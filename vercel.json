@@ -1,0 +1,16 @@
+{
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/data", "destination": "/api/data" },
+    { "source": "/api/sync", "destination": "/api/sync" },
+    { "source": "/api/market-data", "destination": "/api/market-data" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  }
+}
