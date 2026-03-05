@@ -3371,7 +3371,7 @@ export default function App() {
           <div className="bg-[#141414] text-[#E4E3E0] p-1.5">
             <TrendingUp size={20} />
           </div>
-          <h1 className="text-sm font-bold uppercase tracking-tighter leading-none">Vancouver<br/>Transloading</h1>
+          <h1 className="text-sm font-bold uppercase tracking-tighter leading-none">Sweet<br/>Pro</h1>
         </div>
         
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
