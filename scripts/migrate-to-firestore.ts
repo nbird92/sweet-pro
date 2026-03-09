@@ -18,11 +18,15 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config({ path: '.env.local' });
 
 // ---------- Firebase Admin Setup ----------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const serviceAccountPath = resolve(__dirname, 'firebase-service-account.json');
 let serviceAccount: any;
 try {
