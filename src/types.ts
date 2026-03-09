@@ -47,6 +47,18 @@ export interface Customer {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  salespersonId?: string;
+  defaultCarrierCode?: string;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  department: 'sales' | 'operations' | 'logistics' | 'customer service' | 'QA' | 'trading';
+  salespersonNumber?: string;
+  notes?: string;
 }
 
 export interface ProductGroup {
@@ -330,9 +342,11 @@ export interface ConferenceAttendee {
 export interface ConferenceMeeting {
   id: string;
   conferenceId: string;
+  date: string; // Conference date (YYYY-MM-DD)
   time: string;
   meetingName: string;
   attendees: string[]; // Array of attendee IDs
+  customerAttendees: string[]; // Array of customer IDs
   location: string;
   notes?: string;
   customerId?: string;
@@ -355,3 +369,11 @@ export interface Conference {
 }
 
 export const INITIAL_CONFERENCES: Conference[] = [];
+
+export const INITIAL_PEOPLE: Person[] = [
+  { id: 'PERSON-001', name: 'John Smith', email: 'john.smith@sucrosourcing.com', phone: '555-0101', department: 'sales', salespersonNumber: 'SP-001' },
+  { id: 'PERSON-002', name: 'Sarah Johnson', email: 'sarah.johnson@sucrosourcing.com', phone: '555-0102', department: 'sales', salespersonNumber: 'SP-002' },
+  { id: 'PERSON-003', name: 'Mike Chen', email: 'mike.chen@sucrosourcing.com', phone: '555-0103', department: 'operations' },
+  { id: 'PERSON-004', name: 'Lisa Brown', email: 'lisa.brown@sucrosourcing.com', phone: '555-0104', department: 'logistics' },
+  { id: 'PERSON-005', name: 'David Wilson', email: 'david.wilson@sucrosourcing.com', phone: '555-0105', department: 'customer service' },
+];

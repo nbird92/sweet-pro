@@ -30,6 +30,7 @@ export const COLLECTIONS = {
   orders: 'orders',
   marketData: 'marketData',
   conferences: 'conferences',
+  people: 'people',
 } as const;
 
 export type CollectionName = keyof typeof COLLECTIONS;
