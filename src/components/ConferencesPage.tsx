@@ -297,8 +297,8 @@ export default function ConferencesPage({
   };
 
   const filteredConferences = conferences.filter(conf =>
-    conf.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conf.location.toLowerCase().includes(searchTerm.toLowerCase())
+    (conf.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (conf.location || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Generate date range for meeting dates
@@ -391,10 +391,10 @@ export default function ConferencesPage({
                           {new Date(conference.startDate).toLocaleDateString()} - {new Date(conference.endDate).toLocaleDateString()}
                         </div>
                         <div className="text-xs text-gray-600 mt-1 flex gap-4">
-                          <span><MapPin size={12} className="inline mr-1" />{conference.location}</span>
-                          <span><Users size={12} className="inline mr-1" />{conference.attendees.length} attendees</span>
-                          <span><Clock size={12} className="inline mr-1" />{conference.meetings.length} meetings</span>
-                          <span className="uppercase text-[10px] font-bold">{conference.status}</span>
+                          <span><MapPin size={12} className="inline mr-1" />{conference.location || 'No location'}</span>
+                          <span><Users size={12} className="inline mr-1" />{(conference.attendees || []).length} attendees</span>
+                          <span><Clock size={12} className="inline mr-1" />{(conference.meetings || []).length} meetings</span>
+                          <span className="uppercase text-[10px] font-bold">{conference.status || 'Planned'}</span>
                         </div>
                       </div>
                     </div>
@@ -430,14 +430,14 @@ export default function ConferencesPage({
                     <div>
                       <h4 className="font-bold text-sm mb-2">Address</h4>
                       <p className="text-xs text-gray-600">
-                        {conference.address}, {conference.city}, {conference.province} {conference.postalCode}
+                        {[conference.address, conference.city, conference.province, conference.postalCode].filter(Boolean).join(', ') || 'No address set'}
                       </p>
                     </div>
-                    {conference.attendees.length > 0 && (
+                    {(conference.attendees || []).length > 0 && (
                       <div>
                         <h4 className="font-bold text-sm mb-2">Attendees</h4>
                         <div className="grid grid-cols-2 gap-2">
-                          {conference.attendees.map(att => (
+                          {(conference.attendees || []).map(att => (
                             <div key={att.id} className="text-xs bg-gray-50 p-2 border border-gray-200">
                               <div className="font-bold">{att.name}</div>
                               <div className="text-gray-600">{att.email}</div>
@@ -447,18 +447,18 @@ export default function ConferencesPage({
                         </div>
                       </div>
                     )}
-                    {conference.meetings.length > 0 && (
+                    {(conference.meetings || []).length > 0 && (
                       <div>
-                        <h4 className="font-bold text-sm mb-2">Upcoming Meetings ({conference.meetings.length})</h4>
+                        <h4 className="font-bold text-sm mb-2">Upcoming Meetings ({(conference.meetings || []).length})</h4>
                         <div className="space-y-2">
-                          {conference.meetings.slice(0, 3).map(meeting => (
+                          {(conference.meetings || []).slice(0, 3).map(meeting => (
                             <div key={meeting.id} className="text-xs bg-gray-50 p-2 border border-gray-200">
-                              <div className="font-bold">{meeting.time} - {meeting.meetingName}</div>
-                              <div className="text-gray-600">{meeting.location}</div>
+                              <div className="font-bold">{meeting.time || '-'} - {meeting.meetingName || 'Untitled'}</div>
+                              <div className="text-gray-600">{meeting.location || '-'}</div>
                             </div>
                           ))}
-                          {conference.meetings.length > 3 && (
-                            <div className="text-xs text-gray-600 italic">+{conference.meetings.length - 3} more meetings</div>
+                          {(conference.meetings || []).length > 3 && (
+                            <div className="text-xs text-gray-600 italic">+{(conference.meetings || []).length - 3} more meetings</div>
                           )}
                         </div>
                       </div>
@@ -786,9 +786,9 @@ function ConferenceDetailView({
             </p>
             <p className="text-sm text-gray-600">
               <MapPin size={14} className="inline mr-1" />
-              {conference.location}, {conference.city}, {conference.province}
+              {[conference.location, conference.city, conference.province].filter(Boolean).join(', ') || 'No location'}
             </p>
-            <p className="text-xs uppercase font-bold mt-2 text-gray-600">{conference.status}</p>
+            <p className="text-xs uppercase font-bold mt-2 text-gray-600">{conference.status || 'Planned'}</p>
           </div>
           <div className="flex gap-2">
             <button
@@ -815,12 +815,12 @@ function ConferenceDetailView({
 
       {/* Attendees */}
       <div className="mb-8">
-        <h2 className="font-bold text-lg mb-4">Attendees ({conference.attendees.length})</h2>
-        {conference.attendees.length === 0 ? (
+        <h2 className="font-bold text-lg mb-4">Attendees ({(conference.attendees || []).length})</h2>
+        {!conference.attendees || conference.attendees.length === 0 ? (
           <p className="text-gray-500">No attendees added</p>
         ) : (
           <div className="grid grid-cols-2 gap-4">
-            {conference.attendees.map(attendee => (
+            {(conference.attendees || []).map(attendee => (
               <div key={attendee.id} className="bg-white border border-[#141414] p-4">
                 <div className="font-bold">{attendee.name}</div>
                 <div className="text-xs text-gray-600 mt-1">{attendee.email}</div>
@@ -833,30 +833,30 @@ function ConferenceDetailView({
 
       {/* Meetings Schedule */}
       <div>
-        <h2 className="font-bold text-lg mb-4">Meeting Agenda ({conference.meetings.length})</h2>
-        {conference.meetings.length === 0 ? (
+        <h2 className="font-bold text-lg mb-4">Meeting Agenda ({(conference.meetings || []).length})</h2>
+        {!conference.meetings || conference.meetings.length === 0 ? (
           <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 bg-gray-50">
             <p>No meetings scheduled yet</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {conference.meetings
+            {[...conference.meetings]
               .sort((a, b) => {
-                const dateCompare = a.date.localeCompare(b.date);
-                return dateCompare !== 0 ? dateCompare : a.time.localeCompare(b.time);
+                const dateCompare = (a.date || '').localeCompare(b.date || '');
+                return dateCompare !== 0 ? dateCompare : (a.time || '').localeCompare(b.time || '');
               })
               .map(meeting => {
                 const customer = meeting.customerId ? customers.find(c => c.id === meeting.customerId) : null;
-                const meetingAttendees = conference.attendees.filter(a => meeting.attendees.includes(a.id));
-                const customerAttendees = customers.filter(c => meeting.customerAttendees.includes(c.id));
+                const meetingAttendees = conference.attendees.filter(a => (meeting.attendees || []).includes(a.id));
+                const customerAttendees = customers.filter(c => (meeting.customerAttendees || []).includes(c.id));
 
                 return (
                   <div key={meeting.id} className="bg-white border border-[#141414] p-4">
                     <div className="grid grid-cols-5 gap-4 items-start mb-3">
                       <div>
                         <div className="text-xs font-bold uppercase text-gray-600">Date & Time</div>
-                        <div className="text-sm font-bold mt-1">{new Date(meeting.date).toLocaleDateString()}</div>
-                        <div className="text-lg font-bold">{meeting.time}</div>
+                        <div className="text-sm font-bold mt-1">{meeting.date ? new Date(meeting.date).toLocaleDateString() : 'No date'}</div>
+                        <div className="text-lg font-bold">{meeting.time || '-'}</div>
                       </div>
                       <div className="col-span-2">
                         <div className="text-xs font-bold uppercase text-gray-600">Meeting</div>
