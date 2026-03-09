@@ -1872,6 +1872,8 @@ export default function App() {
                   <SortableHeader label="Customer Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Location" sortKey="defaultLocation" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Margin" sortKey="defaultMargin" currentSort={sortConfig} onSort={handleSort} />
+                  <th className="p-4 border-r border-[#141414]/10">Salesperson</th>
+                  <th className="p-4 border-r border-[#141414]/10">Default Carrier</th>
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
@@ -1883,6 +1885,8 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.salespersonId ? people.find(p => p.id === c.salespersonId)?.name || 'Unknown' : '-'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultCarrierCode || '-'}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
                         <button onClick={() => toggleRow(c.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1908,10 +1912,40 @@ export default function App() {
                               <div className="p-6 grid grid-cols-2 gap-6">
                                 <div className="space-y-4">
                                   <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
+                                    <select
+                                      value={c.salespersonId || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'salespersonId', e.target.value || undefined)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                    >
+                                      <option value="">Select a salesperson</option>
+                                      {people.filter(p => p.department === 'sales').map(p => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.name} ({p.salespersonNumber})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>
+                                    <select
+                                      value={c.defaultCarrierCode || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'defaultCarrierCode', e.target.value || undefined)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                    >
+                                      <option value="">Select a carrier</option>
+                                      {carriers.map(carrier => (
+                                        <option key={carrier.id} value={carrier.carrierNumber}>
+                                          {carrier.name} ({carrier.carrierNumber})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
                                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
-                                    <input 
-                                      type="email" 
-                                      value={c.contactEmail || ''} 
+                                    <input
+                                      type="email"
+                                      value={c.contactEmail || ''}
                                       onChange={(e) => updateCustomer(c.id, 'contactEmail', e.target.value)}
                                       className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
                                       placeholder="email@example.com"
@@ -1919,9 +1953,9 @@ export default function App() {
                                   </div>
                                   <div className="space-y-1">
                                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Phone</label>
-                                    <input 
-                                      type="text" 
-                                      value={c.contactPhone || ''} 
+                                    <input
+                                      type="text"
+                                      value={c.contactPhone || ''}
                                       onChange={(e) => updateCustomer(c.id, 'contactPhone', e.target.value)}
                                       className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
                                       placeholder="+1 (555) 000-0000"
@@ -1930,8 +1964,8 @@ export default function App() {
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
-                                  <textarea 
-                                    value={c.notes || ''} 
+                                  <textarea
+                                    value={c.notes || ''}
                                     onChange={(e) => updateCustomer(c.id, 'notes', e.target.value)}
                                     className="w-full bg-white border border-[#141414]/20 p-2 text-xs h-24 resize-none"
                                     placeholder="Add customer specific notes here..."
@@ -4364,12 +4398,42 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
-                    <input 
-                      type="number" 
-                      value={newCustomer.defaultMargin} 
+                    <input
+                      type="number"
+                      value={newCustomer.defaultMargin}
                       onChange={(e) => setNewCustomer({ ...newCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
+                    <select
+                      value={newCustomer.salespersonId || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, salespersonId: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select a salesperson</option>
+                      {people.filter(p => p.department === 'sales').map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.salespersonNumber})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>
+                    <select
+                      value={newCustomer.defaultCarrierCode || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultCarrierCode: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select a carrier</option>
+                      {carriers.map(carrier => (
+                        <option key={carrier.id} value={carrier.carrierNumber}>
+                          {carrier.name} ({carrier.carrierNumber})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
@@ -4768,27 +4832,57 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
-                    <input 
-                      type="number" 
-                      value={editingCustomer.defaultMargin} 
+                    <input
+                      type="number"
+                      value={editingCustomer.defaultMargin}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
+                    <select
+                      value={editingCustomer.salespersonId || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, salespersonId: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select a salesperson</option>
+                      {people.filter(p => p.department === 'sales').map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.salespersonNumber})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>
+                    <select
+                      value={editingCustomer.defaultCarrierCode || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultCarrierCode: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select a carrier</option>
+                      {carriers.map(carrier => (
+                        <option key={carrier.id} value={carrier.carrierNumber}>
+                          {carrier.name} ({carrier.carrierNumber})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
-                    <input 
-                      type="email" 
-                      value={editingCustomer.contactEmail || ''} 
+                    <input
+                      type="email"
+                      value={editingCustomer.contactEmail || ''}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, contactEmail: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Phone</label>
-                    <input 
-                      type="text" 
-                      value={editingCustomer.contactPhone || ''} 
+                    <input
+                      type="text"
+                      value={editingCustomer.contactPhone || ''}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, contactPhone: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
