@@ -8,7 +8,11 @@ import {
   query,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { db } from './firebaseConfig';
+import { getFirestore } from 'firebase/firestore';
+import { app } from './firebaseConfig';
+
+// Use the "sweetpro" database instead of the default
+const db = getFirestore(app, 'sweetpro');
 
 // Collection names matching the old Google Sheets tab names
 export const COLLECTIONS = {

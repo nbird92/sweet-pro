@@ -1,50 +1,30 @@
 /**
- * Migration script: Google Sheets → Firestore
+ * Migration script: Google Sheets → Firestore (using REST API)
  *
  * Prerequisites:
- *   1. Install firebase-admin:  npm install firebase-admin --save-dev
- *   2. Download a Firebase service account key JSON from:
- *      Firebase Console → Project Settings → Service Accounts → Generate New Private Key
- *   3. Save it as `scripts/firebase-service-account.json`
- *   4. Ensure .env.local has the Google Sheets credentials (GOOGLE_SHEET_ID, etc.)
+ *   1. Ensure .env.local has Google Sheets credentials
+ *   2. Ensure .env.local has Firebase credentials (VITE_FIREBASE_API_KEY, etc.)
  *
  * Run:
- *   npx tsx scripts/migrate-to-firestore.ts
+ *   npx tsx scripts/migrate-to-firestore-rest.ts
  */
 
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 import dotenv from 'dotenv';
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 
 dotenv.config({ path: '.env.local' });
 
-// ---------- Firebase Admin Setup ----------
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Firebase REST API setup
+const PROJECT_ID = process.env.VITE_FIREBASE_PROJECT_ID;
+const API_KEY = process.env.VITE_FIREBASE_API_KEY;
 
-const serviceAccountPath = resolve(__dirname, 'firebase-service-account.json');
-let serviceAccount: any;
-try {
-  serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf-8'));
-} catch (err: any) {
-  console.error('ERROR: Could not read scripts/firebase-service-account.json');
-  console.error('Looking at:', serviceAccountPath);
-  console.error('Details:', err.message);
-  console.error('\nDownload it from Firebase Console → Project Settings → Service Accounts → Generate New Private Key');
+if (!PROJECT_ID || !API_KEY) {
+  console.error('ERROR: VITE_FIREBASE_PROJECT_ID or VITE_FIREBASE_API_KEY not set in .env.local');
   process.exit(1);
 }
 
-const fbApp = initializeApp({
-  credential: cert(serviceAccount),
-});
-const db = getFirestore(fbApp);
-
-// ---------- Google Sheets Setup ----------
+// Google Sheets setup
 const jwt = new JWT({
   email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
   key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
@@ -57,7 +37,7 @@ if (!SHEET_ID) {
   process.exit(1);
 }
 
-// ---------- Collection mapping ----------
+// Collection mapping
 const SHEET_TO_COLLECTION: Record<string, string> = {
   Customers: 'customers',
   Products: 'products',
@@ -73,7 +53,7 @@ const SHEET_TO_COLLECTION: Record<string, string> = {
   Orders: 'orders',
 };
 
-// Numeric fields per collection that should be parsed from strings
+// Numeric fields per collection
 const NUMERIC_FIELDS: Record<string, string[]> = {
   customers: ['defaultMargin'],
   products: ['netWeight', 'brix', 'premiumCadMt', 'netWeightKg', 'grossWeightKg', 'maxColor'],
@@ -96,21 +76,55 @@ function parseNumeric(obj: any, fields: string[]): any {
   return result;
 }
 
-async function writeBatch(collectionName: string, docs: any[]) {
-  const BATCH_SIZE = 450;
-  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-    const batch = db.batch();
-    const chunk = docs.slice(i, i + BATCH_SIZE);
-    for (const item of chunk) {
-      if (!item.id) {
-        console.warn(`  Skipping doc without id in ${collectionName}`);
-        continue;
-      }
-      const ref = db.collection(collectionName).doc(item.id);
-      batch.set(ref, item);
+async function writeToFirestore(collectionName: string, docs: any[]): Promise<void> {
+  console.log(`  Writing ${docs.length} documents to Firestore...`);
+
+  for (let i = 0; i < docs.length; i++) {
+    const doc = docs[i];
+    if (!doc.id) {
+      console.warn(`  Skipping doc without id`);
+      continue;
     }
-    await batch.commit();
-    console.log(`  Wrote batch ${Math.floor(i / BATCH_SIZE) + 1} (${chunk.length} docs)`);
+
+    const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/sweetpro/documents/${collectionName}/${doc.id}?key=${API_KEY}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: Object.entries(doc).reduce((acc: any, [key, value]) => {
+            acc[key] = { stringValue: String(value) };
+            if (typeof value === 'number') {
+              acc[key] = { doubleValue: value };
+            } else if (typeof value === 'boolean') {
+              acc[key] = { booleanValue: value };
+            } else if (Array.isArray(value)) {
+              acc[key] = {
+                arrayValue: {
+                  values: value.map(v => ({
+                    stringValue: String(v)
+                  }))
+                }
+              };
+            }
+            return acc;
+          }, {})
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error(`  Error writing doc ${doc.id}:`, error);
+      }
+    } catch (err) {
+      console.error(`  Network error writing doc ${doc.id}:`, err);
+    }
+
+    // Rate limiting - wait a bit between writes to avoid quota issues
+    if ((i + 1) % 10 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
   }
 }
 
@@ -119,18 +133,6 @@ async function migrate() {
   const doc = new GoogleSpreadsheet(SHEET_ID!, jwt);
   await doc.loadInfo();
   console.log(`Spreadsheet: "${doc.title}"\n`);
-
-  console.log('Testing Firestore connection...');
-  try {
-    await db.collection('_test').doc('_test').set({ test: true });
-    await db.collection('_test').doc('_test').delete();
-    console.log('✓ Firestore connection successful\n');
-  } catch (testErr: any) {
-    console.error('✗ Firestore connection failed:', testErr.message);
-    console.error('  Make sure the service account has Cloud Datastore User or Editor role');
-    console.error('  Go to: https://console.cloud.google.com/iam-admin');
-    process.exit(1);
-  }
 
   // Migrate each sheet tab
   for (const [sheetTitle, collectionName] of Object.entries(SHEET_TO_COLLECTION)) {
@@ -182,27 +184,24 @@ async function migrate() {
       return cleaned;
     });
 
-    await writeBatch(collectionName, docs);
+    await writeToFirestore(collectionName, docs);
     console.log(`  → Migrated to Firestore collection "${collectionName}"\n`);
   }
 
-  // Migrate Market Data (from "Data Summary" tab)
+  // Migrate Market Data
   const marketSheet = doc.sheetsByTitle['Data Summary'];
   if (marketSheet) {
     const rows = await marketSheet.getRows();
     const docs = rows.map((r, i) => {
       const obj = r.toObject();
-      // Market data rows might not have an id field — generate one
       return { id: obj.id || `market-${i}`, ...obj };
     });
     console.log(`[Data Summary] Read ${docs.length} rows`);
 
     if (docs.length > 0) {
-      await writeBatch('marketData', docs);
+      await writeToFirestore('marketData', docs);
       console.log(`  → Migrated to Firestore collection "marketData"\n`);
     }
-  } else {
-    console.log('[SKIP] Sheet "Data Summary" not found — no market data migrated');
   }
 
   console.log('Migration complete!');
