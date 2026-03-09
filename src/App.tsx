@@ -40,7 +40,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_HAMILTON_SHIPMENTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_HAMILTON_SHIPMENTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, ConferenceMeeting } from './types';
+import ConferencesPage from './components/ConferencesPage';
 
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
@@ -54,6 +55,7 @@ export default function App() {
   const [transfers, setTransfers] = useState<Transfer[]>(INITIAL_TRANSFERS);
   const [invoices, setInvoices] = useState<Invoice[]>(INITIAL_INVOICES);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
+  const [conferences, setConferences] = useState<Conference[]>(INITIAL_CONFERENCES);
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
@@ -402,6 +404,10 @@ export default function App() {
         setOrders(mapped);
         lastSyncedData.current.orders = JSON.stringify(mapped);
       }
+      if (data.conferences?.length) {
+        setConferences(data.conferences);
+        lastSyncedData.current.conferences = JSON.stringify(data.conferences);
+      }
 
       setSyncStatus('synced');
       setLastSynced(new Date());
@@ -438,6 +444,7 @@ export default function App() {
         { collection: COLLECTIONS.invoices, key: 'invoices', data: invoices },
         { collection: COLLECTIONS.productGroups, key: 'productgroups', data: productGroups },
         { collection: COLLECTIONS.orders, key: 'orders', data: orders },
+        { collection: COLLECTIONS.conferences, key: 'conferences', data: conferences },
       ];
 
       try {
@@ -463,7 +470,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, lastSynced, user]);
   const [config, setConfig] = useState<CommodityConfig>({
     rawPriceUsdCwt: 13.94,
     oceanFreightUsdMt: 135,
@@ -1076,6 +1083,7 @@ export default function App() {
     { name: 'Invoices', icon: FileText },
     { name: 'US #11 Market', icon: TrendingUp },
     { name: 'Products', icon: Package },
+    { name: 'Conferences', icon: Users },
   ];
 
   const renderContent = () => {
@@ -2557,6 +2565,25 @@ export default function App() {
             </table>
           </div>
         </div>
+      );
+    }
+
+    if (activePage === 'Conferences') {
+      return (
+        <ConferencesPage
+          conferences={conferences}
+          customers={customers}
+          onAddConference={(newConference) => setConferences([...conferences, newConference])}
+          onUpdateConference={(updated) => setConferences(conferences.map(c => c.id === updated.id ? updated : c))}
+          onDeleteConference={(id) => setConferences(conferences.filter(c => c.id !== id))}
+          onAddMeeting={(conferenceId, newMeeting) => {
+            setConferences(conferences.map(c =>
+              c.id === conferenceId
+                ? { ...c, meetings: [...c.meetings, newMeeting] }
+                : c
+            ));
+          }}
+        />
       );
     }
 

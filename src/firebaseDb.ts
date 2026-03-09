@@ -29,6 +29,7 @@ export const COLLECTIONS = {
   productGroups: 'productGroups',
   orders: 'orders',
   marketData: 'marketData',
+  conferences: 'conferences',
 } as const;
 
 export type CollectionName = keyof typeof COLLECTIONS;

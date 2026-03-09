@@ -319,3 +319,39 @@ export const INITIAL_TRANSFERS: Transfer[] = [];
 export const INITIAL_INVOICES: Invoice[] = [];
 
 export const INITIAL_ORDERS: Order[] = [];
+
+export interface ConferenceAttendee {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+}
+
+export interface ConferenceMeeting {
+  id: string;
+  conferenceId: string;
+  time: string;
+  meetingName: string;
+  attendees: string[]; // Array of attendee IDs
+  location: string;
+  notes?: string;
+  customerId?: string;
+}
+
+export interface Conference {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  location: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  attendees: ConferenceAttendee[];
+  meetings: ConferenceMeeting[];
+  createdAt?: string;
+  status?: 'Planned' | 'In Progress' | 'Completed';
+}
+
+export const INITIAL_CONFERENCES: Conference[] = [];
