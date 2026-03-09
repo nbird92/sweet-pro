@@ -33,9 +33,13 @@ import {
   AlertCircle,
   Calendar,
   ShoppingCart,
-  Palette
+  Palette,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import { auth, googleProvider } from './firebaseConfig';
+import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_HAMILTON_SHIPMENTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem } from './types';
 
 export default function App() {
@@ -162,23 +166,19 @@ export default function App() {
     event.target.value = '';
   };
   const [selectedBay, setSelectedBay] = useState('');
-  const [accessKey, setAccessKey] = useState<string>(localStorage.getItem('app_access_key') || '');
-  const [showLogin, setShowLogin] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   const fetchMarketData = async () => {
-    if (!accessKey) return;
+    if (!user) return;
     setIsFetchingMarket(true);
     try {
-      const response = await fetch('/api/market-data', {
-        headers: { 'x-access-key': accessKey }
-      });
-      if (response.ok) {
-        const result = await response.json();
-        setMarketData(result.data);
-        setLastMarketUpdate(result.lastUpdated);
-        
-        // Set initial dates from market data if they look like ISO dates or are empty
-        const months = Array.from(new Set(result.data.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
+      const data = await fetchCollection<any>(COLLECTIONS.marketData);
+      if (data.length > 0) {
+        setMarketData(data);
+        setLastMarketUpdate(new Date().toISOString());
+
+        const months = Array.from(new Set(data.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
         if (months.length > 0) {
           setConfig(prev => {
             const isIsoDate = (val: string | undefined) => val && /^\d{4}-\d{2}-\d{2}$/.test(val);
@@ -198,15 +198,44 @@ export default function App() {
   };
 
 
+  // Firebase auth state listener
   useEffect(() => {
-    if (accessKey) {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleSignIn = async () => {
+    try {
+      setSyncError(null);
+      await signInWithPopup(auth, googleProvider);
+    } catch (e: any) {
+      console.error('Sign-in failed:', e);
+      setSyncError(e.message || 'Sign-in failed');
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      setSyncStatus('offline');
+      setLastSynced(null);
+    } catch (e) {
+      console.error('Sign-out failed:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
       fetchMarketData();
       const interval = setInterval(() => {
         fetchMarketData();
-      }, 30 * 60 * 1000); // 30 mins
+      }, 30 * 60 * 1000);
       return () => clearInterval(interval);
     }
-  }, [accessKey]);
+  }, [user]);
   const [showContractConfirm, setShowContractConfirm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
@@ -239,264 +268,188 @@ export default function App() {
     productgroups: JSON.stringify(INITIAL_PRODUCT_GROUPS)
   });
 
-  // Fetch initial data
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setSyncStatus('syncing');
-        setSyncError(null);
-        const res = await fetch('/api/data', {
-          headers: { 'x-access-key': accessKey }
-        });
-        
-        if (res.status === 401) {
-          setShowLogin(true);
-          setSyncStatus('offline');
-          return;
-        }
+  // Fetch initial data from Firestore
+  const loadDataFromFirestore = async () => {
+    try {
+      setSyncStatus('syncing');
+      setSyncError(null);
+      const data = await fetchAllData();
 
-        const data = await res.json();
-        
-        if (data.configMissing) {
-          setSyncStatus('offline');
-          const missing = [];
-          if (!data.details.hasId) missing.push('GOOGLE_SHEET_ID');
-          if (!data.details.hasEmail) missing.push('GOOGLE_SERVICE_ACCOUNT_EMAIL');
-          if (!data.details.hasKey) missing.push('GOOGLE_PRIVATE_KEY');
-          setSyncError(`Missing: ${missing.join(', ')}`);
-          return;
-        }
-        
-        if (data.error) throw new Error(data.error);
-        
-        if (data.customers?.length) {
-          const mapped = data.customers.map((c: any) => ({
-            ...c,
-            defaultMargin: parseFloat(c.defaultMargin) || 0
-          }));
-          setCustomers(mapped);
-          lastSyncedData.current.customers = JSON.stringify(mapped);
-        }
-        if (data.products?.length) {
-          const validLocations = ['Hamilton', 'Vancouver'];
-          const mapped = data.products.map((s: any) => ({
-            ...s,
-            productGroup: s.productGroup || s.productType || 'Bulk',
-            netWeight: parseFloat(s.netWeight) || 0,
-            brix: parseFloat(s.brix) || 0,
-            premiumCadMt: parseFloat(s.premiumCadMt) || 0,
-            netWeightKg: s.netWeightKg ? (parseFloat(s.netWeightKg) || 0) : (s.unitSizeKg ? (parseFloat(s.unitSizeKg) || 0) : undefined),
-            grossWeightKg: s.grossWeightKg ? (parseFloat(s.grossWeightKg) || 0) : undefined,
-            location: validLocations.includes(s.location) ? s.location : 'Hamilton',
-            category: (s.category === 'Conventional' || s.category === 'Organic') ? s.category : 'Conventional'
-          }));
-          setSkus(mapped);
-          lastSyncedData.current.products = JSON.stringify(mapped);
-        }
-        if (data.logistics?.length) {
-          const mapped = data.logistics.map((l: any) => ({
-            ...l,
-            totalCostCad: parseFloat(l.totalCostCad) || 0,
-            weightPerLoadMt: parseFloat(l.weightPerLoadMt) || 0
-          }));
-          setSupplyChain(mapped);
-          lastSyncedData.current.logistics = JSON.stringify(mapped);
-        }
-        if (data.freightRates?.length) {
-          const validTypes = ['Dry Van', 'Bulk', 'Liquid', 'Bulk Rail', 'Intermodal'];
-          const mapped = data.freightRates.map((f: any) => ({
-            ...f,
-            cost: parseFloat(f.cost) || 0,
-            mtPerLoad: parseFloat(f.mtPerLoad) || 0,
-            freightType: validTypes.includes(f.freightType) ? f.freightType : 'Dry Van'
-          }));
-          setFreightRates(mapped);
-          lastSyncedData.current.freightrates = JSON.stringify(mapped);
-        }
-        if (data.contracts?.length) {
-          const mapped = data.contracts.map((c: any) => {
-            const contractVolume = parseFloat(c.contractVolume) || 0;
-            const volumeTaken = parseFloat(c.volumeTaken) || 0;
-            return {
-              ...c,
-              contractVolume,
-              volumeTaken,
-              volumeOutstanding: parseFloat(c.volumeOutstanding) || (contractVolume - volumeTaken),
-              finalPrice: parseFloat(c.finalPrice) || 0
-            };
-          });
-          setContracts(mapped);
-          lastSyncedData.current.contracts = JSON.stringify(mapped);
-        }
-        if (data.carriers?.length) {
-          const mapped = data.carriers.map((c: any) => ({
-            ...c
-          }));
-          setCarriers(mapped);
-          lastSyncedData.current.carriers = JSON.stringify(mapped);
-        }
-        if (data.shipments?.length) {
-          const mapped = data.shipments.map((s: any) => ({
-            ...s,
-            qty: parseFloat(s.qty) || 0
-          }));
-          // Split shipments by location using bay names from location data
-          const vancLoc = (data.locations || []).find((l: any) => l.name?.toLowerCase().includes('vancouver'));
-          const vancBays = vancLoc ? (typeof vancLoc.bays === 'string' ? vancLoc.bays.split(', ') : vancLoc.bays) : [];
-          const vancouver = mapped.filter((s: any) => vancBays.some((b: string) => s.bay === b));
-          const hamilton = mapped.filter((s: any) => !vancBays.some((b: string) => s.bay === b));
-          setHamiltonShipments(hamilton);
-          setVancouverShipments(vancouver);
-          lastSyncedData.current.shipments = JSON.stringify(mapped);
-        }
-        if (data.locations?.length) {
-          const mapped = data.locations.map((l: any) => ({
-            ...l,
-            bays: typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : []
-          }));
-          setLocations(mapped);
-          lastSyncedData.current.locations = JSON.stringify(mapped);
-        }
-        if (data.transfers?.length) {
-          const mapped = data.transfers.map((t: any) => ({
-            ...t,
-            amount: parseFloat(t.amount) || 0
-          }));
-          setTransfers(mapped);
-          lastSyncedData.current.transfers = JSON.stringify(mapped);
-        }
-        if (data.invoices?.length) {
-          const mapped = data.invoices.map((i: any) => ({
-            ...i,
-            qty: parseFloat(i.qty) || 0,
-            amount: parseFloat(i.amount) || 0
-          }));
-          
-          // Cleanup duplicates by shipmentId (keep the first one)
-          const uniqueInvoices: Invoice[] = [];
-          const seenShipmentIds = new Set<string>();
-          
-          for (const inv of mapped) {
-            if (inv.shipmentId && seenShipmentIds.has(inv.shipmentId)) {
-              continue;
-            }
-            if (inv.shipmentId) {
-              seenShipmentIds.add(inv.shipmentId);
-            }
-            uniqueInvoices.push(inv);
-          }
-
-          setInvoices(uniqueInvoices);
-          lastSyncedData.current.invoices = JSON.stringify(uniqueInvoices);
-        }
-        if (data.productGroups?.length) {
-          setProductGroups(data.productGroups);
-          lastSyncedData.current.productgroups = JSON.stringify(data.productGroups);
-        }
-        if (data.orders?.length) {
-          const mapped = data.orders.map((o: any) => ({
-            ...o,
-            amount: parseFloat(o.amount) || 0,
-            lineItems: typeof o.lineItems === 'string' ? JSON.parse(o.lineItems) : (o.lineItems || [])
-          }));
-          setOrders(mapped);
-          lastSyncedData.current.orders = JSON.stringify(mapped);
-        }
-
-        setSyncStatus('synced');
-        setLastSynced(new Date());
-        setShowLogin(false);
-      } catch (e) {
-        console.error("Failed to fetch data:", e);
-        setSyncStatus('error');
-        setSyncError((e as Error).message);
+      if (data.customers?.length) {
+        const mapped = data.customers.map((c: any) => ({
+          ...c,
+          defaultMargin: parseFloat(c.defaultMargin) || 0
+        }));
+        setCustomers(mapped);
+        lastSyncedData.current.customers = JSON.stringify(mapped);
       }
-    };
-    fetchData();
-  }, [accessKey]);
+      if (data.products?.length) {
+        const validLocations = ['Hamilton', 'Vancouver'];
+        const mapped = data.products.map((s: any) => ({
+          ...s,
+          productGroup: s.productGroup || s.productType || 'Bulk',
+          netWeight: parseFloat(s.netWeight) || 0,
+          brix: parseFloat(s.brix) || 0,
+          premiumCadMt: parseFloat(s.premiumCadMt) || 0,
+          netWeightKg: s.netWeightKg ? (parseFloat(s.netWeightKg) || 0) : (s.unitSizeKg ? (parseFloat(s.unitSizeKg) || 0) : undefined),
+          grossWeightKg: s.grossWeightKg ? (parseFloat(s.grossWeightKg) || 0) : undefined,
+          location: validLocations.includes(s.location) ? s.location : 'Hamilton',
+          category: (s.category === 'Conventional' || s.category === 'Organic') ? s.category : 'Conventional'
+        }));
+        setSkus(mapped);
+        lastSyncedData.current.products = JSON.stringify(mapped);
+      }
+      if (data.logistics?.length) {
+        const mapped = data.logistics.map((l: any) => ({
+          ...l,
+          totalCostCad: parseFloat(l.totalCostCad) || 0,
+          weightPerLoadMt: parseFloat(l.weightPerLoadMt) || 0
+        }));
+        setSupplyChain(mapped);
+        lastSyncedData.current.logistics = JSON.stringify(mapped);
+      }
+      if (data.freightRates?.length) {
+        const validTypes = ['Dry Van', 'Bulk', 'Liquid', 'Bulk Rail', 'Intermodal'];
+        const mapped = data.freightRates.map((f: any) => ({
+          ...f,
+          cost: parseFloat(f.cost) || 0,
+          mtPerLoad: parseFloat(f.mtPerLoad) || 0,
+          freightType: validTypes.includes(f.freightType) ? f.freightType : 'Dry Van'
+        }));
+        setFreightRates(mapped);
+        lastSyncedData.current.freightrates = JSON.stringify(mapped);
+      }
+      if (data.contracts?.length) {
+        const mapped = data.contracts.map((c: any) => {
+          const contractVolume = parseFloat(c.contractVolume) || 0;
+          const volumeTaken = parseFloat(c.volumeTaken) || 0;
+          return {
+            ...c,
+            contractVolume,
+            volumeTaken,
+            volumeOutstanding: parseFloat(c.volumeOutstanding) || (contractVolume - volumeTaken),
+            finalPrice: parseFloat(c.finalPrice) || 0
+          };
+        });
+        setContracts(mapped);
+        lastSyncedData.current.contracts = JSON.stringify(mapped);
+      }
+      if (data.carriers?.length) {
+        setCarriers(data.carriers);
+        lastSyncedData.current.carriers = JSON.stringify(data.carriers);
+      }
+      if (data.shipments?.length) {
+        const mapped = data.shipments.map((s: any) => ({
+          ...s,
+          qty: parseFloat(s.qty) || 0
+        }));
+        // Split shipments by location using bay names from location data
+        const locs = data.locations?.length ? data.locations : [];
+        const vancLoc = locs.find((l: any) => l.name?.toLowerCase().includes('vancouver'));
+        const vancBays: string[] = vancLoc
+          ? (typeof vancLoc.bays === 'string' ? vancLoc.bays.split(',').map((b: string) => b.trim()) : (vancLoc.bays || []))
+          : [];
+        const vancouver = mapped.filter((s: any) => vancBays.some((b: string) => s.bay === b));
+        const hamilton = mapped.filter((s: any) => !vancBays.some((b: string) => s.bay === b));
+        setHamiltonShipments(hamilton);
+        setVancouverShipments(vancouver);
+        lastSyncedData.current.shipments = JSON.stringify(mapped);
+      }
+      if (data.locations?.length) {
+        const mapped = data.locations.map((l: any) => ({
+          ...l,
+          bays: Array.isArray(l.bays) ? l.bays : (typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : [])
+        }));
+        setLocations(mapped);
+        lastSyncedData.current.locations = JSON.stringify(mapped);
+      }
+      if (data.transfers?.length) {
+        const mapped = data.transfers.map((t: any) => ({
+          ...t,
+          amount: parseFloat(t.amount) || 0
+        }));
+        setTransfers(mapped);
+        lastSyncedData.current.transfers = JSON.stringify(mapped);
+      }
+      if (data.invoices?.length) {
+        const mapped = data.invoices.map((i: any) => ({
+          ...i,
+          qty: parseFloat(i.qty) || 0,
+          amount: parseFloat(i.amount) || 0
+        }));
 
-  // Sync data with debounce
+        const uniqueInvoices: Invoice[] = [];
+        const seenShipmentIds = new Set<string>();
+        for (const inv of mapped) {
+          if (inv.shipmentId && seenShipmentIds.has(inv.shipmentId)) continue;
+          if (inv.shipmentId) seenShipmentIds.add(inv.shipmentId);
+          uniqueInvoices.push(inv);
+        }
+
+        setInvoices(uniqueInvoices);
+        lastSyncedData.current.invoices = JSON.stringify(uniqueInvoices);
+      }
+      if (data.productGroups?.length) {
+        setProductGroups(data.productGroups);
+        lastSyncedData.current.productgroups = JSON.stringify(data.productGroups);
+      }
+      if (data.orders?.length) {
+        const mapped = data.orders.map((o: any) => ({
+          ...o,
+          amount: parseFloat(o.amount) || 0,
+          lineItems: Array.isArray(o.lineItems) ? o.lineItems : (typeof o.lineItems === 'string' ? JSON.parse(o.lineItems) : [])
+        }));
+        setOrders(mapped);
+        lastSyncedData.current.orders = JSON.stringify(mapped);
+      }
+
+      setSyncStatus('synced');
+      setLastSynced(new Date());
+    } catch (e) {
+      console.error("Failed to fetch data:", e);
+      setSyncStatus('error');
+      setSyncError((e as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      loadDataFromFirestore();
+    }
+  }, [user]);
+
+  // Sync data to Firestore with debounce
   const isSyncing = useRef(false);
   useEffect(() => {
     const syncAll = async () => {
-      if (isSyncing.current || !lastSynced) return;
+      if (isSyncing.current || !lastSynced || !user) return;
       isSyncing.current = true;
 
-      const syncTasks = [
-        { type: 'Customers', data: customers },
-        { type: 'Products', data: skus },
-        { type: 'Logistics', data: supplyChain },
-        { type: 'FreightRates', data: freightRates },
-        { type: 'Contracts', data: contracts },
-        { type: 'Carriers', data: carriers },
-        { type: 'Shipments', data: [...hamiltonShipments, ...vancouverShipments] },
-        { type: 'Locations', data: locations.map(l => ({ ...l, bays: l.bays.join(', ') })) },
-        { type: 'Transfers', data: transfers },
-        { type: 'Invoices', data: invoices },
-        { type: 'ProductGroups', data: productGroups },
-        { type: 'Orders', data: orders.map(o => ({ ...o, lineItems: JSON.stringify(o.lineItems) })) }
+      const syncTasks: { collection: string; key: keyof typeof lastSyncedData.current; data: any[] }[] = [
+        { collection: COLLECTIONS.customers, key: 'customers', data: customers },
+        { collection: COLLECTIONS.products, key: 'products', data: skus },
+        { collection: COLLECTIONS.logistics, key: 'logistics', data: supplyChain },
+        { collection: COLLECTIONS.freightRates, key: 'freightrates', data: freightRates },
+        { collection: COLLECTIONS.contracts, key: 'contracts', data: contracts },
+        { collection: COLLECTIONS.carriers, key: 'carriers', data: carriers },
+        { collection: COLLECTIONS.shipments, key: 'shipments', data: [...hamiltonShipments, ...vancouverShipments] },
+        { collection: COLLECTIONS.locations, key: 'locations', data: locations },
+        { collection: COLLECTIONS.transfers, key: 'transfers', data: transfers },
+        { collection: COLLECTIONS.invoices, key: 'invoices', data: invoices },
+        { collection: COLLECTIONS.productGroups, key: 'productgroups', data: productGroups },
+        { collection: COLLECTIONS.orders, key: 'orders', data: orders },
       ];
-
-      const executeSync = async (task: any, retryCount = 0): Promise<boolean> => {
-        try {
-          const res = await fetch('/api/sync', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'x-access-key': accessKey
-            },
-            body: JSON.stringify({ type: task.type, data: task.data })
-          });
-          
-          if (res.status === 429 && retryCount < 3) {
-            const delay = Math.pow(2, retryCount) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            return executeSync(task, retryCount + 1);
-          }
-
-          if (res.status === 401) {
-            setShowLogin(true);
-            return false;
-          }
-
-          const result = await res.json();
-          if (result.configMissing) {
-            setSyncStatus('offline');
-            return false;
-          }
-          
-          if (!res.ok) {
-            const details = result.details ? `: ${JSON.stringify(result.details)}` : '';
-            throw new Error(`${result.error || 'Sync failed'}${details}`);
-          }
-          return true;
-        } catch (e) {
-          if (retryCount < 3) {
-            const delay = Math.pow(2, retryCount) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-            return executeSync(task, retryCount + 1);
-          }
-          throw e;
-        }
-      };
 
       try {
         for (const task of syncTasks) {
           const dataStr = JSON.stringify(task.data);
-          const key = task.type.toLowerCase() as keyof typeof lastSyncedData.current;
-          
-          if (dataStr === lastSyncedData.current[key]) continue;
+          if (dataStr === lastSyncedData.current[task.key]) continue;
 
           setSyncStatus('syncing');
-          const success = await executeSync(task);
-          if (!success) break;
-          
-          lastSyncedData.current[key] = dataStr;
-          
-          // Add a small delay between each task to spread out API requests
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await syncCollection(task.collection, task.data);
+          lastSyncedData.current[task.key] = dataStr;
         }
-        
+
         setSyncStatus('synced');
         setLastSynced(new Date());
         setSyncError(null);
@@ -510,7 +463,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, lastSynced, accessKey]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, lastSynced, user]);
   const [config, setConfig] = useState<CommodityConfig>({
     rawPriceUsdCwt: 13.94,
     oceanFreightUsdMt: 135,
@@ -3395,8 +3348,8 @@ export default function App() {
           <div>
             <div className="flex justify-between items-center mb-2">
               <div className="text-[10px] uppercase opacity-50 font-bold">Sync Status</div>
-              <button 
-                onClick={() => setLastSynced(new Date(0))} // Force a sync
+              <button
+                onClick={() => loadDataFromFirestore()}
                 disabled={syncStatus === 'syncing'}
                 className="text-[9px] font-bold uppercase hover:underline disabled:opacity-50"
               >
@@ -3409,7 +3362,7 @@ export default function App() {
               {syncStatus === 'error' && <CloudOff size={12} className="text-red-500" />}
               {syncStatus === 'offline' && <CloudOff size={12} className="text-amber-500" />}
               <span className="capitalize">
-                {syncStatus === 'offline' ? 'Setup Required' : syncStatus}
+                {syncStatus === 'offline' ? 'Not signed in' : syncStatus}
               </span>
             </div>
             {syncError && (
@@ -3431,6 +3384,26 @@ export default function App() {
               Live Market Data
             </div>
           </div>
+
+          {user && (
+            <div className="pt-2 border-t border-[#141414]/10">
+              <div className="flex items-center gap-2">
+                {user.photoURL && (
+                  <img src={user.photoURL} alt="" className="w-6 h-6 rounded-full" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] font-bold truncate">{user.displayName || user.email}</div>
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  className="p-1 hover:bg-[#141414]/10 transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut size={12} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 
@@ -3460,34 +3433,31 @@ export default function App() {
 
       {/* Login Modal */}
       <AnimatePresence>
-        {showLogin && (
+        {!user && !authLoading && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Access Required</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Sign In Required</h3>
               </div>
               <div className="p-6 space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">App Access Key</label>
-                  <input 
-                    type="password" 
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="Enter access key"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const val = (e.target as HTMLInputElement).value;
-                        setAccessKey(val);
-                        localStorage.setItem('app_access_key', val);
-                      }
-                    }}
-                  />
-                  <p className="text-[9px] opacity-40 italic">Press Enter to confirm</p>
-                </div>
+                <p className="text-xs opacity-60">Sign in with your Google Workspace account to continue.</p>
+                <button
+                  onClick={handleGoogleSignIn}
+                  className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-3"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                  </svg>
+                  Sign in with Google
+                </button>
                 {syncError && <div className="text-[10px] text-red-500 font-bold">{syncError}</div>}
               </div>
             </motion.div>
