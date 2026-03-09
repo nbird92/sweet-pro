@@ -257,7 +257,7 @@ export default function App() {
   });
 
   // Track last synced data to avoid redundant syncs
-  const lastSyncedData = useRef({
+  const lastSyncedData = useRef<Record<string, string>>({
     customers: JSON.stringify(INITIAL_CUSTOMERS),
     products: JSON.stringify(INITIAL_SKUS),
     logistics: JSON.stringify(INITIAL_SUPPLY_CHAIN),
@@ -269,7 +269,9 @@ export default function App() {
     transfers: JSON.stringify([]),
     invoices: JSON.stringify([]),
     orders: JSON.stringify([]),
-    productgroups: JSON.stringify(INITIAL_PRODUCT_GROUPS)
+    productgroups: JSON.stringify(INITIAL_PRODUCT_GROUPS),
+    conferences: JSON.stringify([]),
+    people: JSON.stringify(INITIAL_PEOPLE),
   });
 
   // Fetch initial data from Firestore
@@ -437,7 +439,7 @@ export default function App() {
       if (isSyncing.current || !lastSynced || !user) return;
       isSyncing.current = true;
 
-      const syncTasks: { collection: string; key: keyof typeof lastSyncedData.current; data: any[] }[] = [
+      const syncTasks: { collection: string; key: string; data: any[] }[] = [
         { collection: COLLECTIONS.customers, key: 'customers', data: customers },
         { collection: COLLECTIONS.products, key: 'products', data: skus },
         { collection: COLLECTIONS.logistics, key: 'logistics', data: supplyChain },
@@ -562,7 +564,7 @@ export default function App() {
   const [errorBox, setErrorBox] = useState<string | null>(null);
 
   const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
+    switch ((status || '').toLowerCase()) {
       case 'completed': return { bg: '#dcfce7', text: '#166534' }; // Green
       case 'in progress': return { bg: '#fef9c3', text: '#854d0e' }; // Light Yellow
       case 'confirmed': return { bg: '#f3e8ff', text: '#6b21a8' }; // Light Purple
@@ -1025,21 +1027,23 @@ export default function App() {
     });
   };
 
-  const getSortedAndFilteredData = <T extends any>(data: T[], searchFields: (keyof T)[]) => {
+  const getSortedAndFilteredData = <T extends Record<string, any>>(data: T[], searchFields: (keyof T)[]) => {
+    if (!Array.isArray(data)) return [];
     let filtered = data;
     if (searchTerm) {
       const lowerSearch = searchTerm.toLowerCase();
-      filtered = data.filter(item => 
-        searchFields.some(field => 
-          String(item[field]).toLowerCase().includes(lowerSearch)
-        )
-      );
+      filtered = data.filter(item => {
+        if (!item) return false;
+        return searchFields.some(field =>
+          String(item[field] ?? '').toLowerCase().includes(lowerSearch)
+        );
+      });
     }
 
     if (sortConfig) {
       filtered = [...filtered].sort((a, b) => {
-        const aVal = a[sortConfig.key as keyof T];
-        const bVal = b[sortConfig.key as keyof T];
+        const aVal = a?.[sortConfig.key as keyof T] ?? '';
+        const bVal = b?.[sortConfig.key as keyof T] ?? '';
         if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -1095,6 +1099,7 @@ export default function App() {
   ];
 
   const renderContent = () => {
+    try {
     if (activePage === 'Dashboard') {
       const completedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s => s.status === 'Completed');
       
@@ -1499,8 +1504,8 @@ export default function App() {
                                                             value={s.status} 
                                                             onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
-                                                              s.status.toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
-                                                              s.status.toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
+                                                              (s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
+                                                              (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
                                                               'bg-slate-100 text-slate-700'
                                                             }`}
                                                           >
@@ -1800,8 +1805,8 @@ export default function App() {
                                                             value={s.status} 
                                                             onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
-                                                              s.status.toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
-                                                              s.status.toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
+                                                              (s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
+                                                              (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
                                                               'bg-slate-100 text-slate-700'
                                                             }`}
                                                           >
@@ -1902,7 +1907,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={5} className="p-0">
+                          <td colSpan={7} className="p-0">
                             <motion.div 
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -3386,6 +3391,23 @@ export default function App() {
         </div>
       </main>
     );
+    } catch (err: any) {
+      console.error('Page render error:', err);
+      return (
+        <div className="p-6">
+          <div className="bg-red-50 border border-red-300 p-6 text-center">
+            <h2 className="text-lg font-bold text-red-800 mb-2">Something went wrong on this page</h2>
+            <p className="text-sm text-red-600 mb-4">{err?.message || 'An unexpected error occurred'}</p>
+            <button
+              onClick={() => setActivePage('Dashboard')}
+              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80"
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
   };
 
   return (
