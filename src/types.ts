@@ -361,6 +361,7 @@ export interface ConferenceMeeting {
   date: string; // Conference date (YYYY-MM-DD)
   time: string;
   meetingName: string;
+  meetingOwner?: string; // Person ID of the sales employee responsible
   attendees: string[]; // Array of Person IDs (sales employees)
   customerAttendees: string[]; // Legacy: Array of customer IDs
   customerAttendeeDetails: CustomerAttendeeDetail[]; // New: typed customer attendee entries
