@@ -242,6 +242,7 @@ export interface Order {
   po: string;
   date: string;
   shipmentDate?: string;
+  deliveryDate?: string;
   status: 'Open' | 'Confirmed' | 'Cancelled';
   lineItems: OrderLineItem[];
   amount: number;

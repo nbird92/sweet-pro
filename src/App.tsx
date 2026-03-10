@@ -67,17 +67,20 @@ export default function App() {
     customer: string;
     product: string;
     contractNumber: string;
-    entries: { date: string; po: string; bol: string; qty: number; carrier: string; amount: number; }[];
+    entries: { shipmentDate: string; deliveryDate: string; po: string; bol: string; qty: number; carrier: string; amount: number; }[];
   }>({
     customer: '',
     product: '',
     contractNumber: '',
-    entries: [{ date: new Date().toISOString().split('T')[0], po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
+    entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
   });
 
   // New Order Modal State
   const [orderCustomerId, setOrderCustomerId] = useState('');
   const [orderPO, setOrderPO] = useState('');
+  const [orderShipmentDate, setOrderShipmentDate] = useState('');
+  const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
+  const [orderCarrier, setOrderCarrier] = useState('');
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -2249,6 +2252,8 @@ export default function App() {
                   <th className="p-3 border-r border-[#E4E3E0]/20">Total Weight (KG)</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">PO #</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Shipment Date</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Delivery Date</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Carrier</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Amount ($)</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Appointment</th>
@@ -2258,7 +2263,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={13} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       No orders yet. Use "Add Order" to create new orders.
                     </td>
                   </tr>
@@ -2276,6 +2281,8 @@ export default function App() {
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(totalWeight * 1000).toFixed(0)}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || '—'}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">${ord.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">
                           <select
@@ -2359,7 +2366,7 @@ export default function App() {
                       <AnimatePresence>
                         {expandedRows.has(ord.id) && (
                           <tr>
-                            <td colSpan={11} className="p-0">
+                            <td colSpan={13} className="p-0">
                               <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -2373,7 +2380,7 @@ export default function App() {
                                       <div className="text-xs font-bold">{ord.id}</div>
                                     </div>
                                     <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Date</div>
+                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Date Created</div>
                                       <div className="text-xs">{ord.date}</div>
                                     </div>
                                     <div>
@@ -2387,6 +2394,20 @@ export default function App() {
                                         ord.status === 'Open' ? 'bg-amber-100 text-amber-700' :
                                         'bg-red-100 text-red-700'
                                       }`}>{ord.status}</div>
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-6">
+                                    <div>
+                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shipment Date</div>
+                                      <div className="text-xs font-bold">{ord.shipmentDate || '—'}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Delivery Date</div>
+                                      <div className="text-xs font-bold">{ord.deliveryDate || '—'}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Carrier</div>
+                                      <div className="text-xs font-bold">{ord.carrier || '—'}</div>
                                     </div>
                                   </div>
 
@@ -5589,41 +5610,81 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier(''); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
               <div className="p-6 space-y-4">
-                {/* Customer & PO Section */}
-                <div className="grid grid-cols-2 gap-6 bg-[#F5F5F5] p-6 border border-[#141414]/10">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
-                    <select
-                      value={orderCustomerId}
-                      onChange={(e) => {
-                        const customerId = e.target.value;
-                        setOrderCustomerId(customerId);
-                        const customer = customers.find(c => c.id === customerId);
-                        if (customer) {
-                          const filtered = contracts.filter(c => c.customerNumber === customerId);
-                          setFilteredOrderContracts(filtered);
-                        }
-                      }}
-                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
-                    >
-                      <option value="">Select Customer</option>
-                      {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                {/* Customer, PO, Carrier & Dates Section */}
+                <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
+                  <div className="grid grid-cols-3 gap-6">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
+                      <select
+                        value={orderCustomerId}
+                        onChange={(e) => {
+                          const customerId = e.target.value;
+                          setOrderCustomerId(customerId);
+                          const customer = customers.find(c => c.id === customerId);
+                          if (customer) {
+                            const filtered = contracts.filter(c => c.customerNumber === customerId);
+                            setFilteredOrderContracts(filtered);
+                            // Auto-fill carrier from customer default
+                            if (customer.defaultCarrierCode) {
+                              const defaultCarrier = carriers.find(c => c.carrierNumber === customer.defaultCarrierCode || c.name === customer.defaultCarrierCode);
+                              if (defaultCarrier) {
+                                setOrderCarrier(defaultCarrier.name);
+                              }
+                            }
+                          }
+                        }}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      >
+                        <option value="">Select Customer</option>
+                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">PO #</label>
+                      <input
+                        type="text"
+                        value={orderPO}
+                        onChange={(e) => setOrderPO(e.target.value)}
+                        placeholder="Purchase Order Number"
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                      <select
+                        value={orderCarrier}
+                        onChange={(e) => setOrderCarrier(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      >
+                        <option value="">Select Carrier</option>
+                        {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">PO #</label>
-                    <input
-                      type="text"
-                      value={orderPO}
-                      onChange={(e) => setOrderPO(e.target.value)}
-                      placeholder="Purchase Order Number"
-                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
-                    />
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Shipment Date</label>
+                      <input
+                        type="date"
+                        value={orderShipmentDate}
+                        onChange={(e) => setOrderShipmentDate(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Delivery Date</label>
+                      <input
+                        type="date"
+                        value={orderDeliveryDate}
+                        onChange={(e) => setOrderDeliveryDate(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -5805,15 +5866,21 @@ export default function App() {
                         contractNumber: contractNumbers.join(', '),
                         po: orderPO,
                         date: new Date().toISOString().split('T')[0],
+                        shipmentDate: orderShipmentDate || undefined,
+                        deliveryDate: orderDeliveryDate || undefined,
                         status: 'Open',
                         lineItems: orderLineItems,
-                        amount: totalAmount
+                        amount: totalAmount,
+                        carrier: orderCarrier || undefined
                       };
                       setOrders([...orders, newOrder]);
                       setIsAddingOrder(false);
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
+                      setOrderShipmentDate('');
+                      setOrderDeliveryDate('');
+                      setOrderCarrier('');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -5825,6 +5892,9 @@ export default function App() {
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
+                      setOrderShipmentDate('');
+                      setOrderDeliveryDate('');
+                      setOrderCarrier('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -5874,7 +5944,21 @@ export default function App() {
                           <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
                           <select
                             value={batchOrder.customer}
-                            onChange={(e) => setBatchOrder({...batchOrder, customer: e.target.value, contractNumber: ''})}
+                            onChange={(e) => {
+                              const custName = e.target.value;
+                              const selectedCust = customers.find(c => c.name === custName);
+                              let defaultCarrierName = '';
+                              if (selectedCust?.defaultCarrierCode) {
+                                const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
+                                if (dc) defaultCarrierName = dc.name;
+                              }
+                              // Auto-fill carrier on all existing entries
+                              const updatedEntries = batchOrder.entries.map(entry => ({
+                                ...entry,
+                                carrier: entry.carrier || defaultCarrierName
+                              }));
+                              setBatchOrder({...batchOrder, customer: custName, contractNumber: '', entries: updatedEntries});
+                            }}
                             className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                           >
                             <option value="">Select Customer</option>
@@ -5938,10 +6022,19 @@ export default function App() {
                         <div className="flex justify-between items-center">
                           <h4 className="text-xs font-black uppercase tracking-widest">Order Entries</h4>
                           <button
-                            onClick={() => setBatchOrder({
-                              ...batchOrder,
-                              entries: [...batchOrder.entries, { date: new Date().toISOString().split('T')[0], po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
-                            })}
+                            onClick={() => {
+                              // Auto-fill carrier from customer default if available
+                              const selectedCust = customers.find(c => c.name === batchOrder.customer);
+                              let defaultCarrierName = '';
+                              if (selectedCust?.defaultCarrierCode) {
+                                const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
+                                if (dc) defaultCarrierName = dc.name;
+                              }
+                              setBatchOrder({
+                                ...batchOrder,
+                                entries: [...batchOrder.entries, { shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: defaultCarrierName, amount: 0 }]
+                              });
+                            }}
                             className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
                           >
                             <Plus size={12} /> Add Entry
@@ -5951,7 +6044,8 @@ export default function App() {
                           <table className="w-full text-left border-collapse">
                             <thead className="sticky top-0 bg-[#141414] text-[#E4E3E0] z-10">
                               <tr className="text-[10px] uppercase font-bold">
-                                <th className="p-3">Date</th>
+                                <th className="p-3">Shipment Date</th>
+                                <th className="p-3">Delivery Date</th>
                                 <th className="p-3">PO #</th>
                                 <th className="p-3">Qty (units)</th>
                                 <th className="p-3">Weight (KG)</th>
@@ -5969,10 +6063,22 @@ export default function App() {
                                     <td className="p-2">
                                       <input
                                         type="date"
-                                        value={entry.date}
+                                        value={entry.shipmentDate}
                                         onChange={(e) => {
                                           const next = [...batchOrder.entries];
-                                          next[idx].date = e.target.value;
+                                          next[idx].shipmentDate = e.target.value;
+                                          setBatchOrder({...batchOrder, entries: next});
+                                        }}
+                                        className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
+                                      />
+                                    </td>
+                                    <td className="p-2">
+                                      <input
+                                        type="date"
+                                        value={entry.deliveryDate}
+                                        onChange={(e) => {
+                                          const next = [...batchOrder.entries];
+                                          next[idx].deliveryDate = e.target.value;
                                           setBatchOrder({...batchOrder, entries: next});
                                         }}
                                         className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
@@ -6105,7 +6211,9 @@ export default function App() {
                                 product: batchOrder.product,
                                 contractNumber: batchOrder.contractNumber,
                                 po: entry.po,
-                                date: entry.date,
+                                date: entry.shipmentDate || new Date().toISOString().split('T')[0],
+                                shipmentDate: entry.shipmentDate || undefined,
+                                deliveryDate: entry.deliveryDate || undefined,
                                 status: 'Open' as const,
                                 lineItems: [lineItem],
                                 amount: entryAmount,
@@ -6118,7 +6226,7 @@ export default function App() {
                               customer: '',
                               product: '',
                               contractNumber: '',
-                              entries: [{ date: new Date().toISOString().split('T')[0], po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
+                              entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
                             });
                           }}
                           className="px-6 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
