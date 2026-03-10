@@ -335,9 +335,24 @@ export const INITIAL_ORDERS: Order[] = [];
 
 export interface ConferenceAttendee {
   id: string;
+  personId: string; // References Person.id from People table
   name: string;
   email: string;
   phone?: string;
+}
+
+export interface CustomerAttendeeDetail {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+}
+
+export interface MeetingFollowUp {
+  id: string;
+  text: string;
+  completed: boolean;
+  createdAt: string;
 }
 
 export interface ConferenceMeeting {
@@ -346,11 +361,13 @@ export interface ConferenceMeeting {
   date: string; // Conference date (YYYY-MM-DD)
   time: string;
   meetingName: string;
-  attendees: string[]; // Array of attendee IDs
-  customerAttendees: string[]; // Array of customer IDs
+  attendees: string[]; // Array of Person IDs (sales employees)
+  customerAttendees: string[]; // Legacy: Array of customer IDs
+  customerAttendeeDetails: CustomerAttendeeDetail[]; // New: typed customer attendee entries
   location: string;
   notes?: string;
   customerId?: string;
+  followUps: MeetingFollowUp[];
 }
 
 export interface Conference {
