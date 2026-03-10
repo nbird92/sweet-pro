@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDetail, MeetingFollowUp, Customer, Person } from '../types';
 import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -58,6 +58,18 @@ export default function ConferencesPage({
   const [followUpSortDir, setFollowUpSortDir] = useState<'asc' | 'desc'>('asc');
   const [editingFollowUp, setEditingFollowUp] = useState<{ meetingId: string; followUp: MeetingFollowUp } | null>(null);
   const [editingFollowUpText, setEditingFollowUpText] = useState('');
+
+  // Keep selectedConference in sync with conferences prop (e.g., after Firestore updates)
+  useEffect(() => {
+    if (selectedConference) {
+      const updated = conferences.find(c => c.id === selectedConference.id);
+      if (updated) {
+        setSelectedConference(updated);
+      } else {
+        setSelectedConference(null);
+      }
+    }
+  }, [conferences]);
 
   const salesPeople = people.filter(p => p.department === 'sales');
 

@@ -556,8 +556,16 @@ export default function App() {
 
   const weeksList = useMemo(() => Array.from({ length: 52 }, (_, i) => `Week ${i + 1}`), []);
   const daysList = useMemo(() => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], []);
-  const timeSlotsList = useMemo(() => Array.from({ length: 16 }, (_, i) => {
-    const totalMinutes = i * 90;
+  // Display time slots: 06:00 to 18:00 in 30-min intervals (default table view)
+  const timeSlotsList = useMemo(() => Array.from({ length: 25 }, (_, i) => {
+    const totalMinutes = 360 + i * 30; // Start at 06:00 (360 min)
+    const hour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+    const min = (totalMinutes % 60).toString().padStart(2, '0');
+    return `${hour}:${min}`;
+  }), []);
+  // Full time slots for creation modal (every 30 min, 00:00-23:30)
+  const allTimeSlots = useMemo(() => Array.from({ length: 48 }, (_, i) => {
+    const totalMinutes = i * 30;
     const hour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
     const min = (totalMinutes % 60).toString().padStart(2, '0');
     return `${hour}:${min}`;
@@ -1249,241 +1257,242 @@ export default function App() {
       );
     }
 
-    if (activePage === 'Hamilton Shipments') {
+    if (activePage === 'Hamilton Shipments' || activePage === 'Vancouver Shipments') {
+      const isHamiltonPage = activePage === 'Hamilton Shipments';
+      const locationName = isHamiltonPage ? 'Hamilton' : 'Vancouver';
+      const locationShipments = isHamiltonPage ? hamiltonShipments : vancouverShipments;
       const currentWeekNum = getWeekNumber(new Date().toISOString());
       const currentWeek = `Week ${currentWeekNum}`;
       const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
 
-      const hamiltonLocation = locations.find(l => l.name.toLowerCase().includes('hamilton'));
-      const hamiltonBays = hamiltonLocation ? hamiltonLocation.bays : ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - WELLINGTON ST.', 'BAY 3 - MOLASSES, DRY DOCKS'];
+      const locationObj = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
+      const locationBays = locationObj ? locationObj.bays : (isHamiltonPage ? ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - WELLINGTON ST.', 'BAY 3 - MOLASSES, DRY DOCKS'] : ['BAY 1', 'BAY 2']);
 
-      const filteredShipments = hamiltonShipments.filter(s => {
-        const matchesSearch = !searchTerm || 
-          s.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.product.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.po.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.bol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.carrier.toLowerCase().includes(searchTerm.toLowerCase());
+      const filteredShipments = locationShipments.filter(s => {
+        const matchesSearch = !searchTerm ||
+          (s.customer || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.product || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.po || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.bol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.carrier || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.contractNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.notes || '').toLowerCase().includes(searchTerm.toLowerCase());
         return matchesSearch;
       });
 
       // Group by Week -> Bay -> Day -> Time
       const groupedData: { [week: string]: { [bay: string]: { [day: string]: { [time: string]: Shipment[] } } } } = {};
-      
       weeksList.forEach(w => {
         groupedData[w] = {};
-        hamiltonBays.forEach(b => {
+        locationBays.forEach(b => {
           groupedData[w][b] = {};
-          daysList.forEach(d => {
-            groupedData[w][b][d] = {};
-          });
+          daysList.forEach(d => { groupedData[w][b][d] = {}; });
         });
       });
-
       filteredShipments.forEach(s => {
-        if (groupedData[s.week] && groupedData[s.week][s.bay] && groupedData[s.week][s.bay][s.day]) {
+        if (groupedData[s.week]?.[s.bay]?.[s.day]) {
           if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [];
           groupedData[s.week][s.bay][s.day][s.time].push(s);
         }
       });
 
-      const visibleWeeks = showPreviousWeeks 
-        ? weeksList 
+      const visibleWeeks = showPreviousWeeks
+        ? weeksList
         : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
 
+      // Current week is always expanded
+      const isCurrentWeekExpanded = (week: string) => week === currentWeek || expandedRows.has(week);
+
       return (
-        <div className="p-6 space-y-4">
+        <div className="p-4 space-y-3">
           <div className="flex justify-between items-center">
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">Hamilton Shipment Schedule</h2>
+            <div className="space-y-0.5">
+              <h2 className="text-xl font-bold uppercase tracking-tighter">{locationName} Shipment Schedule</h2>
               <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
                 <RefreshCw size={12} className={isFetchingShipments ? 'animate-spin' : ''} />
                 Last Updated: {new Date().toLocaleString()}
               </div>
             </div>
-            <div className="flex gap-4">
-              <button 
-                onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-              >
+            <div className="flex gap-2">
+              <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-all">
                 {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
               </button>
-              <button 
-                onClick={() => {
+              <button onClick={() => {
                   const headers = ['id', 'date', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'carrier', 'status', 'notes'];
                   const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
-                  const encodedUri = encodeURI(csvContent);
                   const link = document.createElement("a");
-                  link.setAttribute("href", encodedUri);
+                  link.setAttribute("href", encodeURI(csvContent));
                   link.setAttribute("download", "shipment_template.csv");
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
+                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
                 }}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F5F5F5] transition-all"
-              >
-                <Download size={14} /> Template
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
+                <Download size={12} /> Template
               </button>
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F5F5F5] transition-all"
-              >
-                <FileText size={14} /> Import CSV
+              <button onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
+                <FileText size={12} /> Import CSV
               </button>
-              <button 
-                onClick={() => setIsAddingBatchShipment(true)}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-              >
-                <Plus size={14} /> Add Batch Shipments
+              <button onClick={() => setIsAddingBatchShipment(true)}
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                <Plus size={12} /> Batch
               </button>
-              <button
-                onClick={() => {
-                  setShipmentSearchCustomer('');
-                  setShipmentSearchBOL('');
-                  setShipmentSearchTransfer('');
-                  setIsAddingShipment(true);
-                }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={14} /> Add Shipment
+              <button onClick={() => { setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer(''); setIsAddingShipment(true); }}
+                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all">
+                <Plus size={12} /> Add Shipment
               </button>
             </div>
           </div>
 
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search shipments by customer, product, PO, BOL or carrier..."
-          />
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by customer, product, PO, BOL, carrier, contract or notes..." />
 
-          <div className="space-y-4">
+          <div className="space-y-2">
             {visibleWeeks.map(week => {
-              const isExpanded = expandedRows.has(week) || (week === currentWeek && expandedRows.size === 0);
-              
+              const isCurrentWk = week === currentWeek;
+              const isExpanded = isCurrentWeekExpanded(week);
+
               return (
-                <div key={week} className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-                  <button 
+                <div key={week} className={`bg-white border-2 overflow-hidden ${isCurrentWk ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
+                  <button
                     onClick={() => {
                       const next = new Set(expandedRows);
-                      if (next.has(week)) next.delete(week);
-                      else next.add(week);
+                      if (isCurrentWk) { if (next.has(week)) next.delete(week); else next.add(week); }
+                      else { if (next.has(week)) next.delete(week); else next.add(week); }
                       setExpandedRows(next);
                     }}
-                    className="w-full p-4 bg-[#141414] text-[#E4E3E0] flex justify-between items-center hover:bg-opacity-90 transition-all"
+                    className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-all ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
                   >
-                    <span className="text-xs font-bold uppercase tracking-widest">{week} {week === currentWeek ? '(CURRENT)' : ''}</span>
-                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    <span className="text-[10px] font-bold uppercase tracking-widest">{week} {isCurrentWk ? '(CURRENT WEEK)' : ''}</span>
+                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
-                  
+
                   <AnimatePresence initial={false}>
                     {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0 }}
-                        animate={{ height: 'auto' }}
-                        exit={{ height: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="p-4 space-y-4">
-                          {hamiltonBays.map(bay => {
+                      <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                        <div className="p-2 space-y-2">
+                          {locationBays.map(bay => {
                             const bayKey = `${week}-${bay}`;
-                            const isBayExpanded = expandedBays.has(bayKey);
-                            
+                            // Auto-expand bays in current week
+                            const isBayExpanded = isCurrentWk || expandedBays.has(bayKey);
+
                             return (
-                              <div key={bay} className="border-2 border-[#141414] rounded-lg overflow-hidden">
-                                <button 
+                              <div key={bay} className="border border-[#141414] overflow-hidden">
+                                <button
                                   onClick={() => {
                                     const next = new Set(expandedBays);
-                                    if (next.has(bayKey)) next.delete(bayKey);
-                                    else next.add(bayKey);
+                                    if (next.has(bayKey)) next.delete(bayKey); else next.add(bayKey);
                                     setExpandedBays(next);
                                   }}
-                                  className="w-full p-3 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
+                                  className="w-full px-2 py-1.5 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
                                 >
-                                  <span className="text-xs font-black uppercase tracking-widest">{bay}</span>
-                                  {isBayExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                  <span className="text-[10px] font-black uppercase tracking-widest">{bay}</span>
+                                  {isBayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                                 </button>
 
                                 {isBayExpanded && (
-                                  <div className="p-4 space-y-4 bg-white">
+                                  <div className="space-y-1 bg-white p-1">
                                     {daysList.map(day => {
                                       const dayKey = `${week}-${bay}-${day}`;
-                                      const isDayExpanded = expandedDays.has(dayKey) || (week === currentWeek && day === currentDay && !expandedDays.has(dayKey));
+                                      // Auto-expand all days in current week
+                                      const isDayExpanded = isCurrentWk || expandedDays.has(dayKey);
                                       const weekNum = parseInt(week.replace('Week ', ''));
                                       const dateObj = getDateForWeekDay(weekNum, day);
                                       const dateStr = toLocalDateString(dateObj);
                                       const displayDate = formatDateMMM_DD(dateStr);
+                                      const isToday = isCurrentWk && day === currentDay;
+
+                                      // Get all shipments for this day (including outside 6-18 range)
+                                      const dayShipments = groupedData[week]?.[bay]?.[day] || {};
+                                      const allDayTimes = Object.keys(dayShipments).filter(t => dayShipments[t]?.length > 0);
+                                      // Times outside display range that have shipments
+                                      const outsideRangeTimes = allDayTimes.filter(t => t < '06:00' || t > '18:00');
+                                      const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
 
                                       return (
-                                        <div key={day} className="border border-[#141414]/10 rounded-lg overflow-hidden">
-                                          <button 
+                                        <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
+                                          <button
                                             onClick={() => {
                                               const next = new Set(expandedDays);
-                                              if (next.has(dayKey)) next.delete(dayKey);
-                                              else next.add(dayKey);
+                                              if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
                                               setExpandedDays(next);
                                             }}
-                                            className="w-full p-3 bg-[#F9F9F9] flex justify-between items-center hover:bg-[#F0F0F0] transition-all"
+                                            className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
                                           >
-                                            <div className="flex items-center gap-4">
-                                              <span className="text-[10px] font-black uppercase tracking-widest">{day}</span>
+                                            <div className="flex items-center gap-3">
+                                              <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
                                               <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
+                                              {shipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{shipmentCount}</span>}
                                             </div>
-                                            {isDayExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                            {isDayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                                           </button>
 
                                           {isDayExpanded && (
                                             <div className="overflow-x-auto">
                                               <table className="w-full text-left border-collapse">
                                                 <thead>
-                                                  <tr className="bg-white text-[9px] uppercase font-bold border-b border-[#141414]/10">
-                                                    <th className="p-2 border-r border-[#141414]/5 w-16">Time</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Customer</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Product</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">PO</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">BOL #</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">QTY</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Carrier</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Arrive</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Start</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Out</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Status</th>
-                                                    <th className="p-2">Actions</th>
+                                                  <tr className="bg-white text-[8px] uppercase font-bold border-b border-[#141414]/10">
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5 w-12">Time</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Customer</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Product</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Contract</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">PO</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">BOL</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">QTY</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Carrier</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Arrive</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Status</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Notes</th>
+                                                    <th className="px-1 py-0.5 w-16">Actions</th>
                                                   </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-[#141414]/5">
+                                                <tbody>
+                                                  {/* Out-of-range shipments (before 06:00) */}
+                                                  {outsideRangeTimes.filter(t => t < '06:00').sort().map(slot => (
+                                                    dayShipments[slot]?.map(s => (
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                          <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                          </select>
+                                                        </td>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-xs">
+                                                          <div className="flex gap-0.5">
+                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
+                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                          </div>
+                                                        </td>
+                                                      </tr>
+                                                    ))
+                                                  ))}
+                                                  {/* Standard 06:00-18:00 time slots */}
                                                   {timeSlotsList.map(slot => {
-                                                    const shipments = groupedData[week][bay][day][slot] || [];
+                                                    const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
                                                     if (shipments.length === 0) {
                                                       return (
-                                                        <tr key={slot} className="group hover:bg-[#F9F9F9] transition-colors bg-[#141414]/5 hover:bg-[#141414]/10">
-                                                          <td className="p-2 text-[10px] font-mono border-r border-[#141414]/5">{slot}</td>
-                                                          <td colSpan={10} className="p-2 text-[9px] italic font-bold opacity-40">Available Slot</td>
-                                                          <td className="p-2 text-xs">
-                                                            <button 
-                                                              onClick={() => {
-                                                                setEditingShipment({
-                                                                  id: '',
-                                                                  week,
-                                                                  date: dateStr,
-                                                                  day,
-                                                                  time: slot,
-                                                                  bay: bay,
-                                                                  customer: '',
-                                                                  product: '',
-                                                                  po: '',
-                                                                  bol: '',
-                                                                  qty: 22,
-                                                                  carrier: '',
-                                                                  arrive: '',
-                                                                  start: '',
-                                                                  out: '',
-                                                                  status: 'Pending',
-                                                                  contractNumber: ''
-                                                                });
-                                                                setIsAddingShipment(false);
+                                                        <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
+                                                          <td className="px-1 py-0.5 text-[9px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
+                                                          <td colSpan={12} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
+                                                          <td className="px-1 py-0.5">
+                                                            <button onClick={() => {
+                                                                setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
+                                                                setIsCreatingShipments(true);
                                                               }}
-                                                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                                                            >
+                                                              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Add Shipment">
                                                               <Plus size={10} />
                                                             </button>
                                                           </td>
@@ -1491,41 +1500,70 @@ export default function App() {
                                                       );
                                                     }
                                                     return shipments.map(s => (
-                                                      <tr key={s.id} className="hover:bg-[#F9F9F9] transition-colors" style={{ backgroundColor: s.color || 'transparent' }}>
-                                                        <td className="p-2 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.product}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.bol}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">
-                                                          <select 
-                                                            value={s.status} 
-                                                            onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
-                                                              (s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
-                                                              (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
-                                                              'bg-slate-100 text-slate-700'
-                                                            }`}
-                                                          >
-                                                            <option value="Pending">Pending</option>
-                                                            <option value="Confirmed">Confirmed</option>
-                                                            <option value="In Progress">In Progress</option>
-                                                            <option value="Completed">Completed</option>
-                                                            <option value="Cancelled">Cancelled</option>
+                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                          <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="p-2 text-xs flex gap-1">
-                                                          <button onClick={() => setEditingShipment(s)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><Edit2 size={10} /></button>
-                                                          <button onClick={() => deleteShipment(s.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={10} /></button>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5">
+                                                          <div className="flex gap-0.5">
+                                                            <button onClick={() => {
+                                                                setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
+                                                                setIsCreatingShipments(true);
+                                                              }}
+                                                              className="p-0.5 hover:bg-emerald-600 hover:text-white transition-all" title="Add Shipment"><Plus size={10} /></button>
+                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
+                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                          </div>
                                                         </td>
                                                       </tr>
                                                     ));
                                                   })}
+                                                  {/* Out-of-range shipments (after 18:00) */}
+                                                  {outsideRangeTimes.filter(t => t > '18:00').sort().map(slot => (
+                                                    dayShipments[slot]?.map(s => (
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                          <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                          </select>
+                                                        </td>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-xs">
+                                                          <div className="flex gap-0.5">
+                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
+                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                          </div>
+                                                        </td>
+                                                      </tr>
+                                                    ))
+                                                  ))}
                                                 </tbody>
                                               </table>
                                             </div>
@@ -1550,7 +1588,8 @@ export default function App() {
       );
     }
 
-    if (activePage === 'Vancouver Shipments') {
+    if (false as boolean) {
+      // Vancouver Shipments is now handled by the combined section above - this block is dead code
       const currentWeekNum = getWeekNumber(new Date().toISOString());
       const currentWeek = `Week ${currentWeekNum}`;
       const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
@@ -2289,7 +2328,7 @@ export default function App() {
                             value={ord.status}
                             onChange={(e) => {
                               const newStatus = e.target.value as Order['status'];
-                              if (newStatus === 'Confirmed') {
+                              if (newStatus === 'Confirmed' || newStatus === 'Cancelled') {
                                 setPendingStatusChange({ orderId: ord.id, newStatus });
                                 setShowOrderConfirmation(true);
                               } else {
@@ -2341,7 +2380,7 @@ export default function App() {
                                   onClick={() => {
                                     const customer = customers.find(c => c.name === ord.customer);
                                     const location = customer?.defaultLocation || 'Hamilton';
-                                    setShipmentCreationData({ location, date: '', time: '', bay: '', carrier: '', orderId: ord.id });
+                                    setShipmentCreationData({ location, date: ord.shipmentDate || '', time: '', bay: '', carrier: ord.carrier || '', orderId: ord.id });
                                     setIsCreatingShipments(true);
                                   }}
                                   className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
@@ -2642,13 +2681,13 @@ export default function App() {
           conferences={conferences}
           customers={customers}
           people={people}
-          onAddConference={(newConference) => setConferences([...conferences, newConference])}
-          onUpdateConference={(updated) => setConferences(conferences.map(c => c.id === updated.id ? updated : c))}
-          onDeleteConference={(id) => setConferences(conferences.filter(c => c.id !== id))}
+          onAddConference={(newConference) => setConferences(prev => [...prev, newConference])}
+          onUpdateConference={(updated) => setConferences(prev => prev.map(c => c.id === updated.id ? updated : c))}
+          onDeleteConference={(id) => setConferences(prev => prev.filter(c => c.id !== id))}
           onAddMeeting={(conferenceId, newMeeting) => {
-            setConferences(conferences.map(c =>
+            setConferences(prev => prev.map(c =>
               c.id === conferenceId
-                ? { ...c, meetings: [...c.meetings, newMeeting] }
+                ? { ...c, meetings: [...(c.meetings || []), newMeeting] }
                 : c
             ));
           }}
@@ -3693,7 +3732,7 @@ export default function App() {
                                       setIsAddingBatchShipment(false);
                                       const customer = customers.find(c => c.name === o.customer);
                                       const loc = customer?.defaultLocation || locationName;
-                                      setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: '', time: '', bay: '', carrier: '', orderId: o.id });
+                                      setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
                                       setIsCreatingShipments(true);
                                     }}
                                     className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
@@ -3855,7 +3894,7 @@ export default function App() {
                                             setEditingShipment(null);
                                             const customer = customers.find(c => c.name === o.customer);
                                             const loc = customer?.defaultLocation || locationName;
-                                            setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: '', time: '', bay: '', carrier: '', orderId: o.id });
+                                            setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
                                             setIsCreatingShipments(true);
                                           }}
                                           className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
@@ -3949,7 +3988,7 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, time: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          {timeSlotsList.map(t => <option key={t} value={t}>{t}</option>)}
+                          {allTimeSlots.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -6190,6 +6229,8 @@ export default function App() {
                               setErrorBox(`Insufficient contract volume. Contract has ${selectedContract.volumeOutstanding.toFixed(1)} MT outstanding, batch requires ${totalWeightMT.toFixed(2)} MT`);
                               return;
                             }
+                            // Generate unique BOL numbers for each entry in the batch
+                            const generatedBOLs: string[] = [];
                             const newOrders: Order[] = batchOrder.entries.map((entry) => {
                               const entryWeightMT = entry.qty * product.netWeight;
                               const entryAmount = entryWeightMT * mtRate;
@@ -6204,9 +6245,24 @@ export default function App() {
                                 mtAmount: mtRate,
                                 lineAmount: entryAmount
                               };
+                              // Determine BOL prefix from product group
+                              const prodInfo = skus.find(s => s.name === lineItem.productName);
+                              const prodGroup = prodInfo?.productGroup || 'Other';
+                              const bolPrefix = prodGroup === 'Liquid' ? 'L' : prodGroup === 'Bulk' ? 'B' : 'P';
+                              const currentYear = new Date().getFullYear();
+                              // Combine existing BOLs with already-generated ones in this batch
+                              const allBOLs = [
+                                ...orders.map(o => o.bolNumber),
+                                ...generatedBOLs
+                              ].filter(bol => bol?.startsWith(bolPrefix + '-' + currentYear + '-'))
+                               .map(bol => parseInt(bol.split('-')[2]) || 0);
+                              const nextCounter = (Math.max(...allBOLs, 0) + 1).toString().padStart(3, '0');
+                              const bolNumber = `${bolPrefix}-${currentYear}-${nextCounter}`;
+                              generatedBOLs.push(bolNumber);
+
                               return {
                                 id: `ORD-${Date.now()}-${Math.random()}`,
-                                bolNumber: generateBOLNumber([lineItem]),
+                                bolNumber,
                                 customer: batchOrder.customer,
                                 product: batchOrder.product,
                                 contractNumber: batchOrder.contractNumber,
@@ -6260,10 +6316,16 @@ export default function App() {
                   const order = orders.find(o => o.id === pendingStatusChange.orderId);
                   if (!order) return null;
                   const totalWeight = order.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
+                  const isCancelling = pendingStatusChange.newStatus === 'Cancelled';
+                  const allShipments = [...hamiltonShipments, ...vancouverShipments];
+                  const associatedShipments = allShipments.filter(s => s.bol === order.bolNumber);
                   return (
                     <>
                       <p className="text-sm leading-relaxed">
-                        Are you sure you want to confirm this order? This will lock the order details and prepare it for scheduling into shipments.
+                        {isCancelling
+                          ? `Are you sure you want to cancel this order?${associatedShipments.length > 0 ? ` This will also delete ${associatedShipments.length} associated shipment appointment${associatedShipments.length > 1 ? 's' : ''}.` : ''}`
+                          : 'Are you sure you want to confirm this order? This will lock the order details and prepare it for scheduling into shipments.'
+                        }
                       </p>
                       <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                         <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
@@ -6282,17 +6344,34 @@ export default function App() {
                           <span>Total Weight</span>
                           <span className="text-sm font-black">{totalWeight.toFixed(2)} MT</span>
                         </div>
+                        {isCancelling && associatedShipments.length > 0 && (
+                          <div className="flex justify-between text-[10px] uppercase font-bold text-red-500">
+                            <span>Shipments to Delete</span>
+                            <span className="text-sm font-black">{associatedShipments.length}</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-4">
                         <button
                           onClick={() => {
-                            setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Confirmed' } : o));
+                            if (isCancelling) {
+                              // Cancel order and delete associated shipments
+                              setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Cancelled' } : o));
+                              if (associatedShipments.length > 0) {
+                                setHamiltonShipments(prev => prev.filter(s => s.bol !== order.bolNumber));
+                                setVancouverShipments(prev => prev.filter(s => s.bol !== order.bolNumber));
+                              }
+                            } else {
+                              setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Confirmed' } : o));
+                            }
                             setShowOrderConfirmation(false);
                             setPendingStatusChange(null);
                           }}
-                          className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                          className={`flex-1 py-4 font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 ${
+                            isCancelling ? 'bg-red-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'
+                          }`}
                         >
-                          <CheckCircle2 size={16} /> Confirm Status
+                          {isCancelling ? <><AlertCircle size={16} /> Cancel Order</> : <><CheckCircle2 size={16} /> Confirm Status</>}
                         </button>
                         <button
                           onClick={() => {
@@ -6301,7 +6380,7 @@ export default function App() {
                           }}
                           className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                         >
-                          Cancel
+                          Go Back
                         </button>
                       </div>
                     </>
@@ -6360,7 +6439,7 @@ export default function App() {
                   };
 
                   // Available time slots from shipment schedule
-                  const availableTimeSlots = timeSlotsList.filter(t => isSlotAvailable(t));
+                  const availableTimeSlots = allTimeSlots.filter(t => isSlotAvailable(t));
 
                   return (
                     <>
@@ -6463,7 +6542,7 @@ export default function App() {
                               {selectedBayFilter ? `Available times for ${selectedBayFilter}` : 'Click an available time slot (bay shown for each)'}
                             </div>
                             <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
-                              {timeSlotsList.map(slot => {
+                              {allTimeSlots.map(slot => {
                                 const available = isSlotAvailable(slot);
                                 const isSelected = shipmentCreationData.time === slot;
                                 const availBays = getAvailableBaysForSlot(slot);
