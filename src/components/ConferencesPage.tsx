@@ -45,6 +45,7 @@ export default function ConferencesPage({
     customerAttendeeDetails: [], location: '', notes: '', customerId: '', followUps: [],
   });
   const [newCustAttendee, setNewCustAttendee] = useState({ name: '', email: '', phone: '' });
+  const [newInlineCustAttendee, setNewInlineCustAttendee] = useState({ name: '', email: '', phone: '' });
   const [newFollowUp, setNewFollowUp] = useState('');
 
   // Meeting table sort state
@@ -253,6 +254,36 @@ export default function ConferencesPage({
         if (m.id !== meetingId) return m;
         return { ...m, followUps: (m.followUps || []).map(f => f.id === followUpId ? { ...f, text: newText.trim() } : f) };
       }),
+    };
+    onUpdateConference(updatedConference);
+    setSelectedConference(updatedConference);
+  };
+
+  const addCustomerAttendeeToMeeting = (meetingId: string, attendee: { name: string; email: string; phone: string }) => {
+    if (!selectedConference || !attendee.name.trim()) return;
+    const detail: CustomerAttendeeDetail = {
+      id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: attendee.name.trim(),
+      email: attendee.email.trim(),
+      phone: attendee.phone.trim(),
+    };
+    const updatedConference: Conference = {
+      ...selectedConference,
+      meetings: selectedConference.meetings.map(m =>
+        m.id !== meetingId ? m : { ...m, customerAttendeeDetails: [...(m.customerAttendeeDetails || []), detail] }
+      ),
+    };
+    onUpdateConference(updatedConference);
+    setSelectedConference(updatedConference);
+  };
+
+  const removeCustomerAttendeeFromMeeting = (meetingId: string, attendeeId: string) => {
+    if (!selectedConference) return;
+    const updatedConference: Conference = {
+      ...selectedConference,
+      meetings: selectedConference.meetings.map(m =>
+        m.id !== meetingId ? m : { ...m, customerAttendeeDetails: (m.customerAttendeeDetails || []).filter(ca => ca.id !== attendeeId) }
+      ),
     };
     onUpdateConference(updatedConference);
     setSelectedConference(updatedConference);
@@ -525,21 +556,48 @@ export default function ConferencesPage({
                                         className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Add</button>
                                     </div>
                                   </div>
-                                  {/* Customer attendee contact details */}
-                                  {(meeting.customerAttendeeDetails || []).length > 0 && (
-                                    <div>
-                                      <label className="text-xs font-bold uppercase text-gray-600 mb-2 block">Customer Attendee Details</label>
-                                      <div className="grid grid-cols-3 gap-2">
+                                  {/* Customer Attendees - Inline Add/Remove */}
+                                  <div>
+                                    <label className="text-xs font-bold uppercase text-gray-600 mb-2 flex items-center gap-1"><Users size={12} /> Customer Attendees</label>
+                                    {(meeting.customerAttendeeDetails || []).length > 0 && (
+                                      <div className="space-y-2 mb-3">
                                         {(meeting.customerAttendeeDetails || []).map(ca => (
-                                          <div key={ca.id} className="bg-white p-2 border border-[#141414]/10 text-xs">
-                                            <div className="font-bold">{ca.name}</div>
-                                            {ca.email && <div className="text-gray-600">{ca.email}</div>}
-                                            {ca.phone && <div className="text-gray-600">{ca.phone}</div>}
+                                          <div key={ca.id} className="flex items-center justify-between bg-green-50 p-2 border border-green-200 text-xs">
+                                            <div className="flex items-center gap-3">
+                                              <span className="font-bold text-green-900">{ca.name}</span>
+                                              {ca.email && <span className="text-gray-500">{ca.email}</span>}
+                                              {ca.phone && <span className="text-gray-500">{ca.phone}</span>}
+                                            </div>
+                                            <button onClick={() => removeCustomerAttendeeFromMeeting(meeting.id, ca.id)}
+                                              className="p-1 hover:bg-red-500 hover:text-white transition-all flex-shrink-0"><X size={12} /></button>
                                           </div>
                                         ))}
                                       </div>
+                                    )}
+                                    <div className="flex gap-2">
+                                      <input type="text" value={newInlineCustAttendee.name}
+                                        onChange={(e) => setNewInlineCustAttendee(prev => ({ ...prev, name: e.target.value }))}
+                                        placeholder="Name *"
+                                        className="flex-1 px-3 py-2 border border-[#141414]/20 bg-white text-sm focus:outline-none focus:border-[#141414]" />
+                                      <input type="email" value={newInlineCustAttendee.email}
+                                        onChange={(e) => setNewInlineCustAttendee(prev => ({ ...prev, email: e.target.value }))}
+                                        placeholder="Email"
+                                        className="flex-1 px-3 py-2 border border-[#141414]/20 bg-white text-sm focus:outline-none focus:border-[#141414]" />
+                                      <input type="tel" value={newInlineCustAttendee.phone}
+                                        onChange={(e) => setNewInlineCustAttendee(prev => ({ ...prev, phone: e.target.value }))}
+                                        placeholder="Phone"
+                                        className="flex-1 px-3 py-2 border border-[#141414]/20 bg-white text-sm focus:outline-none focus:border-[#141414]" />
+                                      <button
+                                        onClick={() => {
+                                          if (!newInlineCustAttendee.name.trim()) { alert('Please enter a name'); return; }
+                                          addCustomerAttendeeToMeeting(meeting.id, newInlineCustAttendee);
+                                          setNewInlineCustAttendee({ name: '', email: '', phone: '' });
+                                        }}
+                                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all whitespace-nowrap">
+                                        Add Attendee
+                                      </button>
                                     </div>
-                                  )}
+                                  </div>
                                 </div>
                               </motion.div>
                             </td></tr>
