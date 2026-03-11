@@ -412,8 +412,19 @@ export default function App() {
         lastSyncedData.current.orders = JSON.stringify(mapped);
       }
       if (data.conferences?.length) {
-        setConferences(data.conferences);
-        lastSyncedData.current.conferences = JSON.stringify(data.conferences);
+        // Normalize conference meetings to ensure customerAttendeeDetails is always an array
+        const normalizedConferences = data.conferences.map((conf: any) => ({
+          ...conf,
+          meetings: Array.isArray(conf.meetings) ? conf.meetings.map((m: any) => ({
+            ...m,
+            customerAttendeeDetails: Array.isArray(m.customerAttendeeDetails) ? m.customerAttendeeDetails : [],
+            customerAttendees: Array.isArray(m.customerAttendees) ? m.customerAttendees : [],
+            attendees: Array.isArray(m.attendees) ? m.attendees : [],
+            followUps: Array.isArray(m.followUps) ? m.followUps : [],
+          })) : [],
+        }));
+        setConferences(normalizedConferences);
+        lastSyncedData.current.conferences = JSON.stringify(normalizedConferences);
       }
       if (data.people?.length) {
         setPeople(data.people);
@@ -2915,7 +2926,10 @@ export default function App() {
             <div className="flex justify-between items-center">
               <h3 className="text-sm font-bold uppercase tracking-widest">Carriers</h3>
               <button 
-                onClick={() => setIsAddingCarrier(true)}
+                onClick={() => {
+                  setEditingCarrier({ id: '', carrierNumber: '', name: '', contactEmail: '', contactPhone: '', notes: '' });
+                  setIsAddingCarrier(true);
+                }}
                 className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
               >
                 <Plus size={12} /> Add Carrier
@@ -2940,7 +2954,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactEmail}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactPhone}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
-                        <button onClick={() => setEditingCarrier(carrier)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                        <button onClick={() => { setIsAddingCarrier(false); setEditingCarrier(carrier); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           <Edit2 size={14} />
                         </button>
                         <button onClick={() => setCarriers(carriers.filter(c => c.id !== carrier.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
@@ -3007,6 +3021,7 @@ export default function App() {
               </table>
             </div>
           </div>
+
         </div>
       );
     }
@@ -3622,6 +3637,95 @@ export default function App() {
                   Sign in with Google
                 </button>
                 {syncError && <div className="text-[10px] text-red-500 font-bold">{syncError}</div>}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add / Edit Carrier Modal */}
+      <AnimatePresence>
+        {editingCarrier && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">{isAddingCarrier ? 'Add Carrier' : 'Edit Carrier'}</h3>
+                <button onClick={() => { setIsAddingCarrier(false); setEditingCarrier(null); }} className="hover:rotate-90 transition-transform"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier Number</label>
+                    <input type="text" value={editingCarrier.carrierNumber}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, carrierNumber: e.target.value })}
+                      placeholder="e.g. CAR-001"
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier Name</label>
+                    <input type="text" value={editingCarrier.name}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, name: e.target.value })}
+                      placeholder="Carrier name"
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Contact Email</label>
+                    <input type="email" value={editingCarrier.contactEmail || ''}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, contactEmail: e.target.value })}
+                      placeholder="email@example.com"
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Contact Phone</label>
+                    <input type="tel" value={editingCarrier.contactPhone || ''}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, contactPhone: e.target.value })}
+                      placeholder="(555) 123-4567"
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
+                  <textarea value={editingCarrier.notes || ''}
+                    onChange={(e) => setEditingCarrier({ ...editingCarrier, notes: e.target.value })}
+                    placeholder="Additional notes..."
+                    rows={2}
+                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                </div>
+                <div className="flex gap-4 pt-4 border-t border-[#141414]/10">
+                  <button
+                    onClick={() => {
+                      if (!editingCarrier.name) { alert('Please enter a carrier name'); return; }
+                      if (isAddingCarrier) {
+                        const newCarrier: Carrier = {
+                          ...editingCarrier,
+                          id: `CARRIER-${Date.now()}`,
+                          carrierNumber: editingCarrier.carrierNumber || `CAR-${Date.now().toString().slice(-4)}`,
+                        };
+                        setCarriers(prev => [...prev, newCarrier]);
+                      } else {
+                        setCarriers(prev => prev.map(c => c.id === editingCarrier.id ? editingCarrier : c));
+                      }
+                      setIsAddingCarrier(false);
+                      setEditingCarrier(null);
+                    }}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 size={16} /> {isAddingCarrier ? 'Add Carrier' : 'Save Changes'}
+                  </button>
+                  <button
+                    onClick={() => { setIsAddingCarrier(false); setEditingCarrier(null); }}
+                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

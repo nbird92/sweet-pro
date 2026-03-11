@@ -4,9 +4,11 @@
     {
       "name": "dev",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["./node_modules/tsx/dist/cli.mjs", "server.ts"],
-      "port": 3000,
-      "cwd": "C:\\Users\\NathanBird\\Downloads\\sweetpro"
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "3007"],
+      "port": 3007,
+      "env": {
+        "NODE_OPTIONS": ""
+      }
     }
   ]
 }
