@@ -884,6 +884,9 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
   submitLabel: string; customers: Customer[]; salesPeople: Person[]; conferenceDates: string[];
   newCustAttendee: { name: string; email: string; phone: string }; setNewCustAttendee: (a: { name: string; email: string; phone: string }) => void;
 }) {
+  // Use local state for customer attendees to avoid stale closure issues
+  const [localCustAttendees, setLocalCustAttendees] = useState<CustomerAttendeeDetail[]>(meeting.customerAttendeeDetails || []);
+
   const toggleInternalAttendee = (personId: string) => {
     const current = meeting.attendees || [];
     setMeeting({ ...meeting, attendees: current.includes(personId) ? current.filter((id: string) => id !== personId) : [...current, personId] });
@@ -891,11 +894,15 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
   const addCustomerAttendee = () => {
     if (!newCustAttendee.name) { alert('Please enter a name'); return; }
     const detail: CustomerAttendeeDetail = { id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: newCustAttendee.name, email: newCustAttendee.email, phone: newCustAttendee.phone };
-    setMeeting({ ...meeting, customerAttendeeDetails: [...(meeting.customerAttendeeDetails || []), detail] });
+    const updated = [...localCustAttendees, detail];
+    setLocalCustAttendees(updated);
+    setMeeting({ ...meeting, customerAttendeeDetails: updated });
     setNewCustAttendee({ name: '', email: '', phone: '' });
   };
   const removeCustomerAttendee = (id: string) => {
-    setMeeting({ ...meeting, customerAttendeeDetails: (meeting.customerAttendeeDetails || []).filter((ca: CustomerAttendeeDetail) => ca.id !== id) });
+    const updated = localCustAttendees.filter((ca: CustomerAttendeeDetail) => ca.id !== id);
+    setLocalCustAttendees(updated);
+    setMeeting({ ...meeting, customerAttendeeDetails: updated });
   };
 
   return (
@@ -971,9 +978,9 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
                 <button onClick={addCustomerAttendee} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all whitespace-nowrap">Add</button>
               </div>
             </div>
-            {(meeting.customerAttendeeDetails || []).length > 0 && (
+            {localCustAttendees.length > 0 && (
               <div className="space-y-2">
-                {(meeting.customerAttendeeDetails || []).map((ca: CustomerAttendeeDetail) => (
+                {localCustAttendees.map((ca: CustomerAttendeeDetail) => (
                   <div key={ca.id} className="flex items-center justify-between bg-green-50 p-2 border border-green-200 text-xs">
                     <div><span className="font-bold">{ca.name}</span>{ca.email && <span className="text-gray-600 ml-2">{ca.email}</span>}{ca.phone && <span className="text-gray-600 ml-2">{ca.phone}</span>}</div>
                     <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all"><X size={12} /></button>

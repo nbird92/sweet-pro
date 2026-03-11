@@ -1272,7 +1272,7 @@ export default function App() {
       const isHamiltonPage = activePage === 'Hamilton Shipments';
       const locationName = isHamiltonPage ? 'Hamilton' : 'Vancouver';
       const locationShipments = isHamiltonPage ? hamiltonShipments : vancouverShipments;
-      const currentWeekNum = getWeekNumber(new Date().toISOString());
+      const currentWeekNum = getWeekNumber(new Date().toISOString().split('T')[0]);
       const currentWeek = `Week ${currentWeekNum}`;
       const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
 
@@ -1601,7 +1601,7 @@ export default function App() {
 
     if (false as boolean) {
       // Vancouver Shipments is now handled by the combined section above - this block is dead code
-      const currentWeekNum = getWeekNumber(new Date().toISOString());
+      const currentWeekNum = getWeekNumber(new Date().toISOString().split('T')[0]);
       const currentWeek = `Week ${currentWeekNum}`;
       const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
 
@@ -2370,6 +2370,7 @@ export default function App() {
                                     onChange={(e) => {
                                       if (e.target.value === 'edit') {
                                         setShipmentCreationData({ location: orderShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver', date: orderShipment.date, time: orderShipment.time, bay: orderShipment.bay, carrier: orderShipment.carrier, orderId: ord.id });
+                                        setIsCreatingTransferShipment(false);
                                         setIsCreatingShipments(true);
                                       } else if (e.target.value === 'delete') {
                                         setHamiltonShipments(hamiltonShipments.filter(s => s.bol !== ord.bolNumber));
@@ -2392,6 +2393,7 @@ export default function App() {
                                     const customer = customers.find(c => c.name === ord.customer);
                                     const location = customer?.defaultLocation || 'Hamilton';
                                     setShipmentCreationData({ location, date: ord.shipmentDate || '', time: '', bay: '', carrier: ord.carrier || '', orderId: ord.id });
+                                    setIsCreatingTransferShipment(false);
                                     setIsCreatingShipments(true);
                                   }}
                                   className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
@@ -2405,6 +2407,30 @@ export default function App() {
                           })()}
                         </td>
                         <td className="p-4 text-xs flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              if (ord.status !== 'Open') {
+                                setErrorBox('Only Open orders can be edited. This order is currently ' + ord.status + '.');
+                                return;
+                              }
+                              const cust = customers.find(c => c.name === ord.customer);
+                              setOrderCustomerId(cust?.id || '');
+                              setOrderPO(ord.po);
+                              setOrderShipmentDate(ord.shipmentDate || '');
+                              setOrderDeliveryDate(ord.deliveryDate || '');
+                              setOrderCarrier(ord.carrier || '');
+                              setOrderLineItems(ord.lineItems);
+                              if (cust) {
+                                setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
+                              }
+                              setEditingOrder(ord);
+                              setIsAddingOrder(false);
+                            }}
+                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                            title={ord.status !== 'Open' ? 'Only Open orders can be edited' : 'Edit order'}
+                          >
+                            <Edit2 size={14} />
+                          </button>
                           <button onClick={() => toggleRow(ord.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                             {expandedRows.has(ord.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
@@ -5991,7 +6017,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Create Order Button */}
+                {/* Create/Save Order Button */}
                 <div className="flex gap-4">
                   <button
                     onClick={() => {
@@ -6001,23 +6027,43 @@ export default function App() {
                       }
                       const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                       const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
-                      const newOrder: Order = {
-                        id: `ORD-${Date.now()}`,
-                        bolNumber: generateBOLNumber(orderLineItems),
-                        customer: customers.find(c => c.id === orderCustomerId)?.name || '',
-                        product: orderLineItems.map(li => li.productName).join(', '),
-                        contractNumber: contractNumbers.join(', '),
-                        po: orderPO,
-                        date: new Date().toISOString().split('T')[0],
-                        shipmentDate: orderShipmentDate || undefined,
-                        deliveryDate: orderDeliveryDate || undefined,
-                        status: 'Open',
-                        lineItems: orderLineItems,
-                        amount: totalAmount,
-                        carrier: orderCarrier || undefined
-                      };
-                      setOrders([...orders, newOrder]);
+
+                      if (editingOrder) {
+                        // Update existing order
+                        const updatedOrder: Order = {
+                          ...editingOrder,
+                          customer: customers.find(c => c.id === orderCustomerId)?.name || editingOrder.customer,
+                          product: orderLineItems.map(li => li.productName).join(', '),
+                          contractNumber: contractNumbers.join(', '),
+                          po: orderPO,
+                          shipmentDate: orderShipmentDate || undefined,
+                          deliveryDate: orderDeliveryDate || undefined,
+                          lineItems: orderLineItems,
+                          amount: totalAmount,
+                          carrier: orderCarrier || undefined
+                        };
+                        setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
+                      } else {
+                        // Create new order
+                        const newOrder: Order = {
+                          id: `ORD-${Date.now()}`,
+                          bolNumber: generateBOLNumber(orderLineItems),
+                          customer: customers.find(c => c.id === orderCustomerId)?.name || '',
+                          product: orderLineItems.map(li => li.productName).join(', '),
+                          contractNumber: contractNumbers.join(', '),
+                          po: orderPO,
+                          date: new Date().toISOString().split('T')[0],
+                          shipmentDate: orderShipmentDate || undefined,
+                          deliveryDate: orderDeliveryDate || undefined,
+                          status: 'Open',
+                          lineItems: orderLineItems,
+                          amount: totalAmount,
+                          carrier: orderCarrier || undefined
+                        };
+                        setOrders([...orders, newOrder]);
+                      }
                       setIsAddingOrder(false);
+                      setEditingOrder(null);
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
@@ -6027,11 +6073,12 @@ export default function App() {
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
-                    Create Order
+                    {editingOrder ? 'Save Changes' : 'Create Order'}
                   </button>
                   <button
                     onClick={() => {
                       setIsAddingOrder(false);
+                      setEditingOrder(null);
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
@@ -6514,7 +6561,12 @@ export default function App() {
                 {(() => {
                   const transfer = isCreatingTransferShipment ? transfers.find(t => t.id === shipmentCreationData.transferId) : null;
                   const order = !isCreatingTransferShipment ? orders.find(o => o.id === shipmentCreationData.orderId) : null;
-                  if (!order && !transfer) return null;
+                  if (!order && !transfer) return (
+                    <div className="p-6 text-center">
+                      <p className="text-sm font-bold text-red-600">Unable to find the associated {isCreatingTransferShipment ? 'transfer' : 'order'}.</p>
+                      <p className="text-xs opacity-50 mt-2">The record may have been deleted or modified. Please close and try again.</p>
+                    </div>
+                  );
                   const totalWeight = order ? order.lineItems.reduce((sum, item) => sum + item.totalWeight, 0) : (transfer?.amount || 0);
 
                   const locationData = locations.find(l => l.name.toLowerCase().includes(shipmentCreationData.location.toLowerCase()));
