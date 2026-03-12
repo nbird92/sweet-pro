@@ -1459,7 +1459,9 @@ export default function App() {
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
-                                                                setIsCreatingShipments(true);
+                                                                setIsCreatingTransferShipment(false);
+                                                                setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer('');
+                                                                setIsAddingShipment(true);
                                                               }}
                                                               className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Add Shipment">
                                                               <Plus size={10} />
@@ -1492,7 +1494,9 @@ export default function App() {
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
-                                                                setIsCreatingShipments(true);
+                                                                setIsCreatingTransferShipment(false);
+                                                                setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer('');
+                                                                setIsAddingShipment(true);
                                                               }}
                                                               className="p-0.5 hover:bg-emerald-600 hover:text-white transition-all" title="Add Shipment"><Plus size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
@@ -3679,7 +3683,15 @@ export default function App() {
                                             setEditingShipment(null);
                                             const customer = customers.find(c => c.name === o.customer);
                                             const loc = customer?.defaultLocation || locationName;
-                                            setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
+                                            // Preserve pre-filled date/time/bay from schedule + button click
+                                            setShipmentCreationData(prev => ({
+                                              location: prev.date ? prev.location : loc as 'Hamilton' | 'Vancouver',
+                                              date: prev.date || o.shipmentDate || '',
+                                              time: prev.time || '',
+                                              bay: prev.bay || '',
+                                              carrier: o.carrier || prev.carrier || '',
+                                              orderId: o.id
+                                            }));
                                             setIsCreatingShipments(true);
                                           }}
                                           className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
