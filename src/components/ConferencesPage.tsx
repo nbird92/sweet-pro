@@ -882,23 +882,33 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
   // Fully local state for customer attendee management to avoid stale closure / prop round-trip issues
   const [localCustAttendees, setLocalCustAttendees] = useState<CustomerAttendeeDetail[]>(meeting.customerAttendeeDetails || []);
   const [custInput, setCustInput] = useState({ name: '', email: '', phone: '' });
+  const [editingAttendeeId, setEditingAttendeeId] = useState<string | null>(null);
 
   const toggleInternalAttendee = (personId: string) => {
     const current = meeting.attendees || [];
     setMeeting({ ...meeting, attendees: current.includes(personId) ? current.filter((id: string) => id !== personId) : [...current, personId] });
   };
+  const syncAttendeesToParent = (attendees: CustomerAttendeeDetail[]) => {
+    setLocalCustAttendees(attendees);
+    setMeeting({ ...meeting, customerAttendeeDetails: attendees });
+  };
   const addCustomerAttendee = () => {
     if (!custInput.name.trim()) { alert('Please enter a name'); return; }
     const detail: CustomerAttendeeDetail = { id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: custInput.name.trim(), email: custInput.email.trim(), phone: custInput.phone.trim() };
-    const updated = [...localCustAttendees, detail];
-    setLocalCustAttendees(updated);
-    setMeeting({ ...meeting, customerAttendeeDetails: updated });
+    syncAttendeesToParent([...localCustAttendees, detail]);
     setCustInput({ name: '', email: '', phone: '' });
   };
   const removeCustomerAttendee = (id: string) => {
-    const updated = localCustAttendees.filter((ca: CustomerAttendeeDetail) => ca.id !== id);
-    setLocalCustAttendees(updated);
-    setMeeting({ ...meeting, customerAttendeeDetails: updated });
+    syncAttendeesToParent(localCustAttendees.filter((ca: CustomerAttendeeDetail) => ca.id !== id));
+  };
+  const updateCustomerAttendee = (id: string, field: keyof CustomerAttendeeDetail, value: string) => {
+    syncAttendeesToParent(localCustAttendees.map((ca: CustomerAttendeeDetail) => ca.id === id ? { ...ca, [field]: value } : ca));
+  };
+  // Ensure local attendees are always synced to parent before submit
+  const handleSubmit = () => {
+    setMeeting({ ...meeting, customerAttendeeDetails: localCustAttendees });
+    // Use setTimeout to ensure state update is processed before onSubmit reads it
+    setTimeout(onSubmit, 0);
   };
 
   return (
@@ -977,9 +987,31 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
             {localCustAttendees.length > 0 && (
               <div className="space-y-2">
                 {localCustAttendees.map((ca: CustomerAttendeeDetail) => (
-                  <div key={ca.id} className="flex items-center justify-between bg-green-50 p-2 border border-green-200 text-xs">
-                    <div><span className="font-bold">{ca.name}</span>{ca.email && <span className="text-gray-600 ml-2">{ca.email}</span>}{ca.phone && <span className="text-gray-600 ml-2">{ca.phone}</span>}</div>
-                    <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all"><X size={12} /></button>
+                  <div key={ca.id} className="bg-green-50 p-2 border border-green-200 text-xs">
+                    {editingAttendeeId === ca.id ? (
+                      <div className="flex items-center gap-2">
+                        <input type="text" value={ca.name} onChange={(e) => updateCustomerAttendee(ca.id, 'name', e.target.value)}
+                          className="flex-1 px-2 py-1 border border-green-300 bg-white text-xs focus:outline-none" placeholder="Name" />
+                        <input type="email" value={ca.email || ''} onChange={(e) => updateCustomerAttendee(ca.id, 'email', e.target.value)}
+                          className="flex-1 px-2 py-1 border border-green-300 bg-white text-xs focus:outline-none" placeholder="Email" />
+                        <input type="tel" value={ca.phone || ''} onChange={(e) => updateCustomerAttendee(ca.id, 'phone', e.target.value)}
+                          className="flex-1 px-2 py-1 border border-green-300 bg-white text-xs focus:outline-none" placeholder="Phone" />
+                        <button onClick={() => setEditingAttendeeId(null)} className="p-1 hover:bg-green-600 hover:text-white transition-all" title="Done"><CheckSquare size={12} /></button>
+                        <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Remove"><X size={12} /></button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-bold">{ca.name}</span>
+                          {ca.email && <span className="text-gray-600 ml-2">{ca.email}</span>}
+                          {ca.phone && <span className="text-gray-600 ml-2">{ca.phone}</span>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setEditingAttendeeId(ca.id)} className="p-1 hover:bg-green-600 hover:text-white transition-all" title="Edit"><Edit2 size={12} /></button>
+                          <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Remove"><X size={12} /></button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -992,7 +1024,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
 
           <div className="flex gap-2 justify-end pt-4 border-t">
             <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">{submitLabel}</button>
+            <button onClick={handleSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">{submitLabel}</button>
           </div>
         </div>
       </motion.div>

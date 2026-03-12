@@ -372,9 +372,9 @@ export default function App() {
         lastSyncedData.current.shipments = JSON.stringify(mapped);
       }
       if (data.locations?.length) {
-        const mapped = data.locations.map((l: any) => ({
+        const mapped = data.locations.map((l: any, idx: number) => ({
           ...l,
-          locationCode: l.locationCode || '',
+          locationCode: l.locationCode || String((idx + 1) * 100),
           bays: Array.isArray(l.bays) ? l.bays : (typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : []),
           appointmentStartTime: l.appointmentStartTime || '06:00',
           appointmentEndTime: l.appointmentEndTime || '18:00',
@@ -2676,7 +2676,7 @@ export default function App() {
               <h3 className="text-sm font-bold uppercase tracking-widest">Carriers</h3>
               <button 
                 onClick={() => {
-                  setEditingCarrier({ id: '', carrierNumber: '', name: '', contactEmail: '', contactPhone: '', notes: '' });
+                  setEditingCarrier({ id: '', carrierNumber: '', name: '', contactEmail: '', contactPhone: '', notes: '', defaultLocationCode: '' });
                   setIsAddingCarrier(true);
                 }}
                 className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
