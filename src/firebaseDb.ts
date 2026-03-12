@@ -85,7 +85,9 @@ export async function syncCollection<T extends { id: string }>(
 
   for (const item of data) {
     const docRef = doc(db, collectionName, item.id);
-    currentBatch.set(docRef, { ...item });
+    // Strip undefined values — Firestore rejects them
+    const cleanItem = Object.fromEntries(Object.entries(item).filter(([, v]) => v !== undefined));
+    currentBatch.set(docRef, cleanItem);
     count++;
     if (count >= batchSize) {
       addBatches.push(currentBatch);

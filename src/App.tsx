@@ -364,7 +364,10 @@ export default function App() {
       if (data.locations?.length) {
         const mapped = data.locations.map((l: any) => ({
           ...l,
-          bays: Array.isArray(l.bays) ? l.bays : (typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : [])
+          bays: Array.isArray(l.bays) ? l.bays : (typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : []),
+          appointmentStartTime: l.appointmentStartTime || '06:00',
+          appointmentEndTime: l.appointmentEndTime || '18:00',
+          appointmentDuration: l.appointmentDuration || 30
         }));
         setLocations(mapped);
         lastSyncedData.current.locations = JSON.stringify(mapped);
