@@ -2629,7 +2629,7 @@ export default function App() {
                 <thead>
                   <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
                     <th className="p-4 border-r border-[#141414]/10">Component</th>
-                    <th className="p-4 border-r border-[#141414]/10">Provider</th>
+                    <th className="p-4 border-r border-[#141414]/10">Carrier</th>
                     <th className="p-4 border-r border-[#141414]/10">Total Cost (CAD)</th>
                     <th className="p-4 border-r border-[#141414]/10">Weight / Load (MT)</th>
                     <th className="p-4 border-r border-[#141414]/10">Cost / MT</th>
@@ -2748,7 +2748,7 @@ export default function App() {
                     <SortableHeader label="Origin" sortKey="origin" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Destination" sortKey="destination" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Type" sortKey="freightType" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Provider" sortKey="provider" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Carrier" sortKey="provider" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Cost (CAD)" sortKey="cost" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="MT / Load" sortKey="mtPerLoad" currentSort={sortConfig} onSort={handleSort} />
                     <th className="p-4">Actions</th>
@@ -4049,13 +4049,13 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Provider</label>
-                    <select 
-                      value={newFreightRate.provider} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
+                    <select
+                      value={newFreightRate.provider}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, provider: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="">Select Provider</option>
+                      <option value="">Select Carrier</option>
                       {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                     </select>
                   </div>
@@ -4256,13 +4256,13 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Provider</label>
-                    <select 
-                      value={editingFreightRate.provider} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
+                    <select
+                      value={editingFreightRate.provider}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, provider: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="">Select Provider</option>
+                      <option value="">Select Carrier</option>
                       {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                     </select>
                   </div>
@@ -5092,13 +5092,15 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Provider</label>
-                    <input 
-                      type="text" 
-                      value={newFreightRate.provider} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
+                    <select
+                      value={newFreightRate.provider}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, provider: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    >
+                      <option value="">Select Carrier</option>
+                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
@@ -5193,13 +5195,15 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Provider</label>
-                    <input 
-                      type="text" 
-                      value={editingFreightRate.provider} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
+                    <select
+                      value={editingFreightRate.provider}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, provider: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    >
+                      <option value="">Select Carrier</option>
+                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
