@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Calculator,
   TrendingUp,
@@ -31,7 +31,8 @@ import {
   AlertCircle,
   Calendar,
   ShoppingCart,
-  LogOut
+  LogOut,
+  Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -246,6 +247,7 @@ export default function App() {
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
   const [editingCarrier, setEditingCarrier] = useState<Carrier | null>(null);
   const [isAddingShipment, setIsAddingShipment] = useState(false);
+  const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
   const [newSupplyChain, setNewSupplyChain] = useState<SupplyChainComponent>({
     id: '',
     component: '',
@@ -562,20 +564,36 @@ export default function App() {
 
   const weeksList = useMemo(() => Array.from({ length: 52 }, (_, i) => `Week ${i + 1}`), []);
   const daysList = useMemo(() => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], []);
-  // Display time slots: 06:00 to 18:00 in 30-min intervals (default table view)
-  const timeSlotsList = useMemo(() => Array.from({ length: 25 }, (_, i) => {
-    const totalMinutes = 360 + i * 30; // Start at 06:00 (360 min)
-    const hour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
-    const min = (totalMinutes % 60).toString().padStart(2, '0');
-    return `${hour}:${min}`;
-  }), []);
-  // Full time slots for creation modal (every 30 min, 00:00-23:30)
-  const allTimeSlots = useMemo(() => Array.from({ length: 48 }, (_, i) => {
-    const totalMinutes = i * 30;
-    const hour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
-    const min = (totalMinutes % 60).toString().padStart(2, '0');
-    return `${hour}:${min}`;
-  }), []);
+  // Generate time slots for a location based on its appointment schedule settings
+  const generateTimeSlots = useCallback((startTime: string, endTime: string, durationMin: number) => {
+    const [startH, startM] = startTime.split(':').map(Number);
+    const [endH, endM] = endTime.split(':').map(Number);
+    const startTotal = startH * 60 + startM;
+    const endTotal = endH * 60 + endM;
+    const slots: string[] = [];
+    for (let t = startTotal; t <= endTotal; t += durationMin) {
+      const hour = Math.floor(t / 60).toString().padStart(2, '0');
+      const min = (t % 60).toString().padStart(2, '0');
+      slots.push(`${hour}:${min}`);
+    }
+    return slots;
+  }, []);
+
+  // Get time slots for a specific location from its schedule settings
+  const getLocationTimeSlots = useCallback((locationName: string) => {
+    const loc = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
+    const start = loc?.appointmentStartTime || '06:00';
+    const end = loc?.appointmentEndTime || '18:00';
+    const duration = loc?.appointmentDuration || 30;
+    return generateTimeSlots(start, end, duration);
+  }, [locations, generateTimeSlots]);
+
+  // Full time slots for creation modal — uses the location's settings with its interval
+  const getLocationAllTimeSlots = useCallback((locationName: string) => {
+    const loc = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
+    const duration = loc?.appointmentDuration || 30;
+    return generateTimeSlots('00:00', '23:30', duration);
+  }, [locations, generateTimeSlots]);
 
   const [skuToConfirm, setSkuToConfirm] = useState<SKU | null>(null);
   const [errorBox, setErrorBox] = useState<string | null>(null);
@@ -1231,6 +1249,10 @@ export default function App() {
 
       const locationObj = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
       const locationBays = locationObj ? locationObj.bays : (isHamiltonPage ? ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - WELLINGTON ST.', 'BAY 3 - MOLASSES, DRY DOCKS'] : ['BAY 1', 'BAY 2']);
+      const locStartTime = locationObj?.appointmentStartTime || '06:00';
+      const locEndTime = locationObj?.appointmentEndTime || '18:00';
+      const locDuration = locationObj?.appointmentDuration || 30;
+      const locationTimeSlots = generateTimeSlots(locStartTime, locEndTime, locDuration);
 
       const filteredShipments = locationShipments.filter(s => {
         const matchesSearch = !searchTerm ||
@@ -1374,7 +1396,7 @@ export default function App() {
                                       const dayShipments = groupedData[week]?.[bay]?.[day] || {};
                                       const allDayTimes = Object.keys(dayShipments).filter(t => dayShipments[t]?.length > 0);
                                       // Times outside display range that have shipments
-                                      const outsideRangeTimes = allDayTimes.filter(t => t < '06:00' || t > '18:00');
+                                      const outsideRangeTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
                                       const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
 
                                       return (
@@ -1417,8 +1439,8 @@ export default function App() {
                                                   </tr>
                                                 </thead>
                                                 <tbody>
-                                                  {/* Out-of-range shipments (before 06:00) */}
-                                                  {outsideRangeTimes.filter(t => t < '06:00').sort().map(slot => (
+                                                  {/* Out-of-range shipments (before schedule start) */}
+                                                  {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
                                                         <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
@@ -1448,8 +1470,8 @@ export default function App() {
                                                       </tr>
                                                     ))
                                                   ))}
-                                                  {/* Standard 06:00-18:00 time slots */}
-                                                  {timeSlotsList.map(slot => {
+                                                  {/* Standard time slots from location schedule */}
+                                                  {locationTimeSlots.map(slot => {
                                                     const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
                                                     if (shipments.length === 0) {
                                                       return (
@@ -1506,8 +1528,8 @@ export default function App() {
                                                       </tr>
                                                     ));
                                                   })}
-                                                  {/* Out-of-range shipments (after 18:00) */}
-                                                  {outsideRangeTimes.filter(t => t > '18:00').sort().map(slot => (
+                                                  {/* Out-of-range shipments (after schedule end) */}
+                                                  {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
                                                         <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
@@ -2419,7 +2441,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
-                  setLocations([...locations, { id, name: '', address: '', city: '', province: '', postalCode: '', bays: [] }]);
+                  setLocations([...locations, { id, name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
                   setExpandedRows(new Set([id]));
                 }}
                 className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
@@ -2488,6 +2510,9 @@ export default function App() {
                         />
                       </td>
                       <td className="p-4 text-xs flex gap-2">
+                        <button onClick={() => setEditingAppointmentSchedule({...loc})} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Set Appointment Schedule">
+                          <Clock size={14} />
+                        </button>
                         <button onClick={() => toggleRow(loc.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(loc.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
@@ -3785,7 +3810,7 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, time: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          {allTimeSlots.map(t => <option key={t} value={t}>{t}</option>)}
+                          {getLocationAllTimeSlots(activePage === 'Hamilton Shipments' ? 'Hamilton' : 'Vancouver').map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -6262,7 +6287,8 @@ export default function App() {
                   };
 
                   // Available time slots from shipment schedule
-                  const availableTimeSlots = allTimeSlots.filter(t => isSlotAvailable(t));
+                  const modalAllTimeSlots = getLocationAllTimeSlots(shipmentCreationData.location);
+                  const availableTimeSlots = modalAllTimeSlots.filter(t => isSlotAvailable(t));
 
                   return (
                     <>
@@ -6365,7 +6391,7 @@ export default function App() {
                               {selectedBayFilter ? `Available times for ${selectedBayFilter}` : 'Click an available time slot (bay shown for each)'}
                             </div>
                             <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
-                              {allTimeSlots.map(slot => {
+                              {modalAllTimeSlots.map(slot => {
                                 const available = isSlotAvailable(slot);
                                 const isSelected = shipmentCreationData.time === slot;
                                 const availBays = getAvailableBaysForSlot(slot);
@@ -6563,6 +6589,131 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+      {/* Appointment Schedule Modal */}
+      {editingAppointmentSchedule && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+          >
+            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-widest">Appointment Schedule — {editingAppointmentSchedule.name}</h3>
+              <button onClick={() => setEditingAppointmentSchedule(null)} className="hover:rotate-90 transition-transform"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-6">
+              <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-widest">Schedule Parameters</h4>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Start Time</label>
+                    <select
+                      value={editingAppointmentSchedule.appointmentStartTime || '06:00'}
+                      onChange={(e) => setEditingAppointmentSchedule({...editingAppointmentSchedule, appointmentStartTime: e.target.value})}
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                    >
+                      {Array.from({ length: 48 }, (_, i) => {
+                        const h = Math.floor(i * 30 / 60).toString().padStart(2, '0');
+                        const m = (i * 30 % 60).toString().padStart(2, '0');
+                        return <option key={i} value={`${h}:${m}`}>{h}:{m}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">End Time</label>
+                    <select
+                      value={editingAppointmentSchedule.appointmentEndTime || '18:00'}
+                      onChange={(e) => setEditingAppointmentSchedule({...editingAppointmentSchedule, appointmentEndTime: e.target.value})}
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                    >
+                      {Array.from({ length: 48 }, (_, i) => {
+                        const h = Math.floor(i * 30 / 60).toString().padStart(2, '0');
+                        const m = (i * 30 % 60).toString().padStart(2, '0');
+                        return <option key={i} value={`${h}:${m}`}>{h}:{m}</option>;
+                      })}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Appointment Length</label>
+                    <select
+                      value={editingAppointmentSchedule.appointmentDuration || 30}
+                      onChange={(e) => setEditingAppointmentSchedule({...editingAppointmentSchedule, appointmentDuration: parseInt(e.target.value)})}
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                    >
+                      <option value={15}>15 minutes</option>
+                      <option value={30}>30 minutes</option>
+                      <option value={45}>45 minutes</option>
+                      <option value={60}>1 hour</option>
+                      <option value={90}>1.5 hours</option>
+                      <option value={120}>2 hours</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Preview of generated time slots */}
+              <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-widest">Appointment Slots Preview</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {generateTimeSlots(
+                    editingAppointmentSchedule.appointmentStartTime || '06:00',
+                    editingAppointmentSchedule.appointmentEndTime || '18:00',
+                    editingAppointmentSchedule.appointmentDuration || 30
+                  ).map(slot => (
+                    <span key={slot} className="px-2 py-1 bg-white border border-[#141414]/20 text-[10px] font-mono font-bold">{slot}</span>
+                  ))}
+                </div>
+                <p className="text-[10px] opacity-50">
+                  {generateTimeSlots(
+                    editingAppointmentSchedule.appointmentStartTime || '06:00',
+                    editingAppointmentSchedule.appointmentEndTime || '18:00',
+                    editingAppointmentSchedule.appointmentDuration || 30
+                  ).length} appointment slots per bay per day
+                </p>
+              </div>
+
+              {/* Bays info */}
+              <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-2">
+                <h4 className="text-xs font-bold uppercase tracking-widest">Bays at {editingAppointmentSchedule.name}</h4>
+                {editingAppointmentSchedule.bays.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {editingAppointmentSchedule.bays.map((bay, idx) => (
+                      <span key={idx} className="px-3 py-1.5 bg-white border border-[#141414]/20 text-xs font-bold">{bay}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs opacity-40 italic">No bays configured. Add bays from the location details.</p>
+                )}
+              </div>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={() => {
+                    setLocations(locations.map(l => l.id === editingAppointmentSchedule.id ? {
+                      ...l,
+                      appointmentStartTime: editingAppointmentSchedule.appointmentStartTime,
+                      appointmentEndTime: editingAppointmentSchedule.appointmentEndTime,
+                      appointmentDuration: editingAppointmentSchedule.appointmentDuration
+                    } : l));
+                    setEditingAppointmentSchedule(null);
+                  }}
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                >
+                  Save Schedule
+                </button>
+                <button
+                  onClick={() => setEditingAppointmentSchedule(null)}
+                  className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Add New Transfer Modal */}
       {isAddingTransfer && (

@@ -160,6 +160,9 @@ export interface Location {
   province: string;
   postalCode: string;
   bays: string[];
+  appointmentStartTime?: string;  // e.g. '00:00'
+  appointmentEndTime?: string;    // e.g. '22:30'
+  appointmentDuration?: number;   // minutes per appointment slot (e.g. 90)
 }
 
 export const INITIAL_LOCATIONS: Location[] = [
@@ -170,7 +173,10 @@ export const INITIAL_LOCATIONS: Location[] = [
     city: 'Hamilton',
     province: 'ON',
     postalCode: 'L8L 1L1',
-    bays: ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - FERGUSON AVE.']
+    bays: ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - FERGUSON AVE.'],
+    appointmentStartTime: '00:00',
+    appointmentEndTime: '22:30',
+    appointmentDuration: 90
   },
   {
     id: 'LOC-002',
@@ -179,7 +185,10 @@ export const INITIAL_LOCATIONS: Location[] = [
     city: 'Vancouver',
     province: 'BC',
     postalCode: 'V6B 1A1',
-    bays: ['BAY 1', 'BAY 2']
+    bays: ['BAY 1', 'BAY 2'],
+    appointmentStartTime: '06:00',
+    appointmentEndTime: '18:00',
+    appointmentDuration: 30
   }
 ];
 
