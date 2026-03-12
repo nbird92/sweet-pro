@@ -154,6 +154,7 @@ export interface Shipment {
 
 export interface Location {
   id: string;
+  locationCode: string;
   name: string;
   address: string;
   city: string;
@@ -168,6 +169,7 @@ export interface Location {
 export const INITIAL_LOCATIONS: Location[] = [
   {
     id: 'LOC-001',
+    locationCode: '100',
     name: 'Hamilton',
     address: '123 Ferguson Ave.',
     city: 'Hamilton',
@@ -180,6 +182,7 @@ export const INITIAL_LOCATIONS: Location[] = [
   },
   {
     id: 'LOC-002',
+    locationCode: '200',
     name: 'Vancouver',
     address: '456 Port Road',
     city: 'Vancouver',
@@ -199,6 +202,7 @@ export interface Carrier {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  defaultLocationCode?: string;
 }
 
 export interface Transfer {
@@ -259,9 +263,9 @@ export interface Order {
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [
-  { id: 'CARR-001', carrierNumber: '1001', name: 'FastTruck', contactEmail: 'ops@fasttruck.com', contactPhone: '555-0101' },
-  { id: 'CARR-002', carrierNumber: '1002', name: 'WestLogistics', contactEmail: 'dispatch@westlog.com', contactPhone: '555-0102' },
-  { id: 'CARR-003', carrierNumber: '1003', name: 'Maersk', contactEmail: 'support@maersk.com', contactPhone: '555-0103' },
+  { id: 'CARR-001', carrierNumber: '1001', name: 'FastTruck', contactEmail: 'ops@fasttruck.com', contactPhone: '555-0101', defaultLocationCode: '100' },
+  { id: 'CARR-002', carrierNumber: '1002', name: 'WestLogistics', contactEmail: 'dispatch@westlog.com', contactPhone: '555-0102', defaultLocationCode: '200' },
+  { id: 'CARR-003', carrierNumber: '1003', name: 'Maersk', contactEmail: 'support@maersk.com', contactPhone: '555-0103', defaultLocationCode: '200' },
 ];
 
 export const INITIAL_SUPPLY_CHAIN: SupplyChainComponent[] = [

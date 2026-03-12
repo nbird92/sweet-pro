@@ -32,7 +32,10 @@ import {
   Calendar,
   ShoppingCart,
   LogOut,
-  Clock
+  Clock,
+  Eye,
+  EyeOff,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -44,6 +47,13 @@ import PeoplePage from './components/PeoplePage';
 
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
+  const [hiddenPages, setHiddenPages] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('sweetpro-hidden-pages');
+      return saved ? new Set(JSON.parse(saved)) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
+  const [isEditingSidebar, setIsEditingSidebar] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
@@ -364,6 +374,7 @@ export default function App() {
       if (data.locations?.length) {
         const mapped = data.locations.map((l: any) => ({
           ...l,
+          locationCode: l.locationCode || '',
           bays: Array.isArray(l.bays) ? l.bays : (typeof l.bays === 'string' ? l.bays.split(',').map((b: string) => b.trim()).filter(Boolean) : []),
           appointmentStartTime: l.appointmentStartTime || '06:00',
           appointmentEndTime: l.appointmentEndTime || '18:00',
@@ -1076,6 +1087,21 @@ export default function App() {
     setConfig(prev => ({ ...prev, [field]: !prev[field] }));
   };
 
+
+  const togglePageVisibility = useCallback((pageName: string) => {
+    setHiddenPages(prev => {
+      const next = new Set(prev);
+      if (next.has(pageName)) {
+        next.delete(pageName);
+      } else {
+        next.add(pageName);
+        // If hiding the active page, switch to Dashboard
+        if (activePage === pageName) setActivePage('Dashboard');
+      }
+      localStorage.setItem('sweetpro-hidden-pages', JSON.stringify([...next]));
+      return next;
+    });
+  }, [activePage]);
 
   const navItems = [
     { name: 'Dashboard', icon: TrendingUp },
@@ -2444,7 +2470,7 @@ export default function App() {
               <button 
                 onClick={() => {
                   const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
-                  setLocations([...locations, { id, name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
+                  setLocations([...locations, { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
                   setExpandedRows(new Set([id]));
                 }}
                 className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
@@ -2455,6 +2481,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                  <th className="p-4 border-r border-[#141414]/10">Code</th>
                   <th className="p-4 border-r border-[#141414]/10">Name</th>
                   <th className="p-4 border-r border-[#141414]/10">Address</th>
                   <th className="p-4 border-r border-[#141414]/10">City</th>
@@ -2467,10 +2494,19 @@ export default function App() {
                 {locations.map(loc => (
                   <React.Fragment key={loc.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors">
+                      <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">
+                        <input
+                          type="text"
+                          value={loc.locationCode || ''}
+                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, locationCode: e.target.value } : l))}
+                          className="w-full bg-transparent focus:outline-none"
+                          placeholder="Code"
+                        />
+                      </td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
-                        <input 
-                          type="text" 
-                          value={loc.name} 
+                        <input
+                          type="text"
+                          value={loc.name}
                           onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, name: e.target.value } : l))}
                           className="w-full bg-transparent focus:outline-none"
                           placeholder="Location Name"
@@ -2527,7 +2563,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(loc.id) && (
                         <tr>
-                          <td colSpan={6} className="p-0">
+                          <td colSpan={7} className="p-0">
                             <motion.div 
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -2654,16 +2690,22 @@ export default function App() {
                   <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
                     <th className="p-4 border-r border-[#141414]/10">Carrier #</th>
                     <th className="p-4 border-r border-[#141414]/10">Name</th>
+                    <th className="p-4 border-r border-[#141414]/10">Default Location</th>
                     <th className="p-4 border-r border-[#141414]/10">Contact Email</th>
                     <th className="p-4 border-r border-[#141414]/10">Contact Phone</th>
                     <th className="p-4">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
-                  {carriers.map(carrier => (
+                  {carriers.map(carrier => {
+                    const carrierLoc = locations.find(l => l.locationCode === carrier.defaultLocationCode);
+                    return (
                     <tr key={carrier.id} className="hover:bg-[#F9F9F9] transition-colors">
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{carrier.carrierNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.name}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
+                        {carrierLoc ? `${carrierLoc.locationCode} — ${carrierLoc.name}` : carrier.defaultLocationCode || '—'}
+                      </td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactEmail}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactPhone}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
@@ -2675,7 +2717,8 @@ export default function App() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -3218,22 +3261,59 @@ export default function App() {
           <h1 className="text-sm font-bold uppercase tracking-tighter leading-none">Sweet<br/>Pro</h1>
         </div>
         
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {navItems.map((item) => (
-            <button
-              key={item.name}
-              onClick={() => setActivePage(item.name)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase transition-all border ${
-                activePage === item.name 
-                  ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]' 
-                  : 'bg-transparent text-[#141414] border-transparent hover:border-[#141414]/20'
-              }`}
-            >
-              <item.icon size={16} />
-              {item.name}
-            </button>
-          ))}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {navItems
+            .filter(item => isEditingSidebar || !hiddenPages.has(item.name))
+            .map((item) => {
+              const isHidden = hiddenPages.has(item.name);
+              return (
+                <div key={item.name} className="flex items-center gap-1">
+                  <button
+                    onClick={() => !isEditingSidebar && setActivePage(item.name)}
+                    className={`flex-1 flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase transition-all border ${
+                      isEditingSidebar && isHidden
+                        ? 'bg-transparent text-[#141414]/30 border-transparent'
+                        : activePage === item.name
+                          ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]'
+                          : 'bg-transparent text-[#141414] border-transparent hover:border-[#141414]/20'
+                    } ${isEditingSidebar ? 'cursor-default' : ''}`}
+                  >
+                    <item.icon size={16} />
+                    {item.name}
+                  </button>
+                  {isEditingSidebar && item.name !== 'Dashboard' && (
+                    <button
+                      onClick={() => togglePageVisibility(item.name)}
+                      className={`p-1.5 transition-all ${isHidden ? 'text-[#141414]/25 hover:text-[#141414]/60' : 'text-[#141414]/60 hover:text-[#141414]'}`}
+                      title={isHidden ? `Show ${item.name}` : `Hide ${item.name}`}
+                    >
+                      {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          {isEditingSidebar && (
+            <div className="pt-2 mt-2 border-t border-[#141414]/10">
+              <p className="text-[9px] uppercase opacity-40 font-bold px-4">Click the eye icon to show or hide pages</p>
+            </div>
+          )}
         </nav>
+
+        {/* Customize Sidebar Toggle */}
+        <div className="px-4 py-2 border-t border-[#141414]/10">
+          <button
+            onClick={() => setIsEditingSidebar(!isEditingSidebar)}
+            className={`w-full flex items-center gap-3 px-4 py-2 text-[10px] font-bold uppercase transition-all border ${
+              isEditingSidebar
+                ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]'
+                : 'bg-transparent text-[#141414]/50 border-transparent hover:border-[#141414]/20 hover:text-[#141414]'
+            }`}
+          >
+            <Settings size={14} />
+            {isEditingSidebar ? 'Done' : 'Customize Pages'}
+          </button>
+        </div>
 
         <div className="p-6 border-t border-[#141414] bg-[#F5F5F5] space-y-4">
           <div>
@@ -3403,13 +3483,28 @@ export default function App() {
                       className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
-                  <textarea value={editingCarrier.notes || ''}
-                    onChange={(e) => setEditingCarrier({ ...editingCarrier, notes: e.target.value })}
-                    placeholder="Additional notes..."
-                    rows={2}
-                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Default Location</label>
+                    <select
+                      value={editingCarrier.defaultLocationCode || ''}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, defaultLocationCode: e.target.value })}
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                    >
+                      <option value="">No Default</option>
+                      {locations.map(l => (
+                        <option key={l.id} value={l.locationCode}>{l.locationCode} — {l.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
+                    <textarea value={editingCarrier.notes || ''}
+                      onChange={(e) => setEditingCarrier({ ...editingCarrier, notes: e.target.value })}
+                      placeholder="Additional notes..."
+                      rows={1}
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4 border-t border-[#141414]/10">
                   <button
