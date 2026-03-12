@@ -44,7 +44,6 @@ export default function ConferencesPage({
     date: '', time: '', meetingName: '', meetingOwner: '', attendees: [], customerAttendees: [],
     customerAttendeeDetails: [], location: '', notes: '', customerId: '', followUps: [],
   });
-  const [newCustAttendee, setNewCustAttendee] = useState({ name: '', email: '', phone: '' });
   const [newInlineCustAttendee, setNewInlineCustAttendee] = useState({ name: '', email: '', phone: '' });
   const [newFollowUp, setNewFollowUp] = useState('');
 
@@ -294,7 +293,6 @@ export default function ConferencesPage({
   };
   const resetMeetingForm = () => {
     setNewMeeting({ date: '', time: '', meetingName: '', meetingOwner: '', attendees: [], customerAttendees: [], customerAttendeeDetails: [], location: '', notes: '', customerId: '', followUps: [] });
-    setNewCustAttendee({ name: '', email: '', phone: '' });
   };
 
   const filteredConferences = conferences.filter(conf =>
@@ -686,16 +684,14 @@ export default function ConferencesPage({
           {showAddMeetingModal && (
             <MeetingModal title="Add Meeting" meeting={newMeeting} setMeeting={setNewMeeting} onSubmit={handleAddMeeting}
               onClose={() => { setShowAddMeetingModal(false); resetMeetingForm(); }} submitLabel="Add Meeting"
-              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates}
-              newCustAttendee={newCustAttendee} setNewCustAttendee={setNewCustAttendee} />
+              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} />
           )}
         </AnimatePresence>
         <AnimatePresence>
           {showEditMeetingModal && editingMeeting && (
             <MeetingModal title="Edit Meeting" meeting={editingMeeting} setMeeting={(m: any) => setEditingMeeting(m)} onSubmit={handleEditMeeting}
               onClose={() => { setShowEditMeetingModal(false); setEditingMeeting(null); }} submitLabel="Update Meeting"
-              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates}
-              newCustAttendee={newCustAttendee} setNewCustAttendee={setNewCustAttendee} />
+              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} />
           )}
         </AnimatePresence>
         <AnimatePresence>
@@ -879,25 +875,25 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
 // ============================
 // MEETING MODAL
 // ============================
-function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLabel, customers, salesPeople, conferenceDates, newCustAttendee, setNewCustAttendee }: {
+function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLabel, customers, salesPeople, conferenceDates }: {
   title: string; meeting: Partial<ConferenceMeeting>; setMeeting: (m: any) => void; onSubmit: () => void; onClose: () => void;
   submitLabel: string; customers: Customer[]; salesPeople: Person[]; conferenceDates: string[];
-  newCustAttendee: { name: string; email: string; phone: string }; setNewCustAttendee: (a: { name: string; email: string; phone: string }) => void;
 }) {
-  // Use local state for customer attendees to avoid stale closure issues
+  // Fully local state for customer attendee management to avoid stale closure / prop round-trip issues
   const [localCustAttendees, setLocalCustAttendees] = useState<CustomerAttendeeDetail[]>(meeting.customerAttendeeDetails || []);
+  const [custInput, setCustInput] = useState({ name: '', email: '', phone: '' });
 
   const toggleInternalAttendee = (personId: string) => {
     const current = meeting.attendees || [];
     setMeeting({ ...meeting, attendees: current.includes(personId) ? current.filter((id: string) => id !== personId) : [...current, personId] });
   };
   const addCustomerAttendee = () => {
-    if (!newCustAttendee.name) { alert('Please enter a name'); return; }
-    const detail: CustomerAttendeeDetail = { id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: newCustAttendee.name, email: newCustAttendee.email, phone: newCustAttendee.phone };
+    if (!custInput.name.trim()) { alert('Please enter a name'); return; }
+    const detail: CustomerAttendeeDetail = { id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: custInput.name.trim(), email: custInput.email.trim(), phone: custInput.phone.trim() };
     const updated = [...localCustAttendees, detail];
     setLocalCustAttendees(updated);
     setMeeting({ ...meeting, customerAttendeeDetails: updated });
-    setNewCustAttendee({ name: '', email: '', phone: '' });
+    setCustInput({ name: '', email: '', phone: '' });
   };
   const removeCustomerAttendee = (id: string) => {
     const updated = localCustAttendees.filter((ca: CustomerAttendeeDetail) => ca.id !== id);
@@ -968,12 +964,12 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
           {/* Customer Attendees */}
           <div><label className="text-xs font-bold uppercase block mb-1">Customer Attendees</label>
             <div className="grid grid-cols-3 gap-2 mb-2">
-              <input type="text" value={newCustAttendee.name} onChange={(e) => setNewCustAttendee({ ...newCustAttendee, name: e.target.value })}
+              <input type="text" value={custInput.name} onChange={(e) => setCustInput({ ...custInput, name: e.target.value })}
                 placeholder="Name" className="px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
-              <input type="email" value={newCustAttendee.email} onChange={(e) => setNewCustAttendee({ ...newCustAttendee, email: e.target.value })}
+              <input type="email" value={custInput.email} onChange={(e) => setCustInput({ ...custInput, email: e.target.value })}
                 placeholder="Email" className="px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
               <div className="flex gap-2">
-                <input type="tel" value={newCustAttendee.phone} onChange={(e) => setNewCustAttendee({ ...newCustAttendee, phone: e.target.value })}
+                <input type="tel" value={custInput.phone} onChange={(e) => setCustInput({ ...custInput, phone: e.target.value })}
                   placeholder="Phone" className="flex-1 px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
                 <button onClick={addCustomerAttendee} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all whitespace-nowrap">Add</button>
               </div>

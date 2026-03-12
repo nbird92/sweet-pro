@@ -288,45 +288,6 @@ export const INITIAL_CONTRACTS: Contract[] = [
   }
 ];
 
-export const INITIAL_HAMILTON_SHIPMENTS: Shipment[] = [
-  {
-    id: 'SHIP-001',
-    week: 'Week 9',
-    date: '2026-02-24',
-    day: 'Tuesday',
-    time: '08:00',
-    bay: 'BAY 1 (W) - FERGUSON AVE.',
-    customer: 'Alberta Honey Co Op',
-    product: 'Bulk Fine Granulated 45',
-    po: 'PO-12345',
-    bol: 'BOL-98765',
-    qty: 22,
-    carrier: 'FastTruck',
-    arrive: '07:45',
-    start: '08:05',
-    out: '08:45',
-    status: 'Confirmed'
-  },
-  {
-    id: 'SHIP-002',
-    week: 'Week 9',
-    date: '2026-02-24',
-    day: 'Tuesday',
-    time: '08:30',
-    bay: 'BAY 1 (W) - FERGUSON AVE.',
-    customer: 'Cavalier Candies',
-    product: '20kg Fine Granulated Bag 45',
-    po: 'PO-12346',
-    bol: 'BOL-98766',
-    qty: 22,
-    carrier: 'FastTruck',
-    arrive: '08:15',
-    start: '08:35',
-    out: '09:15',
-    status: 'Pending'
-  }
-];
-
 export const INITIAL_TRANSFERS: Transfer[] = [];
 
 export const INITIAL_INVOICES: Invoice[] = [];

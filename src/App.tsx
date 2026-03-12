@@ -4,22 +4,20 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  Calculator, 
-  TrendingUp, 
-  Globe, 
-  Truck, 
-  Package, 
-  Download, 
-  Printer, 
-  Save, 
-  ChevronRight,
+import {
+  Calculator,
+  TrendingUp,
+  Globe,
+  Truck,
+  Package,
+  Download,
+  Printer,
+  Save,
   Info,
   Users,
   DollarSign,
   ArrowRightLeft,
   FileText,
-  Menu,
   X,
   Edit2,
   Trash2,
@@ -33,14 +31,13 @@ import {
   AlertCircle,
   Calendar,
   ShoppingCart,
-  Palette,
   LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_HAMILTON_SHIPMENTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, ConferenceMeeting, Person } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 
@@ -107,7 +104,6 @@ export default function App() {
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
   const [hamiltonShipments, setHamiltonShipments] = useState<Shipment[]>([]);
   const [vancouverShipments, setVancouverShipments] = useState<Shipment[]>([]);
-  const [isFetchingShipments, setIsFetchingShipments] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -172,7 +168,6 @@ export default function App() {
     // Reset input
     event.target.value = '';
   };
-  const [selectedBay, setSelectedBay] = useState('');
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -595,32 +590,6 @@ export default function App() {
     }
   };
 
-  const checkShipmentConflicts = (shipment: Shipment, excludeId?: string) => {
-    const allShipments = [...hamiltonShipments, ...vancouverShipments];
-    
-    // Check appointment collision
-    const collision = allShipments.find(s => 
-      s.id !== excludeId && 
-      s.date === shipment.date && 
-      s.time === shipment.time && 
-      s.bay === shipment.bay
-    );
-    if (collision) return 'appointment already taken';
-
-    // Check PO uniqueness
-    if (shipment.po) {
-      const poDuplicate = allShipments.find(s => s.id !== excludeId && s.po === shipment.po);
-      if (poDuplicate) return 'PO number has already been used';
-    }
-
-    // Check BOL uniqueness
-    if (shipment.bol) {
-      const bolDuplicate = allShipments.find(s => s.id !== excludeId && s.bol === shipment.bol);
-      if (bolDuplicate) return 'BOL number has already been used';
-    }
-
-    return null;
-  };
 
   const getWeekNumber = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
@@ -760,15 +729,6 @@ export default function App() {
   const [isAddingCarrier, setIsAddingCarrier] = useState(false);
   const [showPreviousWeeks, setShowPreviousWeeks] = useState(false);
   const [isAddingBatchShipment, setIsAddingBatchShipment] = useState(false);
-  const [batchShipment, setBatchShipment] = useState<{
-    customer: string;
-    product: string;
-    entries: { date: string; time: string; po: string; bol: string; qty: number; carrier: string; }[];
-  }>({
-    customer: '',
-    product: '',
-    entries: [{ date: new Date().toISOString().split('T')[0], time: '08:00', po: '', bol: '', qty: 22, carrier: '' }]
-  });
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -901,9 +861,6 @@ export default function App() {
     setHamiltonShipments(hamiltonShipments.filter(s => s.id !== id));
   };
 
-  const updateShipment = (id: string, field: keyof Shipment, value: any) => {
-    setHamiltonShipments(hamiltonShipments.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
 
   const createContract = () => {
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
@@ -936,9 +893,6 @@ export default function App() {
     setCustomers(customers.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
-  const updateSku = (id: string, field: keyof SKU, value: any) => {
-    setSkus(skus.map(s => s.id === id ? { ...s, [field]: value } : s));
-  };
 
   const calculations = useMemo(() => {
     const mtToCwt = 22.0462;
@@ -1101,7 +1055,6 @@ export default function App() {
     setConfig(prev => ({ ...prev, [field]: !prev[field] }));
   };
 
-  const handlePrint = () => window.print();
 
   const navItems = [
     { name: 'Dashboard', icon: TrendingUp },
@@ -1311,8 +1264,11 @@ export default function App() {
         ? weeksList
         : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
 
-      // Current week is always expanded
-      const isCurrentWeekExpanded = (week: string) => week === currentWeek || expandedRows.has(week);
+      // Current week is expanded by default, but can be collapsed by the user
+      const isCurrentWeekExpanded = (week: string) => {
+        if (week === currentWeek) return !expandedRows.has(`collapse-${week}`);
+        return expandedRows.has(week);
+      };
 
       return (
         <div className="p-4 space-y-3">
@@ -1320,7 +1276,7 @@ export default function App() {
             <div className="space-y-0.5">
               <h2 className="text-xl font-bold uppercase tracking-tighter">{locationName} Shipment Schedule</h2>
               <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} className={isFetchingShipments ? 'animate-spin' : ''} />
+                <RefreshCw size={12} className="" />
                 Last Updated: {new Date().toLocaleString()}
               </div>
             </div>
@@ -1367,8 +1323,12 @@ export default function App() {
                   <button
                     onClick={() => {
                       const next = new Set(expandedRows);
-                      if (isCurrentWk) { if (next.has(week)) next.delete(week); else next.add(week); }
-                      else { if (next.has(week)) next.delete(week); else next.add(week); }
+                      if (isCurrentWk) {
+                        const collapseKey = `collapse-${week}`;
+                        if (next.has(collapseKey)) next.delete(collapseKey); else next.add(collapseKey);
+                      } else {
+                        if (next.has(week)) next.delete(week); else next.add(week);
+                      }
                       setExpandedRows(next);
                     }}
                     className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-all ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
@@ -1383,8 +1343,7 @@ export default function App() {
                         <div className="p-2 space-y-2">
                           {locationBays.map(bay => {
                             const bayKey = `${week}-${bay}`;
-                            // Auto-expand bays in current week
-                            const isBayExpanded = isCurrentWk || expandedBays.has(bayKey);
+                            const isBayExpanded = expandedBays.has(bayKey);
 
                             return (
                               <div key={bay} className="border border-[#141414] overflow-hidden">
@@ -1404,8 +1363,7 @@ export default function App() {
                                   <div className="space-y-1 bg-white p-1">
                                     {daysList.map(day => {
                                       const dayKey = `${week}-${bay}-${day}`;
-                                      // Auto-expand all days in current week
-                                      const isDayExpanded = isCurrentWk || expandedDays.has(dayKey);
+                                      const isDayExpanded = expandedDays.has(dayKey);
                                       const weekNum = parseInt(week.replace('Week ', ''));
                                       const dateObj = getDateForWeekDay(weekNum, day);
                                       const dateStr = toLocalDateString(dateObj);
@@ -1575,308 +1533,6 @@ export default function App() {
                                                       </tr>
                                                     ))
                                                   ))}
-                                                </tbody>
-                                              </table>
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      );
-    }
-
-    if (false as boolean) {
-      // Vancouver Shipments is now handled by the combined section above - this block is dead code
-      const currentWeekNum = getWeekNumber(new Date().toISOString().split('T')[0]);
-      const currentWeek = `Week ${currentWeekNum}`;
-      const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
-
-      const vancouverLocation = locations.find(l => l.name.toLowerCase().includes('vancouver'));
-      const vancouverBays = vancouverLocation ? vancouverLocation.bays : ['BAY 1', 'BAY 2'];
-
-      const filteredShipments = vancouverShipments.filter(s => {
-        const matchesSearch = !searchTerm || 
-          s.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.product.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.po.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.bol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          s.carrier.toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch;
-      });
-
-      // Group by Week -> Bay -> Day -> Time
-      const groupedData: { [week: string]: { [bay: string]: { [day: string]: { [time: string]: Shipment[] } } } } = {};
-      
-      weeksList.forEach(w => {
-        groupedData[w] = {};
-        vancouverBays.forEach(b => {
-          groupedData[w][b] = {};
-          daysList.forEach(d => {
-            groupedData[w][b][d] = {};
-          });
-        });
-      });
-
-      filteredShipments.forEach(s => {
-        if (groupedData[s.week] && groupedData[s.week][s.bay] && groupedData[s.week][s.bay][s.day]) {
-          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [];
-          groupedData[s.week][s.bay][s.day][s.time].push(s);
-        }
-      });
-
-      const visibleWeeks = showPreviousWeeks 
-        ? weeksList 
-        : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
-
-      return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">Vancouver Shipment Schedule</h2>
-              <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} className={isFetchingShipments ? 'animate-spin' : ''} />
-                Last Updated: {new Date().toLocaleString()}
-              </div>
-            </div>
-            <div className="flex gap-4">
-              <button 
-                onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-              >
-                {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
-              </button>
-              <button 
-                onClick={() => {
-                  const headers = ['id', 'date', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'carrier', 'status', 'notes'];
-                  const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
-                  const encodedUri = encodeURI(csvContent);
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodedUri);
-                  link.setAttribute("download", "shipment_template.csv");
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                }}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F5F5F5] transition-all"
-              >
-                <Download size={14} /> Template
-              </button>
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F5F5F5] transition-all"
-              >
-                <FileText size={14} /> Import CSV
-              </button>
-              <button 
-                onClick={() => setIsAddingBatchShipment(true)}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-              >
-                <Plus size={14} /> Add Batch Shipments
-              </button>
-              <button
-                onClick={() => {
-                  setShipmentSearchCustomer('');
-                  setShipmentSearchBOL('');
-                  setShipmentSearchTransfer('');
-                  setIsAddingShipment(true);
-                }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={14} /> Add Shipment
-              </button>
-            </div>
-          </div>
-
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search shipments..."
-          />
-
-          <div className="space-y-4">
-            {visibleWeeks.map(week => {
-              const isExpanded = expandedRows.has(week) || (week === currentWeek && expandedRows.size === 0);
-              
-              return (
-                <div key={week} className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-                  <button 
-                    onClick={() => {
-                      const next = new Set(expandedRows);
-                      if (next.has(week)) next.delete(week);
-                      else next.add(week);
-                      setExpandedRows(next);
-                    }}
-                    className="w-full p-4 bg-[#141414] text-[#E4E3E0] flex justify-between items-center hover:bg-opacity-90 transition-all"
-                  >
-                    <span className="text-xs font-bold uppercase tracking-widest">{week} {week === currentWeek ? '(CURRENT)' : ''}</span>
-                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                  </button>
-                  
-                  <AnimatePresence initial={false}>
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ height: 0 }}
-                        animate={{ height: 'auto' }}
-                        exit={{ height: 0 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="p-4 space-y-4">
-                          {vancouverBays.map(bay => {
-                            const bayKey = `${week}-${bay}`;
-                            const isBayExpanded = expandedBays.has(bayKey);
-                            
-                            return (
-                              <div key={bay} className="border-2 border-[#141414] rounded-lg overflow-hidden">
-                                <button 
-                                  onClick={() => {
-                                    const next = new Set(expandedBays);
-                                    if (next.has(bayKey)) next.delete(bayKey);
-                                    else next.add(bayKey);
-                                    setExpandedBays(next);
-                                  }}
-                                  className="w-full p-3 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
-                                >
-                                  <span className="text-xs font-black uppercase tracking-widest">{bay}</span>
-                                  {isBayExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                </button>
-
-                                {isBayExpanded && (
-                                  <div className="p-4 space-y-4 bg-white">
-                                    {daysList.map(day => {
-                                      const dayKey = `${week}-${bay}-${day}`;
-                                      const isDayExpanded = expandedDays.has(dayKey) || (week === currentWeek && day === currentDay && !expandedDays.has(dayKey));
-                                      const weekNum = parseInt(week.replace('Week ', ''));
-                                      const dateObj = getDateForWeekDay(weekNum, day);
-                                      const dateStr = toLocalDateString(dateObj);
-                                      const displayDate = formatDateMMM_DD(dateStr);
-
-                                      return (
-                                        <div key={day} className="border border-[#141414]/10 rounded-lg overflow-hidden">
-                                          <button 
-                                            onClick={() => {
-                                              const next = new Set(expandedDays);
-                                              if (next.has(dayKey)) next.delete(dayKey);
-                                              else next.add(dayKey);
-                                              setExpandedDays(next);
-                                            }}
-                                            className="w-full p-3 bg-[#F9F9F9] flex justify-between items-center hover:bg-[#F0F0F0] transition-all"
-                                          >
-                                            <div className="flex items-center gap-4">
-                                              <span className="text-[10px] font-black uppercase tracking-widest">{day}</span>
-                                              <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
-                                            </div>
-                                            {isDayExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                          </button>
-
-                                          {isDayExpanded && (
-                                            <div className="overflow-x-auto">
-                                              <table className="w-full text-left border-collapse">
-                                                <thead>
-                                                  <tr className="bg-white text-[9px] uppercase font-bold border-b border-[#141414]/10">
-                                                    <th className="p-2 border-r border-[#141414]/5 w-16">Time</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Customer</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Product</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">PO</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">BOL #</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">QTY</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Carrier</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Arrive</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Start</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Out</th>
-                                                    <th className="p-2 border-r border-[#141414]/5">Status</th>
-                                                    <th className="p-2">Actions</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-[#141414]/5">
-                                                  {timeSlotsList.map(slot => {
-                                                    const shipments = groupedData[week][bay][day][slot] || [];
-                                                    if (shipments.length === 0) {
-                                                      return (
-                                                        <tr key={slot} className="group hover:bg-[#F9F9F9] transition-colors bg-[#141414]/5 hover:bg-[#141414]/10">
-                                                          <td className="p-2 text-[10px] font-mono border-r border-[#141414]/5">{slot}</td>
-                                                          <td colSpan={10} className="p-2 text-[9px] italic font-bold opacity-40">Available Slot</td>
-                                                          <td className="p-2 text-xs">
-                                                            <button 
-                                                              onClick={() => {
-                                                                setEditingShipment({
-                                                                  id: '',
-                                                                  week,
-                                                                  date: dateStr,
-                                                                  day,
-                                                                  time: slot,
-                                                                  bay: bay,
-                                                                  customer: '',
-                                                                  product: '',
-                                                                  po: '',
-                                                                  bol: '',
-                                                                  qty: 22,
-                                                                  carrier: '',
-                                                                  arrive: '',
-                                                                  start: '',
-                                                                  out: '',
-                                                                  status: 'Pending',
-                                                                  contractNumber: ''
-                                                                });
-                                                                setIsAddingShipment(false);
-                                                              }}
-                                                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                                                            >
-                                                              <Plus size={10} />
-                                                            </button>
-                                                          </td>
-                                                        </tr>
-                                                      );
-                                                    }
-                                                    return shipments.map(s => (
-                                                      <tr key={s.id} className="hover:bg-[#F9F9F9] transition-colors" style={{ backgroundColor: s.color || 'transparent' }}>
-                                                        <td className="p-2 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.product}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.bol}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="p-2 text-[10px] border-r border-[#141414]/5">
-                                                          <select 
-                                                            value={s.status} 
-                                                            onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
-                                                              (s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' :
-                                                              (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' :
-                                                              'bg-slate-100 text-slate-700'
-                                                            }`}
-                                                          >
-                                                            <option value="Pending">Pending</option>
-                                                            <option value="Confirmed">Confirmed</option>
-                                                            <option value="In Progress">In Progress</option>
-                                                            <option value="Completed">Completed</option>
-                                                            <option value="Cancelled">Cancelled</option>
-                                                          </select>
-                                                        </td>
-                                                        <td className="p-2 text-xs flex gap-1">
-                                                          <button onClick={() => setEditingShipment(s)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><Edit2 size={10} /></button>
-                                                          <button onClick={() => deleteShipment(s.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={10} /></button>
-                                                        </td>
-                                                      </tr>
-                                                    ));
-                                                  })}
                                                 </tbody>
                                               </table>
                                             </div>
@@ -2745,7 +2401,6 @@ export default function App() {
 
     if (activePage === 'Supply Chain') {
       const totalCostPerMt = supplyChain.reduce((sum, item) => sum + (item.totalCostCad / (item.weightPerLoadMt || 1)), 0);
-      const filteredFreightRates = getSortedAndFilteredData(freightRates, ['origin', 'destination', 'provider', 'freightType']);
 
       return (
         <div className="p-6 space-y-8">

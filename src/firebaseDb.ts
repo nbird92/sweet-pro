@@ -2,11 +2,7 @@ import {
   collection,
   doc,
   getDocs,
-  setDoc,
   writeBatch,
-  onSnapshot,
-  query,
-  type Unsubscribe,
 } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './firebaseConfig';
@@ -33,8 +29,6 @@ export const COLLECTIONS = {
   people: 'people',
 } as const;
 
-export type CollectionName = keyof typeof COLLECTIONS;
-
 // Fetch all documents from a collection (one-time read)
 export async function fetchCollection<T>(collectionName: string): Promise<T[]> {
   const snapshot = await getDocs(collection(db, collectionName));
@@ -50,18 +44,6 @@ export async function fetchAllData() {
     })
   );
   return Object.fromEntries(results) as Record<string, any[]>;
-}
-
-// Subscribe to real-time updates on a collection
-export function subscribeToCollection<T>(
-  collectionName: string,
-  callback: (data: T[]) => void
-): Unsubscribe {
-  const q = query(collection(db, collectionName));
-  return onSnapshot(q, (snapshot) => {
-    const data = snapshot.docs.map(doc => ({ ...doc.data() } as T));
-    callback(data);
-  });
 }
 
 // Sync an entire collection: clear all docs and re-add from the provided array.
@@ -118,11 +100,3 @@ export async function syncCollection<T extends { id: string }>(
   }
 }
 
-// Set a single document (create or overwrite)
-export async function setDocument<T extends { id: string }>(
-  collectionName: string,
-  data: T
-): Promise<void> {
-  const docRef = doc(db, collectionName, data.id);
-  await setDoc(docRef, { ...data });
-}
