@@ -3759,15 +3759,16 @@ export default function App() {
           const emailSku = skus.find(s => s.id === selectedSkuId) || skus[0];
           const emailCustomer = customers.find(c => c.name === customer);
           const cs = calculations.currencySymbol;
+          const senderName = user?.displayName || 'Sweet Pro Trading';
+          const senderEmail = user?.email || '';
           const buildEmailBody = () => {
             let lines: string[] = [];
             lines.push(`Dear ${customer},`);
             lines.push('');
             lines.push('Please find below the pricing details for your review:');
             lines.push('');
-            lines.push('─────────────────────────────────────');
             lines.push('QUOTE SUMMARY');
-            lines.push('─────────────────────────────────────');
+            lines.push('-------------------------------------');
             lines.push(`Product: ${emailSku.name}`);
             lines.push(`Origin: ${config.origin}`);
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
@@ -3775,9 +3776,8 @@ export default function App() {
             lines.push(`Currency: ${config.currency}`);
             if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
             lines.push('');
-            lines.push('─────────────────────────────────────');
             lines.push('COST BREAKDOWN');
-            lines.push('─────────────────────────────────────');
+            lines.push('-------------------------------------');
             lines.push(`Raw Sugar (USD/MT): $${calculations.rawMtUsd.toFixed(2)}`);
             lines.push(`Ocean Freight (USD/MT): $${calculations.oceanFreightUsd.toFixed(2)}`);
             lines.push(`Total USD: $${calculations.totalUsd.toFixed(2)}`);
@@ -3801,9 +3801,8 @@ export default function App() {
               lines.push(`Pallet Charge (${cs}/MT): $${calculations.palletCharge.toFixed(2)}`);
             }
             lines.push('');
-            lines.push('─────────────────────────────────────');
             lines.push('FINAL PRICING');
-            lines.push('─────────────────────────────────────');
+            lines.push('-------------------------------------');
             lines.push(`Final Price: ${cs} $${calculations.finalMt.toFixed(2)}/MT`);
             lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
             lines.push(`Total Quote Value: ${cs} $${calculations.totalQuoteValue.toFixed(2)}`);
@@ -3811,8 +3810,32 @@ export default function App() {
             lines.push('Please let us know if you have any questions or would like to proceed.');
             lines.push('');
             lines.push('Best regards,');
-            lines.push('Sweet Pro Trading');
+            lines.push(senderName);
+            if (senderEmail) lines.push(senderEmail);
             return lines.join('\n');
+          };
+          const openInGmail = () => {
+            const body = buildEmailBody();
+            const to = encodeURIComponent(emailTo);
+            const cc = emailCc ? `&cc=${encodeURIComponent(emailCc)}` : '';
+            const su = encodeURIComponent(emailSubject);
+            const bo = encodeURIComponent(body);
+            window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}${cc}&su=${su}&body=${bo}`, '_blank');
+            setShowEmailQuote(false);
+          };
+          const openInOutlook = () => {
+            const body = buildEmailBody();
+            const to = encodeURIComponent(emailTo);
+            const su = encodeURIComponent(emailSubject);
+            const bo = encodeURIComponent(body);
+            window.open(`https://outlook.office.com/mail/deeplink/compose?to=${to}&subject=${su}&body=${bo}`, '_blank');
+            setShowEmailQuote(false);
+          };
+          const openMailto = () => {
+            const body = buildEmailBody();
+            const cc = emailCc ? `&cc=${encodeURIComponent(emailCc)}` : '';
+            window.location.href = `mailto:${emailTo}?subject=${encodeURIComponent(emailSubject)}${cc}&body=${encodeURIComponent(body)}`;
+            setShowEmailQuote(false);
           };
           return (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
@@ -3839,6 +3862,12 @@ export default function App() {
                 {/* Email Fields */}
                 <div className="space-y-3">
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">From</label>
+                    <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm text-[#141414]/70">
+                      {senderName}{senderEmail ? ` <${senderEmail}>` : ''}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">To</label>
                     <input
                       type="email"
@@ -3847,8 +3876,13 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
                       placeholder="recipient@example.com"
                     />
-                    {emailCustomer && (emailCustomer.qaContractEmail || emailCustomer.salesContactEmail || emailCustomer.customerServiceEmail) && (
+                    {emailCustomer && (emailCustomer.qaContractEmail || emailCustomer.salesContactEmail || emailCustomer.customerServiceEmail || emailCustomer.contactEmail) && (
                       <div className="flex flex-wrap gap-1 mt-1">
+                        {emailCustomer.contactEmail && (
+                          <button onClick={() => setEmailTo(emailCustomer.contactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                            Main: {emailCustomer.contactEmail}
+                          </button>
+                        )}
                         {emailCustomer.qaContractEmail && (
                           <button onClick={() => setEmailTo(emailCustomer.qaContractEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                             QA: {emailCustomer.qaContractEmail}
@@ -3898,35 +3932,47 @@ export default function App() {
               </div>
 
               {/* Actions */}
-              <div className="p-4 border-t border-[#141414]/10 flex gap-4">
-                <button
-                  onClick={() => {
-                    const body = encodeURIComponent(buildEmailBody());
-                    const subject = encodeURIComponent(emailSubject);
-                    const cc = emailCc ? `&cc=${encodeURIComponent(emailCc)}` : '';
-                    window.open(`mailto:${encodeURIComponent(emailTo)}?subject=${subject}${cc}&body=${body}`, '_blank');
-                    setShowEmailQuote(false);
-                  }}
-                  disabled={!emailTo}
-                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Send size={14} /> Send Email
-                </button>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(buildEmailBody());
-                    alert('Email body copied to clipboard!');
-                  }}
-                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                >
-                  Copy Body
-                </button>
-                <button
-                  onClick={() => setShowEmailQuote(false)}
-                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                >
-                  Cancel
-                </button>
+              <div className="p-4 border-t border-[#141414]/10 space-y-3">
+                <div className="flex gap-3">
+                  <button
+                    onClick={openInGmail}
+                    disabled={!emailTo}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Send size={14} /> Open in Gmail
+                  </button>
+                  <button
+                    onClick={openInOutlook}
+                    disabled={!emailTo}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Send size={14} /> Open in Outlook
+                  </button>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={openMailto}
+                    disabled={!emailTo}
+                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Mail size={14} /> Default Email App
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(buildEmailBody());
+                      alert('Email body copied to clipboard!');
+                    }}
+                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Copy Body
+                  </button>
+                  <button
+                    onClick={() => setShowEmailQuote(false)}
+                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
