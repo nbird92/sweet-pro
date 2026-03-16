@@ -20,6 +20,7 @@ export interface CommodityConfig {
   contractEndDate?: string;
   isPalletCharge: boolean;
   palletCostCadMt: number;
+  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
 }
 
 export interface SKU {
@@ -134,6 +135,7 @@ export interface Contract {
   finalPrice: number;
   currency: string;
   notes?: string;
+  shippingTerms?: string;
 }
 
 export interface Shipment {
@@ -156,6 +158,9 @@ export interface Shipment {
   status: string;
   notes?: string;
   color?: string;
+  scaledQty?: number;
+  trailerNo?: string;
+  colour?: string;
 }
 
 export interface Location {
@@ -238,6 +243,7 @@ export interface Invoice {
   shipmentId: string;
   date: string;
   status: string;
+  splitNo?: string;
 }
 
 export interface OrderLineItem {
@@ -266,6 +272,7 @@ export interface Order {
   lineItems: OrderLineItem[];
   amount: number;
   carrier?: string;
+  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [

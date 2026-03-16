@@ -92,6 +92,7 @@ export default function App() {
   const [orderShipmentDate, setOrderShipmentDate] = useState('');
   const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
+  const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -181,7 +182,10 @@ export default function App() {
             out: entry.out || '',
             status: entry.status || 'Pending',
             notes: entry.notes || '',
-            color: entry.color || ''
+            color: entry.color || '',
+            scaledQty: parseFloat(entry.scaledqty || entry.scaledQty) || undefined,
+            trailerNo: entry.trailerno || entry.trailerNo || '',
+            colour: entry.colour || ''
           });
         }
 
@@ -1396,7 +1400,7 @@ export default function App() {
       };
 
       // Bay column headers for side-by-side layout
-      const bayColumns = ['Customer', 'Product', 'BOL', 'QTY', 'Carrier', 'Status'];
+      const bayColumns = ['Customer', 'Product', 'BOL', 'QTY', 'Scaled Qty', 'Carrier', 'Trailer No', 'Colour', 'Status'];
 
       return (
         <div className="p-4 space-y-3">
@@ -1531,7 +1535,10 @@ export default function App() {
                                                   <td key={`${bay}-${slot}-prod`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
                                                   <td key={`${bay}-${slot}-bol`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-mono whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
                                                   <td key={`${bay}-${slot}-qty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
+                                                  <td key={`${bay}-${slot}-sqty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.scaledQty || '—'}</td>,
                                                   <td key={`${bay}-${slot}-car`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
+                                                  <td key={`${bay}-${slot}-tno`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.trailerNo || '—'}</td>,
+                                                  <td key={`${bay}-${slot}-clr`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.colour || '—'}</td>,
                                                   <td key={`${bay}-${slot}-stat`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{statusBadge(s.status)}</td>,
                                                 ];
                                               })}
@@ -1626,7 +1633,7 @@ export default function App() {
                 {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
               </button>
               <button onClick={() => {
-                  const headers = ['id', 'date', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'carrier', 'status', 'notes'];
+                  const headers = ['id', 'date', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'notes'];
                   const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
@@ -1747,7 +1754,10 @@ export default function App() {
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">PO</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">BOL</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">QTY</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Scaled Qty (MT)</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Carrier</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Trailer No</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Colour</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Arrive</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
@@ -1768,7 +1778,10 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
@@ -1795,7 +1808,7 @@ export default function App() {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
                                                           <td className="px-1 py-0.5 text-[9px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
-                                                          <td colSpan={12} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
+                                                          <td colSpan={15} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -1819,7 +1832,10 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
@@ -1857,7 +1873,10 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
@@ -2248,6 +2267,7 @@ export default function App() {
                   <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Amount (CAD)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
@@ -2275,6 +2295,7 @@ export default function App() {
                         <option value="Cancelled">Cancelled</option>
                       </select>
                     </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{i.splitNo || '—'}</td>
                     <td className="p-4 text-xs flex items-center gap-2">
                       <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
                         <Printer size={14} />
@@ -2465,6 +2486,7 @@ export default function App() {
                               setOrderShipmentDate(ord.shipmentDate || '');
                               setOrderDeliveryDate(ord.deliveryDate || '');
                               setOrderCarrier(ord.carrier || '');
+                              setOrderShippingTerms(ord.shippingTerms || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
                                 setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
@@ -3144,6 +3166,7 @@ export default function App() {
                   <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
@@ -3166,6 +3189,7 @@ export default function App() {
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
                       <td className="p-3 text-xs flex items-center gap-2">
                         <button onClick={() => toggleRow(c.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -3398,13 +3422,27 @@ export default function App() {
 
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Quote Currency</label>
-                <select 
+                <select
                   value={config.currency}
                   onChange={(e) => setConfig(prev => ({ ...prev, currency: e.target.value as 'USD' | 'CAD' }))}
                   className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                 >
                   <option value="CAD">CAD</option>
                   <option value="USD">USD</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Shipping Terms</label>
+                <select
+                  value={config.shippingTerms || ''}
+                  onChange={(e) => setConfig(prev => ({ ...prev, shippingTerms: e.target.value as any }))}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                >
+                  <option value="">Select Terms</option>
+                  <option value="FOB">FOB</option>
+                  <option value="DAP">DAP</option>
+                  <option value="DDP">DDP</option>
+                  <option value="FCA">FCA</option>
                 </select>
               </div>
               <InputField label="Raw Price (USD/cwt)" value={config.rawPriceUsdCwt} onChange={(v) => handleInputChange('rawPriceUsdCwt', v)} />
@@ -6291,7 +6329,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -6344,6 +6382,20 @@ export default function App() {
                       >
                         <option value="">Select Carrier</option>
                         {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Shipping Terms</label>
+                      <select
+                        value={orderShippingTerms}
+                        onChange={(e) => setOrderShippingTerms(e.target.value as any)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      >
+                        <option value="">Select Terms</option>
+                        <option value="FOB">FOB</option>
+                        <option value="DAP">DAP</option>
+                        <option value="DDP">DDP</option>
+                        <option value="FCA">FCA</option>
                       </select>
                     </div>
                   </div>
@@ -6553,7 +6605,8 @@ export default function App() {
                           deliveryDate: orderDeliveryDate || undefined,
                           lineItems: orderLineItems,
                           amount: totalAmount,
-                          carrier: orderCarrier || undefined
+                          carrier: orderCarrier || undefined,
+                          shippingTerms: orderShippingTerms || undefined
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
                       } else {
@@ -6571,7 +6624,8 @@ export default function App() {
                           status: 'Open',
                           lineItems: orderLineItems,
                           amount: totalAmount,
-                          carrier: orderCarrier || undefined
+                          carrier: orderCarrier || undefined,
+                          shippingTerms: orderShippingTerms || undefined
                         };
                         setOrders([...orders, newOrder]);
                       }
@@ -6583,6 +6637,7 @@ export default function App() {
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');
+                      setOrderShippingTerms('');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -6598,6 +6653,7 @@ export default function App() {
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');
+                      setOrderShippingTerms('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
