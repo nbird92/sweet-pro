@@ -126,60 +126,84 @@ export default function App() {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target?.result as string;
-      const lines = text.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      
-      const newShipments: Shipment[] = [];
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const values = lines[i].split(',').map(v => v.trim());
-        const entry: any = {};
-        headers.forEach((h, idx) => {
-          entry[h] = values[idx];
-        });
-
-        // Basic validation and defaults
-        if (!entry.date) continue;
-
-        const date = entry.date;
-        const week = entry.week || `Week ${getWeekNumber(date)}`;
-        const day = entry.day || new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(date + 'T12:00:00'));
-        
-        newShipments.push({
-          id: entry.id || `SHIP-${Date.now()}-${Math.random()}`,
-          week,
-          date,
-          day,
-          time: entry.time || '08:00',
-          bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))?.bays[0] || ''),
-          customer: entry.customer || '',
-          product: entry.product || '',
-          contractNumber: entry.contractnumber || entry.contractNumber || '',
-          po: entry.po || '',
-          bol: entry.bol || '',
-          qty: parseFloat(entry.qty) || 0,
-          carrier: entry.carrier || '',
-          arrive: entry.arrive || '',
-          start: entry.start || '',
-          out: entry.out || '',
-          status: entry.status || 'Pending',
-          notes: entry.notes || '',
-          color: entry.color || ''
-        });
-      }
-
-      if (newShipments.length > 0) {
-        if (activePage === 'Hamilton Shipments') {
-          setHamiltonShipments(prev => [...prev, ...newShipments]);
-        } else {
-          setVancouverShipments(prev => [...prev, ...newShipments]);
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows. Expected at least a header row and one data row.');
+          return;
         }
-        alert(`Successfully imported ${newShipments.length} shipments.`);
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        if (!headers.includes('date')) {
+          alert(`CSV is missing a required "date" column.\n\nFound columns: ${headers.join(', ')}\n\nUse the Template button to download the expected format.`);
+          return;
+        }
+
+        const newShipments: Shipment[] = [];
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          headers.forEach((h, idx) => {
+            entry[h] = values[idx] || '';
+          });
+
+          if (!entry.date) { skippedRows++; continue; }
+
+          const date = entry.date.trim();
+          let week = entry.week;
+          let day = entry.day;
+          try {
+            if (!week) week = `Week ${getWeekNumber(date)}`;
+            if (!day) day = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(date + 'T12:00:00'));
+          } catch {
+            skippedRows++;
+            continue;
+          }
+
+          newShipments.push({
+            id: entry.id || `SHIP-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            week,
+            date,
+            day,
+            time: entry.time || '08:00',
+            bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))?.bays[0] || ''),
+            customer: entry.customer || '',
+            product: entry.product || '',
+            contractNumber: entry.contractnumber || entry.contractNumber || '',
+            po: entry.po || '',
+            bol: entry.bol || '',
+            qty: parseFloat(entry.qty) || 0,
+            carrier: entry.carrier || '',
+            arrive: entry.arrive || '',
+            start: entry.start || '',
+            out: entry.out || '',
+            status: entry.status || 'Pending',
+            notes: entry.notes || '',
+            color: entry.color || ''
+          });
+        }
+
+        if (newShipments.length > 0) {
+          if (activePage === 'Hamilton Shipments') {
+            setHamiltonShipments(prev => [...prev, ...newShipments]);
+          } else {
+            setVancouverShipments(prev => [...prev, ...newShipments]);
+          }
+          alert(`Successfully imported ${newShipments.length} shipment${newShipments.length > 1 ? 's' : ''}.${skippedRows > 0 ? ` (${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped due to missing/invalid date)` : ''}`);
+        } else {
+          alert(`No shipments could be imported from the CSV.\n\n${skippedRows > 0 ? `${skippedRows} row(s) were skipped because they had missing or invalid dates.` : 'The file may be empty or in an unexpected format.'}\n\nUse the Template button to download the expected format.`);
+        }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}. Please check the file format and try again.`);
       }
     };
+    reader.onerror = () => {
+      alert('Failed to read the CSV file. Please try again.');
+    };
     reader.readAsText(file);
-    // Reset input
+    // Reset input so the same file can be re-selected
     event.target.value = '';
   };
   const [user, setUser] = useState<User | null>(null);
@@ -3612,13 +3636,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-mono selection:bg-[#141414] selection:text-[#E4E3E0] flex">
-      {/* Hidden File Input for CSV Import */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleImportCSV} 
-        accept=".csv" 
-        className="hidden" 
+      {/* Hidden File Input for CSV Import — use sr-only instead of hidden to ensure click() works in all browsers */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImportCSV}
+        accept=".csv"
+        className="sr-only"
       />
 
       {/* Sidebar */}
