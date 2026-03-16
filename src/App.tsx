@@ -180,12 +180,14 @@ export default function App() {
             arrive: entry.arrive || '',
             start: entry.start || '',
             out: entry.out || '',
-            status: entry.status || 'Pending',
+            status: entry.status || 'Confirmed',
             notes: entry.notes || '',
             color: entry.color || '',
             scaledQty: parseFloat(entry.scaledqty || entry.scaledQty) || undefined,
             trailerNo: entry.trailerno || entry.trailerNo || '',
-            colour: entry.colour || ''
+            colour: entry.colour || '',
+            lotNumber: entry.lotnumber || entry.lotNumber || '',
+            deliveryDate: entry.deliverydate || entry.deliveryDate || ''
           });
         }
 
@@ -1400,7 +1402,7 @@ export default function App() {
       };
 
       // Bay column headers for side-by-side layout
-      const bayColumns = ['Customer', 'Product', 'BOL', 'QTY', 'Scaled Qty', 'Carrier', 'Trailer No', 'Colour', 'Status'];
+      const bayColumns = ['Client', 'Product', 'PO', 'BOL', 'QTY', 'Carrier', 'Arrives', 'Start', 'Out'];
 
       return (
         <div className="p-4 space-y-3">
@@ -1533,13 +1535,13 @@ export default function App() {
                                                 return [
                                                   <td key={`${bay}-${slot}-cust`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-black whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
                                                   <td key={`${bay}-${slot}-prod`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
+                                                  <td key={`${bay}-${slot}-po`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
                                                   <td key={`${bay}-${slot}-bol`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-mono whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
                                                   <td key={`${bay}-${slot}-qty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
-                                                  <td key={`${bay}-${slot}-sqty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.scaledQty || '—'}</td>,
                                                   <td key={`${bay}-${slot}-car`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
-                                                  <td key={`${bay}-${slot}-tno`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.trailerNo || '—'}</td>,
-                                                  <td key={`${bay}-${slot}-clr`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.colour || '—'}</td>,
-                                                  <td key={`${bay}-${slot}-stat`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{statusBadge(s.status)}</td>,
+                                                  <td key={`${bay}-${slot}-arr`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
+                                                  <td key={`${bay}-${slot}-srt`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
+                                                  <td key={`${bay}-${slot}-out`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
                                                 ];
                                               })}
                                             </tr>
@@ -1633,7 +1635,7 @@ export default function App() {
                 {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
               </button>
               <button onClick={() => {
-                  const headers = ['id', 'date', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'notes'];
+                  const headers = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
                   const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
@@ -1748,6 +1750,7 @@ export default function App() {
                                                 <thead>
                                                   <tr className="bg-white text-[8px] uppercase font-bold border-b border-[#141414]/10">
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5 w-12">Time</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Delivery Date</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Customer</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Product</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Contract</th>
@@ -1762,7 +1765,7 @@ export default function App() {
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
                                                     <th className="px-1 py-0.5 border-r border-[#141414]/5">Status</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Notes</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Lot Number</th>
                                                     <th className="px-1 py-0.5 w-16">Actions</th>
                                                   </tr>
                                                 </thead>
@@ -1772,6 +1775,7 @@ export default function App() {
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
                                                         <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
@@ -1787,11 +1791,11 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
@@ -1808,7 +1812,7 @@ export default function App() {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
                                                           <td className="px-1 py-0.5 text-[9px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
-                                                          <td colSpan={15} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
+                                                          <td colSpan={16} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -1826,6 +1830,7 @@ export default function App() {
                                                     return shipments.map(s => (
                                                       <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
                                                         <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
@@ -1841,11 +1846,11 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => {
@@ -1867,6 +1872,7 @@ export default function App() {
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
                                                         <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
@@ -1882,11 +1888,11 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
                                                         <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Pending">Pending</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.notes || ''}>{s.notes || '—'}</td>
+                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
@@ -4597,11 +4603,10 @@ export default function App() {
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">Status</label>
                         <select
-                          value={editingShipment.status || 'Pending'}
+                          value={editingShipment.status || 'Confirmed'}
                           onChange={(e) => setEditingShipment({...editingShipment, status: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          <option value="Pending">Pending</option>
                           <option value="Confirmed">Confirmed</option>
                           <option value="In Progress">In Progress</option>
                           <option value="Completed">Completed</option>
@@ -4644,6 +4649,55 @@ export default function App() {
                           value={editingShipment.out || ''}
                           onChange={(e) => setEditingShipment({...editingShipment, out: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Delivery Date</label>
+                        <input
+                          type="date"
+                          value={editingShipment.deliveryDate || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, deliveryDate: e.target.value})}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Lot Number</label>
+                        <input
+                          type="text"
+                          value={editingShipment.lotNumber || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, lotNumber: e.target.value})}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                          placeholder="Enter lot number"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Scaled Qty (MT)</label>
+                        <input
+                          type="number"
+                          value={editingShipment.scaledQty || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, scaledQty: parseFloat(e.target.value) || undefined})}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                          placeholder="Scaled quantity"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Trailer No</label>
+                        <input
+                          type="text"
+                          value={editingShipment.trailerNo || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, trailerNo: e.target.value})}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                          placeholder="Trailer number"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Colour</label>
+                        <input
+                          type="text"
+                          value={editingShipment.colour || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, colour: e.target.value})}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                          placeholder="Colour"
                         />
                       </div>
                     </div>
@@ -7400,7 +7454,7 @@ export default function App() {
                                 arrive: '',
                                 start: '',
                                 out: '',
-                                status: 'Pending',
+                                status: 'Confirmed',
                                 notes: '',
                                 color: ''
                               }));
@@ -7429,7 +7483,7 @@ export default function App() {
                                 arrive: '',
                                 start: '',
                                 out: '',
-                                status: 'Pending',
+                                status: 'Confirmed',
                                 notes: `TRANSFER:${transfer.id}`,
                                 color: ''
                               };

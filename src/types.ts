@@ -161,6 +161,8 @@ export interface Shipment {
   scaledQty?: number;
   trailerNo?: string;
   colour?: string;
+  lotNumber?: string;
+  deliveryDate?: string;
 }
 
 export interface Location {
