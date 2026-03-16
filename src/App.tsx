@@ -448,6 +448,21 @@ export default function App() {
         setPeople(data.people);
         lastSyncedData.current.people = JSON.stringify(data.people);
       }
+      if (data.marketData?.length) {
+        setMarketData(data.marketData);
+        setLastMarketUpdate(new Date().toISOString());
+        const months = Array.from(new Set(data.marketData.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
+        if (months.length > 0) {
+          setConfig(prev => {
+            const isIsoDate = (val: string | undefined) => val && /^\d{4}-\d{2}-\d{2}$/.test(val);
+            return {
+              ...prev,
+              contractStartDate: (!prev.contractStartDate || isIsoDate(prev.contractStartDate)) ? months[0] : prev.contractStartDate,
+              contractEndDate: (!prev.contractEndDate || isIsoDate(prev.contractEndDate)) ? months[Math.min(months.length - 1, 3)] : prev.contractEndDate
+            };
+          });
+        }
+      }
 
       setSyncStatus('synced');
       setLastSynced(new Date());
@@ -2937,6 +2952,24 @@ export default function App() {
     }
 
     if (activePage === 'US #11 Market') {
+      // Resolve column keys dynamically from data
+      const resolveKey = (row: any, ...candidates: string[]) => {
+        for (const c of candidates) {
+          const key = Object.keys(row).find(k => k.toLowerCase() === c.toLowerCase());
+          if (key && row[key] !== undefined) return key;
+        }
+        // Partial match fallback
+        for (const c of candidates) {
+          const key = Object.keys(row).find(k => k.toLowerCase().includes(c.toLowerCase()));
+          if (key && row[key] !== undefined) return key;
+        }
+        return null;
+      };
+      const sampleRow = marketData.length > 0 ? marketData[0] : null;
+      const monthKey = sampleRow ? resolveKey(sampleRow, 'Month', 'month', 'date', 'Date', 'period') : null;
+      const rawsKey = sampleRow ? resolveKey(sampleRow, '#11 Raws', '#11', 'raws', 'Raw Sugar', 'rawSugar', 'raw_sugar', 'price') : null;
+      const fxKey = sampleRow ? resolveKey(sampleRow, 'FX', 'fx', 'fxRate', 'CAD', 'usdcad', 'exchange') : null;
+
       return (
         <div className="p-6 space-y-4">
           <div className="flex justify-between items-center">
@@ -2945,9 +2978,10 @@ export default function App() {
               <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
                 <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
                 Last Updated: {lastMarketUpdate ? new Date(lastMarketUpdate).toLocaleString() : 'Never'}
+                {marketData.length > 0 && <span className="ml-2">({marketData.length} rows)</span>}
               </div>
             </div>
-            <button 
+            <button
               onClick={fetchMarketData}
               disabled={isFetchingMarket}
               className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
@@ -2962,22 +2996,27 @@ export default function App() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                    {marketData.length > 0 && Object.keys(marketData[0]).map(key => (
-                      <th key={key} className="p-4 border-r border-white/10">{key}</th>
-                    ))}
+                    <th className="p-4 border-r border-white/10">Month</th>
+                    <th className="p-4 border-r border-white/10">#11 Raws (USD/cwt)</th>
+                    <th className="p-4">FX (USD/CAD)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
-                  {marketData.length > 0 ? marketData.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-[#F9F9F9] transition-colors">
-                      {Object.values(row).map((val: any, i) => (
-                        <td key={i} className="p-4 text-xs border-r border-[#141414]/10">{val}</td>
-                      ))}
-                    </tr>
-                  )) : (
+                  {marketData.length > 0 ? marketData.map((row, idx) => {
+                    const month = monthKey ? row[monthKey] : '-';
+                    const raws = rawsKey ? row[rawsKey] : '-';
+                    const fx = fxKey ? row[fxKey] : '-';
+                    return (
+                      <tr key={idx} className="hover:bg-[#F9F9F9] transition-colors">
+                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{month}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">{typeof raws === 'number' ? raws.toFixed(2) : raws}</td>
+                        <td className="p-4 text-xs">{typeof fx === 'number' ? fx.toFixed(4) : fx}</td>
+                      </tr>
+                    );
+                  }) : (
                     <tr>
-                      <td className="p-12 text-center text-xs opacity-50 italic" colSpan={100}>
-                        No market data available. Click refresh to fetch.
+                      <td className="p-12 text-center text-xs opacity-50 italic" colSpan={3}>
+                        {isFetchingMarket ? 'Loading market data...' : 'No market data available. Click Refresh Data to fetch from database.'}
                       </td>
                     </tr>
                   )}
