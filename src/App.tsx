@@ -1358,6 +1358,22 @@ export default function App() {
         return expandedRows.has(week);
       };
 
+      // For current week, auto-expand all days
+      const isDayExpandedSchedule = (dayKey: string, isCurrentWk: boolean) => {
+        if (isCurrentWk) return !expandedDays.has(`collapse-sched-${dayKey}`);
+        return expandedDays.has(dayKey);
+      };
+
+      // Status badge helper
+      const statusBadge = (status: string) => {
+        const sl = (status || '').toLowerCase();
+        const cls = sl.includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : sl.includes('pending') ? 'bg-amber-100 text-amber-700' : sl.includes('completed') ? 'bg-blue-100 text-blue-700' : sl.includes('cancelled') ? 'bg-red-100 text-red-700' : sl.includes('in progress') ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700';
+        return <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] whitespace-nowrap ${cls}`}>{status}</span>;
+      };
+
+      // Bay column headers for side-by-side layout
+      const bayColumns = ['Customer', 'Product', 'BOL', 'QTY', 'Carrier', 'Status'];
+
       return (
         <div className="p-4 space-y-3">
           <div className="flex justify-between items-center">
@@ -1392,12 +1408,9 @@ export default function App() {
             {visibleWeeks.map(week => {
               const isCurrentWk = week === currentWeek;
               const isExpanded = isCurrentWeekExpanded(week);
-              // Count total shipments in this week across all bays/days
               const weekShipmentCount = locationBays.reduce((sum, bay) =>
                 sum + daysList.reduce((daySum, day) =>
                   daySum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0), 0);
-
-              if (weekShipmentCount === 0 && !isCurrentWk) return null;
 
               return (
                 <div key={week} className={`bg-white border-2 overflow-hidden ${isCurrentWk ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
@@ -1424,151 +1437,85 @@ export default function App() {
                   <AnimatePresence initial={false}>
                     {isExpanded && (
                       <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-                        <div className="p-2 space-y-2">
-                          {locationBays.map(bay => {
-                            const bayKey = `${week}-${bay}`;
-                            const isBayExpanded = expandedBays.has(bayKey);
-                            // Count shipments for this bay
-                            const bayShipmentCount = daysList.reduce((sum, day) =>
+                        <div className="p-2 space-y-1">
+                          {daysList.map(day => {
+                            const dayKey = `sched-${week}-${day}`;
+                            const isDayExp = isDayExpandedSchedule(dayKey, isCurrentWk);
+                            const weekNum = parseInt(week.replace('Week ', ''));
+                            const dateObj = getDateForWeekDay(weekNum, day);
+                            const dateStr = toLocalDateString(dateObj);
+                            const displayDate = formatDateMMM_DD(dateStr);
+                            const isToday = isCurrentWk && day === currentDay;
+                            const shipmentCount = locationBays.reduce((sum, bay) =>
                               sum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0);
 
                             return (
-                              <div key={bay} className="border border-[#141414] overflow-hidden">
+                              <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
                                 <button
                                   onClick={() => {
-                                    const next = new Set(expandedBays);
-                                    if (next.has(bayKey)) next.delete(bayKey); else next.add(bayKey);
-                                    setExpandedBays(next);
+                                    const next = new Set(expandedDays);
+                                    if (isCurrentWk) {
+                                      const collapseKey = `collapse-sched-${dayKey}`;
+                                      if (next.has(collapseKey)) next.delete(collapseKey); else next.add(collapseKey);
+                                    } else {
+                                      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
+                                    }
+                                    setExpandedDays(next);
                                   }}
-                                  className="w-full px-2 py-1.5 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
+                                  className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
                                 >
                                   <div className="flex items-center gap-3">
-                                    <span className="text-[10px] font-black uppercase tracking-widest">{bay}</span>
-                                    {bayShipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{bayShipmentCount}</span>}
+                                    <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
+                                    <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
+                                    {shipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{shipmentCount}</span>}
                                   </div>
-                                  {isBayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                  {isDayExp ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                                 </button>
 
-                                {isBayExpanded && (
-                                  <div className="space-y-1 bg-white p-1">
-                                    {daysList.map(day => {
-                                      const dayKey = `${week}-${bay}-${day}`;
-                                      const isDayExpanded = expandedDays.has(dayKey);
-                                      const weekNum = parseInt(week.replace('Week ', ''));
-                                      const dateObj = getDateForWeekDay(weekNum, day);
-                                      const dateStr = toLocalDateString(dateObj);
-                                      const displayDate = formatDateMMM_DD(dateStr);
-                                      const isToday = isCurrentWk && day === currentDay;
-
-                                      const dayShipments = groupedData[week]?.[bay]?.[day] || {};
-                                      const allDayTimes = Object.keys(dayShipments).filter(t => dayShipments[t]?.length > 0);
-                                      const outsideRangeTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
-                                      const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
-
-                                      if (shipmentCount === 0 && !isToday) return null;
-
-                                      return (
-                                        <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
-                                          <button
-                                            onClick={() => {
-                                              const next = new Set(expandedDays);
-                                              if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
-                                              setExpandedDays(next);
-                                            }}
-                                            className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
-                                          >
-                                            <div className="flex items-center gap-3">
-                                              <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
-                                              <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
-                                              {shipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{shipmentCount}</span>}
-                                            </div>
-                                            {isDayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                                          </button>
-
-                                          {isDayExpanded && (
-                                            <div className="overflow-x-auto">
-                                              <table className="w-full text-left border-collapse" style={{ minWidth: '1200px' }}>
-                                                <thead>
-                                                  <tr className="bg-white text-[8px] uppercase font-bold border-b border-[#141414]/10">
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5 w-12">Time</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Customer</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Product</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">BOL</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">QTY (MT)</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Carrier</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Arrive</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
-                                                    <th className="px-1 py-0.5">Status</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody>
-                                                  {/* Out-of-range shipments (before schedule start) */}
-                                                  {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot =>
-                                                    dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px]">
-                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
-                                                        </td>
-                                                      </tr>
-                                                    ))
-                                                  )}
-                                                  {/* Standard time slots — only show slots with shipments */}
-                                                  {locationTimeSlots.map(slot => {
-                                                    const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
-                                                    if (shipments.length === 0) return null;
-                                                    return shipments.map(s => (
-                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px]">
-                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
-                                                        </td>
-                                                      </tr>
-                                                    ));
-                                                  })}
-                                                  {/* Out-of-range shipments (after schedule end) */}
-                                                  {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot =>
-                                                    dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px]">
-                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
-                                                        </td>
-                                                      </tr>
-                                                    ))
-                                                  )}
-                                                </tbody>
-                                              </table>
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
+                                {isDayExp && (
+                                  <div className="overflow-x-auto">
+                                    <table className="text-left border-collapse w-max">
+                                      <thead>
+                                        <tr className="bg-[#141414] text-[#E4E3E0] text-[7px] uppercase font-bold">
+                                          <th className="px-1 py-0.5 border-r border-[#E4E3E0]/20 whitespace-nowrap">Time</th>
+                                          {locationBays.map(bay => (
+                                            <th key={bay} colSpan={bayColumns.length} className="px-1 py-0.5 border-r border-[#E4E3E0]/20 text-center whitespace-nowrap">{bay}</th>
+                                          ))}
+                                        </tr>
+                                        <tr className="bg-[#F5F5F5] text-[7px] uppercase font-bold border-b border-[#141414]/10">
+                                          <th className="px-1 py-0.5 border-r border-[#141414]/10"></th>
+                                          {locationBays.map(bay => bayColumns.map(col => (
+                                            <th key={`${bay}-${col}`} className="px-1 py-0.5 border-r border-[#141414]/5 whitespace-nowrap">{col}</th>
+                                          )))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {locationTimeSlots.map(slot => {
+                                          return (
+                                            <tr key={slot} className="border-b border-[#141414]/5 hover:bg-[#F5F5F5] transition-colors">
+                                              <td className="px-1 py-0.5 text-[8px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap">{slot}</td>
+                                              {locationBays.map(bay => {
+                                                const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
+                                                const s = shipments[0];
+                                                if (!s) {
+                                                  return bayColumns.map((col, ci) => (
+                                                    <td key={`${bay}-${slot}-${ci}`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 opacity-15">—</td>
+                                                  ));
+                                                }
+                                                return [
+                                                  <td key={`${bay}-${slot}-cust`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-black whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
+                                                  <td key={`${bay}-${slot}-prod`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
+                                                  <td key={`${bay}-${slot}-bol`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-mono whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
+                                                  <td key={`${bay}-${slot}-qty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
+                                                  <td key={`${bay}-${slot}-car`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
+                                                  <td key={`${bay}-${slot}-stat`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{statusBadge(s.status)}</td>,
+                                                ];
+                                              })}
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
                                   </div>
                                 )}
                               </div>
