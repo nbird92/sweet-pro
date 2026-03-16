@@ -56,6 +56,7 @@ export default function App() {
     } catch { return new Set<string>(); }
   });
   const [isEditingSidebar, setIsEditingSidebar] = useState(false);
+  const [scheduleLocation, setScheduleLocation] = useState('Hamilton');
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
@@ -1144,6 +1145,7 @@ export default function App() {
   const navItems = [
     { name: 'Dashboard', icon: TrendingUp },
     { name: 'Customer Quote', icon: Calculator },
+    { name: 'Shipment Schedule', icon: Calendar },
     { name: 'Hamilton Shipments', icon: Calendar },
     { name: 'Vancouver Shipments', icon: Calendar },
     { name: 'Customers', icon: Users },
@@ -1301,6 +1303,284 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (activePage === 'Shipment Schedule') {
+      const locationName = scheduleLocation;
+      const locationShipments = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()))?.name.toLowerCase().includes('hamilton')
+        ? hamiltonShipments
+        : vancouverShipments;
+      const currentWeekNum = getWeekNumber(new Date().toISOString().split('T')[0]);
+      const currentWeek = `Week ${currentWeekNum}`;
+      const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
+
+      const locationObj = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
+      const locationBays = locationObj ? locationObj.bays : ['BAY 1', 'BAY 2'];
+      const locStartTime = locationObj?.appointmentStartTime || '06:00';
+      const locEndTime = locationObj?.appointmentEndTime || '18:00';
+      const locDuration = locationObj?.appointmentDuration || 30;
+      const locationTimeSlots = generateTimeSlots(locStartTime, locEndTime, locDuration);
+
+      const filteredShipments = locationShipments.filter(s => {
+        const matchesSearch = !searchTerm ||
+          (s.customer || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.product || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.bol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+          (s.carrier || '').toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesSearch;
+      });
+
+      // Group by Week -> Bay -> Day -> Time
+      const groupedData: { [week: string]: { [bay: string]: { [day: string]: { [time: string]: Shipment[] } } } } = {};
+      weeksList.forEach(w => {
+        groupedData[w] = {};
+        locationBays.forEach(b => {
+          groupedData[w][b] = {};
+          daysList.forEach(d => { groupedData[w][b][d] = {}; });
+        });
+      });
+      filteredShipments.forEach(s => {
+        if (groupedData[s.week]?.[s.bay]?.[s.day]) {
+          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [];
+          groupedData[s.week][s.bay][s.day][s.time].push(s);
+        }
+      });
+
+      const visibleWeeks = showPreviousWeeks
+        ? weeksList
+        : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
+
+      const isCurrentWeekExpanded = (week: string) => {
+        if (week === currentWeek) return !expandedRows.has(`collapse-${week}`);
+        return expandedRows.has(week);
+      };
+
+      return (
+        <div className="p-4 space-y-3">
+          <div className="flex justify-between items-center">
+            <div className="space-y-0.5">
+              <h2 className="text-xl font-bold uppercase tracking-tighter">Shipment Schedule</h2>
+              <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
+                <RefreshCw size={12} />
+                Last Updated: {new Date().toLocaleString()}
+              </div>
+            </div>
+            <div className="flex gap-2 items-center">
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
+                <select
+                  value={scheduleLocation}
+                  onChange={(e) => setScheduleLocation(e.target.value)}
+                  className="bg-white border border-[#141414] px-3 py-1.5 text-sm font-bold focus:outline-none"
+                >
+                  {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                </select>
+              </div>
+              <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-all">
+                {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
+              </button>
+            </div>
+          </div>
+
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by customer, product, BOL, or carrier..." />
+
+          <div className="space-y-2">
+            {visibleWeeks.map(week => {
+              const isCurrentWk = week === currentWeek;
+              const isExpanded = isCurrentWeekExpanded(week);
+              // Count total shipments in this week across all bays/days
+              const weekShipmentCount = locationBays.reduce((sum, bay) =>
+                sum + daysList.reduce((daySum, day) =>
+                  daySum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0), 0);
+
+              if (weekShipmentCount === 0 && !isCurrentWk) return null;
+
+              return (
+                <div key={week} className={`bg-white border-2 overflow-hidden ${isCurrentWk ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
+                  <button
+                    onClick={() => {
+                      const next = new Set(expandedRows);
+                      if (isCurrentWk) {
+                        const collapseKey = `collapse-${week}`;
+                        if (next.has(collapseKey)) next.delete(collapseKey); else next.add(collapseKey);
+                      } else {
+                        if (next.has(week)) next.delete(week); else next.add(week);
+                      }
+                      setExpandedRows(next);
+                    }}
+                    className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-all ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-bold uppercase tracking-widest">{week} {isCurrentWk ? '(CURRENT WEEK)' : ''}</span>
+                      {weekShipmentCount > 0 && <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-full">{weekShipmentCount} shipments</span>}
+                    </div>
+                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+
+                  <AnimatePresence initial={false}>
+                    {isExpanded && (
+                      <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                        <div className="p-2 space-y-2">
+                          {locationBays.map(bay => {
+                            const bayKey = `${week}-${bay}`;
+                            const isBayExpanded = expandedBays.has(bayKey);
+                            // Count shipments for this bay
+                            const bayShipmentCount = daysList.reduce((sum, day) =>
+                              sum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0);
+
+                            return (
+                              <div key={bay} className="border border-[#141414] overflow-hidden">
+                                <button
+                                  onClick={() => {
+                                    const next = new Set(expandedBays);
+                                    if (next.has(bayKey)) next.delete(bayKey); else next.add(bayKey);
+                                    setExpandedBays(next);
+                                  }}
+                                  className="w-full px-2 py-1.5 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-[10px] font-black uppercase tracking-widest">{bay}</span>
+                                    {bayShipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{bayShipmentCount}</span>}
+                                  </div>
+                                  {isBayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                </button>
+
+                                {isBayExpanded && (
+                                  <div className="space-y-1 bg-white p-1">
+                                    {daysList.map(day => {
+                                      const dayKey = `${week}-${bay}-${day}`;
+                                      const isDayExpanded = expandedDays.has(dayKey);
+                                      const weekNum = parseInt(week.replace('Week ', ''));
+                                      const dateObj = getDateForWeekDay(weekNum, day);
+                                      const dateStr = toLocalDateString(dateObj);
+                                      const displayDate = formatDateMMM_DD(dateStr);
+                                      const isToday = isCurrentWk && day === currentDay;
+
+                                      const dayShipments = groupedData[week]?.[bay]?.[day] || {};
+                                      const allDayTimes = Object.keys(dayShipments).filter(t => dayShipments[t]?.length > 0);
+                                      const outsideRangeTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
+                                      const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
+
+                                      if (shipmentCount === 0 && !isToday) return null;
+
+                                      return (
+                                        <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
+                                          <button
+                                            onClick={() => {
+                                              const next = new Set(expandedDays);
+                                              if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
+                                              setExpandedDays(next);
+                                            }}
+                                            className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
+                                          >
+                                            <div className="flex items-center gap-3">
+                                              <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
+                                              <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
+                                              {shipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{shipmentCount}</span>}
+                                            </div>
+                                            {isDayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                          </button>
+
+                                          {isDayExpanded && (
+                                            <div className="overflow-x-auto">
+                                              <table className="w-full text-left border-collapse" style={{ minWidth: '1200px' }}>
+                                                <thead>
+                                                  <tr className="bg-white text-[8px] uppercase font-bold border-b border-[#141414]/10">
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5 w-12">Time</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Customer</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Product</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">BOL</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">QTY (MT)</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Carrier</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Arrive</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
+                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
+                                                    <th className="px-1 py-0.5">Status</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {/* Out-of-range shipments (before schedule start) */}
+                                                  {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot =>
+                                                    dayShipments[slot]?.map(s => (
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px]">
+                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
+                                                        </td>
+                                                      </tr>
+                                                    ))
+                                                  )}
+                                                  {/* Standard time slots — only show slots with shipments */}
+                                                  {locationTimeSlots.map(slot => {
+                                                    const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
+                                                    if (shipments.length === 0) return null;
+                                                    return shipments.map(s => (
+                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px]">
+                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
+                                                        </td>
+                                                      </tr>
+                                                    ));
+                                                  })}
+                                                  {/* Out-of-range shipments (after schedule end) */}
+                                                  {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot =>
+                                                    dayShipments[slot]?.map(s => (
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-1 py-0.5 text-[9px]">
+                                                          <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('pending') ? 'bg-amber-100 text-amber-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : (s.status || '').toLowerCase().includes('cancelled') ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-700'}`}>{s.status}</span>
+                                                        </td>
+                                                      </tr>
+                                                    ))
+                                                  )}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
           </div>
         </div>
       );
