@@ -650,14 +650,18 @@ export default function App() {
   const getWeekNumber = (dateStr: string) => {
     const [y, m, d] = dateStr.split('-').map(Number);
     const date = new Date(y, m - 1, d);
-    const firstMonday = new Date(y, 0, 1);
-    const dayOfWeek = firstMonday.getDay();
-    const diff = (dayOfWeek <= 4 ? 1 - dayOfWeek : 8 - dayOfWeek);
-    firstMonday.setDate(firstMonday.getDate() + diff);
-    
-    if (date < firstMonday) return 1;
-    const diffDays = Math.floor((date.getTime() - firstMonday.getTime()) / (1000 * 60 * 60 * 24));
-    return Math.floor(diffDays / 7) + 1;
+    // ISO 8601 week number: week 1 is the week containing the first Thursday of the year
+    const target = new Date(date.valueOf());
+    // Set to nearest Thursday: current date + 4 - current day number (Mon=1, Sun=7)
+    const dayNum = (date.getDay() + 6) % 7; // Mon=0, Sun=6
+    target.setDate(target.getDate() - dayNum + 3);
+    // January 4th is always in week 1
+    const jan4 = new Date(target.getFullYear(), 0, 4);
+    const jan4DayNum = (jan4.getDay() + 6) % 7;
+    const week1Monday = new Date(jan4.valueOf());
+    week1Monday.setDate(jan4.getDate() - jan4DayNum);
+    const diffMs = target.getTime() - week1Monday.getTime();
+    return 1 + Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
   };
 
   const toLocalDateString = (date: Date) => {
@@ -3536,12 +3540,12 @@ export default function App() {
       {/* Login Modal */}
       <AnimatePresence>
         {!user && !authLoading && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Sign In Required</h3>
@@ -3570,12 +3574,12 @@ export default function App() {
       {/* Add / Edit Carrier Modal */}
       <AnimatePresence>
         {editingCarrier && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">{isAddingCarrier ? 'Add Carrier' : 'Edit Carrier'}</h3>
@@ -3678,12 +3682,12 @@ export default function App() {
           const confirmCustomer = customers.find(c => c.name === customer);
           const totalValue = calculations.finalMt * config.volumeMt;
           return (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
                 <AlertCircle size={20} className="text-amber-400" />
@@ -3823,22 +3827,8 @@ export default function App() {
             window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}${cc}&su=${su}&body=${bo}`, '_blank');
             setShowEmailQuote(false);
           };
-          const openInOutlook = () => {
-            const body = buildEmailBody();
-            const to = encodeURIComponent(emailTo);
-            const su = encodeURIComponent(emailSubject);
-            const bo = encodeURIComponent(body);
-            window.open(`https://outlook.office.com/mail/deeplink/compose?to=${to}&subject=${su}&body=${bo}`, '_blank');
-            setShowEmailQuote(false);
-          };
-          const openMailto = () => {
-            const body = buildEmailBody();
-            const cc = emailCc ? `&cc=${encodeURIComponent(emailCc)}` : '';
-            window.location.href = `mailto:${emailTo}?subject=${encodeURIComponent(emailSubject)}${cc}&body=${encodeURIComponent(body)}`;
-            setShowEmailQuote(false);
-          };
           return (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3932,47 +3922,29 @@ export default function App() {
               </div>
 
               {/* Actions */}
-              <div className="p-4 border-t border-[#141414]/10 space-y-3">
-                <div className="flex gap-3">
-                  <button
-                    onClick={openInGmail}
-                    disabled={!emailTo}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <Send size={14} /> Open in Gmail
-                  </button>
-                  <button
-                    onClick={openInOutlook}
-                    disabled={!emailTo}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <Send size={14} /> Open in Outlook
-                  </button>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={openMailto}
-                    disabled={!emailTo}
-                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                  >
-                    <Mail size={14} /> Default Email App
-                  </button>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(buildEmailBody());
-                      alert('Email body copied to clipboard!');
-                    }}
-                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Copy Body
-                  </button>
-                  <button
-                    onClick={() => setShowEmailQuote(false)}
-                    className="flex-1 py-2 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
+              <div className="p-4 border-t border-[#141414]/10 flex gap-3">
+                <button
+                  onClick={openInGmail}
+                  disabled={!emailTo}
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Send size={14} /> Send via Gmail
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(buildEmailBody());
+                    alert('Email body copied to clipboard!');
+                  }}
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                >
+                  Copy Body
+                </button>
+                <button
+                  onClick={() => setShowEmailQuote(false)}
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                >
+                  Cancel
+                </button>
               </div>
             </motion.div>
           </div>
@@ -4404,12 +4376,12 @@ export default function App() {
         )}
 
         {isAddingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add Freight Rate</h3>
@@ -4509,12 +4481,12 @@ export default function App() {
         )}
 
         {editingContract && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Contract: {editingContract.contractNumber}</h3>
@@ -4615,12 +4587,12 @@ export default function App() {
         )}
 
         {editingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Freight Rate</h3>
@@ -4719,12 +4691,12 @@ export default function App() {
         )}
 
         {isAddingCustomer && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add New Customer</h3>
@@ -4917,12 +4889,12 @@ export default function App() {
         )}
 
         {isAddingProductGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add Product Group</h3>
@@ -4982,12 +4954,12 @@ export default function App() {
         )}
 
         {editingProductGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Product Group</h3>
@@ -5045,12 +5017,12 @@ export default function App() {
         )}
 
         {isAddingSku && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add New Product</h3>
@@ -5194,12 +5166,12 @@ export default function App() {
         )}
 
         {editingCustomer && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.id}</h3>
@@ -5385,12 +5357,12 @@ export default function App() {
         )}
 
         {editingSku && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Product: {editingSku.id}</h3>
@@ -5525,12 +5497,12 @@ export default function App() {
         )}
 
         {isAddingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add New Freight Rate</h3>
@@ -5630,12 +5602,12 @@ export default function App() {
         )}
 
         {editingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Freight Rate: {editingFreightRate.id}</h3>
@@ -5734,12 +5706,12 @@ export default function App() {
         )}
 
         {isAddingSupplyChain && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add Supply Chain Component</h3>
@@ -5812,12 +5784,12 @@ export default function App() {
         )}
 
         {editingSupplyChain && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Supply Chain Component: {editingSupplyChain.id}</h3>
@@ -5890,7 +5862,7 @@ export default function App() {
       </AnimatePresence>
 
         {skuToConfirm && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md">
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -5949,7 +5921,7 @@ export default function App() {
         )}
 
         {errorBox && (
-          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-[#141414]/20 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-[#141414]/20 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -5976,7 +5948,7 @@ export default function App() {
 
         {/* Contract Invoice Popup - Free Standing */}
         {contractInvoicePopup && (
-          <div className="fixed inset-0 z-[700] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm" onClick={() => setContractInvoicePopup(null)}>
+          <div className="fixed inset-0 z-[700] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractInvoicePopup(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -6724,12 +6696,12 @@ export default function App() {
 
         {/* Order Confirmation Dialog */}
         {showOrderConfirmation && pendingStatusChange && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
                 <AlertCircle size={20} className="text-amber-400" />
@@ -7178,7 +7150,7 @@ export default function App() {
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}
-            className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+            className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
           >
             <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest">Appointment Schedule — {editingAppointmentSchedule.name}</h3>
@@ -7303,7 +7275,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">New Transfer</h3>
@@ -7402,7 +7374,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Transfer — {editingTransfer.transferNumber}</h3>

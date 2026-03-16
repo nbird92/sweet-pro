@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "dev:vite": "vite --port 3007",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
