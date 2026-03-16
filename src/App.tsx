@@ -35,7 +35,9 @@ import {
   Clock,
   Eye,
   EyeOff,
-  Settings
+  Settings,
+  Mail,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -250,6 +252,11 @@ export default function App() {
     }
   }, [user]);
   const [showContractConfirm, setShowContractConfirm] = useState(false);
+  const [showEmailQuote, setShowEmailQuote] = useState(false);
+  const [emailIncludeMargin, setEmailIncludeMargin] = useState(false);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailCc, setEmailCc] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
@@ -521,6 +528,8 @@ export default function App() {
     exportDutyUsdMt: 361.30,
     origin: 'Hamilton',
     destination: 'Toronto',
+    freightType: '',
+    useManualFreight: false,
     contractStartDate: new Date().toISOString().split('T')[0],
     contractEndDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     isPalletCharge: false,
@@ -833,6 +842,9 @@ export default function App() {
       defaultMargin: 250,
       contactEmail: '',
       contactPhone: '',
+      qaContractEmail: '',
+      salesContactEmail: '',
+      customerServiceEmail: '',
       notes: ''
     });
     setIsAddingCustomer(true);
@@ -930,9 +942,14 @@ export default function App() {
     const mtToCwt = 22.0462;
     const fx = config.fxRate || 1;
     
-    // Lookup freight cost based on origin/destination
-    const matchedRate = freightRates.find(r => r.origin === config.origin && r.destination === config.destination);
+    // Lookup freight cost based on origin/destination/freightType
+    const matchedRate = config.useManualFreight ? null : freightRates.find(r =>
+      r.origin === config.origin &&
+      r.destination === config.destination &&
+      (config.freightType ? r.freightType === config.freightType : true)
+    );
     const freightCost = matchedRate ? matchedRate.cost : config.freightCostTotalCad;
+    const matchedVolume = matchedRate ? matchedRate.mtPerLoad : config.volumePerLoadMt;
 
     // Base calculations in their native currencies first
     const rawUsdMt = config.rawPriceUsdCwt * mtToCwt;
@@ -1728,6 +1745,36 @@ export default function App() {
                                       onChange={(e) => updateCustomer(c.id, 'contactPhone', e.target.value)}
                                       className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
                                       placeholder="+1 (555) 000-0000"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">QA Contract Email</label>
+                                    <input
+                                      type="email"
+                                      value={c.qaContractEmail || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'qaContractEmail', e.target.value)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                      placeholder="qa@customer.com"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">Sales Contact Email</label>
+                                    <input
+                                      type="email"
+                                      value={c.salesContactEmail || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'salesContactEmail', e.target.value)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                      placeholder="sales@customer.com"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
+                                    <input
+                                      type="email"
+                                      value={c.customerServiceEmail || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'customerServiceEmail', e.target.value)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                      placeholder="service@customer.com"
                                     />
                                   </div>
                                 </div>
@@ -3121,20 +3168,54 @@ export default function App() {
                 <div className="space-y-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Destination</label>
-                    <select 
-                      value={config.destination} 
+                    <select
+                      value={config.destination}
                       onChange={(e) => setConfig(prev => ({ ...prev, destination: e.target.value }))}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                     >
                       <option value="">Select Destination</option>
-                      {freightRates.filter(r => r.origin === config.origin).map(r => (
-                        <option key={r.id} value={r.destination}>{r.destination}</option>
+                      {[...new Set(freightRates.filter(r => r.origin === config.origin).map(r => r.destination))].map(dest => (
+                        <option key={dest} value={dest}>{dest}</option>
                       ))}
                     </select>
                   </div>
-                  <InputField label="Total Freight Cost (CAD)" value={calculations.freightCost} onChange={(v) => handleInputChange('freightCostTotalCad', v)} />
-                  <InputField label="Volume per Load (MT)" value={config.volumePerLoadMt} onChange={(v) => handleInputChange('volumePerLoadMt', v)} />
-                  <InputField label="Delivered Freight per MT (CAD)" value={calculations.deliveredFreight} onChange={(v) => handleInputChange('deliveredFreightCadMt', v)} />
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Freight Type</label>
+                    <select
+                      value={config.freightType}
+                      onChange={(e) => {
+                        const ft = e.target.value as CommodityConfig['freightType'];
+                        setConfig(prev => {
+                          const next = { ...prev, freightType: ft, useManualFreight: false };
+                          const matched = freightRates.find(r => r.origin === prev.origin && r.destination === prev.destination && (ft ? r.freightType === ft : true));
+                          if (matched) {
+                            next.freightCostTotalCad = matched.cost;
+                            next.volumePerLoadMt = matched.mtPerLoad;
+                            if (matched.mtPerLoad > 0) {
+                              next.deliveredFreightCadMt = Math.round((matched.cost / matched.mtPerLoad) * 100) / 100;
+                            }
+                          }
+                          return next;
+                        });
+                      }}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                    >
+                      <option value="">All Types</option>
+                      {[...new Set(freightRates.filter(r => r.origin === config.origin && r.destination === config.destination).map(r => r.freightType))].map(ft => (
+                        <option key={ft} value={ft}>{ft}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" checked={config.useManualFreight} onChange={() => setConfig(prev => ({ ...prev, useManualFreight: !prev.useManualFreight }))} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                    </label>
+                    <span className="text-[10px] uppercase font-bold opacity-60">Manual Freight Entry</span>
+                  </div>
+                  <InputField label="Total Freight Cost (CAD)" value={calculations.freightCost} onChange={(v) => handleInputChange('freightCostTotalCad', v)} disabled={!config.useManualFreight} />
+                  <InputField label="Volume per Load (MT)" value={config.volumePerLoadMt} onChange={(v) => handleInputChange('volumePerLoadMt', v)} disabled={!config.useManualFreight} />
+                  <InputField label="Delivered Freight per MT (CAD)" value={calculations.deliveredFreight} onChange={(v) => handleInputChange('deliveredFreightCadMt', v)} disabled={!config.useManualFreight} />
                 </div>
               </motion.section>
             )}
@@ -3388,6 +3469,17 @@ export default function App() {
           <div className="flex gap-2">
             {activePage === 'Customer Quote' && (
               <>
+                <button onClick={() => {
+                  const selectedCust = customers.find(c => c.name === customer);
+                  setEmailTo(selectedCust?.salesContactEmail || selectedCust?.contactEmail || '');
+                  setEmailCc('');
+                  const sku = skus.find(s => s.id === selectedSkuId) || skus[0];
+                  setEmailSubject(`Quote - ${customer} - ${sku.name} - ${config.volumeMt} MT`);
+                  setEmailIncludeMargin(false);
+                  setShowEmailQuote(true);
+                }} className="px-4 py-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors text-xs font-bold flex items-center gap-2">
+                  <Mail size={14} /> EMAIL QUOTE
+                </button>
                 <button onClick={() => setShowContractConfirm(true)} className="px-4 py-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors text-xs font-bold flex items-center gap-2">
                   <FileText size={14} /> CREATE CONTRACT
                 </button>
@@ -3542,13 +3634,17 @@ export default function App() {
 
       {/* Modals */}
       <AnimatePresence>
-        {showContractConfirm && (
+        {showContractConfirm && (() => {
+          const confirmSku = skus.find(s => s.id === selectedSkuId) || skus[0];
+          const confirmCustomer = customers.find(c => c.name === customer);
+          const totalValue = calculations.finalMt * config.volumeMt;
+          return (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
                 <AlertCircle size={20} className="text-amber-400" />
@@ -3556,27 +3652,58 @@ export default function App() {
               </div>
               <div className="p-6 space-y-4">
                 <p className="text-sm leading-relaxed">
-                  Are you sure you want to create a new contract for <span className="font-bold underline">{customer}</span>? 
+                  Are you sure you want to create a new contract for <span className="font-bold underline">{customer}</span>?
                   This will finalize the current quote parameters into a binding contract record.
                 </p>
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-2">
-                  <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
-                    <span>Volume</span>
-                    <span>Price</span>
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Summary</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">Customer</div>
+                    <div className="font-bold text-right">{customer}</div>
+                    {confirmCustomer?.customerNumber && <>
+                      <div className="opacity-60">Customer #</div>
+                      <div className="font-bold text-right">{confirmCustomer.customerNumber}</div>
+                    </>}
+                    <div className="opacity-60">Product (SKU)</div>
+                    <div className="font-bold text-right">{confirmSku.name}</div>
+                    <div className="opacity-60">Origin</div>
+                    <div className="font-bold text-right">{config.origin}</div>
+                    {config.isDelivered && <>
+                      <div className="opacity-60">Destination</div>
+                      <div className="font-bold text-right">{config.destination}</div>
+                      {config.freightType && <>
+                        <div className="opacity-60">Freight Type</div>
+                        <div className="font-bold text-right">{config.freightType}</div>
+                      </>}
+                      <div className="opacity-60">Delivered Freight</div>
+                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.deliveredFreight.toFixed(2)}/MT</div>
+                    </>}
+                    <div className="opacity-60">Currency</div>
+                    <div className="font-bold text-right">{config.currency}</div>
+                    <div className="opacity-60">Contract Volume</div>
+                    <div className="font-bold text-right">{config.volumeMt} MT</div>
+                    <div className="opacity-60">Start Date</div>
+                    <div className="font-bold text-right">{config.contractStartDate || 'N/A'}</div>
+                    <div className="opacity-60">End Date</div>
+                    <div className="font-bold text-right">{config.contractEndDate || 'N/A'}</div>
                   </div>
-                  <div className="flex justify-between text-sm font-black">
-                    <span>{config.volumeMt} MT</span>
-                    <span>{config.currency} ${calculations.finalMt.toFixed(2)}/MT</span>
+                  <div className="border-t border-[#141414]/10 pt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">Final Price</div>
+                    <div className="font-black text-right text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</div>
+                    <div className="opacity-60">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</div>
+                    <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</div>
+                    <div className="opacity-60">Total Contract Value</div>
+                    <div className="font-bold text-right">{calculations.currencySymbol} ${totalValue.toFixed(2)}</div>
                   </div>
                 </div>
                 <div className="flex gap-4">
-                  <button 
+                  <button
                     onClick={createContract}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
                   >
                     <CheckCircle2 size={16} /> Confirm & Create
                   </button>
-                  <button 
+                  <button
                     onClick={() => setShowContractConfirm(false)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -3586,7 +3713,186 @@ export default function App() {
               </div>
             </motion.div>
           </div>
-        )}
+          );
+        })()}
+
+        {showEmailQuote && (() => {
+          const emailSku = skus.find(s => s.id === selectedSkuId) || skus[0];
+          const emailCustomer = customers.find(c => c.name === customer);
+          const cs = calculations.currencySymbol;
+          const buildEmailBody = () => {
+            let lines: string[] = [];
+            lines.push(`Dear ${customer},`);
+            lines.push('');
+            lines.push('Please find below the pricing details for your review:');
+            lines.push('');
+            lines.push('─────────────────────────────────────');
+            lines.push('QUOTE SUMMARY');
+            lines.push('─────────────────────────────────────');
+            lines.push(`Product: ${emailSku.name}`);
+            lines.push(`Origin: ${config.origin}`);
+            if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
+            lines.push(`Volume: ${config.volumeMt} MT`);
+            lines.push(`Currency: ${config.currency}`);
+            if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
+            lines.push('');
+            lines.push('─────────────────────────────────────');
+            lines.push('COST BREAKDOWN');
+            lines.push('─────────────────────────────────────');
+            lines.push(`Raw Sugar (USD/MT): $${calculations.rawMtUsd.toFixed(2)}`);
+            lines.push(`Ocean Freight (USD/MT): $${calculations.oceanFreightUsd.toFixed(2)}`);
+            lines.push(`Total USD: $${calculations.totalUsd.toFixed(2)}`);
+            lines.push(`Yield Multiplier: ${calculations.yieldLoss.toFixed(2)}x`);
+            lines.push(`Total Cost of Raws (${cs}/MT): $${calculations.totalCostOfRawsCad.toFixed(2)}`);
+            if (emailIncludeMargin) {
+              lines.push(`Margin (${cs}/MT): $${calculations.marginCadMt.toFixed(2)}`);
+            }
+            lines.push(`FCA ${config.origin} Bulk (${cs}/MT): $${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}`);
+            if (config.origin === 'Vancouver') {
+              lines.push(`Supply Chain Costs (${cs}/MT): $${calculations.vancouverSupplyChainCost.toFixed(2)}`);
+            }
+            lines.push(`Differential (${cs}/MT): $${calculations.differential.toFixed(2)}`);
+            if (config.isDelivered) {
+              lines.push(`Delivered Freight (${cs}/MT): $${calculations.deliveredFreight.toFixed(2)}`);
+            }
+            if (config.isExport) {
+              lines.push(`Export Duty (${cs}/MT): $${calculations.exportDuty.toFixed(2)}`);
+            }
+            if (config.isPalletCharge) {
+              lines.push(`Pallet Charge (${cs}/MT): $${calculations.palletCharge.toFixed(2)}`);
+            }
+            lines.push('');
+            lines.push('─────────────────────────────────────');
+            lines.push('FINAL PRICING');
+            lines.push('─────────────────────────────────────');
+            lines.push(`Final Price: ${cs} $${calculations.finalMt.toFixed(2)}/MT`);
+            lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
+            lines.push(`Total Quote Value: ${cs} $${calculations.totalQuoteValue.toFixed(2)}`);
+            lines.push('');
+            lines.push('Please let us know if you have any questions or would like to proceed.');
+            lines.push('');
+            lines.push('Best regards,');
+            lines.push('Sweet Pro Trading');
+            return lines.join('\n');
+          };
+          return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] flex flex-col"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Mail size={16} /> Email Quote</h3>
+                <button onClick={() => setShowEmailQuote(false)} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                {/* Include Margin Toggle */}
+                <div className="flex items-center gap-3 pb-3 border-b border-[#141414]/10">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={emailIncludeMargin} onChange={() => setEmailIncludeMargin(!emailIncludeMargin)} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                  </label>
+                  <span className="text-[10px] uppercase font-bold opacity-60">Include Margin</span>
+                </div>
+
+                {/* Email Fields */}
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">To</label>
+                    <input
+                      type="email"
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="recipient@example.com"
+                    />
+                    {emailCustomer && (emailCustomer.qaContractEmail || emailCustomer.salesContactEmail || emailCustomer.customerServiceEmail) && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {emailCustomer.qaContractEmail && (
+                          <button onClick={() => setEmailTo(emailCustomer.qaContractEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                            QA: {emailCustomer.qaContractEmail}
+                          </button>
+                        )}
+                        {emailCustomer.salesContactEmail && (
+                          <button onClick={() => setEmailTo(emailCustomer.salesContactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                            Sales: {emailCustomer.salesContactEmail}
+                          </button>
+                        )}
+                        {emailCustomer.customerServiceEmail && (
+                          <button onClick={() => setEmailTo(emailCustomer.customerServiceEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                            CS: {emailCustomer.customerServiceEmail}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">CC</label>
+                    <input
+                      type="email"
+                      value={emailCc}
+                      onChange={(e) => setEmailCc(e.target.value)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="cc@example.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Subject</label>
+                    <input
+                      type="text"
+                      value={emailSubject}
+                      onChange={(e) => setEmailSubject(e.target.value)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Email Body Preview */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Email Body Preview</label>
+                  <div className="bg-white border border-[#141414] p-4 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-[300px] overflow-y-auto">
+                    {buildEmailBody()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="p-4 border-t border-[#141414]/10 flex gap-4">
+                <button
+                  onClick={() => {
+                    const body = encodeURIComponent(buildEmailBody());
+                    const subject = encodeURIComponent(emailSubject);
+                    const cc = emailCc ? `&cc=${encodeURIComponent(emailCc)}` : '';
+                    window.open(`mailto:${encodeURIComponent(emailTo)}?subject=${subject}${cc}&body=${body}`, '_blank');
+                    setShowEmailQuote(false);
+                  }}
+                  disabled={!emailTo}
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Send size={14} /> Send Email
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(buildEmailBody());
+                    alert('Email body copied to clipboard!');
+                  }}
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                >
+                  Copy Body
+                </button>
+                <button
+                  onClick={() => setShowEmailQuote(false)}
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </div>
+          );
+        })()}
 
         {isAddingBatchShipment && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
@@ -4076,8 +4382,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={newFreightRate.cost} 
+                      type="text" inputMode="decimal"
+                      value={newFreightRate.cost || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, cost: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -4085,8 +4392,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
                     <input 
-                      type="number" 
-                      value={newFreightRate.mtPerLoad} 
+                      type="text" inputMode="decimal"
+                      value={newFreightRate.mtPerLoad || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -4152,18 +4460,20 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT)</label>
                     <input 
-                      type="number" 
-                      value={editingContract.contractVolume} 
-                      onChange={(e) => setEditingContract({ ...editingContract, contractVolume: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingContract.contractVolume || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingContract({ ...editingContract, contractVolume: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Final Price</label>
                     <input 
-                      type="number" 
-                      value={editingContract.finalPrice} 
-                      onChange={(e) => setEditingContract({ ...editingContract, finalPrice: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingContract.finalPrice || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingContract({ ...editingContract, finalPrice: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -4283,8 +4593,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={editingFreightRate.cost} 
+                      type="text" inputMode="decimal"
+                      value={editingFreightRate.cost || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, cost: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -4292,8 +4603,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
                     <input 
-                      type="number" 
-                      value={editingFreightRate.mtPerLoad} 
+                      type="text" inputMode="decimal"
+                      value={editingFreightRate.mtPerLoad || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -4401,9 +4713,10 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
                     <input
-                      type="number"
-                      value={newCustomer.defaultMargin}
-                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newCustomer.defaultMargin || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewCustomer({ ...newCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -4439,33 +4752,63 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
-                    <input 
-                      type="email" 
-                      value={newCustomer.contactEmail || ''} 
+                    <input
+                      type="email"
+                      value={newCustomer.contactEmail || ''}
                       onChange={(e) => setNewCustomer({ ...newCustomer, contactEmail: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Phone</label>
-                    <input 
-                      type="text" 
-                      value={newCustomer.contactPhone || ''} 
+                    <input
+                      type="text"
+                      value={newCustomer.contactPhone || ''}
                       onChange={(e) => setNewCustomer({ ...newCustomer, contactPhone: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">QA Contract Email</label>
+                    <input
+                      type="email"
+                      value={newCustomer.qaContractEmail || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, qaContractEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="qa@customer.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Sales Contact Email</label>
+                    <input
+                      type="email"
+                      value={newCustomer.salesContactEmail || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, salesContactEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="sales@customer.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
+                    <input
+                      type="email"
+                      value={newCustomer.customerServiceEmail || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, customerServiceEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="service@customer.com"
                     />
                   </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
-                  <textarea 
-                    value={newCustomer.notes || ''} 
+                  <textarea
+                    value={newCustomer.notes || ''}
                     onChange={(e) => setNewCustomer({ ...newCustomer, notes: e.target.value })}
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-32 resize-none focus:bg-white transition-colors outline-none"
                   />
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setCustomers([...customers, newCustomer]);
                       setIsAddingCustomer(false);
@@ -4687,45 +5030,50 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
                     <input 
-                      type="number" 
-                      value={newSku.netWeightKg || ''} 
-                      onChange={(e) => setNewSku({ ...newSku, netWeightKg: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSku.netWeightKg || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSku({ ...newSku, netWeightKg: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
                     <input 
-                      type="number" 
-                      value={newSku.grossWeightKg || ''} 
-                      onChange={(e) => setNewSku({ ...newSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSku.grossWeightKg || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSku({ ...newSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
                     <input 
-                      type="number" 
-                      value={newSku.brix} 
-                      onChange={(e) => setNewSku({ ...newSku, brix: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSku.brix || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSku({ ...newSku, brix: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
                     <input 
-                      type="number" 
-                      value={newSku.maxColor} 
-                      onChange={(e) => setNewSku({ ...newSku, maxColor: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSku.maxColor || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSku({ ...newSku, maxColor: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
                     <input 
-                      type="number" 
-                      value={newSku.premiumCadMt} 
-                      onChange={(e) => setNewSku({ ...newSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSku.premiumCadMt || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSku({ ...newSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -4835,9 +5183,10 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
                     <input
-                      type="number"
-                      value={editingCustomer.defaultMargin}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingCustomer.defaultMargin || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -4889,17 +5238,47 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">QA Contract Email</label>
+                    <input
+                      type="email"
+                      value={editingCustomer.qaContractEmail || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, qaContractEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="qa@customer.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Sales Contact Email</label>
+                    <input
+                      type="email"
+                      value={editingCustomer.salesContactEmail || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, salesContactEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="sales@customer.com"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
+                    <input
+                      type="email"
+                      value={editingCustomer.customerServiceEmail || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, customerServiceEmail: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="service@customer.com"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
-                  <textarea 
-                    value={editingCustomer.notes || ''} 
+                  <textarea
+                    value={editingCustomer.notes || ''}
                     onChange={(e) => setEditingCustomer({ ...editingCustomer, notes: e.target.value })}
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-32 resize-none focus:bg-white transition-colors outline-none"
                   />
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
                       setEditingCustomer(null);
@@ -4982,45 +5361,50 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
                     <input 
-                      type="number" 
-                      value={editingSku.netWeightKg || ''} 
-                      onChange={(e) => setEditingSku({ ...editingSku, netWeightKg: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSku.netWeightKg || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSku({ ...editingSku, netWeightKg: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
                     <input 
-                      type="number" 
-                      value={editingSku.grossWeightKg || ''} 
-                      onChange={(e) => setEditingSku({ ...editingSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSku.grossWeightKg || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSku({ ...editingSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
                     <input 
-                      type="number" 
-                      value={editingSku.brix} 
-                      onChange={(e) => setEditingSku({ ...editingSku, brix: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSku.brix || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSku({ ...editingSku, brix: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
                     <input 
-                      type="number" 
-                      value={editingSku.maxColor} 
-                      onChange={(e) => setEditingSku({ ...editingSku, maxColor: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSku.maxColor || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSku({ ...editingSku, maxColor: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
                     <input 
-                      type="number" 
-                      value={editingSku.premiumCadMt} 
-                      onChange={(e) => setEditingSku({ ...editingSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSku.premiumCadMt || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSku({ ...editingSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -5105,8 +5489,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={newFreightRate.cost} 
+                      type="text" inputMode="decimal"
+                      value={newFreightRate.cost || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, cost: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -5128,8 +5513,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT per Load</label>
                     <input 
-                      type="number" 
-                      value={newFreightRate.mtPerLoad} 
+                      type="text" inputMode="decimal"
+                      value={newFreightRate.mtPerLoad || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -5208,8 +5594,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={editingFreightRate.cost} 
+                      type="text" inputMode="decimal"
+                      value={editingFreightRate.cost || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, cost: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -5231,8 +5618,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT per Load</label>
                     <input 
-                      type="number" 
-                      value={editingFreightRate.mtPerLoad} 
+                      type="text" inputMode="decimal"
+                      value={editingFreightRate.mtPerLoad || ''}
+                      onFocus={(e) => e.target.select()}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -5297,18 +5685,20 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Total Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={newSupplyChain.totalCostCad} 
-                      onChange={(e) => setNewSupplyChain({ ...newSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSupplyChain.totalCostCad || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSupplyChain({ ...newSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
                     <input 
-                      type="number" 
-                      value={newSupplyChain.weightPerLoadMt} 
-                      onChange={(e) => setNewSupplyChain({ ...newSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={newSupplyChain.weightPerLoadMt || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setNewSupplyChain({ ...newSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -5373,18 +5763,20 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Total Cost (CAD)</label>
                     <input 
-                      type="number" 
-                      value={editingSupplyChain.totalCostCad} 
-                      onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSupplyChain.totalCostCad || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
                     <input 
-                      type="number" 
-                      value={editingSupplyChain.weightPerLoadMt} 
-                      onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
+                      type="text" inputMode="decimal"
+                        value={editingSupplyChain.weightPerLoadMt || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -5669,9 +6061,10 @@ export default function App() {
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">QTY (units)</label>
                       <input
-                        type="number"
-                        value={newLineItem.qty}
-                        onChange={(e) => setNewLineItem({...newLineItem, qty: parseFloat(e.target.value) || 0})}
+                        type="text" inputMode="decimal"
+                          value={newLineItem.qty || ""}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNewLineItem({...newLineItem, qty: parseFloat(e.target.value) || 0})}
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       />
                     </div>
@@ -6083,8 +6476,9 @@ export default function App() {
                                     </td>
                                     <td className="p-2">
                                       <input
-                                        type="number"
-                                        value={entry.qty}
+                                        type="text" inputMode="decimal"
+                                        value={entry.qty || ''}
+                                        onFocus={(e) => e.target.select()}
                                         onChange={(e) => {
                                           const next = [...batchOrder.entries];
                                           next[idx].qty = parseFloat(e.target.value) || 0;
@@ -6876,7 +7270,7 @@ export default function App() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                      <input name="amount" type="number" step="0.01" defaultValue={22} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                      <input name="amount" type="text" inputMode="decimal" defaultValue="22" onFocus={(e) => e.target.select()} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -6954,7 +7348,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                    <input type="number" step="0.01" value={editingTransfer.amount} onChange={(e) => setEditingTransfer({...editingTransfer, amount: parseFloat(e.target.value) || 0})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    <input type="text" inputMode="decimal" value={editingTransfer.amount || ""} onFocus={(e) => e.target.select()} onChange={(e) => setEditingTransfer({...editingTransfer, amount: parseFloat(e.target.value) || 0})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -7062,19 +7456,53 @@ function SortableHeader({ label, sortKey, currentSort, onSort }: { label: string
   );
 }
 
-function InputField({ label, value, onChange, step = "0.01" }: { label: string, value: number, onChange: (v: string) => void, step?: string }) {
+function InputField({ label, value, onChange, step = "0.01", disabled = false }: { label: string, value: number, onChange: (v: string) => void, step?: string, disabled?: boolean }) {
   const isCurrency = label.includes('CAD') || label.includes('USD');
-  const displayValue = isCurrency ? Number(value ?? 0).toFixed(2) : (value ?? '');
+  const [isFocused, setIsFocused] = useState(false);
+  const [localValue, setLocalValue] = useState('');
+
+  const formattedValue = isCurrency ? Number(value ?? 0).toFixed(2) : String(value ?? 0);
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(true);
+    // On focus, show the raw number without trailing zeros so the user can edit naturally
+    const raw = Number(value ?? 0);
+    const display = raw === 0 ? '' : String(raw);
+    setLocalValue(display);
+    // Select all text for easy replacement
+    setTimeout(() => e.target.select(), 0);
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    // Commit the value on blur
+    onChange(localValue || '0');
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    // Allow empty, digits, decimal point, and minus sign
+    if (v === '' || v === '-' || v === '.' || /^-?\d*\.?\d*$/.test(v)) {
+      setLocalValue(v);
+      // Live update parent so calculations reflect in real time
+      if (v !== '' && v !== '-' && v !== '.') {
+        onChange(v);
+      }
+    }
+  };
 
   return (
     <div className="space-y-1">
       <label className="text-[10px] uppercase font-bold opacity-60">{label}</label>
-      <input 
-        type="number" 
-        step={step}
-        value={displayValue}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+      <input
+        type="text"
+        inputMode="decimal"
+        value={isFocused ? localValue : formattedValue}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onChange={handleChange}
+        disabled={disabled}
+        className={`w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       />
     </div>
   );

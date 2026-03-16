@@ -14,6 +14,8 @@ export interface CommodityConfig {
   exportDutyUsdMt: number;
   origin: 'Hamilton' | 'Vancouver';
   destination: string;
+  freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal' | '';
+  useManualFreight: boolean;
   contractStartDate?: string;
   contractEndDate?: string;
   isPalletCharge: boolean;
@@ -38,6 +40,7 @@ export interface SKU {
 export interface Customer {
   id: string;
   name: string;
+  customerNumber?: string;
   defaultLocation: 'Hamilton' | 'Vancouver';
   address?: string;
   city?: string;
@@ -46,6 +49,9 @@ export interface Customer {
   defaultMargin: number;
   contactEmail?: string;
   contactPhone?: string;
+  qaContractEmail?: string;
+  salesContactEmail?: string;
+  customerServiceEmail?: string;
   notes?: string;
   salespersonId?: string;
   defaultCarrierCode?: string;
