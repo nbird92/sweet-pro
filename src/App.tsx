@@ -82,7 +82,7 @@ export default function App() {
     customer: '',
     product: '',
     contractNumber: '',
-    entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
+    entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: 'Customer Pick Up', amount: 0 }]
   });
 
   // New Order Modal State
@@ -90,7 +90,7 @@ export default function App() {
   const [orderPO, setOrderPO] = useState('');
   const [orderShipmentDate, setOrderShipmentDate] = useState('');
   const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
-  const [orderCarrier, setOrderCarrier] = useState('');
+  const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -626,11 +626,13 @@ export default function App() {
     return generateTimeSlots(start, end, duration);
   }, [locations, generateTimeSlots]);
 
-  // Full time slots for creation modal — uses the location's settings with its interval
+  // Time slots for creation modal — aligned with the location's schedule settings
   const getLocationAllTimeSlots = useCallback((locationName: string) => {
     const loc = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
+    const start = loc?.appointmentStartTime || '06:00';
+    const end = loc?.appointmentEndTime || '18:00';
     const duration = loc?.appointmentDuration || 30;
-    return generateTimeSlots('00:00', '23:30', duration);
+    return generateTimeSlots(start, end, duration);
   }, [locations, generateTimeSlots]);
 
   const [skuToConfirm, setSkuToConfirm] = useState<SKU | null>(null);
@@ -1886,9 +1888,25 @@ export default function App() {
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.shipmentDate}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.arrivalDate}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">
-                      <span className="px-2 py-1 rounded-full text-[10px] font-bold uppercase" style={{ backgroundColor: getStatusColor(t.status).bg, color: getStatusColor(t.status).text }}>
-                        {t.status}
-                      </span>
+                      <select
+                        value={t.status}
+                        onChange={(e) => {
+                          const newStatus = e.target.value;
+                          setTransfers(transfers.map(tr => tr.id === t.id ? { ...tr, status: newStatus } : tr));
+                        }}
+                        className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
+                          t.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                          t.status === 'In Transit' ? 'bg-blue-100 text-blue-700' :
+                          t.status === 'Pending' ? 'bg-amber-100 text-amber-700' :
+                          t.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                          'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="In Transit">In Transit</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
                     </td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">
                       {transferShipment ? (
@@ -6022,7 +6040,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier(''); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -6313,7 +6331,7 @@ export default function App() {
                       setOrderPO('');
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
-                      setOrderCarrier('');
+                      setOrderCarrier('Customer Pick Up');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -6328,7 +6346,7 @@ export default function App() {
                       setOrderPO('');
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
-                      setOrderCarrier('');
+                      setOrderCarrier('Customer Pick Up');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -6381,7 +6399,7 @@ export default function App() {
                             onChange={(e) => {
                               const custName = e.target.value;
                               const selectedCust = customers.find(c => c.name === custName);
-                              let defaultCarrierName = '';
+                              let defaultCarrierName = 'Customer Pick Up';
                               if (selectedCust?.defaultCarrierCode) {
                                 const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
                                 if (dc) defaultCarrierName = dc.name;
@@ -6389,7 +6407,7 @@ export default function App() {
                               // Auto-fill carrier on all existing entries
                               const updatedEntries = batchOrder.entries.map(entry => ({
                                 ...entry,
-                                carrier: entry.carrier || defaultCarrierName
+                                carrier: defaultCarrierName
                               }));
                               setBatchOrder({...batchOrder, customer: custName, contractNumber: '', entries: updatedEntries});
                             }}
@@ -6459,7 +6477,7 @@ export default function App() {
                             onClick={() => {
                               // Auto-fill carrier from customer default if available
                               const selectedCust = customers.find(c => c.name === batchOrder.customer);
-                              let defaultCarrierName = '';
+                              let defaultCarrierName = 'Customer Pick Up';
                               if (selectedCust?.defaultCarrierCode) {
                                 const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
                                 if (dc) defaultCarrierName = dc.name;
@@ -6678,7 +6696,7 @@ export default function App() {
                               customer: '',
                               product: '',
                               contractNumber: '',
-                              entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: '', amount: 0 }]
+                              entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: 'Customer Pick Up', amount: 0 }]
                             });
                           }}
                           className="px-6 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
