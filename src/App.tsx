@@ -728,27 +728,35 @@ export default function App() {
   };
 
   const generateBOLNumber = (lineItems: OrderLineItem[]): string => {
-    // Determine prefix based on product groups in line items
-    const productGroups = lineItems.map(item => {
+    // Determine prefix based on bolCode from product groups
+    const itemGroups = lineItems.map(item => {
       const product = skus.find(s => s.name === item.productName);
       return product?.productGroup || 'Other';
     });
 
-    const uniqueGroups = new Set(productGroups);
-    const prefix =
-      uniqueGroups.size === 1 && uniqueGroups.has('Liquid') ? 'L' :
-      uniqueGroups.size === 1 && uniqueGroups.has('Bulk') ? 'B' :
-      'P'; // Mixed or Other
+    const uniqueGroups = new Set(itemGroups);
+    let prefix = 'P'; // Default for mixed or unknown
+    if (uniqueGroups.size === 1) {
+      const groupName = [...uniqueGroups][0];
+      const pg = productGroups.find(g => g.name === groupName);
+      if (pg?.bolCode) prefix = pg.bolCode;
+    }
 
-    // Find highest existing BOL with same prefix and extract counter
-    const currentYear = new Date().getFullYear();
+    // Find highest existing BOL with same prefix and extract 6-digit counter
     const samePrefixBOLs = orders
       .map(o => o.bolNumber)
-      .filter(bol => bol?.startsWith(prefix + '-' + currentYear + '-'))
+      .filter(bol => bol?.startsWith(prefix) && /^[A-Z]\d{6}$/.test(bol))
+      .map(bol => parseInt(bol.slice(1)) || 0);
+
+    // Also check legacy format (PREFIX-YEAR-COUNTER)
+    const legacyBOLs = orders
+      .map(o => o.bolNumber)
+      .filter(bol => bol?.startsWith(prefix + '-'))
       .map(bol => parseInt(bol.split('-')[2]) || 0);
 
-    const nextCounter = (Math.max(...samePrefixBOLs, 0) + 1).toString().padStart(3, '0');
-    return `${prefix}-${currentYear}-${nextCounter}`;
+    const maxCounter = Math.max(...samePrefixBOLs, ...legacyBOLs, 0);
+    const nextCounter = (maxCounter + 1).toString().padStart(6, '0');
+    return `${prefix}${nextCounter}`;
   };
 
   const updateShipmentStatus = (id: string, status: string) => {
@@ -854,7 +862,8 @@ export default function App() {
   const [newProductGroup, setNewProductGroup] = useState<ProductGroup>({
     id: '',
     name: '',
-    color: '#E4E3E0'
+    color: '#E4E3E0',
+    bolCode: ''
   });
   const [newFreightRate, setNewFreightRate] = useState<FreightRate>({
     id: '',
@@ -2649,6 +2658,7 @@ export default function App() {
                     <thead>
                       <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
                         <th className="p-4 border-r border-[#141414]/10">Group Name</th>
+                        <th className="p-4 border-r border-[#141414]/10">BOL Code</th>
                         <th className="p-4 border-r border-[#141414]/10">Color Coding</th>
                         <th className="p-4">Actions</th>
                       </tr>
@@ -2657,6 +2667,7 @@ export default function App() {
                       {filteredProductGroups.map(pg => (
                         <tr key={pg.id} className="hover:bg-[#F9F9F9] transition-colors">
                           <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pg.name}</td>
+                          <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{pg.bolCode || '—'}</td>
                           <td className="p-4 text-xs border-r border-[#141414]/10">
                             <div className="flex items-center gap-2">
                               <div className="w-4 h-4 border border-[#141414]/20" style={{ backgroundColor: pg.color }} />
@@ -5266,38 +5277,50 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
-                  <input 
-                    type="text" 
-                    value={newProductGroup.name} 
+                  <input
+                    type="text"
+                    value={newProductGroup.name}
                     onChange={(e) => setNewProductGroup({ ...newProductGroup, name: e.target.value })}
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-bold"
                     placeholder="e.g., Bulk, Bagged, Liquid"
                   />
                 </div>
                 <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">BOL Code</label>
+                  <input
+                    type="text"
+                    value={newProductGroup.bolCode}
+                    onChange={(e) => setNewProductGroup({ ...newProductGroup, bolCode: e.target.value.toUpperCase().slice(0, 1) })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono font-bold uppercase"
+                    placeholder="e.g., B, L, P, T"
+                    maxLength={1}
+                  />
+                  <p className="text-[9px] opacity-40">Single letter prefix for BOL numbers (e.g., B for Bulk, L for Liquid)</p>
+                </div>
+                <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Color Coding</label>
                   <div className="flex gap-2 items-center">
-                    <input 
-                      type="color" 
-                      value={newProductGroup.color} 
+                    <input
+                      type="color"
+                      value={newProductGroup.color}
                       onChange={(e) => setNewProductGroup({ ...newProductGroup, color: e.target.value })}
                       className="w-12 h-12 border border-[#141414] cursor-pointer"
                     />
-                    <input 
-                      type="text" 
-                      value={newProductGroup.color} 
+                    <input
+                      type="text"
+                      value={newProductGroup.color}
                       onChange={(e) => setNewProductGroup({ ...newProductGroup, color: e.target.value })}
                       className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setProductGroups([...productGroups, newProductGroup]);
                       setIsAddingProductGroup(false);
                     }}
-                    disabled={!newProductGroup.name}
+                    disabled={!newProductGroup.name || !newProductGroup.bolCode}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
                   >
                     Add Group
@@ -5331,32 +5354,44 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
-                  <input 
-                    type="text" 
-                    value={editingProductGroup.name} 
+                  <input
+                    type="text"
+                    value={editingProductGroup.name}
                     onChange={(e) => setEditingProductGroup({ ...editingProductGroup, name: e.target.value })}
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-bold"
                   />
                 </div>
                 <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">BOL Code</label>
+                  <input
+                    type="text"
+                    value={editingProductGroup.bolCode || ''}
+                    onChange={(e) => setEditingProductGroup({ ...editingProductGroup, bolCode: e.target.value.toUpperCase().slice(0, 1) })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono font-bold uppercase"
+                    placeholder="e.g., B, L, P, T"
+                    maxLength={1}
+                  />
+                  <p className="text-[9px] opacity-40">Single letter prefix for BOL numbers (e.g., B for Bulk, L for Liquid)</p>
+                </div>
+                <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Color Coding</label>
                   <div className="flex gap-2 items-center">
-                    <input 
-                      type="color" 
-                      value={editingProductGroup.color} 
+                    <input
+                      type="color"
+                      value={editingProductGroup.color}
                       onChange={(e) => setEditingProductGroup({ ...editingProductGroup, color: e.target.value })}
                       className="w-12 h-12 border border-[#141414] cursor-pointer"
                     />
-                    <input 
-                      type="text" 
-                      value={editingProductGroup.color} 
+                    <input
+                      type="text"
+                      value={editingProductGroup.color}
                       onChange={(e) => setEditingProductGroup({ ...editingProductGroup, color: e.target.value })}
                       className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setProductGroups(productGroups.map(pg => pg.id === editingProductGroup.id ? editingProductGroup : pg));
                       setEditingProductGroup(null);
@@ -7020,19 +7055,27 @@ export default function App() {
                                 mtAmount: mtRate,
                                 lineAmount: entryAmount
                               };
-                              // Determine BOL prefix from product group
+                              // Determine BOL prefix from product group's bolCode
                               const prodInfo = skus.find(s => s.name === lineItem.productName);
                               const prodGroup = prodInfo?.productGroup || 'Other';
-                              const bolPrefix = prodGroup === 'Liquid' ? 'L' : prodGroup === 'Bulk' ? 'B' : 'P';
-                              const currentYear = new Date().getFullYear();
+                              const pg = productGroups.find(g => g.name === prodGroup);
+                              const bolPrefix = pg?.bolCode || 'P';
                               // Combine existing BOLs with already-generated ones in this batch
                               const allBOLs = [
                                 ...orders.map(o => o.bolNumber),
                                 ...generatedBOLs
-                              ].filter(bol => bol?.startsWith(bolPrefix + '-' + currentYear + '-'))
-                               .map(bol => parseInt(bol.split('-')[2]) || 0);
-                              const nextCounter = (Math.max(...allBOLs, 0) + 1).toString().padStart(3, '0');
-                              const bolNumber = `${bolPrefix}-${currentYear}-${nextCounter}`;
+                              ];
+                              // Check new format (PREFIX + 6 digits)
+                              const newFormatBOLs = allBOLs
+                                .filter(bol => bol?.startsWith(bolPrefix) && /^[A-Z]\d{6}$/.test(bol))
+                                .map(bol => parseInt(bol.slice(1)) || 0);
+                              // Check legacy format (PREFIX-YEAR-COUNTER)
+                              const legacyBOLs = allBOLs
+                                .filter(bol => bol?.startsWith(bolPrefix + '-'))
+                                .map(bol => parseInt(bol.split('-')[2]) || 0);
+                              const maxCounter = Math.max(...newFormatBOLs, ...legacyBOLs, 0);
+                              const nextCounter = (maxCounter + 1).toString().padStart(6, '0');
+                              const bolNumber = `${bolPrefix}${nextCounter}`;
                               generatedBOLs.push(bolNumber);
 
                               return {

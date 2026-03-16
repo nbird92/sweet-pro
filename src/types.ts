@@ -72,13 +72,14 @@ export interface ProductGroup {
   id: string;
   name: string;
   color: string;
+  bolCode: string;
 }
 
 export const INITIAL_PRODUCT_GROUPS: ProductGroup[] = [
-  { id: 'PG-001', name: 'Bulk', color: '#E4E3E0' },
-  { id: 'PG-002', name: 'Bagged', color: '#F5F5F5' },
-  { id: 'PG-003', name: 'Tote', color: '#F9F9F9' },
-  { id: 'PG-004', name: 'Liquid', color: '#FFFFFF' },
+  { id: 'PG-001', name: 'Bulk', color: '#E4E3E0', bolCode: 'B' },
+  { id: 'PG-002', name: 'Bagged', color: '#F5F5F5', bolCode: 'P' },
+  { id: 'PG-003', name: 'Tote', color: '#F9F9F9', bolCode: 'T' },
+  { id: 'PG-004', name: 'Liquid', color: '#FFFFFF', bolCode: 'L' },
 ];
 
 export const INITIAL_SKUS: SKU[] = [
