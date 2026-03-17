@@ -824,6 +824,7 @@ export default function App() {
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingFreightRate, setEditingFreightRate] = useState<FreightRate | null>(null);
   const [editingContract, setEditingContract] = useState<Contract | null>(null);
+  const [selectedContractDetail, setSelectedContractDetail] = useState<Contract | null>(null);
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [isAddingSku, setIsAddingSku] = useState(false);
   const [isAddingFreightRate, setIsAddingFreightRate] = useState(false);
@@ -986,7 +987,13 @@ export default function App() {
       destination: config.destination,
       finalPrice: calculations.finalMt,
       currency: config.currency,
-      notes: `Generated from quote tool for ${customer}`
+      notes: `Generated from quote tool for ${customer}`,
+      shippingTerms: config.shippingTerms || '',
+      fxRate: config.fxRate,
+      rawPriceUsdMt: calculations.rawMtUsd,
+      deliveredFreight: calculations.deliveredFreight,
+      exportDuty: calculations.exportDuty,
+      palletCharge: calculations.palletCharge
     };
 
     setContracts([...contracts, newContract]);
@@ -3178,6 +3185,8 @@ export default function App() {
                   <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="FX Rate" sortKey="fxRate" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="#11 Raw (USD/MT)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
@@ -3190,10 +3199,12 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]">
                 {filteredContracts.map(c => (
                   <React.Fragment key={c.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors group">
+                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setSelectedContractDetail(c)}>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(4) || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${c.rawPriceUsdMt.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume}</td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                         <button
@@ -3208,13 +3219,13 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
                       <td className="p-3 text-xs flex items-center gap-2">
-                        <button onClick={() => toggleRow(c.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
-                        <button onClick={() => setEditingContract(c)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); setEditingContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={() => deleteContract(c.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); deleteContract(c.id); }} className="p-1 hover:bg-red-500 hover:text-white transition-all">
                           <Trash2 size={14} />
                         </button>
                       </td>
@@ -3222,7 +3233,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={9} className="p-0">
+                          <td colSpan={12} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -3244,7 +3255,23 @@ export default function App() {
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Final Price</label>
-                                  <div className="text-xs font-bold text-indigo-600">{c.currency} ${c.finalPrice.toFixed(2)}</div>
+                                  <div className="text-xs font-bold text-indigo-600">{c.currency} ${c.finalPrice.toFixed(2)}/MT</div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
+                                  <div className="text-xs font-bold">{c.deliveredFreight ? `$${c.deliveredFreight.toFixed(2)}/MT` : '—'}</div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-bold opacity-50">Export Duty</label>
+                                  <div className="text-xs font-bold">{c.exportDuty ? `$${c.exportDuty.toFixed(2)}/MT` : '—'}</div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-bold opacity-50">Pallet Charge</label>
+                                  <div className="text-xs font-bold">{c.palletCharge ? `$${c.palletCharge.toFixed(2)}/MT` : '—'}</div>
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] uppercase font-bold opacity-50">FX Rate</label>
+                                  <div className="text-xs font-bold">{c.fxRate?.toFixed(4) || '—'}</div>
                                 </div>
                                 <div className="col-span-4 space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
@@ -4870,69 +4897,90 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contract Number</label>
-                    <input 
-                      type="text" 
-                      value={editingContract.contractNumber} 
+                    <input
+                      type="text"
+                      value={editingContract.contractNumber}
                       onChange={(e) => setEditingContract({ ...editingContract, contractNumber: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer Name</label>
-                    <input 
-                      type="text" 
-                      value={editingContract.customerName} 
-                      onChange={(e) => setEditingContract({ ...editingContract, customerName: e.target.value })}
+                    <select
+                      value={editingContract.customerName}
+                      onChange={(e) => {
+                        const selectedCust = customers.find(c => c.name === e.target.value);
+                        setEditingContract({
+                          ...editingContract,
+                          customerName: e.target.value,
+                          customerNumber: selectedCust?.id || editingContract.customerNumber
+                        });
+                      }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select Customer</option>
+                      {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT) <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <input
+                      type="text"
+                      value={editingContract.contractVolume || ""}
+                      disabled
+                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingContract.contractVolume || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingContract({ ...editingContract, contractVolume: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    <label className="text-[10px] uppercase font-bold opacity-50">Final Price <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <input
+                      type="text"
+                      value={editingContract.finalPrice || ""}
+                      disabled
+                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Final Price</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingContract.finalPrice || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingContract({ ...editingContract, finalPrice: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <input
+                      type="date"
+                      value={editingContract.startDate}
+                      disabled
+                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date</label>
-                    <input 
-                      type="date" 
-                      value={editingContract.startDate} 
-                      onChange={(e) => setEditingContract({ ...editingContract, startDate: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">End Date</label>
-                    <input 
-                      type="date" 
-                      value={editingContract.endDate} 
-                      onChange={(e) => setEditingContract({ ...editingContract, endDate: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    <label className="text-[10px] uppercase font-bold opacity-50">End Date <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <input
+                      type="date"
+                      value={editingContract.endDate}
+                      disabled
+                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
-                    <select 
-                      value={editingContract.origin || 'Hamilton'} 
+                    <select
+                      value={editingContract.origin || 'Hamilton'}
                       onChange={(e) => setEditingContract({ ...editingContract, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="Hamilton">Hamilton</option>
                       <option value="Vancouver">Vancouver</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Shipping Terms</label>
+                    <select
+                      value={editingContract.shippingTerms || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, shippingTerms: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select Terms</option>
+                      <option value="FOB">FOB</option>
+                      <option value="DAP">DAP</option>
+                      <option value="DDP">DDP</option>
+                      <option value="FCA">FCA</option>
                     </select>
                   </div>
                 </div>
@@ -4958,9 +5006,132 @@ export default function App() {
           </div>
         )}
 
+        {selectedContractDetail && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setSelectedContractDetail(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Contract Detail: {selectedContractDetail.contractNumber}</h3>
+                <button onClick={() => setSelectedContractDetail(null)} className="hover:rotate-90 transition-transform">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {/* Contract Information */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Information</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">Contract Number</div>
+                    <div className="font-bold text-right">{selectedContractDetail.contractNumber}</div>
+                    <div className="opacity-60">Customer</div>
+                    <div className="font-bold text-right">{selectedContractDetail.customerName}</div>
+                    <div className="opacity-60">Customer #</div>
+                    <div className="font-bold text-right">{selectedContractDetail.customerNumber}</div>
+                    <div className="opacity-60">Start Date</div>
+                    <div className="font-bold text-right">{selectedContractDetail.startDate}</div>
+                    <div className="opacity-60">End Date</div>
+                    <div className="font-bold text-right">{selectedContractDetail.endDate}</div>
+                    <div className="opacity-60">Shipping Terms</div>
+                    <div className="font-bold text-right">{selectedContractDetail.shippingTerms || '—'}</div>
+                    <div className="opacity-60">Currency</div>
+                    <div className="font-bold text-right">{selectedContractDetail.currency}</div>
+                  </div>
+                </div>
+
+                {/* Product */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">SKU</div>
+                    <div className="font-bold text-right">{selectedContractDetail.skuName}</div>
+                    <div className="opacity-60">Origin</div>
+                    <div className="font-bold text-right">{selectedContractDetail.origin}</div>
+                    <div className="opacity-60">Destination</div>
+                    <div className="font-bold text-right">{selectedContractDetail.destination || '—'}</div>
+                  </div>
+                </div>
+
+                {/* Volume */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Volume</div>
+                  <div className="grid grid-cols-3 gap-4 text-xs text-center">
+                    <div>
+                      <div className="opacity-60 mb-1">Total</div>
+                      <div className="font-black text-lg">{selectedContractDetail.contractVolume} <span className="text-[10px] font-bold opacity-50">MT</span></div>
+                    </div>
+                    <div>
+                      <div className="opacity-60 mb-1">Taken</div>
+                      <div className="font-black text-lg">{selectedContractDetail.volumeTaken || 0} <span className="text-[10px] font-bold opacity-50">MT</span></div>
+                    </div>
+                    <div>
+                      <div className="opacity-60 mb-1">Outstanding</div>
+                      <div className="font-black text-lg">{selectedContractDetail.volumeOutstanding || selectedContractDetail.contractVolume} <span className="text-[10px] font-bold opacity-50">MT</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pricing Breakdown */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pricing Breakdown</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">FX Rate (USD/CAD)</div>
+                    <div className="font-bold text-right">{selectedContractDetail.fxRate?.toFixed(4) || '—'}</div>
+                    <div className="opacity-60">Raw #11 (USD/MT)</div>
+                    <div className="font-bold text-right">{selectedContractDetail.rawPriceUsdMt ? `$${selectedContractDetail.rawPriceUsdMt.toFixed(2)}` : '—'}</div>
+                    <div className="opacity-60">Delivered Freight</div>
+                    <div className="font-bold text-right">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</div>
+                    <div className="opacity-60">Export Duty</div>
+                    <div className="font-bold text-right">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</div>
+                    <div className="opacity-60">Pallet Charge</div>
+                    <div className="font-bold text-right">{selectedContractDetail.palletCharge ? `$${selectedContractDetail.palletCharge.toFixed(2)}/MT` : '—'}</div>
+                  </div>
+                  <div className="border-t border-[#141414]/10 pt-3 grid grid-cols-2 gap-x-6 text-xs">
+                    <div className="opacity-60">Final Price</div>
+                    <div className="font-black text-right text-base text-indigo-600">{selectedContractDetail.currency} ${selectedContractDetail.finalPrice.toFixed(2)}/MT</div>
+                    <div className="opacity-60">Total Contract Value</div>
+                    <div className="font-bold text-right">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice * selectedContractDetail.contractVolume).toFixed(2)}</div>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                {selectedContractDetail.notes && (
+                  <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-2">
+                    <div className="text-[10px] uppercase font-bold opacity-50">Notes</div>
+                    <div className="text-xs italic">{selectedContractDetail.notes}</div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => {
+                      setEditingContract(selectedContractDetail);
+                      setSelectedContractDetail(null);
+                    }}
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit2 size={16} /> Edit Contract
+                  </button>
+                  <button
+                    onClick={() => setSelectedContractDetail(null)}
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {editingFreightRate && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}

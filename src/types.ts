@@ -137,6 +137,11 @@ export interface Contract {
   currency: string;
   notes?: string;
   shippingTerms?: string;
+  fxRate?: number;
+  rawPriceUsdMt?: number;
+  deliveredFreight?: number;
+  exportDuty?: number;
+  palletCharge?: number;
 }
 
 export interface Shipment {
