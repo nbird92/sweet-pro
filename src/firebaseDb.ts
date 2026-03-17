@@ -24,7 +24,7 @@ export const COLLECTIONS = {
   invoices: 'invoices',
   productGroups: 'productGroups',
   orders: 'orders',
-  marketData: 'marketData',
+  marketData: 'MarketData',
   conferences: 'conferences',
   people: 'people',
 } as const;

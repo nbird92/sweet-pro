@@ -479,10 +479,10 @@ export default function App() {
         setPeople(data.people);
         lastSyncedData.current.people = JSON.stringify(data.people);
       }
-      if (data.marketData?.length) {
-        setMarketData(data.marketData);
+      if (data.MarketData?.length) {
+        setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
-        const months = Array.from(new Set(data.marketData.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
+        const months = Array.from(new Set(data.MarketData.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
         if (months.length > 0) {
           setConfig(prev => {
             const isIsoDate = (val: string | undefined) => val && /^\d{4}-\d{2}-\d{2}$/.test(val);
