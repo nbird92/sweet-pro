@@ -599,8 +599,13 @@ export default function App() {
     if (range.length === 0) return;
 
     const firstRow = marketData[0];
-    const rawKey = Object.keys(firstRow).find(k => k.toLowerCase().includes('raw sugar') || k.toLowerCase().includes('#11'));
-    const fxKey = Object.keys(firstRow).find(k => k.toLowerCase().includes('fx') || k.toLowerCase().includes('cad'));
+    const monthKeyCalc = Object.keys(firstRow).find(k => k.toLowerCase() === 'month') || Object.keys(firstRow).find(k => k.toLowerCase() === 'date');
+    const nonSystemKeys = Object.keys(firstRow).filter(k => k !== 'id' && k !== '__name__' && k !== monthKeyCalc);
+    let rawKey = Object.keys(firstRow).find(k => k.toLowerCase().includes('raw sugar') || k.toLowerCase().includes('#11') || k.toLowerCase().includes('raw') || k.toLowerCase().includes('raws'));
+    let fxKey = Object.keys(firstRow).find(k => k.toLowerCase().includes('fx') || k.toLowerCase().includes('cad') || k.toLowerCase().includes('exchange'));
+    // Fallback: use remaining non-month keys
+    if (!rawKey && nonSystemKeys.length >= 1) rawKey = nonSystemKeys[0];
+    if (!fxKey && nonSystemKeys.length >= 2) fxKey = nonSystemKeys[1];
 
     if (rawKey && fxKey) {
       const avgRaw = range.reduce((acc, curr) => {
@@ -3307,9 +3312,44 @@ export default function App() {
         return null;
       };
       const sampleRow = marketData.length > 0 ? marketData[0] : null;
+      const allKeys = sampleRow ? Object.keys(sampleRow).filter(k => k !== 'id' && k !== '__name__') : [];
       const monthKey = sampleRow ? resolveKey(sampleRow, 'Month', 'month', 'date', 'Date', 'period') : null;
-      const rawsKey = sampleRow ? resolveKey(sampleRow, '#11 Raws', '#11', 'raws', 'Raw Sugar', 'rawSugar', 'raw_sugar', 'price') : null;
-      const fxKey = sampleRow ? resolveKey(sampleRow, 'FX', 'fx', 'fxRate', 'CAD', 'usdcad', 'exchange') : null;
+      let rawsKey = sampleRow ? resolveKey(sampleRow, '#11 Raws', '#11 Raw', '#11', 'raws', 'raw', 'Raw Sugar', 'rawSugar', 'raw_sugar', 'price', 'No11', 'no11', 'Raws', 'Raw') : null;
+      let fxKey = sampleRow ? resolveKey(sampleRow, 'FX', 'Fx', 'fx', 'fxRate', 'FX Rate', 'CAD', 'USDCAD', 'usdcad', 'exchange', 'Exchange Rate', 'exchangeRate') : null;
+
+      // Fallback: if we found month but not raws/fx, use remaining non-month keys
+      if (monthKey && (!rawsKey || !fxKey)) {
+        const remainingKeys = allKeys.filter(k => k !== monthKey);
+        if (!rawsKey && remainingKeys.length >= 1) {
+          // First remaining key is likely raws (the #11 value)
+          rawsKey = remainingKeys[0];
+        }
+        if (!fxKey && remainingKeys.length >= 2) {
+          // Second remaining key is likely FX
+          fxKey = remainingKeys[1];
+        }
+      }
+
+      // Sort market data chronologically by month
+      const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const sortedMarketData = [...marketData].sort((a, b) => {
+        const aMonth = monthKey ? String(a[monthKey] || '') : '';
+        const bMonth = monthKey ? String(b[monthKey] || '') : '';
+        // Parse "Mon YYYY" format (e.g., "Jul 2026")
+        const parseMonth = (s: string) => {
+          const parts = s.split(/\s+/);
+          if (parts.length >= 2) {
+            const mIdx = monthOrder.findIndex(m => s.toLowerCase().startsWith(m.toLowerCase()));
+            const year = parseInt(parts[parts.length - 1]) || 0;
+            return year * 12 + (mIdx >= 0 ? mIdx : 0);
+          }
+          // Try parsing as a date
+          const d = new Date(s);
+          if (!isNaN(d.getTime())) return d.getFullYear() * 12 + d.getMonth();
+          return 0;
+        };
+        return parseMonth(aMonth) - parseMonth(bMonth);
+      });
 
       return (
         <div className="p-6 space-y-4">
@@ -3343,7 +3383,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
-                  {marketData.length > 0 ? marketData.map((row, idx) => {
+                  {sortedMarketData.length > 0 ? sortedMarketData.map((row, idx) => {
                     const month = monthKey ? row[monthKey] : '-';
                     const raws = rawsKey ? row[rawsKey] : '-';
                     const fx = fxKey ? row[fxKey] : '-';
