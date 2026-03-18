@@ -85,6 +85,9 @@ export default function QualityAssurancePage({
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [approvalRecipientId, setApprovalRecipientId] = useState('');
 
+  // Delete confirmation
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   // File input refs
   const packagingFileRef = useRef<HTMLInputElement>(null);
   const artworkFileRef = useRef<HTMLInputElement>(null);
@@ -349,10 +352,15 @@ export default function QualityAssurancePage({
             <tbody className="divide-y divide-[#141414]/10">
               {sorted.length > 0 ? sorted.map((p) => {
                 const pg = productGroups.find(g => g.name === p.productGroup);
+                // Row color based on approval status
+                const hasApprovals = p.artworkApprovals.length > 0;
+                const allApproved = hasApprovals && p.artworkApprovals.every(a => a.status === 'approved');
+                const somePending = hasApprovals && p.artworkApprovals.some(a => a.status === 'pending');
+                const rowBg = allApproved ? 'bg-green-50' : somePending ? 'bg-amber-50' : '';
                 return (
                   <tr
                     key={p.id}
-                    className="hover:bg-[#F9F9F9] transition-colors cursor-pointer group"
+                    className={`${rowBg} hover:bg-opacity-70 transition-colors cursor-pointer group`}
                     style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}
                     onClick={() => openDetail(p)}
                   >
@@ -373,7 +381,7 @@ export default function QualityAssurancePage({
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.grossWeightKg ?? '-'}</td>
                     <td className="p-4">
                       <button
-                        onClick={(e) => { e.stopPropagation(); onDeleteQAProduct(p.id); }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(p.id); }}
                         className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <Trash2 size={14} />
@@ -824,6 +832,44 @@ export default function QualityAssurancePage({
                   </button>
                   <button
                     onClick={() => setShowApprovalModal(false)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteConfirmId(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Delete</h3>
+                <button onClick={() => setDeleteConfirmId(null)} className="hover:rotate-90 transition-transform"><X size={20} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to remove this product from Quality Assurance tracking?</p>
+                <p className="text-xs opacity-50">This will delete all QA data (specifications, approvals, uploaded images) for this product.</p>
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => { onDeleteQAProduct(deleteConfirmId); setDeleteConfirmId(null); }}
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setDeleteConfirmId(null)}
                     className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
                   >
                     Cancel
