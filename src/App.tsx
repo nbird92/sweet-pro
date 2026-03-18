@@ -1271,7 +1271,7 @@ export default function App() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Weekly Totals Table */}
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals</h3>
               </div>
@@ -1301,7 +1301,7 @@ export default function App() {
             </div>
 
             {/* Volume by Customer */}
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Volume by Customer (MT)</h3>
               </div>
@@ -1985,7 +1985,7 @@ export default function App() {
             placeholder="Search customers by name, default location or ID..." 
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -2161,7 +2161,7 @@ export default function App() {
             placeholder="Search transfers by number, origin, destination, carrier, lot code..."
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -2299,7 +2299,7 @@ export default function App() {
             placeholder="Search invoices by BOL, Customer, PO, Product..." 
           />
           
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -2402,7 +2402,7 @@ export default function App() {
             placeholder="Search orders by BOL, customer, product, PO or carrier..."
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -2668,7 +2668,7 @@ export default function App() {
           </div>
 
           {/* Product Groups Table */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest">Product Groups</h3>
               <button onClick={() => toggleRow('pg-table')} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
@@ -2726,7 +2726,7 @@ export default function App() {
             placeholder="Search products by name, group, location or ID..." 
           />
           
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -2881,7 +2881,7 @@ export default function App() {
           </div>
 
           {/* Locations Table */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
               <button 
@@ -3032,7 +3032,7 @@ export default function App() {
           </div>
           
           <div className="space-y-4">
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Vancouver Supply Chain</h3>
                 <button 
@@ -3101,7 +3101,7 @@ export default function App() {
                 <Plus size={12} /> Add Carrier
               </button>
             </div>
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
@@ -3158,7 +3158,7 @@ export default function App() {
               placeholder="Search freight rates by origin, destination, provider or type..." 
             />
 
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
@@ -3214,7 +3214,7 @@ export default function App() {
             placeholder="Search contracts by number, customer, SKU, origin or destination..." 
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
@@ -3414,7 +3414,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -6459,12 +6459,17 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Provider</label>
-                    <input 
-                      type="text" 
-                      value={editingSupplyChain.provider} 
+                    <select
+                      value={editingSupplyChain.provider}
                       onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, provider: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    >
+                      <option value="">Select Provider</option>
+                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      {editingSupplyChain.provider && !carriers.find(c => c.name === editingSupplyChain.provider) && (
+                        <option value={editingSupplyChain.provider}>{editingSupplyChain.provider}</option>
+                      )}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Total Cost (CAD)</label>
@@ -6808,7 +6813,9 @@ export default function App() {
                           }
                           const product = skus.find(s => s.name === newLineItem.productName);
                           if (!product) return;
-                          const totalWeight = newLineItem.qty * product.netWeight;
+                          const netWeightKg = product.netWeightKg || product.netWeight;
+                          const totalWeightKg = newLineItem.qty * netWeightKg;
+                          const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
                           // Get contract for pricing and volume validation
                           const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
                           if (!contract) { setErrorBox('Contract not found'); return; }
@@ -6823,14 +6830,14 @@ export default function App() {
                           }
                           // Calculate amounts from contract finalPrice
                           const mtAmount = contract.finalPrice;
-                          const unitAmount = mtAmount * product.netWeight;
+                          const unitAmount = mtAmount * netWeightKg / 1000; // Price per unit = $/MT × MT/unit
                           const lineAmount = totalWeight * mtAmount;
                           const lineItem: OrderLineItem = {
                             id: `LINEITEM-${Date.now()}-${Math.random()}`,
                             productName: newLineItem.productName,
                             qty: newLineItem.qty,
                             contractNumber: newLineItem.contractNumber,
-                            netWeightPerUnit: product.netWeight,
+                            netWeightPerUnit: netWeightKg / 1000, // Store in MT for compatibility
                             totalWeight,
                             unitAmount,
                             mtAmount,
@@ -6895,7 +6902,7 @@ export default function App() {
                 {orderLineItems.length > 0 && (
                   <div className="border border-[#141414] bg-[#F5F5F5] p-4">
                     <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Order Summary</h4>
-                    <div className="grid grid-cols-6 gap-3 text-center">
+                    <div className="grid grid-cols-7 gap-3 text-center">
                       <div>
                         <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Customer</div>
                         <div className="text-xs font-bold">{customers.find(c => c.id === orderCustomerId)?.name || '-'}</div>
@@ -6911,6 +6918,21 @@ export default function App() {
                       <div>
                         <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Total Weight (KG)</div>
                         <div className="text-xs font-bold">{(orderLineItems.reduce((sum, item) => sum + item.totalWeight, 0) * 1000).toFixed(0)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Total Pallets</div>
+                        <div className="text-xs font-bold">{(() => {
+                          let pallets = 0;
+                          orderLineItems.forEach(item => {
+                            const matchSku = skus.find(s => s.name === item.productName);
+                            const qaP = matchSku ? qaProducts.find(q => q.skuId === matchSku.id) : null;
+                            const upp = qaP?.unitsPerPallet;
+                            if (upp && upp > 0) {
+                              pallets += Math.ceil(item.qty / upp);
+                            }
+                          });
+                          return pallets > 0 ? pallets : '-';
+                        })()}</div>
                       </div>
                       <div>
                         <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Total Amount ($)</div>
@@ -7034,7 +7056,9 @@ export default function App() {
 
                   // Calculate batch totals
                   const totalUnits = batchOrder.entries.reduce((sum, e) => sum + e.qty, 0);
-                  const totalWeightMT = product ? totalUnits * product.netWeight : 0;
+                  const batchNetWeightKg = product ? (product.netWeightKg || product.netWeight) : 0;
+                  const totalWeightKg = totalUnits * batchNetWeightKg;
+                  const totalWeightMT = totalWeightKg / 1000;
                   const mtRate = selectedContract ? selectedContract.finalPrice : 0;
                   const totalAmount = totalWeightMT * mtRate;
 
@@ -7113,7 +7137,7 @@ export default function App() {
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Batch Total Weight</div>
                             <div className={`text-xs font-bold ${totalWeightMT > selectedContract.volumeOutstanding ? 'text-red-600' : ''}`}>
-                              {(totalWeightMT * 1000).toFixed(0)} KG ({totalWeightMT.toFixed(2)} MT)
+                              {totalWeightKg.toFixed(0)} KG ({totalWeightMT.toFixed(2)} MT)
                             </div>
                           </div>
                         </div>
@@ -7157,7 +7181,7 @@ export default function App() {
                             </thead>
                             <tbody className="divide-y divide-[#141414]/10">
                               {batchOrder.entries.map((entry, idx) => {
-                                const entryWeightMT = product ? entry.qty * product.netWeight : 0;
+                                const entryWeightMT = product ? entry.qty * (product.netWeightKg || product.netWeight) / 1000 : 0;
                                 const entryAmount = entryWeightMT * mtRate;
                                 return (
                                   <tr key={idx} className="hover:bg-[#F5F5F5] transition-colors">
@@ -7251,7 +7275,7 @@ export default function App() {
                       </div>
 
                       {/* Batch Summary */}
-                      <div className="bg-[#F5F5F5] p-3 border border-[#141414]/10 grid grid-cols-4 gap-3">
+                      <div className="bg-[#F5F5F5] p-3 border border-[#141414]/10 grid grid-cols-5 gap-3">
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Orders</div>
                           <div className="text-sm font-bold">{batchOrder.entries.length}</div>
@@ -7262,7 +7286,19 @@ export default function App() {
                         </div>
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Weight (KG)</div>
-                          <div className="text-sm font-bold">{(totalWeightMT * 1000).toFixed(0)}</div>
+                          <div className="text-sm font-bold">{totalWeightKg.toFixed(0)}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Pallets</div>
+                          <div className="text-sm font-bold">{(() => {
+                            const matchSku = skus.find(s => s.name === batchOrder.product);
+                            const qaP = matchSku ? qaProducts.find(q => q.skuId === matchSku.id) : null;
+                            const upp = qaP?.unitsPerPallet;
+                            if (upp && upp > 0) {
+                              return Math.ceil(totalUnits / upp);
+                            }
+                            return '-';
+                          })()}</div>
                         </div>
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Amount ($)</div>
@@ -7295,16 +7331,16 @@ export default function App() {
                             // Generate unique BOL numbers for each entry in the batch
                             const generatedBOLs: string[] = [];
                             const newOrders: Order[] = batchOrder.entries.map((entry) => {
-                              const entryWeightMT = entry.qty * product.netWeight;
+                              const entryWeightMT = entry.qty * (product.netWeightKg || product.netWeight) / 1000;
                               const entryAmount = entryWeightMT * mtRate;
                               const lineItem: OrderLineItem = {
                                 id: `LINEITEM-${Date.now()}-${Math.random()}`,
                                 productName: batchOrder.product,
                                 qty: entry.qty,
                                 contractNumber: batchOrder.contractNumber,
-                                netWeightPerUnit: product.netWeight,
+                                netWeightPerUnit: (product.netWeightKg || product.netWeight) / 1000,
                                 totalWeight: entryWeightMT,
-                                unitAmount: mtRate * product.netWeight,
+                                unitAmount: mtRate * (product.netWeightKg || product.netWeight) / 1000,
                                 mtAmount: mtRate,
                                 lineAmount: entryAmount
                               };

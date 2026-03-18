@@ -753,6 +753,64 @@ export default function QualityAssurancePage({
                   )}
                 </div>
 
+                {/* Section 8: Ti-Hi / Pallet Configuration (for packaged products) */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pallet Configuration (Ti × Hi)</div>
+                  {isEditing ? (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Ti (layers per row)</label>
+                        <input
+                          type="number" min="0"
+                          value={editData?.ti || ''}
+                          onChange={(e) => {
+                            const ti = parseInt(e.target.value) || 0;
+                            const hi = editData?.hi || 0;
+                            setEditData(prev => prev ? { ...prev, ti, unitsPerPallet: ti * hi } : prev);
+                          }}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="e.g. 5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Hi (rows high)</label>
+                        <input
+                          type="number" min="0"
+                          value={editData?.hi || ''}
+                          onChange={(e) => {
+                            const hi = parseInt(e.target.value) || 0;
+                            const ti = editData?.ti || 0;
+                            setEditData(prev => prev ? { ...prev, hi, unitsPerPallet: ti * hi } : prev);
+                          }}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="e.g. 8"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Units per Pallet</label>
+                        <div className="bg-[#E4E3E0] border border-[#141414] p-2 text-xs font-bold">
+                          {(editData?.ti || 0) * (editData?.hi || 0) || '-'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Ti</div>
+                        <div className="text-xs font-bold">{displayData.ti || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Hi</div>
+                        <div className="text-xs font-bold">{displayData.hi || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Units per Pallet</div>
+                        <div className="text-xs font-bold">{displayData.unitsPerPallet || '-'}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-4 pt-2">
                   {isEditing ? (

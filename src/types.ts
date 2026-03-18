@@ -436,6 +436,9 @@ export interface QAProduct {
   upcCode: string;
   upcImageUrl?: string;
   upcImageFilename?: string;
+  ti?: number;
+  hi?: number;
+  unitsPerPallet?: number;
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
