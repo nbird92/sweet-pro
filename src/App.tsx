@@ -3372,6 +3372,17 @@ export default function App() {
             </button>
           </div>
 
+          {/* DEBUG: Show raw Firebase data structure - REMOVE after fixing */}
+          {sampleRow && (
+            <div className="bg-yellow-50 border border-yellow-400 p-4 text-xs font-mono">
+              <p className="font-bold mb-2">DEBUG — Raw Firebase Document Keys & First Row:</p>
+              <p><strong>All keys:</strong> {JSON.stringify(Object.keys(sampleRow))}</p>
+              <p><strong>First row data:</strong> {JSON.stringify(sampleRow)}</p>
+              <p className="mt-2"><strong>Resolved keys →</strong> monthKey: {JSON.stringify(monthKey)} | rawsKey: {JSON.stringify(rawsKey)} | fxKey: {JSON.stringify(fxKey)}</p>
+              <p><strong>allKeys (filtered):</strong> {JSON.stringify(allKeys)}</p>
+            </div>
+          )}
+
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
