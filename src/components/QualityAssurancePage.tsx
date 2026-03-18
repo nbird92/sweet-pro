@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { QAProduct, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup } from '../types';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -37,6 +37,33 @@ export default function QualityAssurancePage({
   onUpdateQAProduct,
   onDeleteQAProduct,
 }: QualityAssurancePageProps) {
+  // Auto-populate: create QA entries for any SKUs not already tracked
+  useEffect(() => {
+    const existingSkuIds = new Set(qaProducts.map(q => q.skuId));
+    const missing = skus.filter(s => !existingSkuIds.has(s.id));
+    if (missing.length > 0) {
+      missing.forEach(sku => {
+        onAddQAProduct({
+          id: `QA-${sku.id}`,
+          skuId: sku.id,
+          skuName: sku.name,
+          productGroup: sku.productGroup,
+          category: sku.category,
+          location: sku.location,
+          netWeightKg: sku.netWeightKg,
+          grossWeightKg: sku.grossWeightKg,
+          maxColor: sku.maxColor,
+          specifications: { ...emptySpecs },
+          packagingSupplier: '',
+          packagingPictureUrls: [],
+          packagingPictureFilenames: [],
+          artworkApprovals: [],
+          upcCode: '',
+        });
+      });
+    }
+  }, [skus, qaProducts, onAddQAProduct]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
