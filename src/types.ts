@@ -391,3 +391,51 @@ export const INITIAL_PEOPLE: Person[] = [
   { id: 'PERSON-004', name: 'Lisa Brown', email: 'lisa.brown@sucrosourcing.com', phone: '555-0104', department: 'logistics' },
   { id: 'PERSON-005', name: 'David Wilson', email: 'david.wilson@sucrosourcing.com', phone: '555-0105', department: 'customer service' },
 ];
+
+export interface QASpecifications {
+  brix: string;
+  granulation: string;
+  color: string;
+  ash: string;
+  turbidity: string;
+  moisture: string;
+}
+
+export interface ArtworkApproval {
+  id: string;
+  artworkUrl: string;
+  artworkFilename: string;
+  sentTo: string;
+  sentToName: string;
+  sentAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  respondedAt?: string;
+  notes?: string;
+}
+
+export interface QAProduct {
+  id: string;
+  skuId: string;
+  skuName: string;
+  productGroup: string;
+  category: 'Conventional' | 'Organic';
+  location: 'Hamilton' | 'Vancouver';
+  netWeightKg?: number;
+  grossWeightKg?: number;
+  maxColor: number;
+  approverQAId?: string;
+  approverSalesId?: string;
+  approverOperationsId?: string;
+  specifications: QASpecifications;
+  packagingSupplier: string;
+  packagingPictureUrls: string[];
+  packagingPictureFilenames: string[];
+  artworkUrl?: string;
+  artworkFilename?: string;
+  artworkApprovals: ArtworkApproval[];
+  upcCode: string;
+  upcImageUrl?: string;
+  upcImageFilename?: string;
+}
+
+export const INITIAL_QA_PRODUCTS: QAProduct[] = [];

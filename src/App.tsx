@@ -37,15 +37,17 @@ import {
   EyeOff,
   Settings,
   Mail,
-  Send
+  Send,
+  ClipboardCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
+import QualityAssurancePage from './components/QualityAssurancePage';
 
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
@@ -69,6 +71,7 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [conferences, setConferences] = useState<Conference[]>(INITIAL_CONFERENCES);
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
+  const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
@@ -320,6 +323,7 @@ export default function App() {
     productgroups: JSON.stringify(INITIAL_PRODUCT_GROUPS),
     conferences: JSON.stringify([]),
     people: JSON.stringify(INITIAL_PEOPLE),
+    qaproducts: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -479,6 +483,17 @@ export default function App() {
         setPeople(data.people);
         lastSyncedData.current.people = JSON.stringify(data.people);
       }
+      if (data.qaProducts?.length) {
+        const mapped = data.qaProducts.map((qa: any) => ({
+          ...qa,
+          specifications: qa.specifications || { brix: '', granulation: '', color: '', ash: '', turbidity: '', moisture: '' },
+          packagingPictureUrls: qa.packagingPictureUrls || [],
+          packagingPictureFilenames: qa.packagingPictureFilenames || [],
+          artworkApprovals: qa.artworkApprovals || [],
+        }));
+        setQaProducts(mapped);
+        lastSyncedData.current.qaproducts = JSON.stringify(mapped);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -532,6 +547,7 @@ export default function App() {
         { collection: COLLECTIONS.orders, key: 'orders', data: orders },
         { collection: COLLECTIONS.conferences, key: 'conferences', data: conferences },
         { collection: COLLECTIONS.people, key: 'people', data: people },
+        { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
       ];
 
       try {
@@ -557,7 +573,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, lastSynced, user]);
   const [config, setConfig] = useState<CommodityConfig>({
     rawPriceUsdCwt: 13.94,
     oceanFreightUsdMt: 135,
@@ -1209,6 +1225,7 @@ export default function App() {
     { name: 'Products', icon: Package },
     { name: 'Conferences', icon: Users },
     { name: 'People', icon: Users },
+    { name: 'Quality Assurance', icon: ClipboardCheck },
   ];
 
   const renderContent = () => {
@@ -2836,6 +2853,20 @@ export default function App() {
           onAddPerson={(newPerson) => setPeople([...people, newPerson])}
           onUpdatePerson={(updated) => setPeople(people.map(p => p.id === updated.id ? updated : p))}
           onDeletePerson={(id) => setPeople(people.filter(p => p.id !== id))}
+        />
+      );
+    }
+
+    if (activePage === 'Quality Assurance') {
+      return (
+        <QualityAssurancePage
+          qaProducts={qaProducts}
+          skus={skus}
+          people={people}
+          productGroups={productGroups}
+          onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
+          onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
+          onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
         />
       );
     }

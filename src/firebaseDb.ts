@@ -27,6 +27,7 @@ export const COLLECTIONS = {
   marketData: 'MarketData',
   conferences: 'conferences',
   people: 'people',
+  qaProducts: 'qaProducts',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
