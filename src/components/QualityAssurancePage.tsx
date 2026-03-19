@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup } from '../types';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, Download, Mail, FileText } from 'lucide-react';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location } from '../types';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 
@@ -9,6 +9,8 @@ interface QualityAssurancePageProps {
   skus: SKU[];
   people: Person[];
   productGroups: ProductGroup[];
+  locations: Location[];
+  onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
   onDeleteQAProduct: (productId: string) => void;
@@ -33,6 +35,8 @@ export default function QualityAssurancePage({
   skus,
   people,
   productGroups,
+  locations,
+  onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
   onDeleteQAProduct,
@@ -100,6 +104,17 @@ export default function QualityAssurancePage({
   // Upload states for spec sheets and certificates
   const [isUploadingSpecSheet, setIsUploadingSpecSheet] = useState(false);
   const [isUploadingCertificate, setIsUploadingCertificate] = useState(false);
+
+  // Locations table state
+  const [expandedLocRows, setExpandedLocRows] = useState<Set<string>>(new Set());
+  const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
+  const toggleLocRow = (id: string) => {
+    setExpandedLocRows(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   // Filter and sort
   const filtered = qaProducts.filter(p => {
@@ -496,6 +511,234 @@ export default function QualityAssurancePage({
           </table>
         </div>
       </div>
+
+      {/* Locations Table */}
+      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
+          <button
+            onClick={() => {
+              const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
+              onUpdateLocations([...locations, { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
+              setExpandedLocRows(new Set([id]));
+            }}
+            className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+          >
+            <Plus size={12} /> Add New Location
+          </button>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+              <th className="p-4 border-r border-[#141414]/10">Code</th>
+              <th className="p-4 border-r border-[#141414]/10">Name</th>
+              <th className="p-4 border-r border-[#141414]/10">Address</th>
+              <th className="p-4 border-r border-[#141414]/10">City</th>
+              <th className="p-4 border-r border-[#141414]/10">Province</th>
+              <th className="p-4 border-r border-[#141414]/10">Postal Code</th>
+              <th className="p-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#141414]/10">
+            {locations.map(loc => (
+              <React.Fragment key={loc.id}>
+                <tr className="hover:bg-[#F9F9F9] transition-colors">
+                  <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">
+                    <input
+                      type="text"
+                      value={loc.locationCode || ''}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, locationCode: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="Code"
+                    />
+                  </td>
+                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
+                    <input
+                      type="text"
+                      value={loc.name}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, name: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="Location Name"
+                    />
+                  </td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <input
+                      type="text"
+                      value={loc.address}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, address: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="Address"
+                    />
+                  </td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <input
+                      type="text"
+                      value={loc.city}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, city: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="City"
+                    />
+                  </td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <input
+                      type="text"
+                      value={loc.province}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, province: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="Province"
+                    />
+                  </td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <input
+                      type="text"
+                      value={loc.postalCode}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, postalCode: e.target.value } : l))}
+                      className="w-full bg-transparent focus:outline-none"
+                      placeholder="Postal Code"
+                    />
+                  </td>
+                  <td className="p-4 text-xs flex gap-2">
+                    <button onClick={() => setEditingAppointmentSchedule({...loc})} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Set Appointment Schedule">
+                      <Clock size={14} />
+                    </button>
+                    <button onClick={() => toggleLocRow(loc.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                      {expandedLocRows.has(loc.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                    <button onClick={() => onUpdateLocations(locations.filter(l => l.id !== loc.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+                <AnimatePresence>
+                  {expandedLocRows.has(loc.id) && (
+                    <tr>
+                      <td colSpan={7} className="p-0">
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
+                        >
+                          <div className="p-6 space-y-4">
+                            <div className="flex justify-between items-center">
+                              <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
+                              <button
+                                onClick={() => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: [...l.bays, ''] } : l))}
+                                className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
+                              >
+                                <Plus size={10} /> Add Bay
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                              {loc.bays.map((bay, idx) => (
+                                <div key={idx} className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={bay}
+                                    onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b) } : l))}
+                                    className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
+                                    placeholder={`Bay ${idx + 1} Name`}
+                                  />
+                                  <button
+                                    onClick={() => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
+                                    className="p-2 hover:bg-red-500 hover:text-white transition-all"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              ))}
+                              {loc.bays.length === 0 && (
+                                <div className="col-span-full text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      </td>
+                    </tr>
+                  )}
+                </AnimatePresence>
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Appointment Schedule Modal */}
+      <AnimatePresence>
+        {editingAppointmentSchedule && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setEditingAppointmentSchedule(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Appointment Schedule — {editingAppointmentSchedule.name}</h3>
+                <button onClick={() => setEditingAppointmentSchedule(null)} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Start Time</label>
+                    <input
+                      type="time"
+                      value={editingAppointmentSchedule.appointmentStartTime || '06:00'}
+                      onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentStartTime: e.target.value })}
+                      className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">End Time</label>
+                    <input
+                      type="time"
+                      value={editingAppointmentSchedule.appointmentEndTime || '18:00'}
+                      onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentEndTime: e.target.value })}
+                      className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Appointment Duration (minutes)</label>
+                  <input
+                    type="number"
+                    value={editingAppointmentSchedule.appointmentDuration || 30}
+                    onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentDuration: parseInt(e.target.value) || 30 })}
+                    className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
+                    min={5}
+                    step={5}
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      onUpdateLocations(locations.map(l => l.id === editingAppointmentSchedule.id ? {
+                        ...l,
+                        appointmentStartTime: editingAppointmentSchedule.appointmentStartTime,
+                        appointmentEndTime: editingAppointmentSchedule.appointmentEndTime,
+                        appointmentDuration: editingAppointmentSchedule.appointmentDuration,
+                      } : l));
+                      setEditingAppointmentSchedule(null);
+                    }}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                  >
+                    Save Schedule
+                  </button>
+                  <button
+                    onClick={() => setEditingAppointmentSchedule(null)}
+                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Hidden file inputs */}
       <input type="file" ref={packagingFileRef} className="hidden" accept="image/*" onChange={handlePackagingUpload} />

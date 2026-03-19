@@ -3028,6 +3028,8 @@ export default function App() {
           skus={skus}
           people={people}
           productGroups={productGroups}
+          locations={locations}
+          onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
