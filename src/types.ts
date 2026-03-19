@@ -306,6 +306,8 @@ export interface Order {
   amount: number;
   carrier?: string;
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  location?: string;       // shipping origin from contract
+  splitNumber?: string;    // user-entered split number
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [
@@ -473,6 +475,19 @@ export interface QAProduct {
   unitsPerPallet?: number;
   specSheets: QADocument[];
   certificates: QADocument[];
+  pol?: string; // Port of Loading
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
+
+export interface Vendor {
+  id: string;
+  vendorNumber: string;
+  name: string;
+  category: string; // same categories as Person.department
+  contactEmail?: string;
+  contactPhone?: string;
+  notes?: string;
+}
+
+export const INITIAL_VENDORS: Vendor[] = [];

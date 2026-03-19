@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location } from '../types';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor } from '../types';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
@@ -10,6 +10,7 @@ interface QualityAssurancePageProps {
   people: Person[];
   productGroups: ProductGroup[];
   locations: Location[];
+  vendors: Vendor[];
   onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
@@ -36,6 +37,7 @@ export default function QualityAssurancePage({
   people,
   productGroups,
   locations,
+  vendors,
   onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
@@ -543,6 +545,7 @@ export default function QualityAssurancePage({
                 <SortHeader label="Location" sortKey="location" />
                 <SortHeader label="Net Weight (KG)" sortKey="netWeightKg" />
                 <SortHeader label="Gross Weight (KG)" sortKey="grossWeightKg" />
+                <SortHeader label="POL" sortKey="pol" />
                 <th className="p-4">Actions</th>
               </tr>
             </thead>
@@ -576,6 +579,7 @@ export default function QualityAssurancePage({
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.netWeightKg ?? '-'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.grossWeightKg ?? '-'}</td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.pol || '—'}</td>
                     <td className="p-4">
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(p.id); }}
@@ -1011,7 +1015,10 @@ export default function QualityAssurancePage({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Supplier</label>
-                      <input value={newProductData.packagingSupplier} onChange={(e) => setNewProductData(prev => ({ ...prev, packagingSupplier: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Supplier name" />
+                      <select value={newProductData.packagingSupplier} onChange={(e) => setNewProductData(prev => ({ ...prev, packagingSupplier: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Select Vendor</option>
+                        {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">UPC Code</label>
@@ -1122,6 +1129,10 @@ export default function QualityAssurancePage({
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</label>
                         <input type="number" value={editData?.maxColor || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, maxColor: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
                       </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">POL (Port of Loading)</label>
+                        <input value={editData?.pol || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, pol: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Santos, BR" />
+                      </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-4 gap-4">
@@ -1132,6 +1143,7 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">POL</div><div className="text-xs font-bold">{displayData.pol || '—'}</div></div>
                     </div>
                   )}
                 </div>
@@ -1246,12 +1258,14 @@ export default function QualityAssurancePage({
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging Supplier</div>
                   {isEditing ? (
-                    <input
+                    <select
                       value={editData?.packagingSupplier || ''}
                       onChange={(e) => setEditData(prev => prev ? { ...prev, packagingSupplier: e.target.value } : prev)}
                       className="w-full bg-white border border-[#141414] p-3 text-sm outline-none"
-                      placeholder="Enter packaging supplier name"
-                    />
+                    >
+                      <option value="">Select Vendor</option>
+                      {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+                    </select>
                   ) : (
                     <div className="text-xs font-bold">{displayData.packagingSupplier || 'Not specified'}</div>
                   )}

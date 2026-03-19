@@ -39,13 +39,14 @@ import {
   Mail,
   Send,
   ClipboardCheck,
-  GripVertical
+  GripVertical,
+  Briefcase
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -71,6 +72,7 @@ export default function App() {
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
   const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
+  const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
   const [contracts, setContracts] = useState<Contract[]>(INITIAL_CONTRACTS);
   const [carriers, setCarriers] = useState<Carrier[]>(INITIAL_CARRIERS);
   const [locations, setLocations] = useState<Location[]>(INITIAL_LOCATIONS);
@@ -334,6 +336,7 @@ export default function App() {
     people: JSON.stringify(INITIAL_PEOPLE),
     qaproducts: JSON.stringify([]),
     fuelsurcharges: JSON.stringify([]),
+    vendors: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -510,6 +513,10 @@ export default function App() {
         setFuelSurcharges(data.fuelSurcharges);
         lastSyncedData.current.fuelsurcharges = JSON.stringify(data.fuelSurcharges);
       }
+      if (data.vendors?.length) {
+        setVendors(data.vendors);
+        lastSyncedData.current.vendors = JSON.stringify(data.vendors);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -565,6 +572,7 @@ export default function App() {
         { collection: COLLECTIONS.people, key: 'people', data: people },
         { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
+        { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
       ];
 
       try {
@@ -590,7 +598,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
@@ -1313,6 +1321,7 @@ export default function App() {
     { name: 'Conferences', icon: Users },
     { name: 'People', icon: Users },
     { name: 'Quality Assurance', icon: ClipboardCheck },
+    { name: 'Vendors', icon: Briefcase },
   ];
 
   // Apply saved page order (any new pages not in saved order appear at the end)
@@ -2550,6 +2559,8 @@ export default function App() {
                   <th className="p-3 border-r border-[#E4E3E0]/20">Carrier</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Amount ($)</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Split No.</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Appointment</th>
                   <th className="p-3">Actions</th>
                 </tr>
@@ -2557,7 +2568,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={15} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       No orders yet. Use "Add Order" to create new orders.
                     </td>
                   </tr>
@@ -2602,6 +2613,8 @@ export default function App() {
                             <option value="Cancelled">Cancelled</option>
                           </select>
                         </td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">
                           {(() => {
                             const allShipments = [...hamiltonShipments, ...vancouverShipments];
@@ -3123,11 +3136,104 @@ export default function App() {
           people={people}
           productGroups={productGroups}
           locations={locations}
+          vendors={vendors}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
         />
+      );
+    }
+
+    if (activePage === 'Vendors') {
+      const departmentCategories = ['sales', 'operations', 'logistics', 'customer service', 'QA', 'trading'];
+      return (
+        <div className="p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold uppercase tracking-tighter">Vendor Management</h2>
+            <div className="flex gap-2">
+              {/* Auto-add carriers as vendors */}
+              <button
+                onClick={() => {
+                  const existingNames = new Set(vendors.map(v => v.name));
+                  const newVendors: Vendor[] = carriers
+                    .filter(c => !existingNames.has(c.name))
+                    .map(c => ({
+                      id: `VEND-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      vendorNumber: c.carrierNumber,
+                      name: c.name,
+                      category: 'logistics',
+                      contactEmail: c.contactEmail || '',
+                      contactPhone: c.contactPhone || '',
+                    }));
+                  if (newVendors.length > 0) {
+                    setVendors(prev => [...prev, ...newVendors]);
+                  }
+                }}
+                className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+              >
+                <Truck size={12} /> Sync Carriers as Vendors
+              </button>
+              <button
+                onClick={() => {
+                  const id = `VEND-${Date.now()}`;
+                  setVendors(prev => [...prev, { id, vendorNumber: '', name: '', category: 'operations' }]);
+                }}
+                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+              >
+                <Plus size={12} /> Add Vendor
+              </button>
+            </div>
+          </div>
+
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search vendors by number, name or category..." />
+
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                  <SortableHeader label="Vendor No." sortKey="vendorNumber" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Category" sortKey="category" currentSort={sortConfig} onSort={handleSort} />
+                  <th className="p-4 border-r border-[#141414]/10">Email</th>
+                  <th className="p-4 border-r border-[#141414]/10">Phone</th>
+                  <th className="p-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {getSortedAndFilteredData<Vendor>(vendors, ['vendorNumber', 'name', 'category']).map(v => (
+                  <tr key={v.id} className="hover:bg-[#F9F9F9] transition-colors">
+                    <td className="p-4 text-xs font-mono border-r border-[#141414]/10">
+                      <input type="text" value={v.vendorNumber} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, vendorNumber: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Vendor #" />
+                    </td>
+                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
+                      <input type="text" value={v.name} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, name: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Vendor Name" />
+                    </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                      <select value={v.category} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, category: e.target.value } : x))} className="w-full bg-transparent focus:outline-none">
+                        {departmentCategories.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+                      </select>
+                    </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                      <input type="email" value={v.contactEmail || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactEmail: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Email" />
+                    </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                      <input type="text" value={v.contactPhone || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactPhone: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Phone" />
+                    </td>
+                    <td className="p-4 text-xs">
+                      <button onClick={() => setVendors(vendors.filter(x => x.id !== v.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {vendors.length === 0 && (
+                  <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No vendors added yet. Click "Sync Carriers as Vendors" to auto-add carriers.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       );
     }
 
@@ -7041,7 +7147,7 @@ export default function App() {
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-3 gap-6">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Shipment Date</label>
                       <input
@@ -7060,7 +7166,32 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                       />
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Location (Origin)</label>
+                      <div className="w-full bg-white border border-[#141414]/30 p-2 text-sm text-[#141414]/70">
+                        {(() => {
+                          const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
+                          if (contractNums.length === 0) return 'Auto-fills from contract';
+                          const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
+                          return c?.origin || '—';
+                        })()}
+                      </div>
+                    </div>
                   </div>
+                  {editingOrder && (
+                    <div className="grid grid-cols-3 gap-6">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Split Number</label>
+                        <input
+                          type="text"
+                          value={editingOrder.splitNumber || ''}
+                          onChange={(e) => setEditingOrder({ ...editingOrder, splitNumber: e.target.value })}
+                          placeholder="e.g. S-001"
+                          className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Add Line Item Section */}
@@ -7252,6 +7383,10 @@ export default function App() {
                       const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                       const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
 
+                      // Derive location from first contract's origin
+                      const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
+                      const orderLocation = firstContract?.origin || '';
+
                       if (editingOrder) {
                         // Update existing order
                         const updatedOrder: Order = {
@@ -7265,7 +7400,9 @@ export default function App() {
                           lineItems: orderLineItems,
                           amount: totalAmount,
                           carrier: orderCarrier || undefined,
-                          shippingTerms: orderShippingTerms || undefined
+                          shippingTerms: orderShippingTerms || undefined,
+                          location: orderLocation || editingOrder.location,
+                          splitNumber: editingOrder.splitNumber,
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
                       } else {
@@ -7284,7 +7421,8 @@ export default function App() {
                           lineItems: orderLineItems,
                           amount: totalAmount,
                           carrier: orderCarrier || undefined,
-                          shippingTerms: orderShippingTerms || undefined
+                          shippingTerms: orderShippingTerms || undefined,
+                          location: orderLocation,
                         };
                         setOrders([...orders, newOrder]);
                       }
@@ -7416,7 +7554,11 @@ export default function App() {
 
                       {/* Contract Info Summary */}
                       {selectedContract && (
-                        <div className="bg-blue-50 border border-blue-200 p-3 grid grid-cols-4 gap-3">
+                        <div className="bg-blue-50 border border-blue-200 p-3 grid grid-cols-5 gap-3">
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Location (Origin)</div>
+                            <div className="text-xs font-bold">{selectedContract.origin || '—'}</div>
+                          </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Contract Volume</div>
                             <div className="text-xs font-bold">{selectedContract.contractVolume} MT</div>
@@ -7675,7 +7817,8 @@ export default function App() {
                                 status: 'Open' as const,
                                 lineItems: [lineItem],
                                 amount: entryAmount,
-                                carrier: entry.carrier
+                                carrier: entry.carrier,
+                                location: selectedContract?.origin || '',
                               };
                             });
                             setOrders([...orders, ...newOrders]);
