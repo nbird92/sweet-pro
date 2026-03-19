@@ -254,6 +254,19 @@ export interface Carrier {
   defaultLocationCode?: string;
 }
 
+export interface TransferLeg {
+  id: string;
+  legNumber: number;
+  from: string;
+  to: string;
+  carrier: string;
+  amount: number; // MT for this leg
+  shipmentDate?: string;
+  arrivalDate?: string;
+  status?: string;
+  notes?: string;
+}
+
 export interface Transfer {
   id: string;
   transferNumber: string;
@@ -267,6 +280,7 @@ export interface Transfer {
   lotCode?: string;
   notes?: string;
   status: string;
+  legs?: TransferLeg[];
 }
 
 export interface Invoice {

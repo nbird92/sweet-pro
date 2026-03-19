@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -84,6 +84,7 @@ export default function App() {
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
+  const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
@@ -441,7 +442,8 @@ export default function App() {
       if (data.transfers?.length) {
         const mapped = data.transfers.map((t: any) => ({
           ...t,
-          amount: parseFloat(t.amount) || 0
+          amount: parseFloat(t.amount) || 0,
+          legs: Array.isArray(t.legs) ? t.legs.map((leg: any) => ({ ...leg, amount: parseFloat(leg.amount) || 0 })) : undefined
         }));
         setTransfers(mapped);
         lastSyncedData.current.transfers = JSON.stringify(mapped);
@@ -2295,6 +2297,7 @@ export default function App() {
             <button
               onClick={() => {
                 setEditingTransfer(null);
+                setNewTransferLegs([]);
                 setIsAddingTransfer(true);
               }}
               className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
@@ -2320,6 +2323,7 @@ export default function App() {
                   <SortableHeader label="Lot Code" sortKey="lotCode" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Amount (MT)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Carrier" sortKey="carrier" currentSort={sortConfig} onSort={handleSort} />
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Legs</th>
                   <SortableHeader label="Ship Date" sortKey="shipmentDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Arrival Date" sortKey="arrivalDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
@@ -2330,7 +2334,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]">
                 {filteredTransfers.length === 0 && (
                   <tr>
-                    <td colSpan={12} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={13} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       No transfers yet. Use "New Transfer" to create one.
                     </td>
                   </tr>
@@ -2347,6 +2351,13 @@ export default function App() {
                     <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{t.lotCode || '—'}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{t.amount}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.carrier}</td>
+                    <td className="p-3 text-xs border-r border-[#141414]/10">
+                      {t.legs && t.legs.length > 0 ? (
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase">{t.legs.length} Leg{t.legs.length > 1 ? 's' : ''}</span>
+                      ) : (
+                        <span className="text-[10px] opacity-40">Direct</span>
+                      )}
+                    </td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.shipmentDate}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.arrivalDate}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">
@@ -8616,13 +8627,33 @@ export default function App() {
       )}
 
       {/* Add New Transfer Modal */}
-      {isAddingTransfer && (
+      {isAddingTransfer && (() => {
+          const addLeg = () => {
+            setNewTransferLegs(prev => [...prev, {
+              id: `LEG-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+              legNumber: prev.length + 1,
+              from: '',
+              to: '',
+              carrier: '',
+              amount: 22,
+              shipmentDate: '',
+              arrivalDate: '',
+              status: 'Pending',
+            }]);
+          };
+          const updateLeg = (legId: string, field: keyof TransferLeg, value: any) => {
+            setNewTransferLegs(prev => prev.map(l => l.id === legId ? { ...l, [field]: value } : l));
+          };
+          const removeLeg = (legId: string) => {
+            setNewTransferLegs(prev => prev.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 })));
+          };
+          return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">New Transfer</h3>
@@ -8633,6 +8664,7 @@ export default function App() {
                   e.preventDefault();
                   const form = e.target as HTMLFormElement;
                   const data = new FormData(form);
+                  const totalLegAmount = newTransferLegs.reduce((s, l) => s + l.amount, 0);
                   const t: Transfer = {
                     id: `TRF-${Date.now()}`,
                     transferNumber: `TRF-${new Date().getFullYear()}-${String(transfers.length + 1).padStart(3, '0')}`,
@@ -8640,25 +8672,26 @@ export default function App() {
                     to: data.get('to') as string,
                     product: data.get('product') as string,
                     lotCode: data.get('lotCode') as string || '',
-                    amount: parseFloat(data.get('amount') as string) || 0,
-                    carrier: data.get('carrier') as string,
+                    amount: newTransferLegs.length > 0 ? totalLegAmount : (parseFloat(data.get('amount') as string) || 0),
+                    carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : (data.get('carrier') as string),
                     shipmentDate: data.get('shipmentDate') as string,
                     arrivalDate: data.get('arrivalDate') as string,
                     notes: data.get('notes') as string || '',
-                    status: 'Pending'
+                    status: 'Pending',
+                    legs: newTransferLegs.length > 0 ? newTransferLegs : undefined,
                   };
                   setTransfers([...transfers, t]);
                   setIsAddingTransfer(false);
                 }} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">From</label>
+                      <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
                       <select name="from" defaultValue="Hamilton" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                         {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">To</label>
+                      <label className="text-[10px] uppercase font-bold opacity-60">To (Final Destination)</label>
                       <select name="to" defaultValue="Vancouver" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                         {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                       </select>
@@ -8672,23 +8705,33 @@ export default function App() {
                         {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                       </select>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                      <input name="amount" type="text" inputMode="decimal" defaultValue="22" onFocus={(e) => e.target.select()} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                    </div>
+                    {newTransferLegs.length === 0 && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
+                        <input name="amount" type="text" inputMode="decimal" defaultValue="22" onFocus={(e) => e.target.select()} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                      </div>
+                    )}
+                    {newTransferLegs.length > 0 && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
+                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{newTransferLegs.reduce((s, l) => s + l.amount, 0).toFixed(1)} MT</div>
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
                       <input name="lotCode" type="text" placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
-                      <select name="carrier" required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        <option value="">Select Carrier</option>
-                        {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                      </select>
-                    </div>
+                    {newTransferLegs.length === 0 && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                        <select name="carrier" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                          <option value="">Select Carrier</option>
+                          {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
@@ -8700,6 +8743,57 @@ export default function App() {
                       <input name="arrivalDate" type="date" defaultValue={new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
                   </div>
+
+                  {/* Transfer Legs Section */}
+                  <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
+                      <button type="button" onClick={addLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1">
+                        <Plus size={10} /> Add Leg
+                      </button>
+                    </div>
+                    {newTransferLegs.length === 0 && (
+                      <div className="text-xs italic opacity-40 text-center py-2">No legs — this is a direct transfer. Add legs to split into multiple segments.</div>
+                    )}
+                    {newTransferLegs.map((leg) => (
+                      <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
+                          <button type="button" onClick={() => removeLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all rounded">
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-4 gap-3">
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">From</label>
+                            <select value={leg.from} onChange={(e) => updateLeg(leg.id, 'from', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                              <option value="">Select</option>
+                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">To</label>
+                            <select value={leg.to} onChange={(e) => updateLeg(leg.id, 'to', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                              <option value="">Select</option>
+                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">Carrier</label>
+                            <select value={leg.carrier} onChange={(e) => updateLeg(leg.id, 'carrier', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                              <option value="">Select</option>
+                              {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                            </select>
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
+                            <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
                     <textarea name="notes" rows={2} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none resize-none" />
@@ -8712,16 +8806,46 @@ export default function App() {
               </div>
             </motion.div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Edit Transfer Modal */}
-        {editingTransfer && !isAddingTransfer && (
+        {editingTransfer && !isAddingTransfer && (() => {
+          const hasLegs = editingTransfer.legs && editingTransfer.legs.length > 0;
+          const editLegs = editingTransfer.legs || [];
+          const addEditLeg = () => {
+            const newLeg: TransferLeg = {
+              id: `LEG-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+              legNumber: editLegs.length + 1,
+              from: '',
+              to: '',
+              carrier: '',
+              amount: 22,
+              shipmentDate: '',
+              arrivalDate: '',
+              status: 'Pending',
+            };
+            setEditingTransfer({ ...editingTransfer, legs: [...editLegs, newLeg] });
+          };
+          const updateEditLeg = (legId: string, field: keyof TransferLeg, value: any) => {
+            const updated = editLegs.map(l => l.id === legId ? { ...l, [field]: value } : l);
+            const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
+            const carrierStr = updated.map(l => l.carrier).filter(Boolean).join(' → ');
+            setEditingTransfer({ ...editingTransfer, legs: updated, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
+          };
+          const removeEditLeg = (legId: string) => {
+            const updated = editLegs.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 }));
+            const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
+            const carrierStr = updated.map(l => l.carrier).filter(Boolean).join(' → ');
+            setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
+          };
+          return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Transfer — {editingTransfer.transferNumber}</h3>
@@ -8730,13 +8854,13 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">From</label>
+                    <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
                     <select value={editingTransfer.from} onChange={(e) => setEditingTransfer({...editingTransfer, from: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                       {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">To</label>
+                    <label className="text-[10px] uppercase font-bold opacity-60">To (Final Destination)</label>
                     <select value={editingTransfer.to} onChange={(e) => setEditingTransfer({...editingTransfer, to: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                       {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
@@ -8750,23 +8874,32 @@ export default function App() {
                       {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                    <input type="text" inputMode="decimal" value={editingTransfer.amount || ""} onFocus={(e) => e.target.select()} onChange={(e) => setEditingTransfer({...editingTransfer, amount: parseFloat(e.target.value) || 0})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                  </div>
+                  {!hasLegs ? (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
+                      <input type="text" inputMode="decimal" value={editingTransfer.amount || ""} onFocus={(e) => e.target.select()} onChange={(e) => setEditingTransfer({...editingTransfer, amount: parseFloat(e.target.value) || 0})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
+                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{editLegs.reduce((s, l) => s + l.amount, 0).toFixed(1)} MT</div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
                     <input type="text" value={editingTransfer.lotCode || ''} onChange={(e) => setEditingTransfer({...editingTransfer, lotCode: e.target.value})} placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
-                    <select value={editingTransfer.carrier} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">Select Carrier</option>
-                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                    </select>
-                  </div>
+                  {!hasLegs && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                      <select value={editingTransfer.carrier} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                        <option value="">Select Carrier</option>
+                        {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -8793,10 +8926,67 @@ export default function App() {
                     <input type="text" value={editingTransfer.notes || ''} onChange={(e) => setEditingTransfer({...editingTransfer, notes: e.target.value})} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
                 </div>
+
+                {/* Transfer Legs Section */}
+                <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
+                    <button type="button" onClick={addEditLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1">
+                      <Plus size={10} /> Add Leg
+                    </button>
+                  </div>
+                  {editLegs.length === 0 && (
+                    <div className="text-xs italic opacity-40 text-center py-2">No legs — this is a direct transfer. Add legs to split into multiple segments.</div>
+                  )}
+                  {editLegs.map((leg) => (
+                    <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
+                        <button type="button" onClick={() => removeEditLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all rounded">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">From</label>
+                          <select value={leg.from} onChange={(e) => updateEditLeg(leg.id, 'from', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                            <option value="">Select</option>
+                            {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">To</label>
+                          <select value={leg.to} onChange={(e) => updateEditLeg(leg.id, 'to', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                            <option value="">Select</option>
+                            {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Carrier</label>
+                          <select value={leg.carrier} onChange={(e) => updateEditLeg(leg.id, 'carrier', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
+                            <option value="">Select</option>
+                            {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
+                          <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateEditLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={() => {
-                      setTransfers(transfers.map(t => t.id === editingTransfer.id ? editingTransfer : t));
+                      // Recalculate totals from legs before saving
+                      let updatedTransfer = { ...editingTransfer };
+                      if (updatedTransfer.legs && updatedTransfer.legs.length > 0) {
+                        updatedTransfer.amount = updatedTransfer.legs.reduce((s, l) => s + l.amount, 0);
+                        updatedTransfer.carrier = updatedTransfer.legs.map(l => l.carrier).filter(Boolean).join(' → ');
+                      }
+                      setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
                     }}
                     className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
@@ -8808,7 +8998,8 @@ export default function App() {
               </div>
             </motion.div>
           </div>
-        )}
+          );
+        })()}
 
       {/* Print Styles */}
       <style dangerouslySetInnerHTML={{ __html: `
