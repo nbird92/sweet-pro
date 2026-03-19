@@ -413,6 +413,13 @@ export interface ArtworkApproval {
   notes?: string;
 }
 
+export interface QADocument {
+  id: string;
+  url: string;
+  filename: string;
+  uploadedAt: string;
+}
+
 export interface QAProduct {
   id: string;
   skuId: string;
@@ -439,6 +446,8 @@ export interface QAProduct {
   ti?: number;
   hi?: number;
   unitsPerPallet?: number;
+  specSheets: QADocument[];
+  certificates: QADocument[];
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup } from '../types';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown } from 'lucide-react';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup } from '../types';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, Download, Mail, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 
@@ -59,6 +59,8 @@ export default function QualityAssurancePage({
           packagingPictureFilenames: [],
           artworkApprovals: [],
           upcCode: '',
+          specSheets: [],
+          certificates: [],
         });
       });
     }
@@ -92,6 +94,12 @@ export default function QualityAssurancePage({
   const packagingFileRef = useRef<HTMLInputElement>(null);
   const artworkFileRef = useRef<HTMLInputElement>(null);
   const upcFileRef = useRef<HTMLInputElement>(null);
+  const specSheetFileRef = useRef<HTMLInputElement>(null);
+  const certificateFileRef = useRef<HTMLInputElement>(null);
+
+  // Upload states for spec sheets and certificates
+  const [isUploadingSpecSheet, setIsUploadingSpecSheet] = useState(false);
+  const [isUploadingCertificate, setIsUploadingCertificate] = useState(false);
 
   // Filter and sort
   const filtered = qaProducts.filter(p => {
@@ -142,6 +150,8 @@ export default function QualityAssurancePage({
       packagingPictureFilenames: [],
       artworkApprovals: [],
       upcCode: '',
+      specSheets: [],
+      certificates: [],
     };
     onAddQAProduct(newProduct);
     setShowAddModal(false);
@@ -151,7 +161,7 @@ export default function QualityAssurancePage({
   // Open detail card
   const openDetail = (product: QAProduct) => {
     setSelectedProduct(product);
-    setEditData({ ...product, specifications: { ...product.specifications }, packagingPictureUrls: [...product.packagingPictureUrls], packagingPictureFilenames: [...product.packagingPictureFilenames], artworkApprovals: [...product.artworkApprovals] });
+    setEditData({ ...product, specifications: { ...product.specifications }, packagingPictureUrls: [...product.packagingPictureUrls], packagingPictureFilenames: [...product.packagingPictureFilenames], artworkApprovals: [...product.artworkApprovals], specSheets: [...(product.specSheets || [])], certificates: [...(product.certificates || [])] });
     setIsEditing(false);
   };
 
@@ -284,6 +294,92 @@ export default function QualityAssurancePage({
     setSelectedProduct(updated);
   };
 
+  // Spec sheet upload handler
+  const handleSpecSheetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editData) return;
+    if (file.size > 10 * 1024 * 1024) { alert('File must be under 10MB'); return; }
+    setIsUploadingSpecSheet(true);
+    try {
+      const { url, filename } = await uploadQAFile(editData.id, 'packaging', file); // reuse 'packaging' category path
+      const doc: QADocument = { id: `SPEC-${Date.now()}`, url, filename, uploadedAt: new Date().toISOString() };
+      const updated = { ...editData, specSheets: [...(editData.specSheets || []), doc] };
+      setEditData(updated);
+      onUpdateQAProduct(updated);
+      setSelectedProduct(updated);
+    } catch (err) {
+      console.error('Spec sheet upload failed:', err);
+      alert('Failed to upload spec sheet. Please try again.');
+    } finally {
+      setIsUploadingSpecSheet(false);
+      e.target.value = '';
+    }
+  };
+
+  // Certificate upload handler
+  const handleCertificateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editData) return;
+    if (file.size > 10 * 1024 * 1024) { alert('File must be under 10MB'); return; }
+    setIsUploadingCertificate(true);
+    try {
+      const { url, filename } = await uploadQAFile(editData.id, 'artwork', file); // reuse 'artwork' category path
+      const doc: QADocument = { id: `CERT-${Date.now()}`, url, filename, uploadedAt: new Date().toISOString() };
+      const updated = { ...editData, certificates: [...(editData.certificates || []), doc] };
+      setEditData(updated);
+      onUpdateQAProduct(updated);
+      setSelectedProduct(updated);
+    } catch (err) {
+      console.error('Certificate upload failed:', err);
+      alert('Failed to upload certificate. Please try again.');
+    } finally {
+      setIsUploadingCertificate(false);
+      e.target.value = '';
+    }
+  };
+
+  // Delete a spec sheet
+  const handleDeleteSpecSheet = async (docId: string) => {
+    if (!editData) return;
+    const doc = (editData.specSheets || []).find(d => d.id === docId);
+    if (doc) await deleteQAFile(doc.url);
+    const updated = { ...editData, specSheets: (editData.specSheets || []).filter(d => d.id !== docId) };
+    setEditData(updated);
+    onUpdateQAProduct(updated);
+    setSelectedProduct(updated);
+  };
+
+  // Delete a certificate
+  const handleDeleteCertificate = async (docId: string) => {
+    if (!editData) return;
+    const doc = (editData.certificates || []).find(d => d.id === docId);
+    if (doc) await deleteQAFile(doc.url);
+    const updated = { ...editData, certificates: (editData.certificates || []).filter(d => d.id !== docId) };
+    setEditData(updated);
+    onUpdateQAProduct(updated);
+    setSelectedProduct(updated);
+  };
+
+  // Email a document (opens mailto with attachment link)
+  const handleEmailDocument = (doc: QADocument, type: 'Spec Sheet' | 'Certificate') => {
+    const productName = selectedProduct?.skuName || 'Product';
+    const subject = encodeURIComponent(`${type}: ${productName} - ${doc.filename}`);
+    const body = encodeURIComponent(`Please find the ${type.toLowerCase()} for ${productName} attached.\n\nDocument: ${doc.filename}\nDownload: ${doc.url}`);
+    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+  };
+
+  // Download a document
+  const handleDownloadDocument = (doc: QADocument) => {
+    const link = document.createElement('a');
+    link.href = doc.url;
+    link.download = doc.filename;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // People filtered by department
   const qaPeople = people.filter(p => p.department === 'QA');
   const salesPeople = people.filter(p => p.department === 'sales');
@@ -405,6 +501,8 @@ export default function QualityAssurancePage({
       <input type="file" ref={packagingFileRef} className="hidden" accept="image/*" onChange={handlePackagingUpload} />
       <input type="file" ref={artworkFileRef} className="hidden" accept="image/*,.pdf" onChange={handleArtworkUpload} />
       <input type="file" ref={upcFileRef} className="hidden" accept="image/*" onChange={handleUpcUpload} />
+      <input type="file" ref={specSheetFileRef} className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" onChange={handleSpecSheetUpload} />
+      <input type="file" ref={certificateFileRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={handleCertificateUpload} />
 
       {/* Add Product Modal */}
       <AnimatePresence>
@@ -476,6 +574,61 @@ export default function QualityAssurancePage({
               </div>
 
               <div className="p-6 space-y-4">
+                {/* Section 0: Product Details (editable - syncs back to Products table) */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
+                  {isEditing ? (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name</label>
+                        <input value={editData?.skuName || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, skuName: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
+                        <select value={editData?.productGroup || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, productGroup: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Category</label>
+                        <select value={editData?.category || 'Conventional'} onChange={(e) => setEditData(prev => prev ? { ...prev, category: e.target.value as 'Conventional' | 'Organic' } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          <option value="Conventional">Conventional</option>
+                          <option value="Organic">Organic</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
+                        <select value={editData?.location || 'Hamilton'} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value as 'Hamilton' | 'Vancouver' } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          <option value="Hamilton">Hamilton</option>
+                          <option value="Vancouver">Vancouver</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</label>
+                        <input type="number" value={editData?.netWeightKg || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, netWeightKg: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</label>
+                        <input type="number" value={editData?.grossWeightKg || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, grossWeightKg: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</label>
+                        <input type="number" value={editData?.maxColor || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, maxColor: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-4">
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{displayData.skuName}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Group</div><div className="text-xs font-bold">{displayData.productGroup}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Category</div><div className="text-xs font-bold">{displayData.category}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div><div className="text-xs font-bold">{displayData.location}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Section 1: Approvers */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Approvers</div>
@@ -808,6 +961,96 @@ export default function QualityAssurancePage({
                         <div className="text-xs font-bold">{displayData.unitsPerPallet || '-'}</div>
                       </div>
                     </div>
+                  )}
+                </div>
+
+                {/* Section 9: Spec Sheets */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Spec Sheets</div>
+                  {(displayData.specSheets || []).length > 0 ? (
+                    <div className="space-y-2">
+                      {(displayData.specSheets || []).map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                          <div className="flex items-center gap-3">
+                            <FileText size={16} className="text-[#141414]/50" />
+                            <div>
+                              <div className="text-xs font-bold">{doc.filename}</div>
+                              <div className="text-[10px] opacity-50">Uploaded {new Date(doc.uploadedAt).toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                              <Download size={14} />
+                            </button>
+                            <button onClick={() => handleEmailDocument(doc, 'Spec Sheet')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Email">
+                              <Mail size={14} />
+                            </button>
+                            {isEditing && (
+                              <button onClick={() => handleDeleteSpecSheet(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete">
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs opacity-50 italic flex items-center gap-2"><FileText size={14} /> No spec sheets uploaded</div>
+                  )}
+                  {isEditing && (
+                    <button
+                      onClick={() => specSheetFileRef.current?.click()}
+                      disabled={isUploadingSpecSheet}
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    >
+                      {isUploadingSpecSheet ? <RefreshSpinner /> : <Upload size={14} />}
+                      {isUploadingSpecSheet ? 'Uploading...' : 'Upload Spec Sheet'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Section 10: Certificates */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Certificates</div>
+                  {(displayData.certificates || []).length > 0 ? (
+                    <div className="space-y-2">
+                      {(displayData.certificates || []).map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                          <div className="flex items-center gap-3">
+                            <FileText size={16} className="text-[#141414]/50" />
+                            <div>
+                              <div className="text-xs font-bold">{doc.filename}</div>
+                              <div className="text-[10px] opacity-50">Uploaded {new Date(doc.uploadedAt).toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                              <Download size={14} />
+                            </button>
+                            <button onClick={() => handleEmailDocument(doc, 'Certificate')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Email">
+                              <Mail size={14} />
+                            </button>
+                            {isEditing && (
+                              <button onClick={() => handleDeleteCertificate(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete">
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs opacity-50 italic flex items-center gap-2"><FileText size={14} /> No certificates uploaded</div>
+                  )}
+                  {isEditing && (
+                    <button
+                      onClick={() => certificateFileRef.current?.click()}
+                      disabled={isUploadingCertificate}
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    >
+                      {isUploadingCertificate ? <RefreshSpinner /> : <Upload size={14} />}
+                      {isUploadingCertificate ? 'Uploading...' : 'Upload Certificate'}
+                    </button>
                   )}
                 </div>
 

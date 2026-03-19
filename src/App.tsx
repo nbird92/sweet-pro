@@ -105,6 +105,7 @@ export default function App() {
   const [filteredOrderContracts, setFilteredOrderContracts] = useState<Contract[]>([]);
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ orderId: string; newStatus: Order['status'] } | null>(null);
+  const [orderDeleteConfirmId, setOrderDeleteConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: 'Hamilton' | 'Vancouver'; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
   const [isCreatingTransferShipment, setIsCreatingTransferShipment] = useState(false);
@@ -490,6 +491,8 @@ export default function App() {
           packagingPictureUrls: qa.packagingPictureUrls || [],
           packagingPictureFilenames: qa.packagingPictureFilenames || [],
           artworkApprovals: qa.artworkApprovals || [],
+          specSheets: qa.specSheets || [],
+          certificates: qa.certificates || [],
         }));
         setQaProducts(mapped);
         lastSyncedData.current.qaproducts = JSON.stringify(mapped);
@@ -574,6 +577,42 @@ export default function App() {
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, lastSynced, user]);
+
+  // Sync QA product edits back to the Products (SKU) table
+  useEffect(() => {
+    if (qaProducts.length === 0) return;
+    let changed = false;
+    const updatedSkus = skus.map(sku => {
+      const qa = qaProducts.find(q => q.skuId === sku.id);
+      if (!qa) return sku;
+      // Check if any QA-managed fields differ from the SKU
+      if (
+        qa.skuName !== sku.name ||
+        qa.productGroup !== sku.productGroup ||
+        qa.category !== sku.category ||
+        qa.location !== sku.location ||
+        (qa.netWeightKg !== undefined && qa.netWeightKg !== (sku.netWeightKg || sku.netWeight)) ||
+        (qa.grossWeightKg !== undefined && qa.grossWeightKg !== sku.grossWeightKg) ||
+        qa.maxColor !== sku.maxColor
+      ) {
+        changed = true;
+        return {
+          ...sku,
+          name: qa.skuName,
+          productGroup: qa.productGroup,
+          category: qa.category,
+          location: qa.location,
+          netWeightKg: qa.netWeightKg ?? sku.netWeightKg ?? sku.netWeight,
+          netWeight: qa.netWeightKg ?? sku.netWeightKg ?? sku.netWeight,
+          grossWeightKg: qa.grossWeightKg ?? sku.grossWeightKg,
+          maxColor: qa.maxColor,
+        };
+      }
+      return sku;
+    });
+    if (changed) setSkus(updatedSkus);
+  }, [qaProducts]);
+
   const [config, setConfig] = useState<CommodityConfig>({
     rawPriceUsdCwt: 13.94,
     oceanFreightUsdMt: 135,
@@ -2546,7 +2585,7 @@ export default function App() {
                           <button onClick={() => toggleRow(ord.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                             {expandedRows.has(ord.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
-                          <button onClick={() => setOrders(orders.filter(o => o.id !== ord.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                          <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all">
                             <Trash2 size={14} />
                           </button>
                         </td>
@@ -2652,18 +2691,15 @@ export default function App() {
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold uppercase tracking-tighter">Product Catalog</h2>
             <div className="flex gap-2">
-              <button 
+              <button
                 onClick={addProductGroup}
                 className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
               >
                 <Plus size={14} /> Add Product Group
               </button>
-              <button 
-                onClick={addSku}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={14} /> Add Product
-              </button>
+              <div className="px-4 py-2 text-xs text-[#141414]/50 italic flex items-center">
+                Manage products in QA page
+              </div>
             </div>
           </div>
 
@@ -2763,11 +2799,8 @@ export default function App() {
                           <button onClick={() => toggleRow(s.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
                             {expandedRows.has(s.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
-                          <button onClick={() => setEditingSku(s)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Product">
+                          <button onClick={() => setEditingSku(s)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Differential">
                             <Edit2 size={14} />
-                          </button>
-                          <button onClick={() => deleteSku(s.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Product">
-                            <Trash2 size={14} />
                           </button>
                         </td>
                       </tr>
@@ -6020,93 +6053,45 @@ export default function App() {
                 </button>
               </div>
               <div className="p-6 space-y-4">
+                <div className="bg-amber-50 border border-amber-300 p-3 text-xs text-amber-800">
+                  Only the Default Differential can be edited here. To change other product details, use the <span className="font-bold">Quality Assurance</span> page.
+                </div>
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
-                    <input 
-                      type="text" 
-                      value={editingSku.name} 
-                      onChange={(e) => setEditingSku({ ...editingSku, name: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.name}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
-                    <select 
-                      value={editingSku.productGroup} 
-                      onChange={(e) => setEditingSku({ ...editingSku, productGroup: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      {productGroups.map(pg => (
-                        <option key={pg.id} value={pg.name}>{pg.name}</option>
-                      ))}
-                    </select>
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.productGroup}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Conv./Organic</label>
-                    <select 
-                      value={editingSku.category} 
-                      onChange={(e) => setEditingSku({ ...editingSku, category: e.target.value as any })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="Conventional">Conventional</option>
-                      <option value="Organic">Organic</option>
-                    </select>
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.category}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
-                    <select 
-                      value={editingSku.location} 
-                      onChange={(e) => setEditingSku({ ...editingSku, location: e.target.value as 'Hamilton' | 'Vancouver' })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
-                    </select>
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.location}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingSku.netWeightKg || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSku({ ...editingSku, netWeightKg: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.netWeightKg || editingSku.netWeight || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingSku.grossWeightKg || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSku({ ...editingSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.grossWeightKg || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingSku.brix || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSku({ ...editingSku, brix: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.brix || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                        value={editingSku.maxColor || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSku({ ...editingSku, maxColor: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.maxColor || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={editingSku.premiumCadMt || ""}
                         onFocus={(e) => e.target.select()}
@@ -6117,23 +6102,19 @@ export default function App() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
-                  <textarea 
-                    value={editingSku.description || ''} 
-                    onChange={(e) => setEditingSku({ ...editingSku, description: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-32 resize-none focus:bg-white transition-colors outline-none"
-                  />
+                  <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70 min-h-[80px] whitespace-pre-wrap">{editingSku.description || 'No description provided.'}</div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
-                      setSkus(skus.map(s => s.id === editingSku.id ? editingSku : s));
+                      setSkus(skus.map(s => s.id === editingSku.id ? { ...s, premiumCadMt: editingSku.premiumCadMt } : s));
                       setEditingSku(null);
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
                     Save Changes
                   </button>
-                  <button 
+                  <button
                     onClick={() => setEditingSku(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -7400,6 +7381,43 @@ export default function App() {
                     </>
                   );
                 })()}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Order Delete Confirmation Dialog */}
+        {orderDeleteConfirmId && (
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={20} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Delete Order</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete order <span className="font-bold">{orders.find(o => o.id === orderDeleteConfirmId)?.bolNumber || orderDeleteConfirmId}</span>? This action cannot be undone.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      setOrders(orders.filter(o => o.id !== orderDeleteConfirmId));
+                      setOrderDeleteConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                  >
+                    Yes, Delete
+                  </button>
+                  <button
+                    onClick={() => setOrderDeleteConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
