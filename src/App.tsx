@@ -44,7 +44,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -2808,42 +2808,173 @@ export default function App() {
                         {expandedRows.has(s.id) && (
                           <tr>
                             <td colSpan={9} className="p-0">
-                              <motion.div 
+                              <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
                                 exit={{ height: 0, opacity: 0 }}
                                 className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
                               >
-                                <div className="p-6 grid grid-cols-2 gap-6">
-                                  <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                      <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
-                                        <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
+                                {(() => {
+                                  const qaP = qaProducts.find(q => q.skuId === s.id);
+                                  return (
+                                    <div className="p-6 space-y-6">
+                                      {/* Row 1: Basic product info */}
+                                      <div className="grid grid-cols-2 gap-6">
+                                        <div className="space-y-4">
+                                          <div className="grid grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
+                                              <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
+                                              <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
+                                              <div className="text-xs font-bold">{s.maxColor}</div>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
+                                              <div className="text-xs font-bold">{s.brix}</div>
+                                            </div>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <label className="text-[10px] uppercase font-bold opacity-50">Premium (CAD/MT)</label>
+                                            <div className="text-xs font-bold">${s.premiumCadMt}</div>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
+                                          <div className="text-xs opacity-70 whitespace-pre-wrap">{s.description || 'No description provided.'}</div>
+                                        </div>
                                       </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
-                                        <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
-                                      </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                                        <div className="text-xs font-bold">{s.maxColor}</div>
-                                      </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                                        <div className="text-xs font-bold">{s.brix}</div>
-                                      </div>
+
+                                      {/* Row 2: QA Specifications */}
+                                      {qaP && qaP.specifications && (
+                                        <div className="space-y-2">
+                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Specifications</h4>
+                                          <div className="grid grid-cols-6 gap-3">
+                                            {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
+                                              <div key={spec} className="space-y-0.5">
+                                                <label className="text-[10px] uppercase font-bold opacity-40">{spec}</label>
+                                                <div className="text-xs font-bold">{qaP.specifications[spec] || '-'}</div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Row 3: Ti-Hi / Pallet Config */}
+                                      {qaP && (qaP.ti || qaP.hi) && (
+                                        <div className="space-y-2">
+                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Pallet Configuration</h4>
+                                          <div className="grid grid-cols-3 gap-3">
+                                            <div className="space-y-0.5">
+                                              <label className="text-[10px] uppercase font-bold opacity-40">Ti</label>
+                                              <div className="text-xs font-bold">{qaP.ti || '-'}</div>
+                                            </div>
+                                            <div className="space-y-0.5">
+                                              <label className="text-[10px] uppercase font-bold opacity-40">Hi</label>
+                                              <div className="text-xs font-bold">{qaP.hi || '-'}</div>
+                                            </div>
+                                            <div className="space-y-0.5">
+                                              <label className="text-[10px] uppercase font-bold opacity-40">Units per Pallet</label>
+                                              <div className="text-xs font-bold">{qaP.unitsPerPallet || '-'}</div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Row 4: Spec Sheets & Certificates */}
+                                      {qaP && ((qaP.specSheets && qaP.specSheets.length > 0) || (qaP.certificates && qaP.certificates.length > 0)) && (
+                                        <div className="grid grid-cols-2 gap-6">
+                                          {/* Spec Sheets */}
+                                          <div className="space-y-2">
+                                            <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Spec Sheets</h4>
+                                            {qaP.specSheets && qaP.specSheets.length > 0 ? (
+                                              <div className="space-y-1.5">
+                                                {qaP.specSheets.map((doc: QADocument) => (
+                                                  <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                      <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
+                                                      <span className="text-xs font-bold truncate">{doc.filename}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                                      <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                                        <Download size={12} />
+                                                      </a>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <div className="text-xs opacity-40 italic">No spec sheets</div>
+                                            )}
+                                          </div>
+
+                                          {/* Certificates */}
+                                          <div className="space-y-2">
+                                            <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Certificates</h4>
+                                            {qaP.certificates && qaP.certificates.length > 0 ? (
+                                              <div className="space-y-1.5">
+                                                {qaP.certificates.map((doc: QADocument) => (
+                                                  <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                      <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
+                                                      <span className="text-xs font-bold truncate">{doc.filename}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                                      <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                                        <Download size={12} />
+                                                      </a>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            ) : (
+                                              <div className="text-xs opacity-40 italic">No certificates</div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Row 5: Packaging Pictures & Artwork */}
+                                      {qaP && ((qaP.packagingPictureUrls && qaP.packagingPictureUrls.length > 0) || qaP.artworkUrl || qaP.upcImageUrl) && (
+                                        <div className="space-y-2">
+                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Images</h4>
+                                          <div className="flex gap-4 flex-wrap">
+                                            {qaP.packagingPictureUrls && qaP.packagingPictureUrls.map((url: string, idx: number) => (
+                                              <div key={idx} className="space-y-1">
+                                                <img src={url} alt={`Packaging ${idx + 1}`} className="w-24 h-24 object-cover border border-[#141414]/20" />
+                                                <div className="text-[9px] opacity-40 text-center">Packaging</div>
+                                              </div>
+                                            ))}
+                                            {qaP.artworkUrl && (
+                                              <div className="space-y-1">
+                                                <img src={qaP.artworkUrl} alt="Artwork" className="w-24 h-24 object-cover border border-[#141414]/20" />
+                                                <div className="text-[9px] opacity-40 text-center">Artwork</div>
+                                              </div>
+                                            )}
+                                            {qaP.upcImageUrl && (
+                                              <div className="space-y-1">
+                                                <img src={qaP.upcImageUrl} alt="UPC" className="w-24 h-24 object-cover border border-[#141414]/20" />
+                                                <div className="text-[9px] opacity-40 text-center">UPC</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Link to QA page */}
+                                      {qaP && (
+                                        <div className="text-[10px] opacity-40 italic pt-2 border-t border-[#141414]/10">
+                                          To edit product details, spec sheets, certificates, or images, go to the Quality Assurance page.
+                                        </div>
+                                      )}
                                     </div>
-                                    <div className="space-y-1">
-                                      <label className="text-[10px] uppercase font-bold opacity-50">Premium (CAD/MT)</label>
-                                      <div className="text-xs font-bold">${s.premiumCadMt}</div>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
-                                    <div className="text-xs opacity-70 whitespace-pre-wrap">{s.description || 'No description provided.'}</div>
-                                  </div>
-                                </div>
+                                  );
+                                })()}
                               </motion.div>
                             </td>
                           </tr>
