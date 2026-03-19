@@ -686,7 +686,9 @@ export default function App() {
     contractStartDate: new Date().toISOString().split('T')[0],
     contractEndDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     isPalletCharge: false,
-    palletCostCadMt: 15.00
+    palletCostCadMt: 15.00,
+    palletType: '',
+    paymentTerms: undefined
   });
 
   // Auto-calculate market inputs based on contract dates
@@ -1109,7 +1111,9 @@ export default function App() {
       rawPriceUsdMt: calculations.rawMtUsd,
       deliveredFreight: calculations.deliveredFreight,
       exportDuty: calculations.exportDuty,
-      palletCharge: calculations.palletCharge
+      palletCharge: calculations.palletCharge,
+      paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
+      palletType: config.palletType || ''
     };
 
     setContracts([...contracts, newContract]);
@@ -2135,6 +2139,7 @@ export default function App() {
                   <SortableHeader label="Customer Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Location" sortKey="defaultLocation" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Margin" sortKey="defaultMargin" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Payment Terms" sortKey="defaultPaymentTerms" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4 border-r border-[#141414]/10">Salesperson</th>
                   <th className="p-4 border-r border-[#141414]/10">Default Carrier</th>
                   <th className="p-4">Actions</th>
@@ -2148,6 +2153,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultPaymentTerms ? `${c.defaultPaymentTerms} days` : '—'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.salespersonId ? people.find(p => p.id === c.salespersonId)?.name || 'Unknown' : '-'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultCarrierCode || '-'}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
@@ -2165,8 +2171,8 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={7} className="p-0">
-                            <motion.div 
+                          <td colSpan={8} className="p-0">
+                            <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
                               exit={{ height: 0, opacity: 0 }}
@@ -2453,12 +2459,27 @@ export default function App() {
                   <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Amount (CAD)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]">
-                {filteredInvoices.map(i => (
+                {filteredInvoices.map(i => {
+                  // Auto-calculate due date from invoice date + customer payment terms
+                  const invoiceCustomer = customers.find(c => c.name === i.customer);
+                  const paymentDays = invoiceCustomer?.defaultPaymentTerms;
+                  const calculatedDueDate = (() => {
+                    if (i.dueDate) return i.dueDate;
+                    if (i.date && paymentDays) {
+                      const d = new Date(i.date);
+                      d.setDate(d.getDate() + paymentDays);
+                      return d.toISOString().split('T')[0];
+                    }
+                    return '';
+                  })();
+                  const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
+                  return (
                   <tr key={i.id} className="hover:bg-[#F9F9F9] transition-colors group">
                     <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
@@ -2468,8 +2489,8 @@ export default function App() {
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <select 
-                        value={i.status} 
+                      <select
+                        value={i.status}
                         onChange={(e) => updateInvoiceStatus(i.id, e.target.value)}
                         className="bg-transparent font-bold uppercase text-[10px] outline-none cursor-pointer hover:underline"
                         style={{ color: getStatusColor(i.status).text }}
@@ -2481,7 +2502,18 @@ export default function App() {
                         <option value="Cancelled">Cancelled</option>
                       </select>
                     </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{i.splitNo || '—'}</td>
+                    <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
+                      {calculatedDueDate || '—'}
+                    </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                      <input
+                        type="text"
+                        value={i.splitNo || ''}
+                        onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
+                        className="w-full bg-transparent focus:outline-none font-mono text-xs"
+                        placeholder="—"
+                      />
+                    </td>
                     <td className="p-4 text-xs flex items-center gap-2">
                       <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
                         <Printer size={14} />
@@ -2491,7 +2523,8 @@ export default function App() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -3197,6 +3230,7 @@ export default function App() {
                   <SortableHeader label="Category" sortKey="category" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4 border-r border-[#141414]/10">Email</th>
                   <th className="p-4 border-r border-[#141414]/10">Phone</th>
+                  <th className="p-4 border-r border-[#141414]/10">Payment Terms</th>
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
@@ -3220,6 +3254,9 @@ export default function App() {
                     <td className="p-4 text-xs border-r border-[#141414]/10">
                       <input type="text" value={v.contactPhone || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactPhone: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Phone" />
                     </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                      <input type="text" inputMode="numeric" value={v.paymentTerms || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, paymentTerms: parseInt(e.target.value) || undefined } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Days" />
+                    </td>
                     <td className="p-4 text-xs">
                       <button onClick={() => setVendors(vendors.filter(x => x.id !== v.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
                         <Trash2 size={14} />
@@ -3228,7 +3265,7 @@ export default function App() {
                   </tr>
                 ))}
                 {vendors.length === 0 && (
-                  <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No vendors added yet. Click "Sync Carriers as Vendors" to auto-add carriers.</td></tr>
+                  <tr><td colSpan={7} className="p-8 text-center text-xs opacity-50 italic">No vendors added yet. Click "Sync Carriers as Vendors" to auto-add carriers.</td></tr>
                 )}
               </tbody>
             </table>
@@ -3632,6 +3669,7 @@ export default function App() {
                   <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Payment Terms" sortKey="paymentTerms" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
@@ -3657,6 +3695,7 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms ? `${c.paymentTerms} days` : '—'}</td>
                       <td className="p-3 text-xs flex items-center gap-2">
                         <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -3672,7 +3711,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={12} className="p-0">
+                          <td colSpan={13} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -3877,7 +3916,13 @@ export default function App() {
             </h2>
             <select 
               value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                const selectedCust = customers.find(c => c.name === e.target.value);
+                if (selectedCust?.defaultPaymentTerms) {
+                  setConfig(prev => ({ ...prev, paymentTerms: selectedCust.defaultPaymentTerms }));
+                }
+              }}
               className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
             >
               {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
@@ -3970,6 +4015,20 @@ export default function App() {
                   <option value="FCA">FCA</option>
                 </select>
               </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Payment Terms (Days)</label>
+                <input
+                  type="text" inputMode="numeric"
+                  value={config.paymentTerms || ''}
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => setConfig(prev => ({ ...prev, paymentTerms: parseInt(e.target.value) || undefined }))}
+                  placeholder={(() => {
+                    const c = customers.find(c => c.name === customer);
+                    return c?.defaultPaymentTerms ? `Default: ${c.defaultPaymentTerms} days` : 'e.g. 30';
+                  })()}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                />
+              </div>
               <InputField label="Raw Price (USD/cwt)" value={config.rawPriceUsdCwt} onChange={(v) => handleInputChange('rawPriceUsdCwt', v)} />
               <InputField label="Ocean Freight (USD/MT)" value={config.oceanFreightUsdMt} onChange={(v) => handleInputChange('oceanFreightUsdMt', v)} />
               <InputField label="Yield Loss Multiplier" value={config.yieldLossMultiplier} onChange={(v) => handleInputChange('yieldLossMultiplier', v)} step="0.01" />
@@ -3998,14 +4057,34 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Pallet Charge</label>
-                  <button 
-                    onClick={() => handleToggleChange('isPalletCharge')}
-                    className={`w-10 h-5 rounded-full relative transition-colors ${config.isPalletCharge ? 'bg-[#141414]' : 'bg-slate-300'}`}
-                  >
-                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${config.isPalletCharge ? 'left-6' : 'left-1'}`} />
-                  </button>
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                      <input
+                        type="checkbox"
+                        checked={config.palletType === 'CHEP'}
+                        onChange={() => {
+                          const newType = config.palletType === 'CHEP' ? '' : 'CHEP';
+                          setConfig(prev => ({ ...prev, palletType: newType as any, isPalletCharge: newType !== '' }));
+                        }}
+                        className="w-4 h-4 accent-[#141414]"
+                      />
+                      CHEP Pallet
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs">
+                      <input
+                        type="checkbox"
+                        checked={config.palletType === 'One Way'}
+                        onChange={() => {
+                          const newType = config.palletType === 'One Way' ? '' : 'One Way';
+                          setConfig(prev => ({ ...prev, palletType: newType as any, isPalletCharge: newType !== '' }));
+                        }}
+                        className="w-4 h-4 accent-[#141414]"
+                      />
+                      One Way Pallet
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4150,9 +4229,12 @@ export default function App() {
                 <DataRow label={`Export Duty (${calculations.currencySymbol}/MT)`} value={`${calculations.exportDuty.toFixed(2)}`} />
               )}
               {config.isPalletCharge && (
-                <DataRow label={`Pallet Charge (${calculations.currencySymbol}/MT)`} value={`${calculations.palletCharge.toFixed(2)}`} />
+                <DataRow label={`Pallet Charge (${calculations.currencySymbol}/MT) — ${config.palletType || 'Standard'}`} value={`${calculations.palletCharge.toFixed(2)}`} />
               )}
-              
+              {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && (
+                <DataRow label="Payment Terms" value={`${config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms || 0} days`} />
+              )}
+
               <div className="p-6 bg-[#F5F5F5] grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-1">
                   <div className="text-[10px] uppercase opacity-50">Final Rate (MT)</div>
@@ -4575,6 +4657,14 @@ export default function App() {
                     <div className="font-bold text-right">{config.contractStartDate || 'N/A'}</div>
                     <div className="opacity-60">End Date</div>
                     <div className="font-bold text-right">{config.contractEndDate || 'N/A'}</div>
+                    {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && <>
+                      <div className="opacity-60">Payment Terms</div>
+                      <div className="font-bold text-right">{config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms} days</div>
+                    </>}
+                    {config.palletType && <>
+                      <div className="opacity-60">Pallet Type</div>
+                      <div className="font-bold text-right">{config.palletType}</div>
+                    </>}
                   </div>
                   <div className="border-t border-[#141414]/10 pt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">Final Price</div>
@@ -4648,7 +4738,11 @@ export default function App() {
               lines.push(`Export Duty (${cs}/MT): $${calculations.exportDuty.toFixed(2)}`);
             }
             if (config.isPalletCharge) {
-              lines.push(`Pallet Charge (${cs}/MT): $${calculations.palletCharge.toFixed(2)}`);
+              lines.push(`Pallet Charge (${cs}/MT): $${calculations.palletCharge.toFixed(2)} — ${config.palletType || 'Standard'}`);
+            }
+            const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
+            if (emailPaymentTerms) {
+              lines.push(`Payment Terms: ${emailPaymentTerms} days`);
             }
             lines.push('');
             lines.push('FINAL PRICING');
@@ -5497,9 +5591,32 @@ export default function App() {
                       <option value="FCA">FCA</option>
                     </select>
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Payment Terms (Days)</label>
+                    <input
+                      type="text" inputMode="numeric"
+                      value={editingContract.paymentTerms || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, paymentTerms: parseInt(e.target.value) || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="e.g. 30"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Pallet Type</label>
+                    <select
+                      value={editingContract.palletType || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, palletType: e.target.value as any })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">None</option>
+                      <option value="CHEP">CHEP Pallet</option>
+                      <option value="One Way">One Way Pallet</option>
+                    </select>
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setContracts(contracts.map(c => c.id === editingContract.id ? editingContract : c));
                       setEditingContract(null);
@@ -5552,6 +5669,10 @@ export default function App() {
                     <div className="font-bold text-right">{selectedContractDetail.endDate}</div>
                     <div className="opacity-60">Shipping Terms</div>
                     <div className="font-bold text-right">{selectedContractDetail.shippingTerms || '—'}</div>
+                    <div className="opacity-60">Payment Terms</div>
+                    <div className="font-bold text-right">{selectedContractDetail.paymentTerms ? `${selectedContractDetail.paymentTerms} days` : '—'}</div>
+                    <div className="opacity-60">Pallet Type</div>
+                    <div className="font-bold text-right">{selectedContractDetail.palletType || '—'}</div>
                     <div className="opacity-60">Currency</div>
                     <div className="font-bold text-right">{selectedContractDetail.currency}</div>
                   </div>
@@ -5851,6 +5972,17 @@ export default function App() {
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => setNewCustomer({ ...newCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms (Days)</label>
+                    <input
+                      type="text" inputMode="numeric"
+                      value={newCustomer.defaultPaymentTerms || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultPaymentTerms: parseInt(e.target.value) || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="e.g. 30"
                     />
                   </div>
                   <div className="space-y-1">
@@ -6361,6 +6493,17 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms (Days)</label>
+                    <input
+                      type="text" inputMode="numeric"
+                      value={editingCustomer.defaultPaymentTerms || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultPaymentTerms: parseInt(e.target.value) || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="e.g. 30"
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>
@@ -7177,6 +7320,17 @@ export default function App() {
                         })()}
                       </div>
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
+                      <div className="w-full bg-white border border-[#141414]/30 p-2 text-sm text-[#141414]/70">
+                        {(() => {
+                          const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
+                          if (contractNums.length === 0) return 'From contract';
+                          const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
+                          return c?.palletType || '—';
+                        })()}
+                      </div>
+                    </div>
                   </div>
                   {editingOrder && (
                     <div className="grid grid-cols-3 gap-6">
@@ -7403,6 +7557,7 @@ export default function App() {
                           shippingTerms: orderShippingTerms || undefined,
                           location: orderLocation || editingOrder.location,
                           splitNumber: editingOrder.splitNumber,
+                          palletType: firstContract?.palletType || editingOrder.palletType || '',
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
                       } else {
@@ -7423,6 +7578,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: orderLocation,
+                          palletType: firstContract?.palletType || '',
                         };
                         setOrders([...orders, newOrder]);
                       }
@@ -7554,7 +7710,7 @@ export default function App() {
 
                       {/* Contract Info Summary */}
                       {selectedContract && (
-                        <div className="bg-blue-50 border border-blue-200 p-3 grid grid-cols-5 gap-3">
+                        <div className="bg-blue-50 border border-blue-200 p-3 grid grid-cols-6 gap-3">
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Location (Origin)</div>
                             <div className="text-xs font-bold">{selectedContract.origin || '—'}</div>
@@ -7570,6 +7726,10 @@ export default function App() {
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Price per MT</div>
                             <div className="text-xs font-bold">${mtRate.toFixed(2)}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Pallet Type</div>
+                            <div className="text-xs font-bold">{selectedContract.palletType || '—'}</div>
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Batch Total Weight</div>
@@ -7819,6 +7979,7 @@ export default function App() {
                                 amount: entryAmount,
                                 carrier: entry.carrier,
                                 location: selectedContract?.origin || '',
+                                palletType: selectedContract?.palletType || '',
                               };
                             });
                             setOrders([...orders, ...newOrders]);

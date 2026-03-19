@@ -20,7 +20,9 @@ export interface CommodityConfig {
   contractEndDate?: string;
   isPalletCharge: boolean;
   palletCostCadMt: number;
+  palletType?: 'CHEP' | 'One Way' | '';
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  paymentTerms?: number; // Days for payment
 }
 
 export interface SKU {
@@ -56,6 +58,7 @@ export interface Customer {
   notes?: string;
   salespersonId?: string;
   defaultCarrierCode?: string;
+  defaultPaymentTerms?: number; // Number of days to pay invoice
 }
 
 export interface Person {
@@ -155,6 +158,8 @@ export interface Contract {
   deliveredFreight?: number;
   exportDuty?: number;
   palletCharge?: number;
+  paymentTerms?: number; // Days for payment
+  palletType?: 'CHEP' | 'One Way' | '';
 }
 
 export interface Shipment {
@@ -277,6 +282,7 @@ export interface Invoice {
   date: string;
   status: string;
   splitNo?: string;
+  dueDate?: string; // Calculated from date + customer payment terms
 }
 
 export interface OrderLineItem {
@@ -308,6 +314,7 @@ export interface Order {
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
   location?: string;       // shipping origin from contract
   splitNumber?: string;    // user-entered split number
+  palletType?: 'CHEP' | 'One Way' | ''; // from contract
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [
@@ -488,6 +495,7 @@ export interface Vendor {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
+  paymentTerms?: number; // Days for payment
 }
 
 export const INITIAL_VENDORS: Vendor[] = [];
