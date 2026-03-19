@@ -118,7 +118,20 @@ export interface FreightRate {
   cost: number;
   freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal';
   mtPerLoad: number;
+  startDate?: string;
+  endDate?: string;
 }
+
+export interface FuelSurcharge {
+  id: string;
+  carrierCode: string;
+  carrier: string;
+  surchargePercent: number;
+  startDate: string;
+  endDate: string;
+}
+
+export const INITIAL_FUEL_SURCHARGES: FuelSurcharge[] = [];
 
 export interface Contract {
   id: string;

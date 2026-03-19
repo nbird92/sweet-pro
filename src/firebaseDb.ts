@@ -28,6 +28,7 @@ export const COLLECTIONS = {
   conferences: 'conferences',
   people: 'people',
   qaProducts: 'qaProducts',
+  fuelSurcharges: 'fuelSurcharges',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

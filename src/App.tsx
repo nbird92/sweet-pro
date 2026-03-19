@@ -44,7 +44,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -57,12 +57,19 @@ export default function App() {
       return saved ? new Set(JSON.parse(saved)) : new Set<string>();
     } catch { return new Set<string>(); }
   });
+  const [pageOrder, setPageOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('sweetpro-page-order');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
   const [isEditingSidebar, setIsEditingSidebar] = useState(false);
   const [scheduleLocation, setScheduleLocation] = useState('Hamilton');
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
+  const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
   const [contracts, setContracts] = useState<Contract[]>(INITIAL_CONTRACTS);
   const [carriers, setCarriers] = useState<Carrier[]>(INITIAL_CARRIERS);
   const [locations, setLocations] = useState<Location[]>(INITIAL_LOCATIONS);
@@ -325,6 +332,7 @@ export default function App() {
     conferences: JSON.stringify([]),
     people: JSON.stringify(INITIAL_PEOPLE),
     qaproducts: JSON.stringify([]),
+    fuelsurcharges: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -497,6 +505,10 @@ export default function App() {
         setQaProducts(mapped);
         lastSyncedData.current.qaproducts = JSON.stringify(mapped);
       }
+      if (data.fuelSurcharges?.length) {
+        setFuelSurcharges(data.fuelSurcharges);
+        lastSyncedData.current.fuelsurcharges = JSON.stringify(data.fuelSurcharges);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -551,6 +563,7 @@ export default function App() {
         { collection: COLLECTIONS.conferences, key: 'conferences', data: conferences },
         { collection: COLLECTIONS.people, key: 'people', data: people },
         { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
+        { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
       ];
 
       try {
@@ -576,7 +589,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
   useEffect(() => {
@@ -933,7 +946,9 @@ export default function App() {
     provider: '',
     cost: 0,
     freightType: 'Dry Van',
-    mtPerLoad: 22
+    mtPerLoad: 22,
+    startDate: '',
+    endDate: ''
   });
 
   const toggleRow = (id: string) => {
@@ -1010,7 +1025,9 @@ export default function App() {
       provider: '',
       cost: 0,
       freightType: 'Dry Van',
-      mtPerLoad: 22
+      mtPerLoad: 22,
+      startDate: '',
+      endDate: ''
     });
     setIsAddingFreightRate(true);
   };
@@ -1248,7 +1265,7 @@ export default function App() {
     });
   }, [activePage]);
 
-  const navItems = [
+  const defaultNavItems = [
     { name: 'Dashboard', icon: TrendingUp },
     { name: 'Customer Quote', icon: Calculator },
     { name: 'Shipment Schedule', icon: Calendar },
@@ -1266,6 +1283,29 @@ export default function App() {
     { name: 'People', icon: Users },
     { name: 'Quality Assurance', icon: ClipboardCheck },
   ];
+
+  // Apply saved page order (any new pages not in saved order appear at the end)
+  const navItems = useMemo(() => {
+    if (pageOrder.length === 0) return defaultNavItems;
+    const orderMap = new Map<string, number>(pageOrder.map((name, idx) => [name, idx]));
+    return [...defaultNavItems].sort((a, b) => {
+      const aIdx: number = orderMap.get(a.name) ?? 999;
+      const bIdx: number = orderMap.get(b.name) ?? 999;
+      return aIdx - bIdx;
+    });
+  }, [pageOrder]);
+
+  const movePage = useCallback((pageName: string, direction: 'up' | 'down') => {
+    const currentOrder = pageOrder.length > 0 ? pageOrder : defaultNavItems.map(n => n.name);
+    const idx = currentOrder.indexOf(pageName);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= currentOrder.length) return;
+    const newOrder = [...currentOrder];
+    [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
+    setPageOrder(newOrder);
+    localStorage.setItem('sweetpro-page-order', JSON.stringify(newOrder));
+  }, [pageOrder]);
 
   const renderContent = () => {
     try {
@@ -3274,6 +3314,8 @@ export default function App() {
                     <SortableHeader label="Carrier" sortKey="provider" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Cost (CAD)" sortKey="cost" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="MT / Load" sortKey="mtPerLoad" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
                     <th className="p-4">Actions</th>
                   </tr>
                 </thead>
@@ -3286,6 +3328,8 @@ export default function App() {
                       <td className="p-4 text-xs">{rate.provider}</td>
                       <td className="p-4 text-xs font-bold">{rate.cost.toLocaleString()}</td>
                       <td className="p-4 text-xs">{rate.mtPerLoad}</td>
+                      <td className="p-4 text-xs">{rate.startDate || '—'}</td>
+                      <td className="p-4 text-xs">{rate.endDate || '—'}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
                         <button onClick={() => setEditingFreightRate(rate)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           <Edit2 size={14} />
@@ -3296,6 +3340,99 @@ export default function App() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Fuel Surcharge Table */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold uppercase tracking-widest">Fuel Surcharges</h3>
+              <button
+                onClick={() => {
+                  const id = `FS-${Date.now()}`;
+                  setFuelSurcharges([...fuelSurcharges, { id, carrierCode: '', carrier: '', surchargePercent: 0, startDate: '', endDate: '' }]);
+                }}
+                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+              >
+                <Plus size={12} /> Add Surcharge
+              </button>
+            </div>
+
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                    <th className="p-4 border-r border-[#141414]/10">Carrier Code</th>
+                    <th className="p-4 border-r border-[#141414]/10">Carrier</th>
+                    <th className="p-4 border-r border-[#141414]/10">Fuel Surcharge (%)</th>
+                    <th className="p-4 border-r border-[#141414]/10">Start Date</th>
+                    <th className="p-4 border-r border-[#141414]/10">End Date</th>
+                    <th className="p-4">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#141414]/10">
+                  {fuelSurcharges.map(fs => (
+                    <tr key={fs.id} className="hover:bg-[#F9F9F9] transition-colors">
+                      <td className="p-4 text-xs font-mono border-r border-[#141414]/10">
+                        <input
+                          type="text"
+                          value={fs.carrierCode}
+                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, carrierCode: e.target.value } : f))}
+                          className="w-full bg-transparent focus:outline-none"
+                          placeholder="Code"
+                        />
+                      </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
+                        <select
+                          value={fs.carrier}
+                          onChange={(e) => {
+                            const sel = carriers.find(c => c.name === e.target.value);
+                            setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, carrier: e.target.value, carrierCode: sel?.carrierNumber || f.carrierCode } : f));
+                          }}
+                          className="w-full bg-transparent focus:outline-none"
+                        >
+                          <option value="">Select Carrier</option>
+                          {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
+                        <input
+                          type="text" inputMode="decimal"
+                          value={fs.surchargePercent || ''}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, surchargePercent: parseFloat(e.target.value) || 0 } : f))}
+                          className="w-full bg-transparent focus:outline-none"
+                          placeholder="0.0"
+                        />
+                      </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
+                        <input
+                          type="date"
+                          value={fs.startDate || ''}
+                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, startDate: e.target.value } : f))}
+                          className="w-full bg-transparent focus:outline-none"
+                        />
+                      </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
+                        <input
+                          type="date"
+                          value={fs.endDate || ''}
+                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, endDate: e.target.value } : f))}
+                          className="w-full bg-transparent focus:outline-none"
+                        />
+                      </td>
+                      <td className="p-4 text-xs">
+                        <button onClick={() => setFuelSurcharges(fuelSurcharges.filter(f => f.id !== fs.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {fuelSurcharges.length === 0 && (
+                    <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No fuel surcharges added yet.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -3927,10 +4064,30 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navItems
             .filter(item => isEditingSidebar || !hiddenPages.has(item.name))
-            .map((item) => {
+            .map((item, idx, arr) => {
               const isHidden = hiddenPages.has(item.name);
               return (
                 <div key={item.name} className="flex items-center gap-1">
+                  {isEditingSidebar && (
+                    <div className="flex flex-col">
+                      <button
+                        onClick={() => movePage(item.name, 'up')}
+                        disabled={idx === 0}
+                        className="p-0.5 text-[#141414]/40 hover:text-[#141414] transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="Move up"
+                      >
+                        <ChevronUp size={12} />
+                      </button>
+                      <button
+                        onClick={() => movePage(item.name, 'down')}
+                        disabled={idx === arr.length - 1}
+                        className="p-0.5 text-[#141414]/40 hover:text-[#141414] transition-all disabled:opacity-20 disabled:cursor-not-allowed"
+                        title="Move down"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                    </div>
+                  )}
                   <button
                     onClick={() => !isEditingSidebar && setActivePage(item.name)}
                     className={`flex-1 flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase transition-all border ${
@@ -3944,7 +4101,7 @@ export default function App() {
                     <item.icon size={16} />
                     {item.name}
                   </button>
-                  {isEditingSidebar && item.name !== 'Dashboard' && (
+                  {isEditingSidebar && (
                     <button
                       onClick={() => togglePageVisibility(item.name)}
                       className={`p-1.5 transition-all ${isHidden ? 'text-[#141414]/25 hover:text-[#141414]/60' : 'text-[#141414]/60 hover:text-[#141414]'}`}
@@ -3958,7 +4115,7 @@ export default function App() {
             })}
           {isEditingSidebar && (
             <div className="pt-2 mt-2 border-t border-[#141414]/10">
-              <p className="text-[9px] uppercase opacity-40 font-bold px-4">Click the eye icon to show or hide pages</p>
+              <p className="text-[9px] uppercase opacity-40 font-bold px-4">Use arrows to reorder, eye icon to show/hide pages</p>
             </div>
           )}
         </nav>
@@ -5035,7 +5192,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                       value={newFreightRate.mtPerLoad || ''}
                       onFocus={(e) => e.target.select()}
@@ -5043,9 +5200,27 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date</label>
+                    <input
+                      type="date"
+                      value={newFreightRate.startDate || ''}
+                      onChange={(e) => setNewFreightRate({ ...newFreightRate, startDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">End Date</label>
+                    <input
+                      type="date"
+                      value={newFreightRate.endDate || ''}
+                      onChange={(e) => setNewFreightRate({ ...newFreightRate, endDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setFreightRates([...freightRates, newFreightRate]);
                       setIsAddingFreightRate(false);
@@ -5390,7 +5565,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                       value={editingFreightRate.mtPerLoad || ''}
                       onFocus={(e) => e.target.select()}
@@ -5398,9 +5573,27 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date</label>
+                    <input
+                      type="date"
+                      value={editingFreightRate.startDate || ''}
+                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, startDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">End Date</label>
+                    <input
+                      type="date"
+                      value={editingFreightRate.endDate || ''}
+                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, endDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
                     onClick={() => {
                       setFreightRates(freightRates.map(f => f.id === editingFreightRate.id ? editingFreightRate : f));
                       setEditingFreightRate(null);
