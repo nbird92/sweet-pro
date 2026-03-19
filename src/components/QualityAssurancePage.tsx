@@ -197,7 +197,7 @@ export default function QualityAssurancePage({
   const handlePackagingUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editData) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File must be under 2MB'); return; }
+    // Size validation is handled by uploadQAFile (images compressed, docs limited to 400KB)
     setIsUploadingPackaging(true);
     try {
       const { url, filename } = await uploadQAFile(editData.id, 'packaging', file);
@@ -235,7 +235,7 @@ export default function QualityAssurancePage({
   const handleArtworkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editData) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File must be under 2MB'); return; }
+    // Size validation is handled by uploadQAFile (images compressed, docs limited to 400KB)
     setIsUploadingArtwork(true);
     try {
       const { url, filename } = await uploadQAFile(editData.id, 'artwork', file);
@@ -255,7 +255,7 @@ export default function QualityAssurancePage({
   const handleUpcUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editData) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File must be under 2MB'); return; }
+    // Size validation is handled by uploadQAFile (images compressed, docs limited to 400KB)
     setIsUploadingUpc(true);
     try {
       const { url, filename } = await uploadQAFile(editData.id, 'upc', file);
@@ -313,7 +313,7 @@ export default function QualityAssurancePage({
   const handleSpecSheetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editData) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File must be under 2MB'); return; }
+    // Size validation is handled by uploadQAFile (images compressed, docs limited to 400KB)
     setIsUploadingSpecSheet(true);
     try {
       const { url, filename } = await uploadQAFile(editData.id, 'packaging', file); // reuse 'packaging' category path
@@ -335,7 +335,7 @@ export default function QualityAssurancePage({
   const handleCertificateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editData) return;
-    if (file.size > 2 * 1024 * 1024) { alert('File must be under 2MB'); return; }
+    // Size validation is handled by uploadQAFile (images compressed, docs limited to 400KB)
     setIsUploadingCertificate(true);
     try {
       const { url, filename } = await uploadQAFile(editData.id, 'artwork', file); // reuse 'artwork' category path

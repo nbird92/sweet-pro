@@ -3046,20 +3046,11 @@ export default function App() {
             <h2 className="text-xl font-bold uppercase tracking-tighter">Supply Chain Management</h2>
           </div>
 
-          {/* Locations Table */}
+          {/* Locations Table (read-only except bays & appointment schedule — edit locations in QA page) */}
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
-              <button 
-                onClick={() => {
-                  const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
-                  setLocations([...locations, { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
-                  setExpandedRows(new Set([id]));
-                }}
-                className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add New Location
-              </button>
+              <span className="text-[10px] opacity-50 italic">Manage locations in QA page</span>
             </div>
             <table className="w-full text-left border-collapse">
               <thead>
@@ -3077,69 +3068,18 @@ export default function App() {
                 {locations.map(loc => (
                   <React.Fragment key={loc.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">
-                        <input
-                          type="text"
-                          value={loc.locationCode || ''}
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, locationCode: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Code"
-                        />
-                      </td>
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
-                        <input
-                          type="text"
-                          value={loc.name}
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, name: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Location Name"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input 
-                          type="text" 
-                          value={loc.address} 
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, address: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Address"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input 
-                          type="text" 
-                          value={loc.city} 
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, city: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="City"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input 
-                          type="text" 
-                          value={loc.province} 
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, province: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Province"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input 
-                          type="text" 
-                          value={loc.postalCode} 
-                          onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, postalCode: e.target.value } : l))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Postal Code"
-                        />
-                      </td>
+                      <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
+                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
                       <td className="p-4 text-xs flex gap-2">
                         <button onClick={() => setEditingAppointmentSchedule({...loc})} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Set Appointment Schedule">
                           <Clock size={14} />
                         </button>
                         <button onClick={() => toggleRow(loc.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(loc.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                        <button onClick={() => setLocations(locations.filter(l => l.id !== loc.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
