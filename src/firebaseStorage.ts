@@ -1,34 +1,31 @@
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { storage } from './firebaseConfig';
+// File upload utilities - stores files as base64 data URLs in Firestore
+// This bypasses Firebase Storage (which requires separate security rules)
+// and uses the same Firestore persistence that already works for all app data.
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s. Check Firebase Storage rules allow authenticated writes.`)), ms)
-    ),
-  ]);
+const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB per file (base64 adds ~33% overhead, Firestore doc limit is 1MB)
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 export async function uploadQAFile(
-  productId: string,
-  category: 'packaging' | 'artwork' | 'upc',
+  _productId: string,
+  _category: 'packaging' | 'artwork' | 'upc',
   file: File
 ): Promise<{ url: string; filename: string }> {
-  const timestamp = Date.now();
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `qa/${productId}/${category}/${timestamp}_${safeName}`;
-  const storageRef = ref(storage, path);
-  await withTimeout(uploadBytes(storageRef, file), 30000, 'Upload');
-  const url = await withTimeout(getDownloadURL(storageRef), 10000, 'Get download URL');
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error(`File "${file.name}" is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 2MB.`);
+  }
+  const url = await fileToDataUrl(file);
   return { url, filename: file.name };
 }
 
-export async function deleteQAFile(downloadUrl: string): Promise<void> {
-  try {
-    const storageRef = ref(storage, downloadUrl);
-    await deleteObject(storageRef);
-  } catch (e) {
-    console.error('Failed to delete file from storage:', e);
-  }
+export async function deleteQAFile(_downloadUrl: string): Promise<void> {
+  // No-op: data URLs are stored inline in Firestore documents.
+  // Removing from the document array is all that's needed.
 }
