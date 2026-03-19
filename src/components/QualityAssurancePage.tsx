@@ -977,9 +977,9 @@ export default function QualityAssurancePage({
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
-                        <select value={editData?.location || 'Hamilton'} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value as 'Hamilton' | 'Vancouver' } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
-                          <option value="Hamilton">Hamilton</option>
-                          <option value="Vancouver">Vancouver</option>
+                        <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          <option value="">Select Location</option>
+                          {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
                         </select>
                       </div>
                       <div>

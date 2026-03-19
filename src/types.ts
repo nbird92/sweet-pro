@@ -451,7 +451,7 @@ export interface QAProduct {
   skuName: string;
   productGroup: string;
   category: 'Conventional' | 'Organic';
-  location: 'Hamilton' | 'Vancouver';
+  location: string;
   netWeightKg?: number;
   grossWeightKg?: number;
   maxColor: number;
