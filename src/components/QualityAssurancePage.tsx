@@ -199,13 +199,41 @@ export default function QualityAssurancePage({
     );
   };
 
-  // Add product from SKU
-  const handleAddProduct = () => {
-    const sku = skus.find(s => s.id === selectedSkuId);
-    if (!sku) return;
+  // New product template
+  const createBlankProduct = (): QAProduct => ({
+    id: `QA-${Date.now()}`,
+    skuId: '',
+    skuName: '',
+    productGroup: productGroups.length > 0 ? productGroups[0].name : '',
+    category: 'Conventional',
+    location: locations.length > 0 ? locations[0].name : '',
+    netWeightKg: 0,
+    grossWeightKg: 0,
+    maxColor: 0,
+    specifications: { ...emptySpecs },
+    packagingSupplier: '',
+    packagingPictureUrls: [],
+    packagingPictureFilenames: [],
+    artworkApprovals: [],
+    upcCode: '',
+    specSheets: [],
+    certificates: [],
+  });
 
-    const newProduct: QAProduct = {
-      id: `QA-${Date.now()}`,
+  const [newProductData, setNewProductData] = useState<QAProduct>(createBlankProduct);
+
+  const openAddModal = () => {
+    setNewProductData(createBlankProduct());
+    setSelectedSkuId('');
+    setShowAddModal(true);
+  };
+
+  const prefillFromSku = (skuId: string) => {
+    setSelectedSkuId(skuId);
+    const sku = skus.find(s => s.id === skuId);
+    if (!sku) return;
+    setNewProductData(prev => ({
+      ...prev,
       skuId: sku.id,
       skuName: sku.name,
       productGroup: sku.productGroup,
@@ -214,17 +242,20 @@ export default function QualityAssurancePage({
       netWeightKg: sku.netWeightKg,
       grossWeightKg: sku.grossWeightKg,
       maxColor: sku.maxColor,
-      specifications: { ...emptySpecs },
-      packagingSupplier: '',
-      packagingPictureUrls: [],
-      packagingPictureFilenames: [],
-      artworkApprovals: [],
-      upcCode: '',
-      specSheets: [],
-      certificates: [],
+    }));
+  };
+
+  const handleAddProduct = () => {
+    if (!newProductData.skuName.trim()) return;
+    // If no skuId (scratch product), generate one
+    const product: QAProduct = {
+      ...newProductData,
+      id: `QA-${Date.now()}`,
+      skuId: newProductData.skuId || `SKU-NEW-${Date.now()}`,
     };
-    onAddQAProduct(newProduct);
+    onAddQAProduct(product);
     setShowAddModal(false);
+    setNewProductData(createBlankProduct());
     setSelectedSkuId('');
   };
 
@@ -488,7 +519,7 @@ export default function QualityAssurancePage({
           </p>
         </div>
         <button
-          onClick={() => { setShowAddModal(true); setSelectedSkuId(skus.length > 0 ? skus[0].id : ''); }}
+          onClick={openAddModal}
           className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
         >
           <Plus size={14} /> Add Product
@@ -886,43 +917,140 @@ export default function QualityAssurancePage({
       {/* Add Product Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setShowAddModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowAddModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Add Product to QA</h3>
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Add New Product</h3>
                 <button onClick={() => setShowAddModal(false)} className="hover:rotate-90 transition-transform"><X size={20} /></button>
               </div>
               <div className="p-6 space-y-4">
-                <div>
-                  <label className="block text-[10px] uppercase font-bold opacity-50 mb-2">Select Product (SKU)</label>
+                {/* Pre-fill from existing SKU (optional) */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pre-fill from Existing Product (Optional)</div>
                   <select
                     value={selectedSkuId}
-                    onChange={(e) => setSelectedSkuId(e.target.value)}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    onChange={(e) => prefillFromSku(e.target.value)}
+                    className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                   >
-                    <option value="">-- Select a product --</option>
+                    <option value="">— Create from scratch —</option>
                     {skus.map(s => (
                       <option key={s.id} value={s.id}>{s.name} ({s.productGroup} - {s.location})</option>
                     ))}
                   </select>
                 </div>
+
+                {/* Product Details */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name <span className="text-red-500">*</span></label>
+                      <input value={newProductData.skuName} onChange={(e) => setNewProductData(prev => ({ ...prev, skuName: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Enter product name" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
+                      <select value={newProductData.productGroup} onChange={(e) => setNewProductData(prev => ({ ...prev, productGroup: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Category</label>
+                      <select value={newProductData.category} onChange={(e) => setNewProductData(prev => ({ ...prev, category: e.target.value as 'Conventional' | 'Organic' }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="Conventional">Conventional</option>
+                        <option value="Organic">Organic</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
+                      <select value={newProductData.location} onChange={(e) => setNewProductData(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Select Location</option>
+                        {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</label>
+                      <input type="number" value={newProductData.netWeightKg || ''} onFocus={(e) => e.target.select()} onChange={(e) => setNewProductData(prev => ({ ...prev, netWeightKg: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</label>
+                      <input type="number" value={newProductData.grossWeightKg || ''} onFocus={(e) => e.target.select()} onChange={(e) => setNewProductData(prev => ({ ...prev, grossWeightKg: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</label>
+                      <input type="number" value={newProductData.maxColor || ''} onFocus={(e) => e.target.select()} onChange={(e) => setNewProductData(prev => ({ ...prev, maxColor: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Specifications */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Specifications</div>
+                  <div className="grid grid-cols-3 gap-4">
+                    {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
+                      <div key={spec}>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">{spec}</label>
+                        <input
+                          value={newProductData.specifications[spec] || ''}
+                          onChange={(e) => setNewProductData(prev => ({ ...prev, specifications: { ...prev.specifications, [spec]: e.target.value } }))}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Packaging & UPC */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging & UPC</div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Supplier</label>
+                      <input value={newProductData.packagingSupplier} onChange={(e) => setNewProductData(prev => ({ ...prev, packagingSupplier: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Supplier name" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">UPC Code</label>
+                      <input value={newProductData.upcCode} onChange={(e) => setNewProductData(prev => ({ ...prev, upcCode: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="UPC number" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ti-Hi */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pallet Configuration (Ti-Hi)</div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Ti</label>
+                      <input type="number" value={newProductData.ti || ''} onFocus={(e) => e.target.select()} onChange={(e) => { const ti = parseInt(e.target.value) || 0; setNewProductData(prev => ({ ...prev, ti, unitsPerPallet: ti * (prev.hi || 0) })); }} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Hi</label>
+                      <input type="number" value={newProductData.hi || ''} onFocus={(e) => e.target.select()} onChange={(e) => { const hi = parseInt(e.target.value) || 0; setNewProductData(prev => ({ ...prev, hi, unitsPerPallet: (prev.ti || 0) * hi })); }} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Units per Pallet</label>
+                      <div className="bg-white border border-[#141414]/20 p-2 text-xs font-bold">{(newProductData.ti || 0) * (newProductData.hi || 0) || '—'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={handleAddProduct}
-                    disabled={!selectedSkuId}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
+                    disabled={!newProductData.skuName.trim()}
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
                   >
-                    Add Product
+                    <CheckCircle2 size={16} /> Add Product
                   </button>
                   <button
                     onClick={() => setShowAddModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
                   >
                     Cancel
                   </button>
