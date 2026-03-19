@@ -14,7 +14,7 @@ export interface CommodityConfig {
   exportDutyUsdMt: number;
   origin: 'Hamilton' | 'Vancouver';
   destination: string;
-  freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal' | '';
+  freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal' | 'Transload' | '';
   useManualFreight: boolean;
   contractStartDate?: string;
   contractEndDate?: string;
@@ -116,7 +116,7 @@ export interface FreightRate {
   destination: string;
   provider: string;
   cost: number;
-  freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal';
+  freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal' | 'Transload';
   mtPerLoad: number;
   startDate?: string;
   endDate?: string;

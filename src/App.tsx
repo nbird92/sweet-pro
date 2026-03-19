@@ -38,7 +38,8 @@ import {
   Settings,
   Mail,
   Send,
-  ClipboardCheck
+  ClipboardCheck,
+  GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -1295,17 +1296,40 @@ export default function App() {
     });
   }, [pageOrder]);
 
-  const movePage = useCallback((pageName: string, direction: 'up' | 'down') => {
-    const currentOrder = pageOrder.length > 0 ? pageOrder : defaultNavItems.map(n => n.name);
-    const idx = currentOrder.indexOf(pageName);
-    if (idx < 0) return;
-    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= currentOrder.length) return;
-    const newOrder = [...currentOrder];
-    [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
-    setPageOrder(newOrder);
-    localStorage.setItem('sweetpro-page-order', JSON.stringify(newOrder));
-  }, [pageOrder]);
+  const [draggedPage, setDraggedPage] = useState<string | null>(null);
+  const [dragOverPage, setDragOverPage] = useState<string | null>(null);
+
+  const handlePageDragStart = useCallback((pageName: string) => {
+    setDraggedPage(pageName);
+  }, []);
+
+  const handlePageDragOver = useCallback((e: React.DragEvent, pageName: string) => {
+    e.preventDefault();
+    if (pageName !== draggedPage) setDragOverPage(pageName);
+  }, [draggedPage]);
+
+  const handlePageDrop = useCallback((targetPage: string) => {
+    if (!draggedPage || draggedPage === targetPage) {
+      setDraggedPage(null);
+      setDragOverPage(null);
+      return;
+    }
+    const currentOrder = pageOrder.length > 0 ? [...pageOrder] : defaultNavItems.map(n => n.name);
+    const fromIdx = currentOrder.indexOf(draggedPage);
+    const toIdx = currentOrder.indexOf(targetPage);
+    if (fromIdx < 0 || toIdx < 0) return;
+    currentOrder.splice(fromIdx, 1);
+    currentOrder.splice(toIdx, 0, draggedPage);
+    setPageOrder(currentOrder);
+    localStorage.setItem('sweetpro-page-order', JSON.stringify(currentOrder));
+    setDraggedPage(null);
+    setDragOverPage(null);
+  }, [draggedPage, pageOrder]);
+
+  const handlePageDragEnd = useCallback(() => {
+    setDraggedPage(null);
+    setDragOverPage(null);
+  }, []);
 
   const renderContent = () => {
     try {
@@ -2863,11 +2887,11 @@ export default function App() {
                                         <div className="space-y-4">
                                           <div className="grid grid-cols-2 gap-4">
                                             <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (KG)</label>
                                               <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
                                             </div>
                                             <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
+                                              <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (KG)</label>
                                               <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
                                             </div>
                                             <div className="space-y-1">
@@ -2880,7 +2904,7 @@ export default function App() {
                                             </div>
                                           </div>
                                           <div className="space-y-1">
-                                            <label className="text-[10px] uppercase font-bold opacity-50">Premium (CAD/MT)</label>
+                                            <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
                                             <div className="text-xs font-bold">${s.premiumCadMt}</div>
                                           </div>
                                         </div>
@@ -3646,14 +3670,10 @@ export default function App() {
             </button>
           </div>
 
-          {/* DEBUG: Show raw Firebase data structure - REMOVE after fixing */}
-          {sampleRow && (
-            <div className="bg-yellow-50 border border-yellow-400 p-4 text-xs font-mono">
-              <p className="font-bold mb-2">DEBUG — Raw Firebase Document Keys & First Row:</p>
-              <p><strong>All keys:</strong> {JSON.stringify(Object.keys(sampleRow))}</p>
-              <p><strong>First row data:</strong> {JSON.stringify(sampleRow)}</p>
-              <p className="mt-2"><strong>Resolved keys →</strong> monthKey: {JSON.stringify(monthKey)} | rawsKey: {JSON.stringify(rawsKey)} | fxKey: {JSON.stringify(fxKey)}</p>
-              <p><strong>allKeys (filtered):</strong> {JSON.stringify(allKeys)}</p>
+          {/* Data status indicator */}
+          {marketData.length > 0 && !monthKey && (
+            <div className="bg-amber-50 border border-amber-400 p-3 text-xs">
+              <p className="font-bold">Unable to detect month column in your market data. Please ensure your Firebase "MarketData" collection documents include a field named "Month".</p>
             </div>
           )}
 
@@ -4064,28 +4084,22 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navItems
             .filter(item => isEditingSidebar || !hiddenPages.has(item.name))
-            .map((item, idx, arr) => {
+            .map((item) => {
               const isHidden = hiddenPages.has(item.name);
+              const isDragTarget = dragOverPage === item.name && draggedPage !== item.name;
               return (
-                <div key={item.name} className="flex items-center gap-1">
+                <div
+                  key={item.name}
+                  className={`flex items-center gap-1 ${isDragTarget ? 'border-t-2 border-indigo-500' : ''}`}
+                  draggable={isEditingSidebar}
+                  onDragStart={() => handlePageDragStart(item.name)}
+                  onDragOver={(e) => handlePageDragOver(e, item.name)}
+                  onDrop={() => handlePageDrop(item.name)}
+                  onDragEnd={handlePageDragEnd}
+                >
                   {isEditingSidebar && (
-                    <div className="flex flex-col">
-                      <button
-                        onClick={() => movePage(item.name, 'up')}
-                        disabled={idx === 0}
-                        className="p-0.5 text-[#141414]/40 hover:text-[#141414] transition-all disabled:opacity-20 disabled:cursor-not-allowed"
-                        title="Move up"
-                      >
-                        <ChevronUp size={12} />
-                      </button>
-                      <button
-                        onClick={() => movePage(item.name, 'down')}
-                        disabled={idx === arr.length - 1}
-                        className="p-0.5 text-[#141414]/40 hover:text-[#141414] transition-all disabled:opacity-20 disabled:cursor-not-allowed"
-                        title="Move down"
-                      >
-                        <ChevronDown size={12} />
-                      </button>
+                    <div className="cursor-grab active:cursor-grabbing text-[#141414]/30 hover:text-[#141414]/60 px-0.5">
+                      <GripVertical size={14} />
                     </div>
                   )}
                   <button
@@ -4096,7 +4110,7 @@ export default function App() {
                         : activePage === item.name
                           ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]'
                           : 'bg-transparent text-[#141414] border-transparent hover:border-[#141414]/20'
-                    } ${isEditingSidebar ? 'cursor-default' : ''}`}
+                    } ${isEditingSidebar ? 'cursor-default' : ''} ${draggedPage === item.name ? 'opacity-40' : ''}`}
                   >
                     <item.icon size={16} />
                     {item.name}
@@ -4115,7 +4129,7 @@ export default function App() {
             })}
           {isEditingSidebar && (
             <div className="pt-2 mt-2 border-t border-[#141414]/10">
-              <p className="text-[9px] uppercase opacity-40 font-bold px-4">Use arrows to reorder, eye icon to show/hide pages</p>
+              <p className="text-[9px] uppercase opacity-40 font-bold px-4">Drag to reorder, eye icon to show/hide pages</p>
             </div>
           )}
         </nav>
@@ -5178,6 +5192,7 @@ export default function App() {
                       <option value="Liquid">Liquid</option>
                       <option value="Bulk Rail">Bulk Rail</option>
                       <option value="Intermodal">Intermodal</option>
+                      <option value="Transload">Transload</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -5551,6 +5566,7 @@ export default function App() {
                       <option value="Liquid">Liquid</option>
                       <option value="Bulk Rail">Bulk Rail</option>
                       <option value="Intermodal">Intermodal</option>
+                      <option value="Transload">Transload</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -6461,6 +6477,7 @@ export default function App() {
                       <option value="Liquid">Liquid</option>
                       <option value="Bulk Rail">Bulk Rail</option>
                       <option value="Intermodal">Intermodal</option>
+                      <option value="Transload">Transload</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -6566,6 +6583,7 @@ export default function App() {
                       <option value="Liquid">Liquid</option>
                       <option value="Bulk Rail">Bulk Rail</option>
                       <option value="Intermodal">Intermodal</option>
+                      <option value="Transload">Transload</option>
                     </select>
                   </div>
                   <div className="space-y-1">
