@@ -105,15 +105,70 @@ export default function QualityAssurancePage({
   const [isUploadingSpecSheet, setIsUploadingSpecSheet] = useState(false);
   const [isUploadingCertificate, setIsUploadingCertificate] = useState(false);
 
-  // Locations table state
-  const [expandedLocRows, setExpandedLocRows] = useState<Set<string>>(new Set());
-  const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
-  const toggleLocRow = (id: string) => {
-    setExpandedLocRows(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  // Location detail card state
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  const [isEditingLocation, setIsEditingLocation] = useState(false);
+  const [editLocationData, setEditLocationData] = useState<Location | null>(null);
+
+  // Location audit upload states
+  const [isUploadingGfsiReport, setIsUploadingGfsiReport] = useState(false);
+  const [isUploadingGfsiCert, setIsUploadingGfsiCert] = useState(false);
+  const [isUploadingOrganicReport, setIsUploadingOrganicReport] = useState(false);
+  const [isUploadingOrganicCert, setIsUploadingOrganicCert] = useState(false);
+  const gfsiReportRef = useRef<HTMLInputElement>(null);
+  const gfsiCertRef = useRef<HTMLInputElement>(null);
+  const organicReportRef = useRef<HTMLInputElement>(null);
+  const organicCertRef = useRef<HTMLInputElement>(null);
+
+  const openLocationDetail = (loc: Location) => {
+    setSelectedLocation(loc);
+    setEditLocationData({ ...loc });
+    setIsEditingLocation(false);
+  };
+
+  const closeLocationDetail = () => {
+    setSelectedLocation(null);
+    setEditLocationData(null);
+    setIsEditingLocation(false);
+  };
+
+  const saveLocationChanges = () => {
+    if (!editLocationData) return;
+    onUpdateLocations(locations.map(l => l.id === editLocationData.id ? editLocationData : l));
+    setSelectedLocation(editLocationData);
+    setIsEditingLocation(false);
+  };
+
+  // Generic audit document upload handler
+  const handleAuditDocUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate',
+    setLoading: (v: boolean) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file || !editLocationData) return;
+    setLoading(true);
+    try {
+      const { url, filename } = await uploadQAFile(editLocationData.id, 'packaging', file);
+      const doc: QADocument = { id: `${field}-${Date.now()}`, url, filename, uploadedAt: new Date().toISOString() };
+      const updated = { ...editLocationData, [field]: doc };
+      setEditLocationData(updated);
+      onUpdateLocations(locations.map(l => l.id === updated.id ? updated : l));
+      setSelectedLocation(updated);
+    } catch (err: any) {
+      alert(err.message || 'Upload failed. Please try again.');
+    } finally {
+      setLoading(false);
+      e.target.value = '';
+    }
+  };
+
+  const deleteAuditDoc = (field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate') => {
+    if (!editLocationData) return;
+    const updated = { ...editLocationData, [field]: undefined };
+    setEditLocationData(updated);
+    onUpdateLocations(locations.map(l => l.id === updated.id ? updated : l));
+    setSelectedLocation(updated);
   };
 
   // Filter and sort
@@ -519,8 +574,10 @@ export default function QualityAssurancePage({
           <button
             onClick={() => {
               const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
-              onUpdateLocations([...locations, { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 }]);
-              setExpandedLocRows(new Set([id]));
+              const newLoc: Location = { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 };
+              onUpdateLocations([...locations, newLoc]);
+              openLocationDetail(newLoc);
+              setIsEditingLocation(true);
             }}
             className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
           >
@@ -541,198 +598,277 @@ export default function QualityAssurancePage({
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
             {locations.map(loc => (
-              <React.Fragment key={loc.id}>
-                <tr className="hover:bg-[#F9F9F9] transition-colors">
-                  <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">
-                    <input
-                      type="text"
-                      value={loc.locationCode || ''}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, locationCode: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="Code"
-                    />
-                  </td>
-                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
-                    <input
-                      type="text"
-                      value={loc.name}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, name: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="Location Name"
-                    />
-                  </td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">
-                    <input
-                      type="text"
-                      value={loc.address}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, address: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="Address"
-                    />
-                  </td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">
-                    <input
-                      type="text"
-                      value={loc.city}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, city: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="City"
-                    />
-                  </td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">
-                    <input
-                      type="text"
-                      value={loc.province}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, province: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="Province"
-                    />
-                  </td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">
-                    <input
-                      type="text"
-                      value={loc.postalCode}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, postalCode: e.target.value } : l))}
-                      className="w-full bg-transparent focus:outline-none"
-                      placeholder="Postal Code"
-                    />
-                  </td>
-                  <td className="p-4 text-xs flex gap-2">
-                    <button onClick={() => setEditingAppointmentSchedule({...loc})} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Set Appointment Schedule">
-                      <Clock size={14} />
-                    </button>
-                    <button onClick={() => toggleLocRow(loc.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                      {expandedLocRows.has(loc.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </button>
-                    <button onClick={() => onUpdateLocations(locations.filter(l => l.id !== loc.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
-                </tr>
-                <AnimatePresence>
-                  {expandedLocRows.has(loc.id) && (
-                    <tr>
-                      <td colSpan={7} className="p-0">
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                        >
-                          <div className="p-6 space-y-4">
-                            <div className="flex justify-between items-center">
-                              <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
-                              <button
-                                onClick={() => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: [...l.bays, ''] } : l))}
-                                className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
-                              >
-                                <Plus size={10} /> Add Bay
-                              </button>
-                            </div>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                              {loc.bays.map((bay, idx) => (
-                                <div key={idx} className="flex gap-2">
-                                  <input
-                                    type="text"
-                                    value={bay}
-                                    onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b) } : l))}
-                                    className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
-                                    placeholder={`Bay ${idx + 1} Name`}
-                                  />
-                                  <button
-                                    onClick={() => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
-                                    className="p-2 hover:bg-red-500 hover:text-white transition-all"
-                                  >
-                                    <Trash2 size={12} />
-                                  </button>
-                                </div>
-                              ))}
-                              {loc.bays.length === 0 && (
-                                <div className="col-span-full text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
-                              )}
-                            </div>
-                          </div>
-                        </motion.div>
-                      </td>
-                    </tr>
-                  )}
-                </AnimatePresence>
-              </React.Fragment>
+              <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors cursor-pointer group" onClick={() => openLocationDetail(loc)}>
+                <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
+                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
+                <td className="p-4 text-xs">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onUpdateLocations(locations.filter(l => l.id !== loc.id)); }}
+                    className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
             ))}
+            {locations.length === 0 && (
+              <tr><td colSpan={7} className="p-12 text-center text-xs opacity-50 italic">No locations added yet.</td></tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Appointment Schedule Modal */}
+      {/* Hidden file inputs for audit documents */}
+      <input type="file" ref={gfsiReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditReport', setIsUploadingGfsiReport)} />
+      <input type="file" ref={gfsiCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditCertificate', setIsUploadingGfsiCert)} />
+      <input type="file" ref={organicReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditReport', setIsUploadingOrganicReport)} />
+      <input type="file" ref={organicCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditCertificate', setIsUploadingOrganicCert)} />
+
+      {/* Location Detail Card Modal */}
       <AnimatePresence>
-        {editingAppointmentSchedule && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setEditingAppointmentSchedule(null)}>
+        {selectedLocation && editLocationData && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeLocationDetail}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Appointment Schedule — {editingAppointmentSchedule.name}</h3>
-                <button onClick={() => setEditingAppointmentSchedule(null)} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
-                  <X size={16} />
-                </button>
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Location: {(isEditingLocation ? editLocationData : selectedLocation).name || 'New Location'}</h3>
+                <button onClick={closeLocationDetail} className="hover:rotate-90 transition-transform"><X size={20} /></button>
               </div>
               <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Start Time</label>
-                    <input
-                      type="time"
-                      value={editingAppointmentSchedule.appointmentStartTime || '06:00'}
-                      onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentStartTime: e.target.value })}
-                      className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">End Time</label>
-                    <input
-                      type="time"
-                      value={editingAppointmentSchedule.appointmentEndTime || '18:00'}
-                      onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentEndTime: e.target.value })}
-                      className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
-                    />
-                  </div>
+                {/* Section 1: Location Details */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Location Details</div>
+                  {isEditingLocation ? (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location Code</label>
+                        <input value={editLocationData.locationCode || ''} onChange={(e) => setEditLocationData({ ...editLocationData, locationCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 100" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Name</label>
+                        <input value={editLocationData.name || ''} onChange={(e) => setEditLocationData({ ...editLocationData, name: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Location Name" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Address</label>
+                        <input value={editLocationData.address || ''} onChange={(e) => setEditLocationData({ ...editLocationData, address: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Address" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">City</label>
+                        <input value={editLocationData.city || ''} onChange={(e) => setEditLocationData({ ...editLocationData, city: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="City" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Province</label>
+                        <input value={editLocationData.province || ''} onChange={(e) => setEditLocationData({ ...editLocationData, province: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Province" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</label>
+                        <input value={editLocationData.postalCode || ''} onChange={(e) => setEditLocationData({ ...editLocationData, postalCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Postal Code" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Code</div><div className="text-xs font-bold font-mono">{selectedLocation.locationCode || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{selectedLocation.name || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Address</div><div className="text-xs font-bold">{selectedLocation.address || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">City</div><div className="text-xs font-bold">{selectedLocation.city || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Province</div><div className="text-xs font-bold">{selectedLocation.province || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</div><div className="text-xs font-bold">{selectedLocation.postalCode || '—'}</div></div>
+                    </div>
+                  )}
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Appointment Duration (minutes)</label>
-                  <input
-                    type="number"
-                    value={editingAppointmentSchedule.appointmentDuration || 30}
-                    onChange={(e) => setEditingAppointmentSchedule({ ...editingAppointmentSchedule, appointmentDuration: parseInt(e.target.value) || 30 })}
-                    className="w-full border border-[#141414] p-2 text-sm focus:outline-none"
-                    min={5}
-                    step={5}
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      onUpdateLocations(locations.map(l => l.id === editingAppointmentSchedule.id ? {
-                        ...l,
-                        appointmentStartTime: editingAppointmentSchedule.appointmentStartTime,
-                        appointmentEndTime: editingAppointmentSchedule.appointmentEndTime,
-                        appointmentDuration: editingAppointmentSchedule.appointmentDuration,
-                      } : l));
-                      setEditingAppointmentSchedule(null);
-                    }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
-                  >
-                    Save Schedule
-                  </button>
-                  <button
-                    onClick={() => setEditingAppointmentSchedule(null)}
-                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
+
+                {/* Section 2: GFSI Audit */}
+                {(() => {
+                  const data = isEditingLocation ? editLocationData : selectedLocation;
+                  return (
+                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">GFSI Audit</div>
+                      {isEditingLocation ? (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified Start Date</label>
+                            <input type="date" value={editLocationData.gfsiAuditStartDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditStartDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified End Date</label>
+                            <input type="date" value={editLocationData.gfsiAuditEndDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditEndDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Audit Certifier</label>
+                            <input value={editLocationData.gfsiAuditCertifier || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditCertifier: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying body" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data.gfsiAuditStartDate || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data.gfsiAuditEndDate || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data.gfsiAuditCertifier || '—'}</div></div>
+                        </div>
+                      )}
+                      {/* Audit Report */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Report</div>
+                        {data.gfsiAuditReport ? (
+                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                            <div className="flex items-center gap-3">
+                              <FileText size={16} className="text-[#141414]/50" />
+                              <div>
+                                <div className="text-xs font-bold">{data.gfsiAuditReport.filename}</div>
+                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.gfsiAuditReport.uploadedAt).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a href={data.gfsiAuditReport.url} download={data.gfsiAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No report uploaded</div>
+                        )}
+                        {isEditingLocation && !data.gfsiAuditReport && (
+                          <button onClick={() => gfsiReportRef.current?.click()} disabled={isUploadingGfsiReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                            {isUploadingGfsiReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiReport ? 'Uploading...' : 'Upload Report'}
+                          </button>
+                        )}
+                      </div>
+                      {/* Audit Certificate */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Certificate</div>
+                        {data.gfsiAuditCertificate ? (
+                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                            <div className="flex items-center gap-3">
+                              <FileText size={16} className="text-[#141414]/50" />
+                              <div>
+                                <div className="text-xs font-bold">{data.gfsiAuditCertificate.filename}</div>
+                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.gfsiAuditCertificate.uploadedAt).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a href={data.gfsiAuditCertificate.url} download={data.gfsiAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
+                        )}
+                        {isEditingLocation && !data.gfsiAuditCertificate && (
+                          <button onClick={() => gfsiCertRef.current?.click()} disabled={isUploadingGfsiCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                            {isUploadingGfsiCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiCert ? 'Uploading...' : 'Upload Certificate'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Section 3: Organic Audit */}
+                {(() => {
+                  const data = isEditingLocation ? editLocationData : selectedLocation;
+                  return (
+                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Organic Audit</div>
+                      {isEditingLocation ? (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified Start Date</label>
+                            <input type="date" value={editLocationData.organicAuditStartDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditStartDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified End Date</label>
+                            <input type="date" value={editLocationData.organicAuditEndDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditEndDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Audit Certifier</label>
+                            <input value={editLocationData.organicAuditCertifier || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditCertifier: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying body" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data.organicAuditStartDate || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data.organicAuditEndDate || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data.organicAuditCertifier || '—'}</div></div>
+                        </div>
+                      )}
+                      {/* Organic Report */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Report</div>
+                        {data.organicAuditReport ? (
+                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                            <div className="flex items-center gap-3">
+                              <FileText size={16} className="text-[#141414]/50" />
+                              <div>
+                                <div className="text-xs font-bold">{data.organicAuditReport.filename}</div>
+                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.organicAuditReport.uploadedAt).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a href={data.organicAuditReport.url} download={data.organicAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No report uploaded</div>
+                        )}
+                        {isEditingLocation && !data.organicAuditReport && (
+                          <button onClick={() => organicReportRef.current?.click()} disabled={isUploadingOrganicReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                            {isUploadingOrganicReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicReport ? 'Uploading...' : 'Upload Report'}
+                          </button>
+                        )}
+                      </div>
+                      {/* Organic Certificate */}
+                      <div className="space-y-1">
+                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Certificate</div>
+                        {data.organicAuditCertificate ? (
+                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                            <div className="flex items-center gap-3">
+                              <FileText size={16} className="text-[#141414]/50" />
+                              <div>
+                                <div className="text-xs font-bold">{data.organicAuditCertificate.filename}</div>
+                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.organicAuditCertificate.uploadedAt).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a href={data.organicAuditCertificate.url} download={data.organicAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
+                        )}
+                        {isEditingLocation && !data.organicAuditCertificate && (
+                          <button onClick={() => organicCertRef.current?.click()} disabled={isUploadingOrganicCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                            {isUploadingOrganicCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicCert ? 'Uploading...' : 'Upload Certificate'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Action Buttons */}
+                <div className="flex gap-4 pt-2">
+                  {isEditingLocation ? (
+                    <>
+                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all">
+                        <CheckCircle2 size={16} /> Save Changes
+                      </button>
+                      <button onClick={() => { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all">Edit Location</button>
+                      <button onClick={closeLocationDetail} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Close</button>
+                    </>
+                  )}
                 </div>
               </div>
             </motion.div>

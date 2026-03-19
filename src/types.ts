@@ -183,6 +183,18 @@ export interface Location {
   appointmentStartTime?: string;  // e.g. '00:00'
   appointmentEndTime?: string;    // e.g. '22:30'
   appointmentDuration?: number;   // minutes per appointment slot (e.g. 90)
+  // GFSI Audit
+  gfsiAuditStartDate?: string;
+  gfsiAuditEndDate?: string;
+  gfsiAuditCertifier?: string;
+  gfsiAuditReport?: QADocument;
+  gfsiAuditCertificate?: QADocument;
+  // Organic Audit
+  organicAuditStartDate?: string;
+  organicAuditEndDate?: string;
+  organicAuditCertifier?: string;
+  organicAuditReport?: QADocument;
+  organicAuditCertificate?: QADocument;
 }
 
 export const INITIAL_LOCATIONS: Location[] = [
