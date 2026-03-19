@@ -34,7 +34,7 @@ export interface SKU {
   netWeightKg?: number;
   grossWeightKg?: number;
   maxColor: number;
-  location: 'Hamilton' | 'Vancouver';
+  location: string;
   description?: string;
 }
 

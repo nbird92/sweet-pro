@@ -593,13 +593,15 @@ export default function App() {
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
+  // Updates existing SKUs and creates new ones for QA products with no match
   useEffect(() => {
     if (qaProducts.length === 0) return;
     let changed = false;
+
+    // Update existing SKUs that have a matching QA product
     const updatedSkus = skus.map(sku => {
       const qa = qaProducts.find(q => q.skuId === sku.id);
       if (!qa) return sku;
-      // Check if any QA-managed fields differ from the SKU
       if (
         qa.skuName !== sku.name ||
         qa.productGroup !== sku.productGroup ||
@@ -624,7 +626,35 @@ export default function App() {
       }
       return sku;
     });
-    if (changed) setSkus(updatedSkus);
+
+    // Create new SKUs for QA products that have no matching SKU
+    const newSkus: SKU[] = [];
+    qaProducts.forEach(qa => {
+      if (!qa.skuName.trim()) return; // skip blank names
+      const existingSku = updatedSkus.find(s => s.id === qa.skuId);
+      if (!existingSku) {
+        newSkus.push({
+          id: qa.skuId,
+          name: qa.skuName,
+          productGroup: qa.productGroup,
+          category: qa.category,
+          netWeight: qa.netWeightKg || 0,
+          netWeightKg: qa.netWeightKg || 0,
+          grossWeightKg: qa.grossWeightKg || 0,
+          brix: 0,
+          premiumCadMt: 0,
+          maxColor: qa.maxColor,
+          location: qa.location || 'Hamilton',
+        });
+      }
+    });
+
+    if (newSkus.length > 0) {
+      changed = true;
+      setSkus([...updatedSkus, ...newSkus]);
+    } else if (changed) {
+      setSkus(updatedSkus);
+    }
   }, [qaProducts]);
 
   const [config, setConfig] = useState<CommodityConfig>({
