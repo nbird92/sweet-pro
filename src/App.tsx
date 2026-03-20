@@ -85,6 +85,11 @@ export default function App() {
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
+  const [expandedLeadIds, setExpandedLeadIds] = useState<Set<string>>(new Set());
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
+  const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
+  const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', notes: '', status: 'New', followUps: [], createdAt: '' });
+  const [newLeadFollowUp, setNewLeadFollowUp] = useState<Record<string, { date: string; description: string; infoSent: string }>>({});
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
@@ -3347,10 +3352,6 @@ export default function App() {
 
     if (activePage === 'Sales Leads') {
       const salesPeople = people.filter(p => p.department === 'sales');
-      const [expandedLeadIds, setExpandedLeadIds] = React.useState<Set<string>>(new Set());
-      const [showAddLeadModal, setShowAddLeadModal] = React.useState(false);
-      const [editingLeadCard, setEditingLeadCard] = React.useState<SalesLead | null>(null);
-      const [newLeadFollowUp, setNewLeadFollowUp] = React.useState<Record<string, { date: string; description: string; infoSent: string }>>({});
 
       const toggleExpandLead = (id: string) => {
         setExpandedLeadIds(prev => {
@@ -3489,7 +3490,10 @@ export default function App() {
         <div className="p-6 space-y-4">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold uppercase tracking-tighter">Sales Leads</h2>
-            <button onClick={() => setShowAddLeadModal(true)}
+            <button onClick={() => {
+              setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', notes: '', status: 'New', followUps: [], createdAt: '' });
+              setShowAddLeadModal(true);
+            }}
               className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
               <Plus size={14} /> Add Lead
             </button>
@@ -3567,17 +3571,14 @@ export default function App() {
 
           {/* Add Lead Modal */}
           <AnimatePresence>
-            {showAddLeadModal && (() => {
-              const [newLead, setNewLead] = React.useState<SalesLead>({ ...emptyLead, id: `SL-${Date.now()}` });
-              return (
-                <LeadModal lead={newLead} setLead={setNewLead} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
+            {showAddLeadModal && (
+                <LeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
                   onSubmit={() => {
-                    if (!newLead.customerName) { alert('Please enter a customer name'); return; }
-                    setSalesLeads(prev => [...prev, { ...newLead, id: `SL-${Date.now()}`, createdAt: new Date().toISOString() }]);
+                    if (!newLeadData.customerName) { alert('Please enter a customer name'); return; }
+                    setSalesLeads(prev => [...prev, { ...newLeadData, id: `SL-${Date.now()}`, createdAt: new Date().toISOString() }]);
                     setShowAddLeadModal(false);
                   }} />
-              );
-            })()}
+            )}
           </AnimatePresence>
 
           {/* Edit Lead Card Modal */}
