@@ -46,6 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
+import { generateOrderConfirmation, extractSpreadsheetId } from './googleSheetsService';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
@@ -215,6 +216,7 @@ export default function App() {
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
+  const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -414,6 +416,40 @@ export default function App() {
       setLastSynced(null);
     } catch (e) {
       console.error('Sign-out failed:', e);
+    }
+  };
+
+  const handleGenerateOrderConfirmation = async (order: Order) => {
+    // Find the Order Confirmation template from qaTemplates
+    const template = qaTemplates.find(t => t.name.toLowerCase().includes('order confirmation')) || qaTemplates.find(t => t.type === 'Bill of Lading');
+    if (!template?.googleSheetUrl) {
+      setErrorBox('No Order Confirmation template found. Please add one in the QA page Templates table with the Google Sheet URL.');
+      return;
+    }
+    const spreadsheetId = extractSpreadsheetId(template.googleSheetUrl);
+    if (!spreadsheetId) {
+      setErrorBox('Invalid Google Sheet URL in the template. Please check the URL in the QA Templates table.');
+      return;
+    }
+    setGeneratingOrderConfirmation(order.id);
+    try {
+      const customer = customers.find(c => c.name === order.customer);
+      const carrier = carriers.find(c => c.name === order.carrier);
+      const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
+      const url = await generateOrderConfirmation({
+        order,
+        customer,
+        carrier,
+        shipperLocation,
+        qaProducts,
+        templateSpreadsheetId: spreadsheetId,
+      });
+      window.open(url, '_blank');
+    } catch (e: any) {
+      console.error('Generate order confirmation failed:', e);
+      setErrorBox('Failed to generate order confirmation: ' + (e.message || 'Unknown error'));
+    } finally {
+      setGeneratingOrderConfirmation(null);
     }
   };
 
@@ -2960,6 +2996,14 @@ export default function App() {
                         <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
                           <button
+                            onClick={() => handleGenerateOrderConfirmation(ord)}
+                            className={`p-1 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === ord.id ? 'animate-pulse bg-emerald-100' : ''}`}
+                            title="Generate Order Confirmation"
+                            disabled={generatingOrderConfirmation === ord.id}
+                          >
+                            <FileText size={14} />
+                          </button>
+                          <button
                             onClick={() => {
                               if (ord.status !== 'Open') {
                                 setErrorBox('Only Open orders can be edited. This order is currently ' + ord.status + '.');
@@ -5250,25 +5294,34 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
-                  <button onClick={() => setViewingOrderCard(null)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
-                  {viewingOrderCard.status === 'Open' && (
-                    <button onClick={() => {
-                      const cust = customers.find(c => c.name === viewingOrderCard.customer);
-                      setOrderCustomerId(cust?.id || '');
-                      setOrderPO(viewingOrderCard.po);
-                      setOrderShipmentDate(viewingOrderCard.shipmentDate || '');
-                      setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
-                      setOrderCarrier(viewingOrderCard.carrier || '');
-                      setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
-                      setOrderLineItems(viewingOrderCard.lineItems);
-                      if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
-                      setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
-                      setIsAddingOrder(false);
-                      setViewingOrderCard(null);
-                    }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Edit Order</button>
-                  )}
+                <div className="flex justify-between pt-4 border-t border-[#141414]/10">
+                  <button
+                    onClick={() => handleGenerateOrderConfirmation(viewingOrderCard)}
+                    disabled={generatingOrderConfirmation === viewingOrderCard.id}
+                    className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
+                  >
+                    <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Generate Order Confirmation'}
+                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setViewingOrderCard(null)}
+                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
+                    {viewingOrderCard.status === 'Open' && (
+                      <button onClick={() => {
+                        const cust = customers.find(c => c.name === viewingOrderCard.customer);
+                        setOrderCustomerId(cust?.id || '');
+                        setOrderPO(viewingOrderCard.po);
+                        setOrderShipmentDate(viewingOrderCard.shipmentDate || '');
+                        setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
+                        setOrderCarrier(viewingOrderCard.carrier || '');
+                        setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
+                        setOrderLineItems(viewingOrderCard.lineItems);
+                        if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
+                        setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
+                        setIsAddingOrder(false);
+                        setViewingOrderCard(null);
+                      }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Edit Order</button>
+                    )}
+                  </div>
                 </div>
               </div>
             </motion.div>
