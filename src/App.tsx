@@ -51,6 +51,115 @@ import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
 
+// ============================
+// SALES LEAD MODAL (extracted to prevent remount on every keystroke)
+// ============================
+function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp }: {
+  lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string;
+  qaProducts: QAProduct[]; skus: SKU[]; locations: Location[]; salesPeople: Person[];
+  newLeadFollowUp: Record<string, { date: string; description: string; infoSent: string }>;
+  setNewLeadFollowUp: React.Dispatch<React.SetStateAction<Record<string, { date: string; description: string; infoSent: string }>>>;
+}) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
+      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer Name*</label>
+              <input type="text" value={lead.customerName} onChange={(e) => setLead({ ...lead, customerName: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Enter customer name" /></div>
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
+              <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                <option value="">Select product</option>
+                {qaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
+                {skus.filter(s => !qaProducts.some(qp => qp.skuName === s.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+              </select></div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Volume (MT)</label>
+              <input type="number" value={lead.volume || ''} onChange={(e) => setLead({ ...lead, volume: parseFloat(e.target.value) || 0 })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location</label>
+              <select value={lead.location} onChange={(e) => setLead({ ...lead, location: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                <option value="">Select location</option>
+                {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+              </select></div>
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
+              <select value={lead.status} onChange={(e) => setLead({ ...lead, status: e.target.value as SalesLead['status'] })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                <option value="New">New</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Qualified">Qualified</option>
+                <option value="Closed Won">Closed Won</option>
+                <option value="Closed Lost">Closed Lost</option>
+              </select></div>
+          </div>
+          <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Sales Person</label>
+            <select value={lead.salespersonId} onChange={(e) => setLead({ ...lead, salespersonId: e.target.value })}
+              className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+              <option value="">Select salesperson</option>
+              {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select></div>
+          <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Notes</label>
+            <textarea value={lead.notes || ''} onChange={(e) => setLead({ ...lead, notes: e.target.value })} rows={3}
+              className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Additional notes..." /></div>
+          {lead.source && <div className="text-[10px] opacity-50">Source: {lead.source}</div>}
+
+          {/* Follow-ups section in modal */}
+          <div className="border-t border-[#141414]/10 pt-4">
+            <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Follow-ups</h4>
+            {(lead.followUps || []).map(fu => (
+              <div key={fu.id} className="flex items-start gap-2 mb-2 p-2 bg-[#F5F5F5] border border-[#141414]/10">
+                <button onClick={() => setLead({ ...lead, followUps: lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f) })}
+                  className="mt-0.5 flex-shrink-0">{fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}</button>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-xs ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</div>
+                  <div className="text-[10px] opacity-40">{fu.date}{fu.infoSent ? ` — Info: ${fu.infoSent}` : ''}</div>
+                </div>
+                <button onClick={() => setLead({ ...lead, followUps: lead.followUps.filter(f => f.id !== fu.id) })}
+                  className="p-0.5 hover:bg-red-100 text-red-400 flex-shrink-0"><Trash2 size={12} /></button>
+              </div>
+            ))}
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <input type="date" placeholder="Date" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                value={(newLeadFollowUp[lead.id] || { date: '' }).date}
+                onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), date: e.target.value } }))} />
+              <input type="text" placeholder="Description" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                value={(newLeadFollowUp[lead.id] || { description: '' }).description}
+                onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), description: e.target.value } }))} />
+              <div className="flex gap-1">
+                <input type="text" placeholder="Info sent" className="flex-1 px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                  value={(newLeadFollowUp[lead.id] || { infoSent: '' }).infoSent}
+                  onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), infoSent: e.target.value } }))} />
+                <button onClick={() => {
+                  const fu = newLeadFollowUp[lead.id];
+                  if (!fu?.description) return;
+                  const newFu: SalesLeadFollowUp = { id: `SLFU-${Date.now()}`, date: fu.date || new Date().toISOString().split('T')[0], description: fu.description, infoSent: fu.infoSent || '', completed: false };
+                  setLead({ ...lead, followUps: [...lead.followUps, newFu] });
+                  setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { date: '', description: '', infoSent: '' } }));
+                }} className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-xs font-bold"><Plus size={12} /></button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">
+              {title.includes('Edit') ? 'Save Changes' : 'Create Lead'}</button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
   const [hiddenPages, setHiddenPages] = useState<Set<string>>(() => {
@@ -3382,110 +3491,6 @@ export default function App() {
           (people.find(p => p.id === lead.salespersonId)?.name || '').toLowerCase().includes(term);
       });
 
-      const emptyLead: SalesLead = {
-        id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '',
-        notes: '', status: 'New', followUps: [], createdAt: new Date().toISOString(),
-      };
-
-      const LeadModal = ({ lead, setLead, onSubmit, onClose, title }: { lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string }) => (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-            className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
-              <button onClick={onClose} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer Name*</label>
-                  <input type="text" value={lead.customerName} onChange={(e) => setLead({ ...lead, customerName: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Enter customer name" /></div>
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
-                  <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
-                    <option value="">Select product</option>
-                    {qaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
-                    {skus.filter(s => !qaProducts.some(qp => qp.skuName === s.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                  </select></div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Volume (MT)</label>
-                  <input type="number" value={lead.volume || ''} onChange={(e) => setLead({ ...lead, volume: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location</label>
-                  <select value={lead.location} onChange={(e) => setLead({ ...lead, location: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
-                    <option value="">Select location</option>
-                    {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                  </select></div>
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
-                  <select value={lead.status} onChange={(e) => setLead({ ...lead, status: e.target.value as SalesLead['status'] })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
-                    <option value="New">New</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Qualified">Qualified</option>
-                    <option value="Closed Won">Closed Won</option>
-                    <option value="Closed Lost">Closed Lost</option>
-                  </select></div>
-              </div>
-              <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Sales Person</label>
-                <select value={lead.salespersonId} onChange={(e) => setLead({ ...lead, salespersonId: e.target.value })}
-                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
-                  <option value="">Select salesperson</option>
-                  {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select></div>
-              <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Notes</label>
-                <textarea value={lead.notes || ''} onChange={(e) => setLead({ ...lead, notes: e.target.value })} rows={3}
-                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Additional notes..." /></div>
-              {lead.source && <div className="text-[10px] opacity-50">Source: {lead.source}</div>}
-
-              {/* Follow-ups section in modal */}
-              <div className="border-t border-[#141414]/10 pt-4">
-                <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Follow-ups</h4>
-                {(lead.followUps || []).map(fu => (
-                  <div key={fu.id} className="flex items-start gap-2 mb-2 p-2 bg-[#F5F5F5] border border-[#141414]/10">
-                    <button onClick={() => setLead({ ...lead, followUps: lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f) })}
-                      className="mt-0.5 flex-shrink-0">{fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}</button>
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-xs ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</div>
-                      <div className="text-[10px] opacity-40">{fu.date}{fu.infoSent ? ` — Info: ${fu.infoSent}` : ''}</div>
-                    </div>
-                    <button onClick={() => setLead({ ...lead, followUps: lead.followUps.filter(f => f.id !== fu.id) })}
-                      className="p-0.5 hover:bg-red-100 text-red-400 flex-shrink-0"><Trash2 size={12} /></button>
-                  </div>
-                ))}
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  <input type="date" placeholder="Date" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
-                    value={(newLeadFollowUp[lead.id] || { date: '' }).date}
-                    onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), date: e.target.value } }))} />
-                  <input type="text" placeholder="Description" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
-                    value={(newLeadFollowUp[lead.id] || { description: '' }).description}
-                    onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), description: e.target.value } }))} />
-                  <div className="flex gap-1">
-                    <input type="text" placeholder="Info sent" className="flex-1 px-2 py-1 border border-[#141414] text-xs focus:outline-none"
-                      value={(newLeadFollowUp[lead.id] || { infoSent: '' }).infoSent}
-                      onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), infoSent: e.target.value } }))} />
-                    <button onClick={() => {
-                      const fu = newLeadFollowUp[lead.id];
-                      if (!fu?.description) return;
-                      const newFu: SalesLeadFollowUp = { id: `SLFU-${Date.now()}`, date: fu.date || new Date().toISOString().split('T')[0], description: fu.description, infoSent: fu.infoSent || '', completed: false };
-                      setLead({ ...lead, followUps: [...lead.followUps, newFu] });
-                      setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { date: '', description: '', infoSent: '' } }));
-                    }} className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-xs font-bold"><Plus size={12} /></button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
-                <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-                <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">
-                  {title.includes('Edit') ? 'Save Changes' : 'Create Lead'}</button>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      );
-
       return (
         <div className="p-6 space-y-4">
           <div className="flex justify-between items-center">
@@ -3572,7 +3577,9 @@ export default function App() {
           {/* Add Lead Modal */}
           <AnimatePresence>
             {showAddLeadModal && (
-                <LeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
+                <SalesLeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
+                  qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople}
+                  newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                   onSubmit={() => {
                     if (!newLeadData.customerName) { alert('Please enter a customer name'); return; }
                     setSalesLeads(prev => [...prev, { ...newLeadData, id: `SL-${Date.now()}`, createdAt: new Date().toISOString() }]);
@@ -3584,7 +3591,9 @@ export default function App() {
           {/* Edit Lead Card Modal */}
           <AnimatePresence>
             {editingLeadCard && (
-              <LeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
+              <SalesLeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
+                qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople}
+                newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                 onSubmit={() => {
                   setSalesLeads(salesLeads.map(l => l.id === editingLeadCard.id ? editingLeadCard : l));
                   setEditingLeadCard(null);
