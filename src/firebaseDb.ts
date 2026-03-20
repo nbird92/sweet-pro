@@ -32,6 +32,7 @@ export const COLLECTIONS = {
   vendors: 'vendors',
   chepPalletMovements: 'chepPalletMovements',
   salesLeads: 'salesLeads',
+  qaTemplates: 'qaTemplates',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

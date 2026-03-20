@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -204,6 +204,7 @@ export default function App() {
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
+  const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
@@ -468,6 +469,7 @@ export default function App() {
     vendors: JSON.stringify([]),
     cheppalletmovements: JSON.stringify([]),
     salesleads: JSON.stringify([]),
+    qatemplates: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -657,6 +659,10 @@ export default function App() {
         setSalesLeads(data.salesLeads);
         lastSyncedData.current.salesleads = JSON.stringify(data.salesLeads);
       }
+      if (data.qaTemplates?.length) {
+        setQaTemplates(data.qaTemplates);
+        lastSyncedData.current.qatemplates = JSON.stringify(data.qaTemplates);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -715,6 +721,7 @@ export default function App() {
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
         { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
+        { collection: COLLECTIONS.qaTemplates, key: 'qatemplates', data: qaTemplates },
       ];
 
       try {
@@ -740,7 +747,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, qaTemplates, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
@@ -3429,10 +3436,12 @@ export default function App() {
           productGroups={productGroups}
           locations={locations}
           vendors={vendors}
+          qaTemplates={qaTemplates}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
+          onUpdateTemplates={setQaTemplates}
         />
       );
     }

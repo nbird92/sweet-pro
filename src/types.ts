@@ -556,3 +556,15 @@ export interface SalesLead {
 }
 
 export const INITIAL_SALES_LEADS: SalesLead[] = [];
+
+export interface QATemplate {
+  id: string;
+  name: string;
+  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Other';
+  googleSheetUrl: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const INITIAL_QA_TEMPLATES: QATemplate[] = [];

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor } from '../types';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText } from 'lucide-react';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate } from '../types';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 
@@ -11,10 +11,12 @@ interface QualityAssurancePageProps {
   productGroups: ProductGroup[];
   locations: Location[];
   vendors: Vendor[];
+  qaTemplates: QATemplate[];
   onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
   onDeleteQAProduct: (productId: string) => void;
+  onUpdateTemplates: (templates: QATemplate[]) => void;
 }
 
 function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -38,10 +40,12 @@ export default function QualityAssurancePage({
   productGroups,
   locations,
   vendors,
+  qaTemplates,
   onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
   onDeleteQAProduct,
+  onUpdateTemplates,
 }: QualityAssurancePageProps) {
   // Auto-populate: create QA entries for any SKUs not already tracked
   useEffect(() => {
@@ -121,6 +125,12 @@ export default function QualityAssurancePage({
   const gfsiCertRef = useRef<HTMLInputElement>(null);
   const organicReportRef = useRef<HTMLInputElement>(null);
   const organicCertRef = useRef<HTMLInputElement>(null);
+
+  // Template state
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<QATemplate | null>(null);
+  const [templateForm, setTemplateForm] = useState<{ name: string; type: QATemplate['type']; googleSheetUrl: string; description: string }>({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
+  const [deleteTemplateConfirmId, setDeleteTemplateConfirmId] = useState<string | null>(null);
 
   const openLocationDetail = (loc: Location) => {
     setSelectedLocation(loc);
@@ -656,6 +666,231 @@ export default function QualityAssurancePage({
           </tbody>
         </table>
       </div>
+
+      {/* Templates Table */}
+      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest">Templates</h3>
+            <span className="text-[10px] opacity-60">{qaTemplates.length} templates</span>
+          </div>
+          <button
+            onClick={() => {
+              setEditingTemplate(null);
+              setTemplateForm({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
+              setShowTemplateModal(true);
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+          >
+            <Plus size={12} /> Add Template
+          </button>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase font-bold tracking-widest border-b border-[#141414]/10">
+              <th className="p-4">Name</th>
+              <th className="p-4">Type</th>
+              <th className="p-4">Description</th>
+              <th className="p-4">Google Sheet</th>
+              <th className="p-4">Last Updated</th>
+              <th className="p-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#141414]/10">
+            {qaTemplates.map(template => (
+              <tr key={template.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{template.name}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">
+                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                    template.type === 'Bill of Lading' ? 'bg-blue-100 text-blue-700' :
+                    template.type === 'Certificate of Analysis' ? 'bg-emerald-100 text-emerald-700' :
+                    template.type === 'Packing List' ? 'bg-amber-100 text-amber-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>{template.type}</span>
+                </td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{template.description || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">
+                  {template.googleSheetUrl ? (
+                    <a
+                      href={template.googleSheetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline font-bold"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink size={12} /> Open Sheet
+                    </a>
+                  ) : '—'}
+                </td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-60">{template.updatedAt ? new Date(template.updatedAt).toLocaleDateString() : '—'}</td>
+                <td className="p-4 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingTemplate(template);
+                        setTemplateForm({
+                          name: template.name,
+                          type: template.type,
+                          googleSheetUrl: template.googleSheetUrl,
+                          description: template.description || '',
+                        });
+                        setShowTemplateModal(true);
+                      }}
+                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
+                      title="Edit template"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => setDeleteTemplateConfirmId(template.id)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete template"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {qaTemplates.length === 0 && (
+              <tr><td colSpan={6} className="p-12 text-center text-xs opacity-50 italic">No templates added yet. Add a Bill of Lading, Certificate of Analysis, or Packing List template.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add/Edit Template Modal */}
+      <AnimatePresence>
+        {showTemplateModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowTemplateModal(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">{editingTemplate ? 'Edit Template' : 'Add Template'}</h3>
+                <button onClick={() => setShowTemplateModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Template Name *</label>
+                  <input
+                    type="text"
+                    value={templateForm.name}
+                    onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                    placeholder="e.g. Standard Bill of Lading"
+                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Template Type *</label>
+                  <select
+                    value={templateForm.type}
+                    onChange={(e) => setTemplateForm({ ...templateForm, type: e.target.value as QATemplate['type'] })}
+                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  >
+                    <option value="Bill of Lading">Bill of Lading</option>
+                    <option value="Certificate of Analysis">Certificate of Analysis</option>
+                    <option value="Packing List">Packing List</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Google Sheet URL *</label>
+                  <input
+                    type="url"
+                    value={templateForm.googleSheetUrl}
+                    onChange={(e) => setTemplateForm({ ...templateForm, googleSheetUrl: e.target.value })}
+                    placeholder="https://docs.google.com/spreadsheets/d/..."
+                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  />
+                  <p className="text-[9px] opacity-50 mt-1">Paste the full URL of your Google Sheet template. Make sure the sheet is shared with anyone who needs access.</p>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
+                  <textarea
+                    value={templateForm.description}
+                    onChange={(e) => setTemplateForm({ ...templateForm, description: e.target.value })}
+                    placeholder="Optional description of this template..."
+                    rows={2}
+                    className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+                  <button
+                    onClick={() => setShowTemplateModal(false)}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!templateForm.name || !templateForm.googleSheetUrl) return;
+                      const now = new Date().toISOString();
+                      if (editingTemplate) {
+                        const updated: QATemplate = {
+                          ...editingTemplate,
+                          name: templateForm.name,
+                          type: templateForm.type,
+                          googleSheetUrl: templateForm.googleSheetUrl,
+                          description: templateForm.description,
+                          updatedAt: now,
+                        };
+                        onUpdateTemplates(qaTemplates.map(t => t.id === editingTemplate.id ? updated : t));
+                      } else {
+                        const newTemplate: QATemplate = {
+                          id: `TMPL-${Date.now()}`,
+                          name: templateForm.name,
+                          type: templateForm.type,
+                          googleSheetUrl: templateForm.googleSheetUrl,
+                          description: templateForm.description,
+                          createdAt: now,
+                          updatedAt: now,
+                        };
+                        onUpdateTemplates([...qaTemplates, newTemplate]);
+                      }
+                      setShowTemplateModal(false);
+                      setEditingTemplate(null);
+                    }}
+                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                  >
+                    {editingTemplate ? 'Save Changes' : 'Add Template'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Template Confirmation */}
+      <AnimatePresence>
+        {deleteTemplateConfirmId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteTemplateConfirmId(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full p-6 space-y-4"
+            >
+              <h3 className="text-xs font-bold uppercase tracking-widest">Delete Template</h3>
+              <p className="text-sm opacity-70">Are you sure you want to delete this template? This action cannot be undone.</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTemplateConfirmId(null)}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                <button onClick={() => {
+                  onUpdateTemplates(qaTemplates.filter(t => t.id !== deleteTemplateConfirmId));
+                  setDeleteTemplateConfirmId(null);
+                }} className="px-4 py-2 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all">Delete</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Hidden file inputs for audit documents */}
       <input type="file" ref={gfsiReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditReport', setIsUploadingGfsiReport)} />
