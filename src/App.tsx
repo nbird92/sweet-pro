@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -73,6 +73,7 @@ export default function App() {
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
   const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
   const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
+  const [chepPalletMovements, setChepPalletMovements] = useState<ChepPalletMovement[]>(INITIAL_CHEP_PALLET_MOVEMENTS);
   const [contracts, setContracts] = useState<Contract[]>(INITIAL_CONTRACTS);
   const [carriers, setCarriers] = useState<Carrier[]>(INITIAL_CARRIERS);
   const [locations, setLocations] = useState<Location[]>(INITIAL_LOCATIONS);
@@ -338,6 +339,7 @@ export default function App() {
     qaproducts: JSON.stringify([]),
     fuelsurcharges: JSON.stringify([]),
     vendors: JSON.stringify([]),
+    cheppalletmovements: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -519,6 +521,10 @@ export default function App() {
         setVendors(data.vendors);
         lastSyncedData.current.vendors = JSON.stringify(data.vendors);
       }
+      if (data.chepPalletMovements?.length) {
+        setChepPalletMovements(data.chepPalletMovements);
+        lastSyncedData.current.cheppalletmovements = JSON.stringify(data.chepPalletMovements);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -575,6 +581,7 @@ export default function App() {
         { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
+        { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
       ];
 
       try {
@@ -600,7 +607,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
@@ -915,6 +922,34 @@ export default function App() {
         return [...prevInvoices, newInvoice];
       });
 
+      // Track CHEP pallet outbound if applicable
+      const matchingOrder = orders.find(o => o.bolNumber === shipment.bol);
+      if (matchingOrder?.palletType === 'CHEP') {
+        const orderLocation = matchingOrder.location || '';
+        let totalPallets = 0;
+        for (const li of matchingOrder.lineItems) {
+          const matchSku = skus.find(s => s.name === li.productName);
+          const qaP = matchSku ? qaProducts.find(q => q.skuId === matchSku.id) : null;
+          const upp = qaP?.unitsPerPallet;
+          if (upp && upp > 0) {
+            totalPallets += Math.ceil(li.qty / upp);
+          } else {
+            totalPallets += li.qty;
+          }
+        }
+        if (totalPallets > 0) {
+          const chepMovement: ChepPalletMovement = {
+            id: `CHEP-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            date: new Date().toISOString().split('T')[0],
+            location: orderLocation,
+            type: 'out',
+            quantity: totalPallets,
+            reference: shipment.bol,
+          };
+          setChepPalletMovements(prev => [...prev, chepMovement]);
+        }
+      }
+
       // Deduct volume from the contract
       if (contract) {
         setContracts(prevContracts => prevContracts.map(c => {
@@ -1190,6 +1225,11 @@ export default function App() {
     if (config.isPalletCharge) {
       palletChargeCadMt = config.palletCostCadMt;
       finalCadMt += palletChargeCadMt;
+    }
+
+    // Apply 2% surcharge for "2% / Net 15" payment terms
+    if (config.paymentTerms === '2% / Net 15') {
+      finalCadMt *= 1.02;
     }
 
     // Currency Conversion for Display
@@ -2155,7 +2195,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultPaymentTerms ? `${c.defaultPaymentTerms} days` : '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultPaymentTerms || '—'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.salespersonId ? people.find(p => p.id === c.salespersonId)?.name || 'Unknown' : '-'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultCarrierCode || '-'}</td>
                       <td className="p-4 text-xs flex items-center gap-2">
@@ -2479,7 +2519,8 @@ export default function App() {
                 {filteredInvoices.map(i => {
                   // Auto-calculate due date from invoice date + customer payment terms
                   const invoiceCustomer = customers.find(c => c.name === i.customer);
-                  const paymentDays = invoiceCustomer?.defaultPaymentTerms;
+                  const paymentTermsStr = invoiceCustomer?.defaultPaymentTerms;
+                  const paymentDays = paymentTermsStr ? parseInt(paymentTermsStr.match(/\d+/)?.[0] || '0') : 0;
                   const calculatedDueDate = (() => {
                     if (i.dueDate) return i.dueDate;
                     if (i.date && paymentDays) {
@@ -3266,7 +3307,14 @@ export default function App() {
                       <input type="text" value={v.contactPhone || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactPhone: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Phone" />
                     </td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <input type="text" inputMode="numeric" value={v.paymentTerms || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, paymentTerms: parseInt(e.target.value) || undefined } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Days" />
+                      <select value={v.paymentTerms || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, paymentTerms: e.target.value || undefined } : x))} className="w-full bg-transparent focus:outline-none">
+                        <option value="">Select...</option>
+                        <option value="Net 15">Net 15</option>
+                        <option value="Net 30">Net 30</option>
+                        <option value="Net 45">Net 45</option>
+                        <option value="Net 90">Net 90</option>
+                        <option value="2% / Net 15">2% / Net 15</option>
+                      </select>
                     </td>
                     <td className="p-4 text-xs">
                       <button onClick={() => setVendors(vendors.filter(x => x.id !== v.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
@@ -3646,6 +3694,108 @@ export default function App() {
             </div>
           </div>
 
+          {/* CHEP Pallets Inventory */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold uppercase tracking-widest">CHEP Pallets Inventory</h3>
+              <button
+                onClick={() => {
+                  const id = `CHEP-${Date.now()}`;
+                  setChepPalletMovements(prev => [...prev, {
+                    id,
+                    date: new Date().toISOString().split('T')[0],
+                    location: locations[0]?.name || 'Hamilton',
+                    type: 'in' as const,
+                    quantity: 0,
+                    reference: 'Manual Add',
+                    notes: '',
+                  }]);
+                }}
+                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+              >
+                <Plus size={12} /> Add Pallets
+              </button>
+            </div>
+
+            {/* Location Summary */}
+            {(() => {
+              const balanceByLocation: Record<string, number> = {};
+              for (const loc of locations) {
+                balanceByLocation[loc.name] = 0;
+              }
+              for (const m of chepPalletMovements) {
+                if (balanceByLocation[m.location] === undefined) balanceByLocation[m.location] = 0;
+                balanceByLocation[m.location] += m.type === 'in' ? m.quantity : -m.quantity;
+              }
+              return (
+                <div className="flex gap-4">
+                  {Object.entries(balanceByLocation).map(([loc, bal]) => (
+                    <div key={loc} className="flex-1 bg-white border border-[#141414] p-4 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">{loc}</div>
+                      <div className={`text-2xl font-black ${bal < 0 ? 'text-red-600' : 'text-[#141414]'}`}>{bal}</div>
+                      <div className="text-[10px] opacity-40">pallets on hand</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {/* Movements Table */}
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Date</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Type</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Quantity</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Reference</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Notes</th>
+                    <th className="p-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#141414]/10">
+                  {[...chepPalletMovements].sort((a, b) => b.date.localeCompare(a.date)).map(m => (
+                    <tr key={m.id} className="hover:bg-[#F9F9F9] transition-colors">
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <input type="date" value={m.date} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, date: e.target.value } : x))} className="bg-transparent focus:outline-none" />
+                      </td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <select value={m.location} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, location: e.target.value } : x))} className="bg-transparent focus:outline-none">
+                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        {m.type === 'in' ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[8px] uppercase">IN</span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold text-[8px] uppercase">OUT</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                        <input type="text" inputMode="numeric" value={m.quantity || ''} onFocus={(e) => e.target.select()} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, quantity: parseInt(e.target.value) || 0 } : x))} className="w-16 bg-transparent focus:outline-none" />
+                      </td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <input type="text" value={m.reference} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, reference: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Reference" />
+                      </td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <input type="text" value={m.notes || ''} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, notes: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Notes" />
+                      </td>
+                      <td className="p-3 text-xs">
+                        <button onClick={() => setChepPalletMovements(prev => prev.filter(x => x.id !== m.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {chepPalletMovements.length === 0 && (
+                    <tr><td colSpan={7} className="p-8 text-center text-xs opacity-50 italic">No CHEP pallet movements recorded yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
       );
     }
@@ -3706,7 +3856,7 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms ? `${c.paymentTerms} days` : '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms || '—'}</td>
                       <td className="p-3 text-xs flex items-center gap-2">
                         <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -4027,18 +4177,19 @@ export default function App() {
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Payment Terms (Days)</label>
-                <input
-                  type="text" inputMode="numeric"
+                <label className="text-[10px] uppercase font-bold opacity-60">Payment Terms</label>
+                <select
                   value={config.paymentTerms || ''}
-                  onFocus={(e) => e.target.select()}
-                  onChange={(e) => setConfig(prev => ({ ...prev, paymentTerms: parseInt(e.target.value) || undefined }))}
-                  placeholder={(() => {
-                    const c = customers.find(c => c.name === customer);
-                    return c?.defaultPaymentTerms ? `Default: ${c.defaultPaymentTerms} days` : 'e.g. 30';
-                  })()}
+                  onChange={(e) => setConfig(prev => ({ ...prev, paymentTerms: e.target.value || undefined }))}
                   className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                />
+                >
+                  <option value="">Select...</option>
+                  <option value="Net 15">Net 15</option>
+                  <option value="Net 30">Net 30</option>
+                  <option value="Net 45">Net 45</option>
+                  <option value="Net 90">Net 90</option>
+                  <option value="2% / Net 15">2% / Net 15</option>
+                </select>
               </div>
               <InputField label="Raw Price (USD/cwt)" value={config.rawPriceUsdCwt} onChange={(v) => handleInputChange('rawPriceUsdCwt', v)} />
               <InputField label="Ocean Freight (USD/MT)" value={config.oceanFreightUsdMt} onChange={(v) => handleInputChange('oceanFreightUsdMt', v)} />
@@ -4077,7 +4228,7 @@ export default function App() {
                         checked={config.palletType === 'CHEP'}
                         onChange={() => {
                           const newType = config.palletType === 'CHEP' ? '' : 'CHEP';
-                          setConfig(prev => ({ ...prev, palletType: newType as any, isPalletCharge: newType !== '' }));
+                          setConfig(prev => ({ ...prev, palletType: newType as any, isPalletCharge: newType !== '', palletCostCadMt: newType === 'CHEP' ? 0 : prev.palletCostCadMt }));
                         }}
                         className="w-4 h-4 accent-[#141414]"
                       />
@@ -4102,8 +4253,8 @@ export default function App() {
           </section>
 
           <AnimatePresence>
-            {config.isPalletCharge && (
-              <motion.section 
+            {config.palletType === 'One Way' && (
+              <motion.section
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
@@ -4243,7 +4394,7 @@ export default function App() {
                 <DataRow label={`Pallet Charge (${calculations.currencySymbol}/MT) — ${config.palletType || 'Standard'}`} value={`${calculations.palletCharge.toFixed(2)}`} />
               )}
               {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && (
-                <DataRow label="Payment Terms" value={`${config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms || 0} days`} />
+                <DataRow label="Payment Terms" value={`${config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms || ''}`} />
               )}
 
               <div className="p-6 bg-[#F5F5F5] grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -4670,7 +4821,7 @@ export default function App() {
                     <div className="font-bold text-right">{config.contractEndDate || 'N/A'}</div>
                     {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && <>
                       <div className="opacity-60">Payment Terms</div>
-                      <div className="font-bold text-right">{config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms} days</div>
+                      <div className="font-bold text-right">{config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms}</div>
                     </>}
                     {config.palletType && <>
                       <div className="opacity-60">Pallet Type</div>
@@ -4753,7 +4904,7 @@ export default function App() {
             }
             const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
             if (emailPaymentTerms) {
-              lines.push(`Payment Terms: ${emailPaymentTerms} days`);
+              lines.push(`Payment Terms: ${emailPaymentTerms}`);
             }
             lines.push('');
             lines.push('FINAL PRICING');
@@ -5603,15 +5754,19 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Payment Terms (Days)</label>
-                    <input
-                      type="text" inputMode="numeric"
+                    <label className="text-[10px] uppercase font-bold opacity-50">Payment Terms</label>
+                    <select
                       value={editingContract.paymentTerms || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, paymentTerms: parseInt(e.target.value) || undefined })}
+                      onChange={(e) => setEditingContract({ ...editingContract, paymentTerms: e.target.value || undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                      placeholder="e.g. 30"
-                    />
+                    >
+                      <option value="">Select...</option>
+                      <option value="Net 15">Net 15</option>
+                      <option value="Net 30">Net 30</option>
+                      <option value="Net 45">Net 45</option>
+                      <option value="Net 90">Net 90</option>
+                      <option value="2% / Net 15">2% / Net 15</option>
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Pallet Type</label>
@@ -5681,7 +5836,7 @@ export default function App() {
                     <div className="opacity-60">Shipping Terms</div>
                     <div className="font-bold text-right">{selectedContractDetail.shippingTerms || '—'}</div>
                     <div className="opacity-60">Payment Terms</div>
-                    <div className="font-bold text-right">{selectedContractDetail.paymentTerms ? `${selectedContractDetail.paymentTerms} days` : '—'}</div>
+                    <div className="font-bold text-right">{selectedContractDetail.paymentTerms || '—'}</div>
                     <div className="opacity-60">Pallet Type</div>
                     <div className="font-bold text-right">{selectedContractDetail.palletType || '—'}</div>
                     <div className="opacity-60">Currency</div>
@@ -5986,15 +6141,19 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms (Days)</label>
-                    <input
-                      type="text" inputMode="numeric"
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms</label>
+                    <select
                       value={newCustomer.defaultPaymentTerms || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultPaymentTerms: parseInt(e.target.value) || undefined })}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultPaymentTerms: e.target.value || undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                      placeholder="e.g. 30"
-                    />
+                    >
+                      <option value="">Select...</option>
+                      <option value="Net 15">Net 15</option>
+                      <option value="Net 30">Net 30</option>
+                      <option value="Net 45">Net 45</option>
+                      <option value="Net 90">Net 90</option>
+                      <option value="2% / Net 15">2% / Net 15</option>
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
@@ -6506,15 +6665,19 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms (Days)</label>
-                    <input
-                      type="text" inputMode="numeric"
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms</label>
+                    <select
                       value={editingCustomer.defaultPaymentTerms || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultPaymentTerms: parseInt(e.target.value) || undefined })}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultPaymentTerms: e.target.value || undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                      placeholder="e.g. 30"
-                    />
+                    >
+                      <option value="">Select...</option>
+                      <option value="Net 15">Net 15</option>
+                      <option value="Net 30">Net 30</option>
+                      <option value="Net 45">Net 45</option>
+                      <option value="Net 90">Net 90</option>
+                      <option value="2% / Net 15">2% / Net 15</option>
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>

@@ -22,7 +22,7 @@ export interface CommodityConfig {
   palletCostCadMt: number;
   palletType?: 'CHEP' | 'One Way' | '';
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
-  paymentTerms?: number; // Days for payment
+  paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
 }
 
 export interface SKU {
@@ -58,7 +58,7 @@ export interface Customer {
   notes?: string;
   salespersonId?: string;
   defaultCarrierCode?: string;
-  defaultPaymentTerms?: number; // Number of days to pay invoice
+  defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
 }
 
 export interface Person {
@@ -158,7 +158,7 @@ export interface Contract {
   deliveredFreight?: number;
   exportDuty?: number;
   palletCharge?: number;
-  paymentTerms?: number; // Days for payment
+  paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   palletType?: 'CHEP' | 'One Way' | '';
 }
 
@@ -509,7 +509,19 @@ export interface Vendor {
   contactEmail?: string;
   contactPhone?: string;
   notes?: string;
-  paymentTerms?: number; // Days for payment
+  paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
 }
 
 export const INITIAL_VENDORS: Vendor[] = [];
+
+export interface ChepPalletMovement {
+  id: string;
+  date: string;
+  location: string;
+  type: 'in' | 'out';
+  quantity: number;
+  reference: string;
+  notes?: string;
+}
+
+export const INITIAL_CHEP_PALLET_MOVEMENTS: ChepPalletMovement[] = [];

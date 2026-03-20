@@ -30,6 +30,7 @@ export const COLLECTIONS = {
   qaProducts: 'qaProducts',
   fuelSurcharges: 'fuelSurcharges',
   vendors: 'vendors',
+  chepPalletMovements: 'chepPalletMovements',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
