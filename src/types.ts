@@ -297,6 +297,10 @@ export interface Invoice {
   status: string;
   splitNo?: string;
   dueDate?: string; // Calculated from date + customer payment terms
+  lineItems?: OrderLineItem[]; // Line item details from the linked order
+  shippingTerms?: string;
+  location?: string;
+  contractNumber?: string;
 }
 
 export interface OrderLineItem {

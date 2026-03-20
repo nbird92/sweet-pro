@@ -213,6 +213,7 @@ export default function App() {
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -1038,6 +1039,7 @@ export default function App() {
         : shipment.qty * config.refiningMarginCadMt; // fallback
 
       const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
       const newInvoice: Invoice = {
         id: invoiceId,
         bolNumber: shipment.bol,
@@ -1049,7 +1051,11 @@ export default function App() {
         amount: invoiceAmount,
         shipmentId: shipment.id,
         date: new Date().toISOString().split('T')[0],
-        status: 'Pending'
+        status: 'Pending',
+        lineItems: linkedOrder?.lineItems || [],
+        shippingTerms: linkedOrder?.shippingTerms || '',
+        location: linkedOrder?.location || '',
+        contractNumber: linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
       };
 
       setInvoices(prevInvoices => {
@@ -2652,7 +2658,7 @@ export default function App() {
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#141414]">
+              <tbody className="divide-y divide-[#141414]/10">
                 {filteredInvoices.map(i => {
                   // Auto-calculate due date from invoice date + customer payment terms
                   const invoiceCustomer = customers.find(c => c.name === i.customer);
@@ -2668,50 +2674,131 @@ export default function App() {
                     return '';
                   })();
                   const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
+                  // Get line items: from invoice directly, or look up linked order by BOL
+                  const invoiceLineItems = i.lineItems || orders.find(o => o.bolNumber === i.bolNumber)?.lineItems || [];
+                  const linkedOrder = orders.find(o => o.bolNumber === i.bolNumber);
                   return (
-                  <tr key={i.id} className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '' })}>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{i.product}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
-                      <select
-                        value={i.status}
-                        onChange={(e) => updateInvoiceStatus(i.id, e.target.value)}
-                        className="bg-transparent font-bold uppercase text-[10px] outline-none cursor-pointer hover:underline"
-                        style={{ color: getStatusColor(i.status).text }}
-                      >
-                        <option value="Pending">Pending</option>
-                        <option value="Sent">Sent</option>
-                        <option value="Paid">Paid</option>
-                        <option value="Overdue">Overdue</option>
-                        <option value="Cancelled">Cancelled</option>
-                      </select>
-                    </td>
-                    <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
-                      {calculatedDueDate || '—'}
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="text"
-                        value={i.splitNo || ''}
-                        onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
-                        className="w-full bg-transparent focus:outline-none font-mono text-xs"
-                        placeholder="—"
-                      />
-                    </td>
-                    <td className="p-4 text-xs flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                      <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
-                        <Printer size={14} />
-                      </button>
-                      <button onClick={() => setInvoices(invoices.filter(item => item.id !== i.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
+                  <React.Fragment key={i.id}>
+                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
+                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.product}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={i.status}
+                          onChange={(e) => updateInvoiceStatus(i.id, e.target.value)}
+                          className="bg-transparent font-bold uppercase text-[10px] outline-none cursor-pointer hover:underline"
+                          style={{ color: getStatusColor(i.status).text }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Sent">Sent</option>
+                          <option value="Paid">Paid</option>
+                          <option value="Overdue">Overdue</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                      </td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
+                        {calculatedDueDate || '—'}
+                      </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={i.splitNo || ''}
+                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
+                          className="w-full bg-transparent focus:outline-none font-mono text-xs"
+                          placeholder="—"
+                        />
+                      </td>
+                      <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2">
+                          <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
+                            <Printer size={14} />
+                          </button>
+                          <button onClick={() => toggleRow(i.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Expand details">
+                            {expandedRows.has(i.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                          <button onClick={() => setInvoices(invoices.filter(item => item.id !== i.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <AnimatePresence>
+                      {expandedRows.has(i.id) && (
+                        <tr>
+                          <td colSpan={11} className="p-0">
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
+                            >
+                              <div className="p-6 space-y-4">
+                                <div className="grid grid-cols-4 gap-6">
+                                  <div>
+                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Invoice ID</div>
+                                    <div className="text-xs font-bold">{i.id}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Carrier</div>
+                                    <div className="text-xs font-bold">{i.carrier || '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div>
+                                    <div className="text-xs font-bold">{i.location || linkedOrder?.location || '—'}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Contract #</div>
+                                    <div className="text-xs font-bold font-mono">{i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</div>
+                                  </div>
+                                </div>
+                                {invoiceLineItems.length > 0 && (
+                                  <div className="border border-[#141414]/10 overflow-hidden">
+                                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
+                                      <h4 className="text-xs font-bold uppercase">Line Items</h4>
+                                    </div>
+                                    <table className="w-full text-xs">
+                                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
+                                        <tr>
+                                          <th className="p-3 text-left font-bold">Product</th>
+                                          <th className="p-3 text-left font-bold">QTY (units)</th>
+                                          <th className="p-3 text-left font-bold">Weight/Unit</th>
+                                          <th className="p-3 text-left font-bold">Total Weight</th>
+                                          <th className="p-3 text-left font-bold">Unit Amount</th>
+                                          <th className="p-3 text-left font-bold">Line Amount</th>
+                                          <th className="p-3 text-left font-bold">Contract #</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-[#141414]/10">
+                                        {invoiceLineItems.map(item => (
+                                          <tr key={item.id} className="hover:bg-[#141414]/5">
+                                            <td className="p-3">{item.productName}</td>
+                                            <td className="p-3">{item.qty}</td>
+                                            <td className="p-3">{item.netWeightPerUnit}</td>
+                                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
+                                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
+                                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
+                                            <td className="p-3 font-mono">{item.contractNumber}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                                {invoiceLineItems.length === 0 && (
+                                  <div className="text-[10px] opacity-40 italic">No line items available for this invoice.</div>
+                                )}
+                              </div>
+                            </motion.div>
+                          </td>
+                        </tr>
+                      )}
+                    </AnimatePresence>
+                  </React.Fragment>
                   );
                 })}
               </tbody>
@@ -2800,7 +2887,7 @@ export default function App() {
                   const productDisplay = ord.product || ord.lineItems.map(li => li.productName).join(', ');
                   return (
                     <React.Fragment key={ord.id}>
-                      <tr className="hover:bg-[#F9F9F9] transition-colors group">
+                      <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px]" title={productDisplay}>{productDisplay}</td>
@@ -2811,7 +2898,7 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || '—'}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">${ord.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={ord.status}
                             onChange={(e) => {
@@ -2837,7 +2924,7 @@ export default function App() {
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           {(() => {
                             const allShipments = [...hamiltonShipments, ...vancouverShipments];
                             const orderShipment = allShipments.find(s => s.bol === ord.bolNumber);
@@ -2885,7 +2972,8 @@ export default function App() {
                             }
                           })()}
                         </td>
-                        <td className="p-4 text-xs flex items-center gap-2">
+                        <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
                           <button
                             onClick={() => {
                               if (ord.status !== 'Open') {
@@ -2917,6 +3005,7 @@ export default function App() {
                           <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all">
                             <Trash2 size={14} />
                           </button>
+                          </div>
                         </td>
                       </tr>
                       <AnimatePresence>
@@ -4926,7 +5015,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -4934,12 +5023,15 @@ export default function App() {
                 <button onClick={() => setEditingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
               </div>
               <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
                     <input type="text" value={editingInvoiceCard.bolNumber} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, bolNumber: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Date</label>
                     <input type="date" value={editingInvoiceCard.date} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, date: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
+                    <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -4953,18 +5045,18 @@ export default function App() {
                     <input type="text" value={editingInvoiceCard.product} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
                     <input type="text" value={editingInvoiceCard.po} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, po: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
                     <input type="number" value={editingInvoiceCard.qty} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, qty: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
                     <input type="number" value={editingInvoiceCard.amount} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, amount: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
                     <select value={editingInvoiceCard.status} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, status: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
@@ -4974,18 +5066,57 @@ export default function App() {
                       <option value="Overdue">Overdue</option>
                       <option value="Cancelled">Cancelled</option>
                     </select></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
-                    <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })}
-                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
                     <input type="text" value={editingInvoiceCard.carrier} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, carrier: e.target.value })}
                       className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                    <input type="text" value={editingInvoiceCard.splitNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, splitNo: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
                 </div>
-                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
-                  <input type="text" value={editingInvoiceCard.splitNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, splitNo: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location</label>
+                    <input type="text" value={editingInvoiceCard.location || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, location: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
+                    <input type="text" value={editingInvoiceCard.contractNumber || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, contractNumber: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414] font-mono" /></div>
+                </div>
+
+                {/* Line Items */}
+                {(editingInvoiceCard.lineItems || []).length > 0 && (
+                  <div className="border border-[#141414]/10 overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
+                      <h4 className="text-xs font-bold uppercase">Line Items</h4>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
+                        <tr>
+                          <th className="p-3 text-left font-bold">Product</th>
+                          <th className="p-3 text-left font-bold">QTY (units)</th>
+                          <th className="p-3 text-left font-bold">Weight/Unit</th>
+                          <th className="p-3 text-left font-bold">Total Weight</th>
+                          <th className="p-3 text-left font-bold">Unit Amount</th>
+                          <th className="p-3 text-left font-bold">Line Amount</th>
+                          <th className="p-3 text-left font-bold">Contract #</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#141414]/10">
+                        {(editingInvoiceCard.lineItems || []).map(item => (
+                          <tr key={item.id} className="hover:bg-[#141414]/5">
+                            <td className="p-3">{item.productName}</td>
+                            <td className="p-3">{item.qty}</td>
+                            <td className="p-3">{item.netWeightPerUnit}</td>
+                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
+                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-mono">{item.contractNumber}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
                   <button onClick={() => setEditingInvoiceCard(null)}
                     className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
@@ -4993,6 +5124,145 @@ export default function App() {
                     setInvoices(invoices.map(inv => inv.id === editingInvoiceCard.id ? editingInvoiceCard : inv));
                     setEditingInvoiceCard(null);
                   }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Save Changes</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Order Card Modal */}
+      <AnimatePresence>
+        {viewingOrderCard && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setViewingOrderCard(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-xs font-bold uppercase tracking-widest">Order Details</h3>
+                  <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
+                    viewingOrderCard.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                    viewingOrderCard.status === 'Open' ? 'bg-amber-100 text-amber-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>{viewingOrderCard.status}</span>
+                </div>
+                <button onClick={() => setViewingOrderCard(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
+                    <div className="text-sm font-bold">{viewingOrderCard.bolNumber}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
+                    <div className="text-sm font-bold">{viewingOrderCard.customer}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Date Created</label>
+                    <div className="text-sm">{viewingOrderCard.date}</div></div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
+                    <div className="text-sm">{viewingOrderCard.po || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
+                    <div className="text-sm font-mono">{viewingOrderCard.contractNumber || viewingOrderCard.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                    <div className="text-sm font-bold">${viewingOrderCard.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div></div>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipment Date</label>
+                    <div className="text-sm">{viewingOrderCard.shipmentDate || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Delivery Date</label>
+                    <div className="text-sm">{viewingOrderCard.deliveryDate || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
+                    <div className="text-sm">{viewingOrderCard.carrier || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
+                    <div className="text-sm">{viewingOrderCard.shippingTerms || '—'}</div></div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location</label>
+                    <div className="text-sm">{viewingOrderCard.location || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split Number</label>
+                    <div className="text-sm font-mono">{viewingOrderCard.splitNumber || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Pallet Type</label>
+                    <div className="text-sm">{viewingOrderCard.palletType || '—'}</div></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
+                    <div className="text-sm font-bold">{(viewingOrderCard.lineItems.reduce((sum, item) => sum + item.totalWeight, 0) * 1000).toFixed(0)}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
+                    <div className="text-sm">{viewingOrderCard.product || viewingOrderCard.lineItems.map(li => li.productName).join(', ') || '—'}</div></div>
+                </div>
+
+                {/* Line Items */}
+                {viewingOrderCard.lineItems.length > 0 && (
+                  <div className="border border-[#141414]/10 overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
+                      <h4 className="text-xs font-bold uppercase">Line Items ({viewingOrderCard.lineItems.length})</h4>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
+                        <tr>
+                          <th className="p-3 text-left font-bold">Product</th>
+                          <th className="p-3 text-left font-bold">QTY (units)</th>
+                          <th className="p-3 text-left font-bold">Weight/Unit</th>
+                          <th className="p-3 text-left font-bold">Total Weight</th>
+                          <th className="p-3 text-left font-bold">Unit Amount</th>
+                          <th className="p-3 text-left font-bold">MT Amount</th>
+                          <th className="p-3 text-left font-bold">Line Amount</th>
+                          <th className="p-3 text-left font-bold">Contract #</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#141414]/10">
+                        {viewingOrderCard.lineItems.map(item => (
+                          <tr key={item.id} className="hover:bg-[#141414]/5">
+                            <td className="p-3">{item.productName}</td>
+                            <td className="p-3">{item.qty}</td>
+                            <td className="p-3">{item.netWeightPerUnit}</td>
+                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
+                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{item.mtAmount ? `$${item.mtAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-mono">{item.contractNumber}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
+                        <tr>
+                          <td className="p-3 font-bold">Total</td>
+                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.reduce((s, i) => s + i.qty, 0)}</td>
+                          <td className="p-3"></td>
+                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.reduce((s, i) => s + i.totalWeight, 0).toFixed(2)}</td>
+                          <td className="p-3"></td>
+                          <td className="p-3"></td>
+                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.some(i => i.lineAmount) ? `$${viewingOrderCard.lineItems.reduce((s, i) => s + (i.lineAmount || 0), 0).toFixed(2)}` : '—'}</td>
+                          <td className="p-3"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+                  <button onClick={() => setViewingOrderCard(null)}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
+                  {viewingOrderCard.status === 'Open' && (
+                    <button onClick={() => {
+                      const cust = customers.find(c => c.name === viewingOrderCard.customer);
+                      setOrderCustomerId(cust?.id || '');
+                      setOrderPO(viewingOrderCard.po);
+                      setOrderShipmentDate(viewingOrderCard.shipmentDate || '');
+                      setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
+                      setOrderCarrier(viewingOrderCard.carrier || '');
+                      setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
+                      setOrderLineItems(viewingOrderCard.lineItems);
+                      if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
+                      setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
+                      setIsAddingOrder(false);
+                      setViewingOrderCard(null);
+                    }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Edit Order</button>
+                  )}
                 </div>
               </div>
             </motion.div>
