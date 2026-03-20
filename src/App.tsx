@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { generateOrderConfirmation, extractSpreadsheetId } from './googleSheetsService';
+import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
@@ -419,32 +419,20 @@ export default function App() {
     }
   };
 
-  const handleGenerateOrderConfirmation = async (order: Order) => {
-    // Find the Order Confirmation template from qaTemplates
-    const template = qaTemplates.find(t => t.name.toLowerCase().includes('order confirmation')) || qaTemplates.find(t => t.type === 'Bill of Lading');
-    if (!template?.googleSheetUrl) {
-      setErrorBox('No Order Confirmation template found. Please add one in the QA page Templates table with the Google Sheet URL.');
-      return;
-    }
-    const spreadsheetId = extractSpreadsheetId(template.googleSheetUrl);
-    if (!spreadsheetId) {
-      setErrorBox('Invalid Google Sheet URL in the template. Please check the URL in the QA Templates table.');
-      return;
-    }
+  const handleGenerateOrderConfirmation = (order: Order) => {
     setGeneratingOrderConfirmation(order.id);
     try {
       const customer = customers.find(c => c.name === order.customer);
       const carrier = carriers.find(c => c.name === order.carrier);
       const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
-      const url = await generateOrderConfirmation({
+      generateOrderConfirmationPdf({
         order,
         customer,
         carrier,
         shipperLocation,
         qaProducts,
-        templateSpreadsheetId: spreadsheetId,
+        skus,
       });
-      window.open(url, '_blank');
     } catch (e: any) {
       console.error('Generate order confirmation failed:', e);
       setErrorBox('Failed to generate order confirmation: ' + (e.message || 'Unknown error'));
