@@ -107,6 +107,17 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
               <option value="">Select salesperson</option>
               {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select></div>
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contact Name</label>
+              <input type="text" value={lead.contactName || ''} onChange={(e) => setLead({ ...lead, contactName: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Full name" /></div>
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contact Email</label>
+              <input type="email" value={lead.contactEmail || ''} onChange={(e) => setLead({ ...lead, contactEmail: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="email@example.com" /></div>
+            <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contact Phone</label>
+              <input type="tel" value={lead.contactPhone || ''} onChange={(e) => setLead({ ...lead, contactPhone: e.target.value })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="(555) 123-4567" /></div>
+          </div>
           <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Notes</label>
             <textarea value={lead.notes || ''} onChange={(e) => setLead({ ...lead, notes: e.target.value })} rows={3}
               className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Additional notes..." /></div>
@@ -196,7 +207,7 @@ export default function App() {
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
-  const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', notes: '', status: 'New', followUps: [], createdAt: '' });
+  const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
   const [newLeadFollowUp, setNewLeadFollowUp] = useState<Record<string, { date: string; description: string; infoSent: string }>>({});
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
@@ -3471,7 +3482,7 @@ export default function App() {
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold uppercase tracking-tighter">Sales Leads</h2>
             <button onClick={() => {
-              setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', notes: '', status: 'New', followUps: [], createdAt: '' });
+              setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
               setShowAddLeadModal(true);
             }}
               className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">

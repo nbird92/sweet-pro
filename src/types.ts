@@ -541,6 +541,9 @@ export interface SalesLead {
   volume: number;
   location: string;
   salespersonId: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
   notes?: string;
   status: 'New' | 'In Progress' | 'Qualified' | 'Closed Won' | 'Closed Lost';
   followUps: SalesLeadFollowUp[];
