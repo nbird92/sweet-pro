@@ -525,3 +525,27 @@ export interface ChepPalletMovement {
 }
 
 export const INITIAL_CHEP_PALLET_MOVEMENTS: ChepPalletMovement[] = [];
+
+export interface SalesLeadFollowUp {
+  id: string;
+  date: string;
+  description: string;
+  infoSent: string;
+  completed: boolean;
+}
+
+export interface SalesLead {
+  id: string;
+  customerName: string;
+  product: string;
+  volume: number;
+  location: string;
+  salespersonId: string;
+  notes?: string;
+  status: 'New' | 'In Progress' | 'Qualified' | 'Closed Won' | 'Closed Lost';
+  followUps: SalesLeadFollowUp[];
+  createdAt: string;
+  source?: string;
+}
+
+export const INITIAL_SALES_LEADS: SalesLead[] = [];

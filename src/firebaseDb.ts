@@ -31,6 +31,7 @@ export const COLLECTIONS = {
   fuelSurcharges: 'fuelSurcharges',
   vendors: 'vendors',
   chepPalletMovements: 'chepPalletMovements',
+  salesLeads: 'salesLeads',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

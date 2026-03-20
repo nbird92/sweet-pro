@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -83,6 +83,8 @@ export default function App() {
   const [conferences, setConferences] = useState<Conference[]>(INITIAL_CONFERENCES);
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
+  const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
+  const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
@@ -340,6 +342,7 @@ export default function App() {
     fuelsurcharges: JSON.stringify([]),
     vendors: JSON.stringify([]),
     cheppalletmovements: JSON.stringify([]),
+    salesleads: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -525,6 +528,10 @@ export default function App() {
         setChepPalletMovements(data.chepPalletMovements);
         lastSyncedData.current.cheppalletmovements = JSON.stringify(data.chepPalletMovements);
       }
+      if (data.salesLeads?.length) {
+        setSalesLeads(data.salesLeads);
+        lastSyncedData.current.salesleads = JSON.stringify(data.salesLeads);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -582,6 +589,7 @@ export default function App() {
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
+        { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
       ];
 
       try {
@@ -607,7 +615,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, lastSynced, user]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
@@ -1365,6 +1373,7 @@ export default function App() {
     { name: 'US #11 Market', icon: TrendingUp },
     { name: 'Products', icon: Package },
     { name: 'Conferences', icon: Users },
+    { name: 'Sales Leads', icon: Users },
     { name: 'People', icon: Users },
     { name: 'Quality Assurance', icon: ClipboardCheck },
     { name: 'Vendors', icon: Briefcase },
@@ -2532,7 +2541,7 @@ export default function App() {
                   })();
                   const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
                   return (
-                  <tr key={i.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                  <tr key={i.id} className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '' })}>
                     <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
@@ -2540,7 +2549,7 @@ export default function App() {
                     <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={i.status}
                         onChange={(e) => updateInvoiceStatus(i.id, e.target.value)}
@@ -2557,7 +2566,7 @@ export default function App() {
                     <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
                       {calculatedDueDate || '—'}
                     </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
+                    <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="text"
                         value={i.splitNo || ''}
@@ -2566,7 +2575,7 @@ export default function App() {
                         placeholder="—"
                       />
                     </td>
-                    <td className="p-4 text-xs flex items-center gap-2">
+                    <td className="p-4 text-xs flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                       <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
                         <Printer size={14} />
                       </button>
@@ -3198,6 +3207,9 @@ export default function App() {
                 : c
             ));
           }}
+          onCreateSalesLead={(lead: SalesLead) => {
+            setSalesLeads(prev => [...prev, lead]);
+          }}
         />
       );
     }
@@ -3329,6 +3341,255 @@ export default function App() {
               </tbody>
             </table>
           </div>
+        </div>
+      );
+    }
+
+    if (activePage === 'Sales Leads') {
+      const salesPeople = people.filter(p => p.department === 'sales');
+      const [expandedLeadIds, setExpandedLeadIds] = React.useState<Set<string>>(new Set());
+      const [showAddLeadModal, setShowAddLeadModal] = React.useState(false);
+      const [editingLeadCard, setEditingLeadCard] = React.useState<SalesLead | null>(null);
+      const [newLeadFollowUp, setNewLeadFollowUp] = React.useState<Record<string, { date: string; description: string; infoSent: string }>>({});
+
+      const toggleExpandLead = (id: string) => {
+        setExpandedLeadIds(prev => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          return next;
+        });
+      };
+
+      const getLeadStatusColor = (status: string) => {
+        switch (status) {
+          case 'New': return 'bg-blue-100 text-blue-800';
+          case 'In Progress': return 'bg-yellow-100 text-yellow-800';
+          case 'Qualified': return 'bg-purple-100 text-purple-800';
+          case 'Closed Won': return 'bg-green-100 text-green-800';
+          case 'Closed Lost': return 'bg-red-100 text-red-800';
+          default: return 'bg-gray-100 text-gray-800';
+        }
+      };
+
+      const filteredLeads = salesLeads.filter(lead => {
+        if (!searchTerm) return true;
+        const term = searchTerm.toLowerCase();
+        return lead.customerName.toLowerCase().includes(term) ||
+          lead.product.toLowerCase().includes(term) ||
+          lead.location.toLowerCase().includes(term) ||
+          lead.status.toLowerCase().includes(term) ||
+          (people.find(p => p.id === lead.salespersonId)?.name || '').toLowerCase().includes(term);
+      });
+
+      const emptyLead: SalesLead = {
+        id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '',
+        notes: '', status: 'New', followUps: [], createdAt: new Date().toISOString(),
+      };
+
+      const LeadModal = ({ lead, setLead, onSubmit, onClose, title }: { lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string }) => (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
+              <button onClick={onClose} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer Name*</label>
+                  <input type="text" value={lead.customerName} onChange={(e) => setLead({ ...lead, customerName: e.target.value })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Enter customer name" /></div>
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
+                  <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                    <option value="">Select product</option>
+                    {qaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
+                    {skus.filter(s => !qaProducts.some(qp => qp.skuName === s.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                  </select></div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Volume (MT)</label>
+                  <input type="number" value={lead.volume || ''} onChange={(e) => setLead({ ...lead, volume: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location</label>
+                  <select value={lead.location} onChange={(e) => setLead({ ...lead, location: e.target.value })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                    <option value="">Select location</option>
+                    {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                  </select></div>
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
+                  <select value={lead.status} onChange={(e) => setLead({ ...lead, status: e.target.value as SalesLead['status'] })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                    <option value="New">New</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Qualified">Qualified</option>
+                    <option value="Closed Won">Closed Won</option>
+                    <option value="Closed Lost">Closed Lost</option>
+                  </select></div>
+              </div>
+              <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Sales Person</label>
+                <select value={lead.salespersonId} onChange={(e) => setLead({ ...lead, salespersonId: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                  <option value="">Select salesperson</option>
+                  {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select></div>
+              <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Notes</label>
+                <textarea value={lead.notes || ''} onChange={(e) => setLead({ ...lead, notes: e.target.value })} rows={3}
+                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Additional notes..." /></div>
+              {lead.source && <div className="text-[10px] opacity-50">Source: {lead.source}</div>}
+
+              {/* Follow-ups section in modal */}
+              <div className="border-t border-[#141414]/10 pt-4">
+                <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Follow-ups</h4>
+                {(lead.followUps || []).map(fu => (
+                  <div key={fu.id} className="flex items-start gap-2 mb-2 p-2 bg-[#F5F5F5] border border-[#141414]/10">
+                    <button onClick={() => setLead({ ...lead, followUps: lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f) })}
+                      className="mt-0.5 flex-shrink-0">{fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}</button>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-xs ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</div>
+                      <div className="text-[10px] opacity-40">{fu.date}{fu.infoSent ? ` — Info: ${fu.infoSent}` : ''}</div>
+                    </div>
+                    <button onClick={() => setLead({ ...lead, followUps: lead.followUps.filter(f => f.id !== fu.id) })}
+                      className="p-0.5 hover:bg-red-100 text-red-400 flex-shrink-0"><Trash2 size={12} /></button>
+                  </div>
+                ))}
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  <input type="date" placeholder="Date" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                    value={(newLeadFollowUp[lead.id] || { date: '' }).date}
+                    onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), date: e.target.value } }))} />
+                  <input type="text" placeholder="Description" className="px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                    value={(newLeadFollowUp[lead.id] || { description: '' }).description}
+                    onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), description: e.target.value } }))} />
+                  <div className="flex gap-1">
+                    <input type="text" placeholder="Info sent" className="flex-1 px-2 py-1 border border-[#141414] text-xs focus:outline-none"
+                      value={(newLeadFollowUp[lead.id] || { infoSent: '' }).infoSent}
+                      onChange={(e) => setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { ...(prev[lead.id] || { date: '', description: '', infoSent: '' }), infoSent: e.target.value } }))} />
+                    <button onClick={() => {
+                      const fu = newLeadFollowUp[lead.id];
+                      if (!fu?.description) return;
+                      const newFu: SalesLeadFollowUp = { id: `SLFU-${Date.now()}`, date: fu.date || new Date().toISOString().split('T')[0], description: fu.description, infoSent: fu.infoSent || '', completed: false };
+                      setLead({ ...lead, followUps: [...lead.followUps, newFu] });
+                      setNewLeadFollowUp(prev => ({ ...prev, [lead.id]: { date: '', description: '', infoSent: '' } }));
+                    }} className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-xs font-bold"><Plus size={12} /></button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+                <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">
+                  {title.includes('Edit') ? 'Save Changes' : 'Create Lead'}</button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      );
+
+      return (
+        <div className="p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold uppercase tracking-tighter">Sales Leads</h2>
+            <button onClick={() => setShowAddLeadModal(true)}
+              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
+              <Plus size={14} /> Add Lead
+            </button>
+          </div>
+
+          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search leads by customer, product, location, status..." />
+
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                  <th className="p-3 w-8"></th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Customer</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Product</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Volume (MT)</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Sales Person</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Follow-ups</th>
+                  <th className="p-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {filteredLeads.length === 0 && (
+                  <tr><td colSpan={9} className="p-6 text-center text-xs font-bold opacity-40 italic">No sales leads yet. Click "Add Lead" to create one.</td></tr>
+                )}
+                {filteredLeads.map(lead => {
+                  const salesperson = people.find(p => p.id === lead.salespersonId);
+                  const isExpanded = expandedLeadIds.has(lead.id);
+                  return (
+                    <React.Fragment key={lead.id}>
+                      <tr className="hover:bg-[#F9F9F9] transition-colors cursor-pointer" onClick={() => setEditingLeadCard({ ...lead })}>
+                        <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleExpandLead(lead.id); }}>
+                          {lead.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                        </td>
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.customerName}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.product}</td>
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.volume}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.location}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>
+                        <td className="p-3 border-r border-[#141414]/10">
+                          <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${getLeadStatusColor(lead.status)}`}>{lead.status}</span>
+                        </td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.followUps.filter(f => !f.completed).length}/{lead.followUps.length}</td>
+                        <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => setEditingLeadCard({ ...lead })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
+                            <button onClick={() => setSalesLeads(salesLeads.filter(l => l.id !== lead.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && lead.followUps.length > 0 && lead.followUps.map(fu => (
+                        <tr key={fu.id} className="bg-[#F9F9F9]">
+                          <td className="p-2 pl-6"></td>
+                          <td className="p-2 text-[10px] opacity-60" colSpan={2}>
+                            <button onClick={() => {
+                              const updatedFollowUps = lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
+                              setSalesLeads(salesLeads.map(l => l.id === lead.id ? { ...l, followUps: updatedFollowUps } : l));
+                            }} className="inline-flex items-center gap-1">
+                              {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
+                              <span className={fu.completed ? 'line-through' : ''}>{fu.description}</span>
+                            </button>
+                          </td>
+                          <td className="p-2 text-[10px] opacity-60">{fu.date}</td>
+                          <td className="p-2 text-[10px] opacity-60" colSpan={2}>{fu.infoSent || '—'}</td>
+                          <td colSpan={3}></td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Add Lead Modal */}
+          <AnimatePresence>
+            {showAddLeadModal && (() => {
+              const [newLead, setNewLead] = React.useState<SalesLead>({ ...emptyLead, id: `SL-${Date.now()}` });
+              return (
+                <LeadModal lead={newLead} setLead={setNewLead} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
+                  onSubmit={() => {
+                    if (!newLead.customerName) { alert('Please enter a customer name'); return; }
+                    setSalesLeads(prev => [...prev, { ...newLead, id: `SL-${Date.now()}`, createdAt: new Date().toISOString() }]);
+                    setShowAddLeadModal(false);
+                  }} />
+              );
+            })()}
+          </AnimatePresence>
+
+          {/* Edit Lead Card Modal */}
+          <AnimatePresence>
+            {editingLeadCard && (
+              <LeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
+                onSubmit={() => {
+                  setSalesLeads(salesLeads.map(l => l.id === editingLeadCard.id ? editingLeadCard : l));
+                  setEditingLeadCard(null);
+                }} />
+            )}
+          </AnimatePresence>
         </div>
       );
     }
@@ -4655,6 +4916,88 @@ export default function App() {
                   Sign in with Google
                 </button>
                 {syncError && <div className="text-[10px] text-red-500 font-bold">{syncError}</div>}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Invoice Card Modal */}
+      <AnimatePresence>
+        {editingInvoiceCard && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setEditingInvoiceCard(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Invoice Details</h3>
+                <button onClick={() => setEditingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
+                    <input type="text" value={editingInvoiceCard.bolNumber} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, bolNumber: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Date</label>
+                    <input type="date" value={editingInvoiceCard.date} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, date: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
+                    <select value={editingInvoiceCard.customer} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customer: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                      <option value="">Select customer</option>
+                      {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
+                    <input type="text" value={editingInvoiceCard.product} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
+                    <input type="text" value={editingInvoiceCard.po} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, po: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
+                    <input type="number" value={editingInvoiceCard.qty} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, qty: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                    <input type="number" value={editingInvoiceCard.amount} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, amount: parseFloat(e.target.value) || 0 })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
+                    <select value={editingInvoiceCard.status} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, status: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                      <option value="Pending">Pending</option>
+                      <option value="Sent">Sent</option>
+                      <option value="Paid">Paid</option>
+                      <option value="Overdue">Overdue</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
+                    <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
+                    <input type="text" value={editingInvoiceCard.carrier} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, carrier: e.target.value })}
+                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                </div>
+                <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                  <input type="text" value={editingInvoiceCard.splitNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, splitNo: e.target.value })}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+                <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+                  <button onClick={() => setEditingInvoiceCard(null)}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  <button onClick={() => {
+                    setInvoices(invoices.map(inv => inv.id === editingInvoiceCard.id ? editingInvoiceCard : inv));
+                    setEditingInvoiceCard(null);
+                  }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Save Changes</button>
+                </div>
               </div>
             </motion.div>
           </div>

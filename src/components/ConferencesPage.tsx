@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDetail, MeetingFollowUp, Customer, Person } from '../types';
+import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDetail, MeetingFollowUp, Customer, Person, SalesLead, SalesLeadFollowUp } from '../types';
 import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -11,6 +11,7 @@ interface ConferencesPageProps {
   onUpdateConference: (conference: Conference) => void;
   onDeleteConference: (conferenceId: string) => void;
   onAddMeeting: (conferenceId: string, meeting: ConferenceMeeting) => void;
+  onCreateSalesLead?: (lead: SalesLead) => void;
 }
 
 function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -24,7 +25,7 @@ function SearchInput({ value, onChange, placeholder }: { value: string; onChange
 }
 
 export default function ConferencesPage({
-  conferences, customers, people, onAddConference, onUpdateConference, onDeleteConference, onAddMeeting,
+  conferences, customers, people, onAddConference, onUpdateConference, onDeleteConference, onAddMeeting, onCreateSalesLead,
 }: ConferencesPageProps) {
   const [selectedConference, setSelectedConference] = useState<Conference | null>(null);
   const [showAddConferenceModal, setShowAddConferenceModal] = useState(false);
@@ -148,10 +149,14 @@ export default function ConferencesPage({
 
   const handleAddMeeting = () => {
     if (!selectedConference || !newMeeting.date || !newMeeting.time || !newMeeting.location) { alert('Please fill in date, time, and location'); return; }
+    const isNewCustomer = newMeeting.customerId === '__NEW_CUSTOMER__';
     let meetingName = newMeeting.meetingName || '';
-    if (newMeeting.customerId && !meetingName) {
+    if (newMeeting.customerId && newMeeting.customerId !== '__NEW_CUSTOMER__' && !meetingName) {
       const customer = customers.find(c => c.id === newMeeting.customerId);
       meetingName = customer ? customer.name : 'Meeting';
+    }
+    if (isNewCustomer && !meetingName) {
+      meetingName = 'New Customer Meeting';
     }
     // Ensure owner is also in attendees
     let attendees = [...(newMeeting.attendees || [])];
@@ -162,11 +167,38 @@ export default function ConferencesPage({
       id: `MTG-${Date.now()}`, conferenceId: selectedConference.id, date: newMeeting.date!, time: newMeeting.time!,
       meetingName, meetingOwner: newMeeting.meetingOwner || undefined, attendees,
       customerAttendees: [], customerAttendeeDetails: newMeeting.customerAttendeeDetails || [],
-      location: newMeeting.location!, notes: newMeeting.notes, customerId: newMeeting.customerId, followUps: [],
+      location: newMeeting.location!, notes: newMeeting.notes, customerId: isNewCustomer ? '' : newMeeting.customerId, followUps: [],
     };
     const updatedConference: Conference = { ...selectedConference, meetings: [...selectedConference.meetings, meeting] };
     onAddMeeting(selectedConference.id, meeting);
     setSelectedConference(updatedConference);
+
+    // Create a Sales Lead if "New Customer" was selected
+    if (isNewCustomer && onCreateSalesLead) {
+      const customerContactName = (newMeeting.customerAttendeeDetails || []).map(ca => ca.name).join(', ');
+      const leadFollowUps: SalesLeadFollowUp[] = (meeting.followUps || []).map(fu => ({
+        id: `SLFU-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        date: fu.createdAt || meeting.date,
+        description: fu.text,
+        infoSent: '',
+        completed: fu.completed,
+      }));
+      const salesLead: SalesLead = {
+        id: `SL-${Date.now()}`,
+        customerName: customerContactName || meetingName,
+        product: '',
+        volume: 0,
+        location: '',
+        salespersonId: newMeeting.meetingOwner || '',
+        notes: `Contact info: ${(newMeeting.customerAttendeeDetails || []).map(ca => `${ca.name} (${ca.email}${ca.phone ? ', ' + ca.phone : ''})`).join('; ')}`,
+        status: 'New',
+        followUps: leadFollowUps,
+        createdAt: new Date().toISOString(),
+        source: `Conference - ${selectedConference.name}`,
+      };
+      onCreateSalesLead(salesLead);
+    }
+
     setShowAddMeetingModal(false);
     resetMeetingForm();
   };
@@ -940,6 +972,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
               <select value={meeting.customerId || ''} onChange={(e) => setMeeting({ ...meeting, customerId: e.target.value })}
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
                 <option value="">Select a customer</option>
+                <option value="__NEW_CUSTOMER__">+ New Customer</option>
                 {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
             <div><label className="text-xs font-bold uppercase block mb-1">Meeting Name</label>
               <input type="text" value={meeting.meetingName || ''} onChange={(e) => setMeeting({ ...meeting, meetingName: e.target.value })}
