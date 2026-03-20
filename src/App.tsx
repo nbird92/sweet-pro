@@ -2519,7 +2519,7 @@ export default function App() {
                 {filteredInvoices.map(i => {
                   // Auto-calculate due date from invoice date + customer payment terms
                   const invoiceCustomer = customers.find(c => c.name === i.customer);
-                  const paymentTermsStr = invoiceCustomer?.defaultPaymentTerms;
+                  const paymentTermsStr = invoiceCustomer?.defaultPaymentTerms ? String(invoiceCustomer.defaultPaymentTerms) : '';
                   const paymentDays = paymentTermsStr ? parseInt(paymentTermsStr.match(/\d+/)?.[0] || '0') : 0;
                   const calculatedDueDate = (() => {
                     if (i.dueDate) return i.dueDate;
