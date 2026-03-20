@@ -194,7 +194,6 @@ export default function App() {
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
-  const [expandedLeadIds, setExpandedLeadIds] = useState<Set<string>>(new Set());
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
   const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', notes: '', status: 'New', followUps: [], createdAt: '' });
@@ -920,6 +919,10 @@ export default function App() {
       case 'in progress': return { bg: '#fef9c3', text: '#854d0e' }; // Light Yellow
       case 'confirmed': return { bg: '#f3e8ff', text: '#6b21a8' }; // Light Purple
       case 'cancelled': return { bg: '#fee2e2', text: '#991b1b' }; // Light Red BG, Dark Red Text
+      case 'new': return { bg: '#dbeafe', text: '#1e40af' }; // Blue (Sales Lead)
+      case 'qualified': return { bg: '#f3e8ff', text: '#6b21a8' }; // Purple (Sales Lead)
+      case 'closed won': return { bg: '#dcfce7', text: '#166534' }; // Green (Sales Lead)
+      case 'closed lost': return { bg: '#fee2e2', text: '#991b1b' }; // Red (Sales Lead)
       default: return { bg: 'transparent', text: 'inherit' };
     }
   };
@@ -3461,35 +3464,7 @@ export default function App() {
 
     if (activePage === 'Sales Leads') {
       const salesPeople = people.filter(p => p.department === 'sales');
-
-      const toggleExpandLead = (id: string) => {
-        setExpandedLeadIds(prev => {
-          const next = new Set(prev);
-          if (next.has(id)) next.delete(id); else next.add(id);
-          return next;
-        });
-      };
-
-      const getLeadStatusColor = (status: string) => {
-        switch (status) {
-          case 'New': return 'bg-blue-100 text-blue-800';
-          case 'In Progress': return 'bg-yellow-100 text-yellow-800';
-          case 'Qualified': return 'bg-purple-100 text-purple-800';
-          case 'Closed Won': return 'bg-green-100 text-green-800';
-          case 'Closed Lost': return 'bg-red-100 text-red-800';
-          default: return 'bg-gray-100 text-gray-800';
-        }
-      };
-
-      const filteredLeads = salesLeads.filter(lead => {
-        if (!searchTerm) return true;
-        const term = searchTerm.toLowerCase();
-        return lead.customerName.toLowerCase().includes(term) ||
-          lead.product.toLowerCase().includes(term) ||
-          lead.location.toLowerCase().includes(term) ||
-          lead.status.toLowerCase().includes(term) ||
-          (people.find(p => p.id === lead.salespersonId)?.name || '').toLowerCase().includes(term);
-      });
+      const filteredLeads = getSortedAndFilteredData<SalesLead>(salesLeads, ['customerName', 'product', 'location', 'status']);
 
       return (
         <div className="p-6 space-y-4">
@@ -3511,12 +3486,12 @@ export default function App() {
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 w-8"></th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Customer</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Product</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Volume (MT)</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Sales Person</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
+                  <SortableHeader label="Customer" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Volume (MT)" sortKey="volume" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Sales Person" sortKey="salespersonId" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3 border-r border-[#E4E3E0]/20">Follow-ups</th>
                   <th className="p-3">Actions</th>
                 </tr>
@@ -3527,11 +3502,11 @@ export default function App() {
                 )}
                 {filteredLeads.map(lead => {
                   const salesperson = people.find(p => p.id === lead.salespersonId);
-                  const isExpanded = expandedLeadIds.has(lead.id);
+                  const isExpanded = expandedRows.has(lead.id);
                   return (
                     <React.Fragment key={lead.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors cursor-pointer" onClick={() => setEditingLeadCard({ ...lead })}>
-                        <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleExpandLead(lead.id); }}>
+                        <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleRow(lead.id); }}>
                           {lead.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
                         </td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.customerName}</td>
@@ -3540,7 +3515,7 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{lead.location}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>
                         <td className="p-3 border-r border-[#141414]/10">
-                          <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${getLeadStatusColor(lead.status)}`}>{lead.status}</span>
+                          <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(lead.status).bg, color: getStatusColor(lead.status).text }}>{lead.status}</span>
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{lead.followUps.filter(f => !f.completed).length}/{lead.followUps.length}</td>
                         <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
