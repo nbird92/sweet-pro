@@ -47,6 +47,7 @@ import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebas
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
+import { generateBolPdf } from './bolPdf';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
@@ -456,6 +457,29 @@ export default function App() {
   const handleClosePdfPreview = () => {
     if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
     setPdfPreview(null);
+  };
+
+  const handleGenerateBol = (shipment: Shipment) => {
+    try {
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const cust = customers.find(c => c.name === shipment.customer);
+      const carr = carriers.find(c => c.name === shipment.carrier);
+      const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
+      const { blobUrl, filename } = generateBolPdf({
+        shipment,
+        order: linkedOrder,
+        customer: cust,
+        carrier: carr,
+        shipFromLocation: shipFromLoc,
+        shipToCustomer: cust,
+        qaProducts,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename });
+    } catch (e: any) {
+      console.error('Generate BOL failed:', e);
+      setErrorBox('Failed to generate Bill of Lading: ' + (e.message || 'Unknown error'));
+    }
   };
 
   useEffect(() => {
@@ -2215,6 +2239,7 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
+                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
                                                             <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
@@ -2277,6 +2302,7 @@ export default function App() {
                                                                 setIsAddingShipment(true);
                                                               }}
                                                               className="p-0.5 hover:bg-emerald-600 hover:text-white transition-all" title="Add Shipment"><Plus size={10} /></button>
+                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
                                                             <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
@@ -2312,6 +2338,7 @@ export default function App() {
                                                         <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
+                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
                                                             <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
@@ -5347,7 +5374,7 @@ export default function App() {
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest">Order Confirmation Preview</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest">{pdfPreview.filename.startsWith('BOL_') ? 'Bill of Lading Preview' : 'Order Confirmation Preview'}</h3>
                   <span className="text-[10px] opacity-60 font-mono">{pdfPreview.filename}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -6221,6 +6248,12 @@ export default function App() {
                         className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                       >
                         Save Changes
+                      </button>
+                      <button
+                        onClick={() => editingShipment && handleGenerateBol(editingShipment)}
+                        className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      >
+                        <FileText size={14} /> Preview BOL
                       </button>
                       <button
                         onClick={() => { setIsAddingShipment(false); setEditingShipment(null); }}
