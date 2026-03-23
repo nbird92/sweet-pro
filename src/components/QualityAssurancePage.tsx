@@ -705,6 +705,7 @@ export default function QualityAssurancePage({
                     template.type === 'Bill of Lading' ? 'bg-blue-100 text-blue-700' :
                     template.type === 'Certificate of Analysis' ? 'bg-emerald-100 text-emerald-700' :
                     template.type === 'Packing List' ? 'bg-amber-100 text-amber-700' :
+                    template.type === 'Order Confirmation' ? 'bg-purple-100 text-purple-700' :
                     'bg-gray-100 text-gray-700'
                   }`}>{template.type}</span>
                 </td>
@@ -795,6 +796,7 @@ export default function QualityAssurancePage({
                     <option value="Bill of Lading">Bill of Lading</option>
                     <option value="Certificate of Analysis">Certificate of Analysis</option>
                     <option value="Packing List">Packing List</option>
+                    <option value="Order Confirmation">Order Confirmation</option>
                     <option value="Other">Other</option>
                   </select>
                 </div>

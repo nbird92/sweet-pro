@@ -40,7 +40,8 @@ import {
   Send,
   ClipboardCheck,
   GripVertical,
-  Briefcase
+  Briefcase,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -218,7 +219,7 @@ export default function App() {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string } | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -437,7 +438,7 @@ export default function App() {
       });
       // Revoke any previous blob URL to prevent memory leaks
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url: blobUrl, filename });
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Order Confirmation' });
     } catch (e: any) {
       console.error('Generate order confirmation failed:', e);
       setErrorBox('Failed to generate order confirmation: ' + (e.message || 'Unknown error'));
@@ -475,7 +476,7 @@ export default function App() {
         qaProducts,
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url: blobUrl, filename });
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Bill of Lading' });
     } catch (e: any) {
       console.error('Generate BOL failed:', e);
       setErrorBox('Failed to generate Bill of Lading: ' + (e.message || 'Unknown error'));
@@ -5372,21 +5373,38 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest">{pdfPreview.filename.startsWith('BOL_') ? 'Bill of Lading Preview' : 'Order Confirmation Preview'}</h3>
-                  <span className="text-[10px] opacity-60 font-mono">{pdfPreview.filename}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleDownloadPdf}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
-                  >
-                    <Download size={12} /> Download PDF
-                  </button>
-                  <button onClick={handleClosePdfPreview} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
-                </div>
-              </div>
+              {(() => {
+                const linkedTemplate = pdfPreview.templateType ? qaTemplates.find(t => t.type === pdfPreview.templateType) : null;
+                const previewTitle = pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview';
+                return (
+                  <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-4">
+                      <h3 className="text-xs font-bold uppercase tracking-widest">{previewTitle}</h3>
+                      <span className="text-[10px] opacity-60 font-mono">{pdfPreview.filename}</span>
+                      {linkedTemplate && (
+                        <a
+                          href={linkedTemplate.googleSheetUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+                          title={`Open "${linkedTemplate.name}" template in Google Sheets`}
+                        >
+                          <ExternalLink size={10} /> Template
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleDownloadPdf}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+                      >
+                        <Download size={12} /> Download PDF
+                      </button>
+                      <button onClick={handleClosePdfPreview} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="flex-1 bg-[#525659]">
                 <iframe
                   src={pdfPreview.url}

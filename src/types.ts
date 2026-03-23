@@ -560,7 +560,7 @@ export const INITIAL_SALES_LEADS: SalesLead[] = [];
 export interface QATemplate {
   id: string;
   name: string;
-  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Other';
+  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Order Confirmation' | 'Other';
   googleSheetUrl: string;
   description?: string;
   createdAt: string;
