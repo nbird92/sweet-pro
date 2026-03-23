@@ -12,49 +12,57 @@ interface GenerateBolParams {
   qaProducts: QAProduct[];
 }
 
-// Colors
 const BLACK = '#141414';
-const RED_BG = [220, 50, 50] as const;
-const YELLOW_BG = [255, 255, 150] as const;
+const YELLOW = [255, 255, 200] as const;
+const RED_BG = [220, 40, 40] as const;
+const LIGHT_GRAY = [240, 240, 240] as const;
 
-function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number, width: number): number {
+function drawRect(doc: jsPDF, x: number, y: number, w: number, h: number, fill?: readonly number[]) {
+  if (fill) {
+    doc.setFillColor(fill[0], fill[1], fill[2]);
+    doc.rect(x, y, w, h, 'FD');
+  } else {
+    doc.rect(x, y, w, h, 'S');
+  }
+}
+
+function drawBlackHeader(doc: jsPDF, text: string, x: number, y: number, w: number, h = 6): number {
   doc.setFillColor(BLACK);
-  doc.rect(x, y, width, 7, 'F');
+  doc.rect(x, y, w, h, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(255, 255, 255);
-  doc.text(text, x + 2, y + 5);
+  doc.text(text, x + w / 2, y + h / 2 + 1, { align: 'center' });
   doc.setTextColor(BLACK);
-  return y + 7;
-}
-
-function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, labelWidth: number, valueWidth: number, h = 6): number {
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(BLACK);
-  doc.text(label, x + 1, y + 4);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(value || '', x + labelWidth + 1, y + 4);
-  doc.setDrawColor(150, 150, 150);
-  doc.rect(x, y, labelWidth + valueWidth, h);
   return y + h;
 }
 
-function drawLabelValueBox(doc: jsPDF, label: string, value: string, x: number, y: number, w: number, h: number, options?: { fillColor?: readonly number[]; valueBold?: boolean; labelSize?: number; valueSize?: number }): void {
-  if (options?.fillColor) {
-    doc.setFillColor(options.fillColor[0], options.fillColor[1], options.fillColor[2]);
-    doc.rect(x, y, w, h, 'F');
+function drawLabelCell(doc: jsPDF, label: string, x: number, y: number, w: number, h: number, fill?: readonly number[]) {
+  doc.setDrawColor(100, 100, 100);
+  if (fill) {
+    doc.setFillColor(fill[0], fill[1], fill[2]);
+    doc.rect(x, y, w, h, 'FD');
+  } else {
+    doc.rect(x, y, w, h, 'S');
   }
-  doc.setDrawColor(150, 150, 150);
-  doc.rect(x, y, w, h);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(options?.labelSize || 7);
+  doc.setFontSize(8);
   doc.setTextColor(BLACK);
-  doc.text(label, x + 1, y + 4);
-  doc.setFont('helvetica', options?.valueBold ? 'bold' : 'normal');
-  doc.setFontSize(options?.valueSize || 9);
-  doc.text(value || '', x + 1, y + h - 2);
+  doc.text(label, x + 2, y + h / 2 + 1);
+}
+
+function drawValueCell(doc: jsPDF, value: string, x: number, y: number, w: number, h: number, fill?: readonly number[]) {
+  doc.setDrawColor(100, 100, 100);
+  if (fill) {
+    doc.setFillColor(fill[0], fill[1], fill[2]);
+    doc.rect(x, y, w, h, 'FD');
+  } else {
+    doc.rect(x, y, w, h, 'S');
+  }
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(BLACK);
+  doc.text(value || '', x + 2, y + h / 2 + 1);
 }
 
 export function generateBolPdf({
@@ -63,138 +71,196 @@ export function generateBolPdf({
   customer,
   carrier,
   shipFromLocation,
-  shipToCustomer,
   qaProducts,
 }: GenerateBolParams): { blobUrl: string; filename: string } {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 14;
-  const contentWidth = pageWidth - margin * 2;
-  const halfWidth = contentWidth / 2;
-  const leftCol = margin;
-  const rightCol = margin + halfWidth + 1;
-  const rightHalfWidth = halfWidth - 1;
+  const M = 12; // margin
+  const W = pageWidth - M * 2; // content width
+  const halfW = W / 2;
+  const L = M; // left edge
+  const R = M + halfW; // right column start
+  const rh = 6; // standard row height
 
-  // ─── HEADER ───
+  doc.setDrawColor(100, 100, 100);
+  doc.setLineWidth(0.3);
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 1-5: HEADER — "BILL OF LADING" + Sucro Canada logo
+  // ═══════════════════════════════════════════════════════════
+  let y = 12;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
+  doc.setFontSize(22);
   doc.setTextColor(BLACK);
-  doc.text('BILL OF LADING', pageWidth / 2, 14, { align: 'center' });
+  doc.text('BILL OF LADING', L + halfW * 0.45, y + 6, { align: 'center' });
 
-  doc.setDrawColor(BLACK);
-  doc.setLineWidth(0.5);
-  doc.line(leftCol, 17, pageWidth - margin, 17);
-
-  let y = 20;
-
-  // ─── CARRIER INFO (left) & PICK UP / PO (right) ───
-  // Left column: Carrier details
-  const carrierName = carrier?.name || shipment.carrier || '';
-  const carrierScac = carrier?.carrierNumber || '';
-  const carrierTel = carrier?.contactPhone || '';
-  const carrierEmail = carrier?.contactEmail || '';
-
-  drawFieldRow(doc, 'CARRIER:', carrierName, leftCol, y, 18, halfWidth - 18);
-  // Right: Pick Up Date
-  drawLabelValueBox(doc, 'Pick Up Date:', shipment.date || '', rightCol, y, rightHalfWidth, 6);
-  y += 6;
-
-  drawFieldRow(doc, 'SCAC:', carrierScac, leftCol, y, 18, halfWidth - 18);
-  y += 6;
-
-  drawFieldRow(doc, 'Tel:', carrierTel, leftCol, y, 18, halfWidth - 18);
-  // Right: Customer PO # (yellow background)
-  drawLabelValueBox(doc, 'CUSTOMER PO #:', order?.po || shipment.po || '', rightCol, y - 6, rightHalfWidth, 12, { fillColor: YELLOW_BG, valueBold: true, labelSize: 9, valueSize: 11 });
-  y += 6;
-
-  drawFieldRow(doc, 'email:', carrierEmail, leftCol, y, 18, halfWidth - 18);
-  y += 8;
-
-  // ─── SHIP FROM ───
-  y = drawSectionHeader(doc, 'SHIP FROM:', leftCol, y, halfWidth);
-
-  const shipFromName = shipFromLocation?.name || order?.location || '';
-  const shipFromAddr = shipFromLocation ? [shipFromLocation.address, shipFromLocation.city, shipFromLocation.province, shipFromLocation.postalCode].filter(Boolean).join(', ') : '';
-
-  drawFieldRow(doc, 'Name:', shipFromName, leftCol, y, 18, halfWidth - 18);
-  y += 6;
-  drawFieldRow(doc, 'Address:', shipFromAddr, leftCol, y, 18, halfWidth - 18, 12);
-  y += 14;
-
-  // SID# and Trailer/Seal on right
-  const sidY = y;
-  drawFieldRow(doc, 'SID#:', '', leftCol, y, 18, halfWidth - 18);
-  // Trailer Number (red bg)
-  drawLabelValueBox(doc, 'Trailer Number:', shipment.trailerNo || '', rightCol, sidY - 14, rightHalfWidth, 8, { fillColor: RED_BG as unknown as readonly number[] });
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
+  // Sucro Canada text (logo placeholder)
+  doc.setFontSize(14);
+  doc.setTextColor(0, 128, 0);
+  doc.text('Sucro Canada', R + halfW * 0.3, y + 4, { align: 'center' });
   doc.setFontSize(7);
-  doc.text('Trailer Number:', rightCol + 1, sidY - 14 + 4);
+  doc.setTextColor(100, 100, 100);
+  doc.text('www.sucrocan.com', R + halfW * 0.3, y + 8, { align: 'center' });
   doc.setTextColor(BLACK);
-  // Seal number(s)
-  drawLabelValueBox(doc, 'Seal number(s):', 'See below', rightCol, sidY - 6, rightHalfWidth, 6);
-  // Origin of Good
-  drawLabelValueBox(doc, 'Origin of Good:', '', rightCol, sidY, rightHalfWidth, 6);
 
-  y += 8;
+  y += 16;
 
-  // ─── SHIP TO ───
-  y = drawSectionHeader(doc, 'SHIP TO:', leftCol, y, halfWidth);
-  // Freight Charges Terms on right
-  drawLabelValueBox(doc, 'Freight Charges Terms:', '', rightCol, y - 1, rightHalfWidth, 7);
+  // ═══════════════════════════════════════════════════════════
+  // ROW 7: Pick Up Date (left, yellow) | CUSTOMER PO # (right, yellow)
+  // ═══════════════════════════════════════════════════════════
+  const dateRowH = 10;
+  // Pick Up Date label
+  drawLabelCell(doc, 'Pick Up Date:', L, y, 30, dateRowH, YELLOW);
+  drawValueCell(doc, shipment.date || '', L + 30, y, halfW - 30, dateRowH, YELLOW);
+  // Customer PO #
+  drawLabelCell(doc, 'CUSTOMER PO #:', R, y, 35, dateRowH, YELLOW);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  drawValueCell(doc, order?.po || shipment.po || '', R + 35, y, halfW - 35, dateRowH, YELLOW);
+  y += dateRowH + 2;
 
-  const shipToName = customer?.name || shipment.customer || '';
-  const shipToAddr = customer ? [customer.address, customer.city, customer.province, customer.postalCode].filter(Boolean).join(', ') : '';
-
-  drawFieldRow(doc, 'Name:', shipToName, leftCol, y, 18, halfWidth - 18);
+  // ═══════════════════════════════════════════════════════════
+  // ROW 9: SHIP FROM (left header) | SHIP TO (right header)
+  // ═══════════════════════════════════════════════════════════
+  drawBlackHeader(doc, 'SHIP FROM:', L, y, halfW);
+  drawBlackHeader(doc, 'SHIP TO:', R, y, halfW);
   y += 6;
-  drawFieldRow(doc, 'Address:', shipToAddr, leftCol, y, 18, halfWidth - 18, 12);
 
-  // Freight terms checkboxes on right
-  const ftY = y - 5;
-  const cbSize = 3;
+  // Row 10: Ship From Name | Ship To Name
+  const shipFromName = shipFromLocation?.name || order?.location || '';
+  const shipToName = customer?.name || shipment.customer || '';
+  drawLabelCell(doc, 'Name:', L, y, 18, rh);
+  drawValueCell(doc, shipFromName, L + 18, y, halfW - 18, rh);
+  drawLabelCell(doc, 'Name:', R, y, 18, rh);
+  drawValueCell(doc, shipToName, R + 18, y, halfW - 18, rh);
+  y += rh;
+
+  // Row 11: Ship From Address | Ship To Address
+  const shipFromAddr = shipFromLocation ? [shipFromLocation.address, shipFromLocation.city, shipFromLocation.province, shipFromLocation.postalCode].filter(Boolean).join(', ') : '';
+  const shipToAddr = customer ? [customer.address, customer.city, customer.province, customer.postalCode].filter(Boolean).join(', ') : '';
+  drawLabelCell(doc, 'Address:', L, y, 18, rh * 2);
+  drawValueCell(doc, shipFromAddr, L + 18, y, halfW - 18, rh * 2);
+  drawLabelCell(doc, 'Address:', R, y, 18, rh * 2);
+  drawValueCell(doc, shipToAddr, R + 18, y, halfW - 18, rh * 2);
+  y += rh * 2;
+
+  // Row 13: SID#
+  drawLabelCell(doc, 'SID#:', L, y, 18, rh);
+  drawValueCell(doc, '', L + 18, y, W - 18, rh);
+  y += rh + 2;
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 14: CARRIER (left header) | THIRD PARTY FREIGHT CHARGES BILL TO (right header)
+  // ═══════════════════════════════════════════════════════════
+  drawBlackHeader(doc, 'CARRIER:', L, y, halfW);
+  drawBlackHeader(doc, 'THIRD PARTY FREIGHT CHARGES BILL TO:', R, y, halfW);
+  y += 6;
+
+  // Row 15: Carrier Name | 3rd Party Name
+  const carrierName = carrier?.name || shipment.carrier || '';
+  drawLabelCell(doc, 'Name:', L, y, 18, rh);
+  drawValueCell(doc, carrierName, L + 18, y, halfW - 18, rh);
+  drawLabelCell(doc, 'Name:', R, y, 18, rh);
+  drawValueCell(doc, '', R + 18, y, halfW - 18, rh);
+  y += rh;
+
+  // Row 16: SCAC | 3rd Party Address
+  drawLabelCell(doc, 'SCAC:', L, y, 18, rh);
+  drawValueCell(doc, carrier?.carrierNumber || '', L + 18, y, halfW - 18, rh);
+  drawLabelCell(doc, 'Address:', R, y, 18, rh);
+  drawValueCell(doc, '', R + 18, y, halfW - 18, rh);
+  y += rh;
+
+  // Row 17: Tel
+  drawLabelCell(doc, 'Tel:', L, y, 18, rh);
+  drawValueCell(doc, carrier?.contactPhone || '', L + 18, y, halfW - 18, rh);
+  // Right side empty
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // Row 18: Email
+  drawLabelCell(doc, 'Email:', L, y, 18, rh);
+  drawValueCell(doc, carrier?.contactEmail || '', L + 18, y, halfW - 18, rh);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 19-20: Freight Charges Terms + checkboxes
+  // ═══════════════════════════════════════════════════════════
+  // Row 19: Freight Charges Terms label (right side)
+  drawRect(doc, L, y, halfW, rh);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.text('Freight Charges Terms:', R + 2, y + 4);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // Row 20: Trailer Number (left) | Prepaid | Collect | Third Party | X (right)
+  drawLabelCell(doc, 'Trailer Number:', L, y, 30, rh);
+  drawValueCell(doc, shipment.trailerNo || '', L + 30, y, halfW - 30, rh);
+
   const freightTerms = order?.shippingTerms || '';
   const cbLabels = ['Prepaid', 'Collect', 'Third Party'];
-  const cbX = rightCol;
-  const cbW = rightHalfWidth / 3;
+  const cbW = halfW / 4;
   cbLabels.forEach((label, i) => {
-    const bx = cbX + i * cbW;
-    doc.setDrawColor(150, 150, 150);
-    doc.rect(bx, ftY, cbW, 8);
+    const bx = R + i * cbW;
+    drawRect(doc, bx, y, cbW, rh);
     doc.setFontSize(7);
     doc.setFont('helvetica', 'normal');
-    doc.text(label, bx + cbSize + 3, ftY + 5);
-    // Draw checkbox
-    doc.rect(bx + 1, ftY + 2, cbSize, cbSize);
-    if (freightTerms.toLowerCase().includes(label.toLowerCase())) {
-      doc.setFont('helvetica', 'bold');
-      doc.text('X', bx + 1.5, ftY + 4.5);
-    }
+    doc.text(label, bx + 2, y + 4);
   });
+  // X column
+  const xCol = R + 3 * cbW;
+  drawRect(doc, xCol, y, cbW, rh);
+  // Check the matching one
+  const freightLower = freightTerms.toLowerCase();
+  if (freightLower.includes('prepaid')) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('X', R + cbW * 0.4, y + 4.5);
+  } else if (freightLower.includes('collect')) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('X', R + cbW + cbW * 0.4, y + 4.5);
+  } else if (freightLower.includes('third')) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('X', R + cbW * 2 + cbW * 0.4, y + 4.5);
+  } else {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('X', xCol + cbW * 0.4, y + 4.5);
+  }
+  y += rh;
 
-  y += 14;
-
-  // ─── THIRD PARTY FREIGHT CHARGES BILL TO ───
-  y = drawSectionHeader(doc, 'THIRD PARTY FREIGHT CHARGES BILL TO:', leftCol, y, halfWidth);
-  // Master Bill of Lading text on right
-  doc.setFontSize(6);
+  // Row 21: Origin of Good (left) | Master BOL checkbox (right)
+  drawLabelCell(doc, 'Origin of Good:', L, y, 30, rh);
+  drawValueCell(doc, '', L + 30, y, halfW - 30, rh);
+  // Checkbox + Master Bill text
+  drawRect(doc, R, y, halfW, rh * 2);
+  doc.setFontSize(5.5);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(80, 80, 80);
-  doc.text('Master Bill of Lading: with attached', rightCol + 1, y + 2);
-  doc.text('underlying Bills of Lading', rightCol + 1, y + 5.5);
-  doc.setDrawColor(150, 150, 150);
-  doc.rect(rightCol, y - 7, rightHalfWidth, 14);
   doc.setTextColor(BLACK);
+  // Checkbox symbol
+  doc.setFontSize(10);
+  doc.text('☑', R + 8, y + 5);
+  doc.setFontSize(6);
+  doc.text('Master Bill of Lading: with attached underlying', R + 14, y + 4);
+  doc.text('Bills of Lading', R + 14, y + 8);
+  y += rh;
 
-  drawFieldRow(doc, 'Name:', '', leftCol, y, 18, halfWidth - 18);
-  y += 6;
-  drawFieldRow(doc, 'Address:', '', leftCol, y, 18, halfWidth - 18);
-  y += 9;
+  // Row 23: Seal number(s) | Check Box label
+  drawLabelCell(doc, 'Seal number(s):', L, y, 30, rh);
+  drawValueCell(doc, 'See below', L + 30, y, halfW - 30, rh);
+  // "Check Box" label on right
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Check Box', R + 8, y + 4);
+  y += rh + 2;
 
-  // ─── GOODS SHIPPED TABLE ───
-  y = drawSectionHeader(doc, 'GOODS SHIPPED:', leftCol, y, contentWidth);
-
-  // Build line items
+  // ═══════════════════════════════════════════════════════════
+  // ROW 25: GOODS SHIPPED TABLE
+  // ═══════════════════════════════════════════════════════════
   const lineItemsData: (string | number)[][] = [];
   let totalNetWeight = 0;
   let totalGrossWeight = 0;
@@ -202,23 +268,22 @@ export function generateBolPdf({
   if (order?.lineItems && order.lineItems.length > 0) {
     order.lineItems.forEach(item => {
       const qaProduct = qaProducts.find(p => p.skuName === item.productName);
-      const netWeightKg = qaProduct?.netWeightKg || item.netWeightPerUnit || 0;
-      const grossWeightKg = qaProduct?.grossWeightKg || 0;
-      const itemNetWeight = netWeightKg * item.qty;
-      const itemGrossWeight = grossWeightKg * item.qty;
-      totalNetWeight += itemNetWeight;
-      totalGrossWeight += itemGrossWeight;
+      const netWt = qaProduct?.netWeightKg || item.netWeightPerUnit || 0;
+      const grossWt = qaProduct?.grossWeightKg || 0;
+      const itemNet = netWt * item.qty;
+      const itemGross = grossWt * item.qty;
+      totalNetWeight += itemNet;
+      totalGrossWeight += itemGross;
 
       lineItemsData.push([
         item.totalWeight ? item.totalWeight.toFixed(2) : '',
         item.productName || '',
         shipment.lotNumber || item.contractNumber || '',
-        itemNetWeight ? itemNetWeight.toFixed(2) : '',
-        itemGrossWeight ? itemGrossWeight.toFixed(2) : '',
+        itemNet ? itemNet.toFixed(2) : '',
+        itemGross ? itemGross.toFixed(2) : '',
       ]);
     });
   } else {
-    // Single line from shipment data
     lineItemsData.push([
       shipment.qty ? shipment.qty.toString() : '',
       shipment.product || '',
@@ -228,172 +293,200 @@ export function generateBolPdf({
     ]);
   }
 
-  // Pad to at least 3 rows
+  // Pad to 3 rows minimum
   while (lineItemsData.length < 3) {
     lineItemsData.push(['', '', '', '', '']);
   }
 
   autoTable(doc, {
     startY: y,
-    margin: { left: margin, right: margin },
+    margin: { left: M, right: M },
     head: [['Qty (MT)', 'Description Of Goods', 'Lot #', 'Net Weight (Kg)', 'Gross Weight (Kg)']],
     body: lineItemsData,
     styles: {
       fontSize: 8,
-      cellPadding: 3,
-      lineColor: [150, 150, 150],
+      cellPadding: 2.5,
+      lineColor: [100, 100, 100],
       lineWidth: 0.3,
       textColor: [20, 20, 20],
     },
     headStyles: {
-      fillColor: [240, 240, 240],
-      textColor: [20, 20, 20],
+      fillColor: [20, 20, 20],
+      textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 7,
+      fontSize: 8,
     },
     columnStyles: {
       0: { halign: 'center', cellWidth: 25 },
       1: { cellWidth: 'auto' },
       2: { halign: 'center', cellWidth: 25 },
-      3: { halign: 'right', cellWidth: 30 },
-      4: { halign: 'right', cellWidth: 30 },
+      3: { halign: 'right', cellWidth: 32 },
+      4: { halign: 'right', cellWidth: 32 },
     },
   });
 
-  y = (doc as any).lastAutoTable?.finalY || y + 40;
+  y = (doc as any).lastAutoTable?.finalY || y + 30;
+  y += 1;
 
-  // Disclaimer
-  y += 2;
+  // ═══════════════════════════════════════════════════════════
+  // ROW 28-29: DISCLAIMER (red text)
+  // ═══════════════════════════════════════════════════════════
+  doc.setFillColor(255, 255, 230);
+  doc.rect(L, y, W, 8, 'F');
   doc.setFontSize(6.5);
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(200, 50, 50);
-  doc.text('Please note that the quantity listed on this BoL is an estimate only. Please refer to the included scale ticket for the actual quantity.', pageWidth / 2, y, { align: 'center' });
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(200, 0, 0);
+  doc.text('Please note that the quantity listed on this BoL is an estimate only. Please refer to the included scale ticket for the actual', pageWidth / 2, y + 3, { align: 'center' });
+  doc.text('quantity.', pageWidth / 2, y + 6.5, { align: 'center' });
   doc.setTextColor(BLACK);
-  y += 5;
+  y += 10;
 
-  // ─── SEAL #'s ───
-  doc.setFillColor(BLACK);
-  doc.rect(margin + halfWidth * 0.4, y, halfWidth * 0.3, 6, 'F');
+  // ═══════════════════════════════════════════════════════════
+  // ROW 30: SEAL #'s HEADER
+  // ═══════════════════════════════════════════════════════════
+  const sealHeaderW = 30;
+  const sealX = L + halfW - sealHeaderW / 2;
+  drawBlackHeader(doc, "SEAL #'s", sealX, y, sealHeaderW);
+  // Empty cells beside it
+  drawRect(doc, L, y, halfW - sealHeaderW / 2, 6);
+  drawRect(doc, sealX + sealHeaderW, y, W - halfW - sealHeaderW / 2, 6);
+  y += 6;
+
+  // Rows 31-34: Seal # entry rows (with red fill cells)
+  for (let i = 0; i < 4; i++) {
+    drawRect(doc, L, y, halfW - 15, rh);
+    drawRect(doc, L + halfW - 15, y, 30, rh, i < 2 ? RED_BG : undefined);
+    drawRect(doc, L + halfW + 15, y, halfW - 15, rh);
+    y += rh;
+  }
+
+  // Rows 35-40: Empty bordered rows
+  for (let i = 0; i < 6; i++) {
+    drawRect(doc, L, y, halfW, rh);
+    drawRect(doc, R, y, halfW, rh);
+    y += rh;
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 41-44: SENT ALONG WITH SHIPMENT + TOTAL
+  // ═══════════════════════════════════════════════════════════
+  // Row 41: Sent along header
+  drawRect(doc, L, y, W, rh);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
+  doc.text('Sent along with shipment:', L + 25, y + 4);
+  y += rh;
+
+  // Row 42: Packing List
+  drawRect(doc, L, y, halfW, rh);
+  drawRect(doc, R, y, halfW, rh);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Packing List', L + 25, y + 4);
+  y += rh;
+
+  // Row 43: COA
+  drawRect(doc, L, y, halfW, rh);
+  drawRect(doc, R, y, halfW, rh);
+  doc.text('COA', L + 25, y + 4);
+  y += rh;
+
+  // Row 44: Retain Sample + Total
+  drawRect(doc, L, y, halfW, rh);
+  doc.text('Retain Sample', L + 25, y + 4);
+  // Total label
+  doc.setFont('helvetica', 'bold');
+  doc.text('Total', R + 10, y + 4);
+  // Total value (red background)
+  const totalValStr = totalGrossWeight > 0 ? totalGrossWeight.toFixed(2) : '0.00';
+  const totalCellW = 30;
+  drawRect(doc, L + W - totalCellW, y, totalCellW, rh, RED_BG);
   doc.setTextColor(255, 255, 255);
-  doc.text("SEAL #'s", margin + halfWidth * 0.4 + 2, y + 4);
+  doc.setFontSize(9);
+  doc.text(totalValStr, L + W - 2, y + 4, { align: 'right' });
   doc.setTextColor(BLACK);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh + 2;
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 45: SPECIAL AGREEMENT
+  // ═══════════════════════════════════════════════════════════
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.text('Special agreement between Consignor & carrier. Please Advise here:', L, y + 3);
+  doc.setDrawColor(100, 100, 100);
+  doc.line(L, y + 5, L + W, y + 5);
+  y += 8;
+
+  // ═══════════════════════════════════════════════════════════
+  // ROW 47: CONSIGNOR + ALL GOODS RECEIVED
+  // ═══════════════════════════════════════════════════════════
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.text('Consignor:', L, y + 3);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Sucro Can Canada', L + 40, y + 3);
+  doc.setFont('helvetica', 'bold');
+  doc.text('All Goods received in good condition', R + 5, y + 3);
+  y += 6;
+
+  // Signature line (empty box)
+  drawRect(doc, L, y, halfW, 6);
+  drawRect(doc, R, y, halfW, 6);
+  y += 6;
+
+  // Row 49: Date: | Date:
+  drawLabelCell(doc, 'Date:', L, y, 15, rh);
+  drawRect(doc, L + 15, y, halfW - 15, rh);
+  drawLabelCell(doc, 'Date:', R, y, 15, rh);
+  drawRect(doc, R + 15, y, halfW - 15, rh);
+  y += rh;
+
+  // Empty row
+  drawRect(doc, L, y, halfW, rh);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // Row 51: Shipper:
+  drawLabelCell(doc, 'Shipper:', L, y, 18, rh);
+  drawRect(doc, L + 18, y, halfW - 18, rh);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // Empty row
+  drawRect(doc, L, y, halfW, rh);
+  drawRect(doc, R, y, halfW, rh);
+  y += rh;
+
+  // Row 53: Print name: | Carrier signature
+  drawLabelCell(doc, 'Print name:', L, y, 22, rh);
+  drawRect(doc, L + 22, y, halfW - 22, rh);
+  drawLabelCell(doc, 'Carrier signature', R, y, 30, rh);
+  drawRect(doc, R + 30, y, halfW - 30, rh);
+  y += rh + 2;
+
+  // Row 54: Notes
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.text('Notes: (please if anything to notify, indicate here)', L, y + 3);
   y += 7;
 
-  // 3 seal number rows
-  for (let i = 0; i < 3; i++) {
-    doc.setDrawColor(150, 150, 150);
-    doc.rect(margin + halfWidth * 0.3, y, halfWidth * 0.4, 6);
-    y += 6;
-  }
-  y += 4;
-
-  // ─── SENT ALONG WITH SHIPMENT ───
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.text('Sent along with shipment:', leftCol + 20, y);
-  y += 4;
-  const sentItems = ['Packing List', 'COA', 'Retain Sample'];
-  sentItems.forEach(item => {
-    doc.setDrawColor(150, 150, 150);
-    doc.rect(leftCol + 20, y, halfWidth - 20, 5);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.text(item, leftCol + 22, y + 3.5);
-    // Checkbox
-    doc.rect(leftCol + 22 + doc.getTextWidth(item) + 3, y + 0.5, 3.5, 3.5);
-    y += 5;
-  });
-
-  // Total on the right of last row
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text('Total', rightCol, y - 2);
-  const totalVal = totalGrossWeight > 0 ? totalGrossWeight.toFixed(2) : '0.00';
-  doc.text(totalVal, pageWidth - margin, y - 2, { align: 'right' });
-
-  y += 3;
-
-  // ─── SPECIAL AGREEMENT ───
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(80, 80, 80);
-  doc.text('Special agreement between Consignor & carrier. Please Advise here:', leftCol, y);
-  doc.setDrawColor(150, 150, 150);
-  doc.line(leftCol, y + 1, pageWidth - margin, y + 1);
-  doc.setTextColor(BLACK);
-  y += 8;
-
-  // ─── SIGNATURE SECTION ───
-  // Left: Consignor
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.text('Consignor:', leftCol, y);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Sucro Can Canada', leftCol + 22, y);
-
-  // Right: All Goods received
-  doc.setFont('helvetica', 'bold');
-  doc.text('All Goods received in good condition', rightCol, y);
-  y += 5;
-
-  // Signature lines
-  doc.setDrawColor(150, 150, 150);
-  // Left signature block
-  doc.rect(leftCol, y, halfWidth, 8);
-  y += 8;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.text('Date:', leftCol + 1, y + 4);
-  doc.rect(leftCol, y, halfWidth, 6);
-  // Right Date
-  doc.text('Date:', rightCol + 1, y + 4);
-  doc.rect(rightCol, y, rightHalfWidth, 6);
-  y += 6;
-
-  // Empty signature row
-  doc.rect(leftCol, y, halfWidth, 6);
-  doc.rect(rightCol, y, rightHalfWidth, 6);
-  y += 6;
-
-  doc.text('Shipper:', leftCol + 1, y + 4);
-  doc.rect(leftCol, y, halfWidth, 6);
-  // Right: Carrier signature area
-  doc.rect(rightCol, y, rightHalfWidth, 6);
-  y += 6;
-
-  doc.rect(leftCol, y, halfWidth, 6);
-  doc.rect(rightCol, y, rightHalfWidth, 6);
-  y += 6;
-
-  doc.text('Print name:', leftCol + 1, y + 4);
-  doc.rect(leftCol, y, halfWidth, 6);
-  doc.text('Carrier signature', rightCol + 1, y + 4);
-  doc.rect(rightCol, y, rightHalfWidth, 6);
-  y += 8;
-
-  // Notes
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(80, 80, 80);
-  doc.text('Notes: (please if anything to notify, indicate here)', leftCol, y);
-  doc.setTextColor(BLACK);
-  y += 5;
-
-  // ─── BOL NUMBER (bottom) ───
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text('Bill of Lading #', pageWidth / 2 - 20, y + 2);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
+  // ═══════════════════════════════════════════════════════════
+  // ROW 55: BILL OF LADING # (bottom)
+  // ═══════════════════════════════════════════════════════════
   const bolNum = shipment.bol || order?.bolNumber || '';
-  doc.text(bolNum, pageWidth / 2 + 20, y + 2);
-  doc.setDrawColor(BLACK);
-  doc.rect(pageWidth / 2 + 18, y - 2, halfWidth - 20, 8);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Bill of Lading #', R - 5, y + 4, { align: 'right' });
+  // Value box
+  drawRect(doc, R, y - 1, halfW, 8);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(12);
+  doc.text(bolNum, R + 3, y + 4);
 
-  // ─── RETURN BLOB URL + FILENAME ───
+  // ═══════════════════════════════════════════════════════════
+  // RETURN BLOB URL + FILENAME
+  // ═══════════════════════════════════════════════════════════
   const filename = `BOL_${bolNum || 'draft'}_${(shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
