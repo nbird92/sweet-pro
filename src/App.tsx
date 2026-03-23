@@ -217,6 +217,7 @@ export default function App() {
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string } | null>(null);
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -425,7 +426,7 @@ export default function App() {
       const customer = customers.find(c => c.name === order.customer);
       const carrier = carriers.find(c => c.name === order.carrier);
       const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
-      generateOrderConfirmationPdf({
+      const { blobUrl, filename } = generateOrderConfirmationPdf({
         order,
         customer,
         carrier,
@@ -433,12 +434,28 @@ export default function App() {
         qaProducts,
         skus,
       });
+      // Revoke any previous blob URL to prevent memory leaks
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename });
     } catch (e: any) {
       console.error('Generate order confirmation failed:', e);
       setErrorBox('Failed to generate order confirmation: ' + (e.message || 'Unknown error'));
     } finally {
       setGeneratingOrderConfirmation(null);
     }
+  };
+
+  const handleDownloadPdf = () => {
+    if (!pdfPreview) return;
+    const link = document.createElement('a');
+    link.href = pdfPreview.url;
+    link.download = pdfPreview.filename;
+    link.click();
+  };
+
+  const handleClosePdfPreview = () => {
+    if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+    setPdfPreview(null);
   };
 
   useEffect(() => {
@@ -2986,7 +3003,7 @@ export default function App() {
                           <button
                             onClick={() => handleGenerateOrderConfirmation(ord)}
                             className={`p-1 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === ord.id ? 'animate-pulse bg-emerald-100' : ''}`}
-                            title="Generate Order Confirmation"
+                            title="Preview Order Confirmation"
                             disabled={generatingOrderConfirmation === ord.id}
                           >
                             <FileText size={14} />
@@ -5288,7 +5305,7 @@ export default function App() {
                     disabled={generatingOrderConfirmation === viewingOrderCard.id}
                     className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
                   >
-                    <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Generate Order Confirmation'}
+                    <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Preview Order Confirmation'}
                   </button>
                   <div className="flex gap-2">
                     <button onClick={() => setViewingOrderCard(null)}
@@ -5311,6 +5328,44 @@ export default function App() {
                     )}
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Preview Modal */}
+      <AnimatePresence>
+        {pdfPreview && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md" onClick={handleClosePdfPreview}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-xs font-bold uppercase tracking-widest">Order Confirmation Preview</h3>
+                  <span className="text-[10px] opacity-60 font-mono">{pdfPreview.filename}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDownloadPdf}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+                  >
+                    <Download size={12} /> Download PDF
+                  </button>
+                  <button onClick={handleClosePdfPreview} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                </div>
+              </div>
+              <div className="flex-1 bg-[#525659]">
+                <iframe
+                  src={pdfPreview.url}
+                  title="PDF Preview"
+                  className="w-full h-full border-0"
+                />
               </div>
             </motion.div>
           </div>

@@ -59,7 +59,7 @@ export function generateOrderConfirmationPdf({
   shipperLocation,
   qaProducts,
   skus,
-}: GenerateOrderConfirmationParams): void {
+}: GenerateOrderConfirmationParams): { blobUrl: string; filename: string } {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const contentWidth = pageWidth - 28; // 14mm margins
@@ -272,7 +272,9 @@ export function generateOrderConfirmationPdf({
   doc.setDrawColor(200, 200, 200);
   doc.rect(rightCol + 30, y - 4, halfWidth - 32, 7);
 
-  // ─── SAVE ───
+  // ─── RETURN BLOB URL + FILENAME ───
   const filename = `Order_Confirmation_${order.bolNumber || 'draft'}_${order.customer?.replace(/[^a-zA-Z0-9]/g, '_') || 'customer'}.pdf`;
-  doc.save(filename);
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+  return { blobUrl, filename };
 }
