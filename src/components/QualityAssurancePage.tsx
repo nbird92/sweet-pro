@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate } from '../types';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil } from 'lucide-react';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem } from '../types';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 
@@ -99,6 +99,15 @@ export default function QualityAssurancePage({
 
   // Delete confirmation
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Modal window state
+  const [productModalMaximized, setProductModalMaximized] = useState(false);
+  const [productModalMinimized, setProductModalMinimized] = useState(false);
+
+  // BOM editing state
+  const [editingBomItem, setEditingBomItem] = useState<BOMItem | null>(null);
+  const [showBomForm, setShowBomForm] = useState(false);
+  const emptyBomItem: BOMItem = { id: '', materialName: '', category: 'Raw Material', quantity: 0, unit: 'kg' };
 
   // File input refs
   const packagingFileRef = useRef<HTMLInputElement>(null);
@@ -274,14 +283,20 @@ export default function QualityAssurancePage({
   // Open detail card
   const openDetail = (product: QAProduct) => {
     setSelectedProduct(product);
-    setEditData({ ...product, specifications: { ...product.specifications }, packagingPictureUrls: [...product.packagingPictureUrls], packagingPictureFilenames: [...product.packagingPictureFilenames], artworkApprovals: [...product.artworkApprovals], specSheets: [...(product.specSheets || [])], certificates: [...(product.certificates || [])] });
+    setEditData({ ...product, specifications: { ...product.specifications }, packagingPictureUrls: [...product.packagingPictureUrls], packagingPictureFilenames: [...product.packagingPictureFilenames], artworkApprovals: [...product.artworkApprovals], specSheets: [...(product.specSheets || [])], certificates: [...(product.certificates || [])], billOfMaterials: [...(product.billOfMaterials || [])] });
     setIsEditing(false);
+    setProductModalMaximized(false);
+    setProductModalMinimized(false);
   };
 
   const closeDetail = () => {
     setSelectedProduct(null);
     setEditData(null);
     setIsEditing(false);
+    setProductModalMaximized(false);
+    setProductModalMinimized(false);
+    setShowBomForm(false);
+    setEditingBomItem(null);
   };
 
   const saveChanges = () => {
@@ -1307,21 +1322,25 @@ export default function QualityAssurancePage({
 
       {/* Product Detail Card Modal */}
       <AnimatePresence>
-        {selectedProduct && displayData && (
+        {selectedProduct && displayData && !productModalMinimized && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeDetail}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${productModalMaximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-3xl w-full max-h-[90vh]'}`}
             >
               {/* Header */}
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   Product QA: {displayData.skuName}
                 </h3>
-                <button onClick={closeDetail} className="hover:rotate-90 transition-transform"><X size={20} /></button>
+                <div className="flex items-center gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setProductModalMaximized(!productModalMaximized); }} className="p-1 hover:bg-white/20 transition-all" title={productModalMaximized ? 'Restore' : 'Maximize'}>{productModalMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={closeDetail} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
 
               <div className="p-6 space-y-4">
@@ -1812,6 +1831,178 @@ export default function QualityAssurancePage({
                   )}
                 </div>
 
+                {/* Bill of Materials */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="flex justify-between items-center border-b border-[#141414]/10 pb-2">
+                    <div className="text-[10px] uppercase font-bold opacity-50">Bill of Materials</div>
+                    {isEditing && (
+                      <button
+                        onClick={() => { setEditingBomItem({ ...emptyBomItem, id: `BOM-${Date.now()}` }); setShowBomForm(true); }}
+                        className="flex items-center gap-1 px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
+                      >
+                        <Plus size={12} /> Add Material
+                      </button>
+                    )}
+                  </div>
+
+                  {/* BOM Table */}
+                  {(displayData.billOfMaterials && displayData.billOfMaterials.length > 0) ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                            <th className="p-2">Material</th>
+                            <th className="p-2">Code</th>
+                            <th className="p-2">Category</th>
+                            <th className="p-2">Qty</th>
+                            <th className="p-2">Unit</th>
+                            <th className="p-2">Supplier</th>
+                            <th className="p-2">Cost/Unit</th>
+                            <th className="p-2">Notes</th>
+                            {isEditing && <th className="p-2">Actions</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(isEditing ? (editData?.billOfMaterials || []) : displayData.billOfMaterials).map((item, idx) => (
+                            <tr key={item.id || idx} className="border-b border-[#141414]/10 hover:bg-white/50 transition-colors">
+                              <td className="p-2 text-xs font-bold">{item.materialName}</td>
+                              <td className="p-2 text-xs font-mono">{item.materialCode || '—'}</td>
+                              <td className="p-2 text-xs">
+                                <span className={`px-2 py-0.5 text-[9px] font-bold uppercase border ${
+                                  item.category === 'Raw Material' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                  item.category === 'Packaging' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                  item.category === 'Label' ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                                  item.category === 'Additive' ? 'bg-green-50 text-green-700 border-green-200' :
+                                  'bg-gray-50 text-gray-700 border-gray-200'
+                                }`}>{item.category}</span>
+                              </td>
+                              <td className="p-2 text-xs font-mono">{item.quantity}</td>
+                              <td className="p-2 text-xs">{item.unit}</td>
+                              <td className="p-2 text-xs">{item.supplier || '—'}</td>
+                              <td className="p-2 text-xs font-mono">{item.costPerUnit ? `${item.currency || 'CAD'} $${item.costPerUnit.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-xs italic opacity-60">{item.notes || '—'}</td>
+                              {isEditing && (
+                                <td className="p-2 text-xs">
+                                  <div className="flex gap-1">
+                                    <button onClick={() => { setEditingBomItem({ ...item }); setShowBomForm(true); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><Pencil size={12} /></button>
+                                    <button onClick={() => {
+                                      const updated = (editData?.billOfMaterials || []).filter(b => b.id !== item.id);
+                                      setEditData(prev => prev ? { ...prev, billOfMaterials: updated } : prev);
+                                    }} className="p-1 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={12} /></button>
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                        {/* Total cost row */}
+                        {displayData.billOfMaterials.some(b => b.costPerUnit) && (
+                          <tfoot>
+                            <tr className="bg-[#E4E3E0] font-bold">
+                              <td colSpan={6} className="p-2 text-xs text-right uppercase">Total Cost per Unit:</td>
+                              <td className="p-2 text-xs font-mono">
+                                CAD ${displayData.billOfMaterials.reduce((sum, b) => sum + (b.costPerUnit || 0) * b.quantity, 0).toFixed(2)}
+                              </td>
+                              <td colSpan={isEditing ? 2 : 1}></td>
+                            </tr>
+                          </tfoot>
+                        )}
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-xs opacity-50 italic">No bill of materials defined for this product.</div>
+                  )}
+
+                  {/* BOM Add/Edit Form */}
+                  {showBomForm && editingBomItem && isEditing && (
+                    <div className="bg-white p-4 border border-[#141414]/20 space-y-3 mt-2">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">
+                        {editingBomItem.materialName ? 'Edit Material' : 'Add Material'}
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Material Name *</label>
+                          <input value={editingBomItem.materialName} onChange={(e) => setEditingBomItem({ ...editingBomItem, materialName: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Fine Granulated Sugar" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Material Code</label>
+                          <input value={editingBomItem.materialCode || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, materialCode: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. RM-001" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Category</label>
+                          <select value={editingBomItem.category} onChange={(e) => setEditingBomItem({ ...editingBomItem, category: e.target.value as BOMItem['category'] })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none">
+                            <option value="Raw Material">Raw Material</option>
+                            <option value="Packaging">Packaging</option>
+                            <option value="Label">Label</option>
+                            <option value="Additive">Additive</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Quantity *</label>
+                          <input type="number" value={editingBomItem.quantity || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="0" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Unit</label>
+                          <select value={editingBomItem.unit} onChange={(e) => setEditingBomItem({ ...editingBomItem, unit: e.target.value as BOMItem['unit'] })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none">
+                            <option value="kg">kg</option>
+                            <option value="g">g</option>
+                            <option value="pcs">pcs</option>
+                            <option value="rolls">rolls</option>
+                            <option value="sheets">sheets</option>
+                            <option value="liters">liters</option>
+                            <option value="ml">ml</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Supplier</label>
+                          <select value={editingBomItem.supplier || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, supplier: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none">
+                            <option value="">Select Supplier</option>
+                            {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Cost Per Unit</label>
+                          <input type="number" step="0.01" value={editingBomItem.costPerUnit || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, costPerUnit: parseFloat(e.target.value) || 0 })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="0.00" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Currency</label>
+                          <select value={editingBomItem.currency || 'CAD'} onChange={(e) => setEditingBomItem({ ...editingBomItem, currency: e.target.value as 'CAD' | 'USD' })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none">
+                            <option value="CAD">CAD</option>
+                            <option value="USD">USD</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Notes</label>
+                          <input value={editingBomItem.notes || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="Optional notes" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={() => {
+                            if (!editingBomItem.materialName || !editingBomItem.quantity) return;
+                            const existing = editData?.billOfMaterials || [];
+                            const idx = existing.findIndex(b => b.id === editingBomItem.id);
+                            const updated = idx >= 0 ? existing.map(b => b.id === editingBomItem.id ? editingBomItem : b) : [...existing, editingBomItem];
+                            setEditData(prev => prev ? { ...prev, billOfMaterials: updated } : prev);
+                            setShowBomForm(false);
+                            setEditingBomItem(null);
+                          }}
+                          className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                        >
+                          {editingBomItem.materialName && (editData?.billOfMaterials || []).some(b => b.id === editingBomItem.id) ? 'Update' : 'Add'} Material
+                        </button>
+                        <button
+                          onClick={() => { setShowBomForm(false); setEditingBomItem(null); }}
+                          className="px-6 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-4 pt-2">
                   {isEditing ? (
@@ -1848,6 +2039,17 @@ export default function QualityAssurancePage({
                 </div>
               </div>
             </motion.div>
+          </div>
+        )}
+        {/* Minimized taskbar */}
+        {selectedProduct && productModalMinimized && (
+          <div className="fixed bottom-4 left-4 z-[100]">
+            <button
+              onClick={() => setProductModalMinimized(false)}
+              className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]"
+            >
+              <Maximize2 size={12} /> Product QA: {selectedProduct.skuName}
+            </button>
           </div>
         )}
       </AnimatePresence>

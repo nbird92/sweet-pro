@@ -41,7 +41,10 @@ import {
   ClipboardCheck,
   GripVertical,
   Briefcase,
-  ExternalLink
+  ExternalLink,
+  Minimize2,
+  Maximize2,
+  Minus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -220,6 +223,13 @@ export default function App() {
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
+
+  // Modal window states (minimize/maximize)
+  const [modalStates, setModalStates] = useState<Record<string, { minimized: boolean; maximized: boolean }>>({});
+  const getModalState = (key: string) => modalStates[key] || { minimized: false, maximized: false };
+  const setModalMinimized = (key: string, val: boolean) => setModalStates(prev => ({ ...prev, [key]: { ...getModalState(key), minimized: val } }));
+  const setModalMaximized = (key: string, val: boolean) => setModalStates(prev => ({ ...prev, [key]: { ...getModalState(key), maximized: val } }));
+  const resetModalState = (key: string) => setModalStates(prev => { const next = { ...prev }; delete next[key]; return next; });
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -2707,24 +2717,31 @@ export default function App() {
       const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['bolNumber', 'customer', 'product', 'po', 'status']);
 
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Customer Invoices</h2>
+        <div className="space-y-0">
+          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <DollarSign size={18} />
+              <h2 className="text-sm font-bold uppercase tracking-widest">Customer Invoices</h2>
+              <span className="text-[10px] opacity-50 font-mono">{filteredInvoices.length} records</span>
+            </div>
             <div className="flex gap-2">
-              <button className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                <Printer size={14} /> Batch Print
+              <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Printer size={12} /> Batch Print
               </button>
-              <button className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
-                <Download size={14} /> Export All
+              <button className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
+                <Download size={12} /> Export All
               </button>
             </div>
           </div>
 
-          <SearchInput 
-            value={searchTerm} 
-            onChange={setSearchTerm} 
-            placeholder="Search invoices by BOL, Customer, PO, Product..." 
-          />
+          <div className="px-6 pt-4">
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search invoices by BOL, Customer, PO, Product..."
+            />
+          </div>
+          <div className="px-6 pb-6">
           
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -2867,6 +2884,7 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       );
     }
@@ -2886,15 +2904,19 @@ export default function App() {
       });
 
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Orders</h2>
-            <div className="flex gap-4">
+        <div className="space-y-0">
+          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <ShoppingCart size={18} />
+              <h2 className="text-sm font-bold uppercase tracking-widest">Orders</h2>
+              <span className="text-[10px] opacity-50 font-mono">{filteredOrders.length} records</span>
+            </div>
+            <div className="flex gap-3">
               <button
                 onClick={() => setIsAddingBatchOrder(true)}
-                className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
               >
-                <Plus size={14} /> Add Batch Orders
+                <Plus size={12} /> Batch Orders
               </button>
               <button
                 onClick={() => {
@@ -2905,18 +2927,21 @@ export default function App() {
                   setEditingOrder(null);
                   setIsAddingOrder(true);
                 }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
               >
-                <Plus size={14} /> Add Order
+                <Plus size={12} /> Add Order
               </button>
             </div>
           </div>
 
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search orders by BOL, customer, product, PO or carrier..."
-          />
+          <div className="px-6 pt-4">
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search orders by BOL, customer, product, PO or carrier..."
+            />
+          </div>
+          <div className="px-6 pb-6">
 
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -3175,6 +3200,7 @@ export default function App() {
                 })}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       );
@@ -4232,17 +4258,24 @@ export default function App() {
       const filteredContracts = getSortedAndFilteredData<Contract>(contracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
 
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Contract Management</h2>
+        <div className="space-y-0">
+          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <FileText size={18} />
+              <h2 className="text-sm font-bold uppercase tracking-widest">Contract Management</h2>
+              <span className="text-[10px] opacity-50 font-mono">{filteredContracts.length} records</span>
+            </div>
           </div>
-          
-          <SearchInput 
-            value={searchTerm} 
-            onChange={setSearchTerm} 
-            placeholder="Search contracts by number, customer, SKU, origin or destination..." 
-          />
 
+          <div className="px-6 pt-4">
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search contracts by number, customer, SKU, origin or destination..."
+            />
+          </div>
+
+          <div className="px-6 py-4">
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -4269,9 +4302,9 @@ export default function App() {
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(4) || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${c.rawPriceUsdMt.toFixed(2)}` : '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                         <button
                           onClick={(e) => { e.stopPropagation(); setContractInvoicePopup(contractInvoicePopup === c.contractNumber ? null : c.contractNumber); }}
@@ -4280,7 +4313,7 @@ export default function App() {
                           {c.volumeTaken || 0}
                         </button>
                       </td>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)}</td>
+                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
@@ -4338,7 +4371,7 @@ export default function App() {
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">FX Rate</label>
-                                  <div className="text-xs font-bold">{c.fxRate?.toFixed(4) || '—'}</div>
+                                  <div className="text-xs font-bold">{c.fxRate?.toFixed(2) || '—'}</div>
                                 </div>
                                 <div className="col-span-4 space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
@@ -4354,6 +4387,7 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       );
@@ -5091,13 +5125,13 @@ export default function App() {
 
       {/* Invoice Card Modal */}
       <AnimatePresence>
-        {editingInvoiceCard && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setEditingInvoiceCard(null)}>
+        {editingInvoiceCard && !getModalState('invoice').minimized && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('invoice').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -5105,7 +5139,11 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-widest">Invoice Details</h3>
                   <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(editingInvoiceCard.status).bg, color: getStatusColor(editingInvoiceCard.status).text }}>{editingInvoiceCard.status}</span>
                 </div>
-                <button onClick={() => setEditingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setModalMinimized('invoice', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('invoice', !getModalState('invoice').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('invoice').maximized ? 'Restore' : 'Maximize'}>{getModalState('invoice').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
               <div className="p-6 space-y-5">
                 {/* Invoice-level fields */}
@@ -5223,13 +5261,13 @@ export default function App() {
 
       {/* Order Card Modal */}
       <AnimatePresence>
-        {viewingOrderCard && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setViewingOrderCard(null)}>
+        {viewingOrderCard && !getModalState('order').minimized && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('order').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -5241,7 +5279,11 @@ export default function App() {
                     'bg-red-100 text-red-700'
                   }`}>{viewingOrderCard.status}</span>
                 </div>
-                <button onClick={() => setViewingOrderCard(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setModalMinimized('order', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('order', !getModalState('order').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('order').maximized ? 'Restore' : 'Maximize'}>{getModalState('order').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setViewingOrderCard(null); resetModalState('order'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
               <div className="p-6 space-y-5">
                 {/* Order-level fields */}
@@ -5967,21 +6009,23 @@ export default function App() {
             </motion.div>
           </div>
         )}
-        {(isAddingShipment || editingShipment) && (
+        {(isAddingShipment || editingShipment) && !getModalState('shipment').minimized && (
           <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full overflow-hidden my-8"
+              className={`bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden my-8 transition-all ${getModalState('shipment').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-4xl w-full'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingShipment ? 'Add Shipment from Order' : 'Edit Shipment'}
                 </h3>
-                <button onClick={() => { setIsAddingShipment(false); setEditingShipment(null); }} className="hover:rotate-90 transition-transform">
-                  <X size={18} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setModalMinimized('shipment', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('shipment', !getModalState('shipment').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('shipment').maximized ? 'Restore' : 'Maximize'}>{getModalState('shipment').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setIsAddingShipment(false); setEditingShipment(null); resetModalState('shipment'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
               <div className="p-6 space-y-4">
                 {isAddingShipment ? (
@@ -6688,19 +6732,20 @@ export default function App() {
         )}
 
         {selectedContractDetail && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setSelectedContractDetail(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('contract').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Contract Detail: {selectedContractDetail.contractNumber}</h3>
-                <button onClick={() => setSelectedContractDetail(null)} className="hover:rotate-90 transition-transform">
-                  <X size={20} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setModalMaximized('contract', !getModalState('contract').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('contract').maximized ? 'Restore' : 'Maximize'}>{getModalState('contract').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
               <div className="p-6 space-y-4">
                 {/* Contract Information */}
@@ -6765,7 +6810,7 @@ export default function App() {
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pricing Breakdown</div>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">FX Rate (USD/CAD)</div>
-                    <div className="font-bold text-right">{selectedContractDetail.fxRate?.toFixed(4) || '—'}</div>
+                    <div className="font-bold text-right">{selectedContractDetail.fxRate?.toFixed(2) || '—'}</div>
                     <div className="opacity-60">Raw #11 (USD/MT)</div>
                     <div className="font-bold text-right">{selectedContractDetail.rawPriceUsdMt ? `$${selectedContractDetail.rawPriceUsdMt.toFixed(2)}` : '—'}</div>
                     <div className="opacity-60">Delivered Freight</div>
@@ -8173,6 +8218,27 @@ export default function App() {
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+
+        {/* Minimized modal taskbar */}
+        {(Object.entries(modalStates).some(([, s]) => (s as { minimized: boolean }).minimized)) && (
+          <div className="fixed bottom-4 left-4 z-[600] flex gap-2 flex-wrap">
+            {getModalState('invoice').minimized && editingInvoiceCard && (
+              <button onClick={() => setModalMinimized('invoice', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+                <Maximize2 size={12} /> Invoice: {editingInvoiceCard.bolNumber}
+              </button>
+            )}
+            {getModalState('order').minimized && viewingOrderCard && (
+              <button onClick={() => setModalMinimized('order', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+                <Maximize2 size={12} /> Order: {viewingOrderCard.bolNumber}
+              </button>
+            )}
+            {getModalState('shipment').minimized && (isAddingShipment || editingShipment) && (
+              <button onClick={() => setModalMinimized('shipment', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+                <Maximize2 size={12} /> {isAddingShipment ? 'Add Shipment' : `Edit: ${editingShipment?.bol || ''}`}
+              </button>
+            )}
           </div>
         )}
 

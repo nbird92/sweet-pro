@@ -475,6 +475,19 @@ export interface QADocument {
   uploadedAt: string;
 }
 
+export interface BOMItem {
+  id: string;
+  materialName: string;
+  materialCode?: string;
+  category: 'Raw Material' | 'Packaging' | 'Label' | 'Additive' | 'Other';
+  quantity: number;
+  unit: 'kg' | 'g' | 'pcs' | 'rolls' | 'sheets' | 'liters' | 'ml';
+  supplier?: string;
+  costPerUnit?: number;
+  currency?: 'CAD' | 'USD';
+  notes?: string;
+}
+
 export interface QAProduct {
   id: string;
   skuId: string;
@@ -504,6 +517,7 @@ export interface QAProduct {
   specSheets: QADocument[];
   certificates: QADocument[];
   pol?: string; // Port of Loading
+  billOfMaterials?: BOMItem[];
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
