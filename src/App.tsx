@@ -2227,7 +2227,7 @@ export default function App() {
                                                   {/* Out-of-range shipments (before schedule start) */}
                                                   {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
                                                         <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
@@ -2242,14 +2242,14 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-xs">
+                                                        <td className="px-1 py-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
@@ -2282,7 +2282,7 @@ export default function App() {
                                                       );
                                                     }
                                                     return shipments.map(s => (
-                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
+                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
                                                         <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
@@ -2297,14 +2297,14 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5">
+                                                        <td className="px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -2324,7 +2324,7 @@ export default function App() {
                                                   {/* Out-of-range shipments (after schedule end) */}
                                                   {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
+                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
                                                         <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
@@ -2339,14 +2339,14 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-xs">
+                                                        <td className="px-1 py-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
@@ -5562,8 +5562,9 @@ export default function App() {
                   Are you sure you want to create a new contract for <span className="font-bold underline">{customer}</span>?
                   This will finalize the current quote parameters into a binding contract record.
                 </p>
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Summary</div>
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3 max-h-[50vh] overflow-y-auto">
+                  {/* Customer & Product */}
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Customer & Product</div>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">Customer</div>
                     <div className="font-bold text-right">{customer}</div>
@@ -5573,8 +5574,40 @@ export default function App() {
                     </>}
                     <div className="opacity-60">Product (SKU)</div>
                     <div className="font-bold text-right">{confirmSku.name}</div>
+                    <div className="opacity-60">Product Group</div>
+                    <div className="font-bold text-right">{confirmSku.productGroup}</div>
+                    <div className="opacity-60">Category</div>
+                    <div className="font-bold text-right">{confirmSku.category}</div>
+                  </div>
+
+                  {/* Raw Material & Pricing */}
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Raw Material & Pricing</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60">Raw Price (USD/CWT)</div>
+                    <div className="font-bold text-right">USD ${config.rawPriceUsdCwt.toFixed(2)}</div>
+                    <div className="opacity-60">Raw Price (USD/MT)</div>
+                    <div className="font-bold text-right">USD ${calculations.rawMtUsd.toFixed(2)}</div>
+                    <div className="opacity-60">Ocean Freight (USD/MT)</div>
+                    <div className="font-bold text-right">USD ${config.oceanFreightUsdMt.toFixed(2)}</div>
+                    <div className="opacity-60">Yield Loss Multiplier</div>
+                    <div className="font-bold text-right">{config.yieldLossMultiplier}x</div>
+                    <div className="opacity-60">FX Rate (USD/CAD)</div>
+                    <div className="font-bold text-right">{config.fxRate.toFixed(4)}</div>
+                    <div className="opacity-60">Refining Margin (CAD/MT)</div>
+                    <div className="font-bold text-right">CAD ${config.refiningMarginCadMt.toFixed(2)}</div>
+                    <div className="opacity-60">SKU Differential</div>
+                    <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.differential.toFixed(2)}/MT</div>
+                    <div className="opacity-60">FCA {config.origin} Bulk</div>
+                    <div className="font-bold text-right">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</div>
+                  </div>
+
+                  {/* Logistics & Shipping */}
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Logistics & Shipping</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">Origin</div>
                     <div className="font-bold text-right">{config.origin}</div>
+                    <div className="opacity-60">Currency</div>
+                    <div className="font-bold text-right">{config.currency}</div>
                     {config.isDelivered && <>
                       <div className="opacity-60">Destination</div>
                       <div className="font-bold text-right">{config.destination}</div>
@@ -5584,26 +5617,49 @@ export default function App() {
                       </>}
                       <div className="opacity-60">Delivered Freight</div>
                       <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.deliveredFreight.toFixed(2)}/MT</div>
+                      <div className="opacity-60">Volume Per Load</div>
+                      <div className="font-bold text-right">{config.volumePerLoadMt} MT</div>
                     </>}
-                    <div className="opacity-60">Currency</div>
-                    <div className="font-bold text-right">{config.currency}</div>
+                    {config.shippingTerms && <>
+                      <div className="opacity-60">Shipping Terms</div>
+                      <div className="font-bold text-right">{config.shippingTerms}</div>
+                    </>}
+                    {config.isExport && <>
+                      <div className="opacity-60">Export Duty (USD/MT)</div>
+                      <div className="font-bold text-right">USD ${config.exportDutyUsdMt.toFixed(2)}</div>
+                    </>}
+                    {config.isPalletCharge && <>
+                      <div className="opacity-60">Pallet Charge</div>
+                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.palletCharge.toFixed(2)}/MT</div>
+                    </>}
+                    {config.palletType && <>
+                      <div className="opacity-60">Pallet Type</div>
+                      <div className="font-bold text-right">{config.palletType}</div>
+                    </>}
+                    {config.origin === 'Vancouver' && <>
+                      <div className="opacity-60">Supply Chain Cost</div>
+                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.vancouverSupplyChainCost.toFixed(2)}/MT</div>
+                    </>}
+                  </div>
+
+                  {/* Contract Terms */}
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Contract Terms</div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">Contract Volume</div>
                     <div className="font-bold text-right">{config.volumeMt} MT</div>
                     <div className="opacity-60">Start Date</div>
                     <div className="font-bold text-right">{config.contractStartDate || 'N/A'}</div>
                     <div className="opacity-60">End Date</div>
                     <div className="font-bold text-right">{config.contractEndDate || 'N/A'}</div>
-                    {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && <>
+                    {(config.paymentTerms || confirmCustomer?.defaultPaymentTerms) && <>
                       <div className="opacity-60">Payment Terms</div>
-                      <div className="font-bold text-right">{config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms}</div>
-                    </>}
-                    {config.palletType && <>
-                      <div className="opacity-60">Pallet Type</div>
-                      <div className="font-bold text-right">{config.palletType}</div>
+                      <div className="font-bold text-right">{config.paymentTerms || confirmCustomer?.defaultPaymentTerms}</div>
                     </>}
                   </div>
-                  <div className="border-t border-[#141414]/10 pt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Final Price</div>
+
+                  {/* Financial Summary */}
+                  <div className="border-t-2 border-[#141414]/20 pt-3 mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                    <div className="opacity-60 font-bold">Final Price</div>
                     <div className="font-black text-right text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</div>
                     <div className="opacity-60">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</div>
                     <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</div>
