@@ -2200,28 +2200,27 @@ export default function App() {
                                           </button>
 
                                           {isDayExpanded && (
-                                            <div className="overflow-x-auto">
-                                              <table className="w-full text-left border-collapse">
+                                            <div className="overflow-x-auto scrollbar-thin">
+                                              <table className="text-left border-collapse min-w-[1400px]">
                                                 <thead>
-                                                  <tr className="bg-white text-[8px] uppercase font-bold border-b border-[#141414]/10">
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5 w-12">Time</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Delivery Date</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Customer</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Product</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Contract</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">PO</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">BOL</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">QTY</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Scaled Qty (MT)</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Carrier</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Trailer No</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Colour</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Arrive</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Start</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Out</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Status</th>
-                                                    <th className="px-1 py-0.5 border-r border-[#141414]/5">Lot Number</th>
-                                                    <th className="px-1 py-0.5 w-16">Actions</th>
+                                                  <tr className="bg-white text-[9px] uppercase font-bold border-b border-[#141414]/10">
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[60px]">Time</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[100px]">Delivery Date</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Customer</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Product</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Contract</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">PO</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">BOL</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[55px]">QTY</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[95px]">Scaled Qty (MT)</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[110px]">Carrier</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Trailer No</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[65px]">Arrive</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[60px]">Start</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[55px]">Out</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Status</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[100px]">Lot Number</th>
+                                                    <th className="px-2 py-1 min-w-[70px]">Actions</th>
                                                   </tr>
                                                 </thead>
                                                 <tbody>
@@ -2229,28 +2228,27 @@ export default function App() {
                                                   {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
@@ -2267,8 +2265,8 @@ export default function App() {
                                                     if (shipments.length === 0) {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
-                                                          <td className="px-1 py-0.5 text-[9px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
-                                                          <td colSpan={16} className="px-1 py-0.5 text-[8px] italic opacity-20">—</td>
+                                                          <td className="px-2 py-1 text-[10px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
+                                                          <td colSpan={15} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -2285,28 +2283,27 @@ export default function App() {
                                                     }
                                                     return shipments.map(s => (
                                                       <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => {
@@ -2328,28 +2325,27 @@ export default function App() {
                                                   {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot => (
                                                     dayShipments[slot]?.map(s => (
                                                       <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50" style={{ backgroundColor: s.color || undefined }}>
-                                                        <td className="px-1 py-0.5 text-[9px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 truncate max-w-[100px]">{s.product}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.colour || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-1 py-0.5 text-[9px] border-r border-[#141414]/5">
+                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 truncate max-w-[80px]" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
                                                         <td className="px-1 py-0.5 text-xs">
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
@@ -6258,14 +6254,62 @@ export default function App() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Colour</label>
+                        <label className="text-[10px] uppercase font-bold opacity-60">Origin of Goods</label>
                         <input
                           type="text"
-                          value={editingShipment.colour || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, colour: e.target.value})}
+                          value={editingShipment.originOfGoods || ''}
+                          onChange={(e) => setEditingShipment({...editingShipment, originOfGoods: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                          placeholder="Colour"
+                          placeholder="Origin of goods"
                         />
+                      </div>
+                      <div className="space-y-1 md:col-span-3">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Seal Numbers</label>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {(editingShipment.sealNumbers || []).map((seal, idx) => (
+                            <div key={idx} className="flex items-center gap-1 bg-[#E4E3E0] px-2 py-1 text-sm border border-[#141414]/20">
+                              <span className="font-mono">{seal}</span>
+                              <button
+                                onClick={() => {
+                                  const updated = [...(editingShipment.sealNumbers || [])];
+                                  updated.splice(idx, 1);
+                                  setEditingShipment({...editingShipment, sealNumbers: updated});
+                                }}
+                                className="ml-1 text-red-500 hover:text-red-700 font-bold text-xs"
+                              >×</button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            id="seal-number-input"
+                            className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                            placeholder="Enter seal number and press Add"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const input = e.currentTarget;
+                                const val = input.value.trim();
+                                if (val) {
+                                  setEditingShipment({...editingShipment, sealNumbers: [...(editingShipment.sealNumbers || []), val]});
+                                  input.value = '';
+                                }
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={() => {
+                              const input = document.getElementById('seal-number-input') as HTMLInputElement;
+                              const val = input?.value.trim();
+                              if (val) {
+                                setEditingShipment({...editingShipment, sealNumbers: [...(editingShipment.sealNumbers || []), val]});
+                                input.value = '';
+                              }
+                            }}
+                            className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs uppercase font-bold hover:bg-opacity-80 transition-all"
+                          >Add</button>
+                        </div>
                       </div>
                     </div>
                     {/* Summary info */}

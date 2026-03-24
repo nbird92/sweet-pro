@@ -187,6 +187,8 @@ export interface Shipment {
   colour?: string;
   lotNumber?: string;
   deliveryDate?: string;
+  sealNumbers?: string[];
+  originOfGoods?: string;
 }
 
 export interface Location {
