@@ -161,6 +161,7 @@ export interface Contract {
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   palletType?: 'CHEP' | 'One Way' | '';
   margin?: number; // Margin in CAD/MT
+  active?: boolean; // Contract active status (defaults to true)
 }
 
 export interface Shipment {

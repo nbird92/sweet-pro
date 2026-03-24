@@ -44,7 +44,8 @@ import {
   ExternalLink,
   Minimize2,
   Maximize2,
-  Minus
+  Minus,
+  Power
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -262,6 +263,7 @@ export default function App() {
   const [pendingStatusChange, setPendingStatusChange] = useState<{ orderId: string; newStatus: Order['status'] } | null>(null);
   const [orderDeleteConfirmId, setOrderDeleteConfirmId] = useState<string | null>(null);
   const [shipmentDeleteConfirmId, setShipmentDeleteConfirmId] = useState<string | null>(null);
+  const [contractInactivateConfirmId, setContractInactivateConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: 'Hamilton' | 'Vancouver'; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
   const [isCreatingTransferShipment, setIsCreatingTransferShipment] = useState(false);
@@ -609,7 +611,8 @@ export default function App() {
             contractVolume,
             volumeTaken,
             volumeOutstanding: parseFloat(c.volumeOutstanding) || (contractVolume - volumeTaken),
-            finalPrice: parseFloat(c.finalPrice) || 0
+            finalPrice: parseFloat(c.finalPrice) || 0,
+            active: c.active !== false ? true : false
           };
         });
         setContracts(mapped);
@@ -1340,8 +1343,24 @@ export default function App() {
     setFreightRates(freightRates.filter(f => f.id !== id));
   };
 
-  const deleteContract = (id: string) => {
-    setContracts(contracts.filter(c => c.id !== id));
+  const toggleContractActive = (id: string) => {
+    const contract = contracts.find(c => c.id === id);
+    if (!contract) return;
+    // If trying to inactivate, check for outstanding orders
+    if (contract.active !== false) {
+      const hasOutstandingOrders = orders.some(o =>
+        o.status === 'Open' &&
+        (o.contractNumber === contract.contractNumber ||
+          o.lineItems.some(li => li.contractNumber === contract.contractNumber))
+      );
+      if (hasOutstandingOrders) {
+        setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has outstanding open orders.`);
+        setContractInactivateConfirmId(null);
+        return;
+      }
+    }
+    setContracts(contracts.map(c => c.id === id ? { ...c, active: c.active === false ? true : false } : c));
+    setContractInactivateConfirmId(null);
   };
 
   const deleteShipment = (id: string) => {
@@ -1389,7 +1408,8 @@ export default function App() {
       palletCharge: calculations.palletCharge,
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
       palletType: config.palletType || '',
-      margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0
+      margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0,
+      active: true
     };
 
     setContracts([...contracts, newContract]);
@@ -3096,7 +3116,7 @@ export default function App() {
                               setOrderShippingTerms(ord.shippingTerms || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
-                                setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
+                                setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
                               }
                               setEditingOrder(ord);
                               setIsAddingOrder(false);
@@ -4301,13 +4321,14 @@ export default function App() {
                   <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Payment Terms" sortKey="paymentTerms" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Status" sortKey="active" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]">
                 {filteredContracts.map(c => (
                   <React.Fragment key={c.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setSelectedContractDetail(c)}>
+                    <tr className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
@@ -4320,7 +4341,7 @@ export default function App() {
                           onClick={(e) => { e.stopPropagation(); setContractInvoicePopup(contractInvoicePopup === c.contractNumber ? null : c.contractNumber); }}
                           className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
                         >
-                          {c.volumeTaken || 0}
+                          {(c.volumeTaken || 0).toFixed(2)}
                         </button>
                       </td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
@@ -4328,6 +4349,11 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                        <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${c.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                          {c.active !== false ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
                       <td className="p-3 text-xs flex items-center gap-2">
                         <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -4335,15 +4361,15 @@ export default function App() {
                         <button onClick={(e) => { e.stopPropagation(); setEditingContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); deleteContract(c.id); }} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
+                        <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-all ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
+                          <Power size={14} />
                         </button>
                       </td>
                     </tr>
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={14} className="p-0">
+                          <td colSpan={15} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -5418,7 +5444,7 @@ export default function App() {
                         setOrderCarrier(viewingOrderCard.carrier || '');
                         setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
-                        if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id));
+                        if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
                         setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
                         setIsAddingOrder(false);
                         setViewingOrderCard(null);
@@ -6790,6 +6816,12 @@ export default function App() {
                     <div className="font-bold text-right">{selectedContractDetail.palletType || '—'}</div>
                     <div className="opacity-60">Currency</div>
                     <div className="font-bold text-right">{selectedContractDetail.currency}</div>
+                    <div className="opacity-60">Status</div>
+                    <div className="font-bold text-right">
+                      <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${selectedContractDetail.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {selectedContractDetail.active !== false ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -8387,7 +8419,7 @@ export default function App() {
                           setOrderCustomerId(customerId);
                           const customer = customers.find(c => c.id === customerId);
                           if (customer) {
-                            const filtered = contracts.filter(c => c.customerNumber === customerId);
+                            const filtered = contracts.filter(c => c.customerNumber === customerId && c.active !== false);
                             setFilteredOrderContracts(filtered);
                             // Auto-fill carrier from customer default
                             if (customer.defaultCarrierCode) {
@@ -9272,6 +9304,74 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Contract Inactivate/Reactivate Confirmation */}
+        {contractInactivateConfirmId && (() => {
+          const targetContract = contracts.find(c => c.id === contractInactivateConfirmId);
+          const isCurrentlyActive = targetContract?.active !== false;
+          const hasOutstandingOrders = isCurrentlyActive && orders.some(o =>
+            o.status === 'Open' &&
+            (o.contractNumber === targetContract?.contractNumber ||
+              o.lineItems.some(li => li.contractNumber === targetContract?.contractNumber))
+          );
+          return (
+            <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+              >
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                  <AlertCircle size={20} className={isCurrentlyActive ? 'text-amber-400' : 'text-green-400'} />
+                  <h3 className="text-xs font-bold uppercase tracking-widest">
+                    {isCurrentlyActive ? 'Inactivate Contract' : 'Reactivate Contract'}
+                  </h3>
+                </div>
+                <div className="p-6 space-y-4">
+                  {isCurrentlyActive && hasOutstandingOrders && (
+                    <div className="bg-red-50 border border-red-300 p-3 flex items-start gap-2">
+                      <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-red-800">
+                        <span className="font-bold">Cannot inactivate.</span> Contract <span className="font-bold">{targetContract?.contractNumber}</span> has outstanding open orders that must be completed or cancelled first.
+                      </p>
+                    </div>
+                  )}
+                  {isCurrentlyActive && !hasOutstandingOrders && (
+                    <div className="bg-amber-50 border border-amber-300 p-3 flex items-start gap-2">
+                      <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-xs text-amber-800 space-y-1">
+                        <p className="font-bold">Warning: This action will inactivate the contract.</p>
+                        <p>Contract <span className="font-bold">{targetContract?.contractNumber}</span> ({targetContract?.customerName}) will be marked as inactive. No new orders can be placed against an inactive contract.</p>
+                      </div>
+                    </div>
+                  )}
+                  {!isCurrentlyActive && (
+                    <p className="text-sm">
+                      Reactivate contract <span className="font-bold">{targetContract?.contractNumber}</span> ({targetContract?.customerName})? Orders will be able to be placed against this contract again.
+                    </p>
+                  )}
+                  <div className="flex gap-4">
+                    {!(isCurrentlyActive && hasOutstandingOrders) && (
+                      <button
+                        onClick={() => toggleContractActive(contractInactivateConfirmId)}
+                        className={`flex-1 py-3 text-white text-xs font-bold uppercase transition-all ${isCurrentlyActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
+                      >
+                        {isCurrentlyActive ? 'Yes, Inactivate' : 'Yes, Reactivate'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setContractInactivateConfirmId(null)}
+                      className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    >
+                      {isCurrentlyActive && hasOutstandingOrders ? 'Close' : 'Cancel'}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
 
         {/* Order Confirmation Dialog */}
         {showOrderConfirmation && pendingStatusChange && (
