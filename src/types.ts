@@ -23,6 +23,7 @@ export interface CommodityConfig {
   palletType?: 'CHEP' | 'One Way' | '';
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
+  addContractLines?: boolean; // Toggle to add product-specific lines with differentials
 }
 
 export interface SKU {
@@ -162,6 +163,14 @@ export interface Contract {
   palletType?: 'CHEP' | 'One Way' | '';
   margin?: number; // Margin in CAD/MT
   active?: boolean; // Contract active status (defaults to true)
+  contractLines?: ContractLine[]; // Product-specific lines with differentials
+}
+
+export interface ContractLine {
+  id: string;
+  productName: string;
+  differentialCadMt: number; // Product-specific differential (CAD/MT)
+  finalPriceMt: number; // Bulk price + differential = line-specific final price
 }
 
 export interface Shipment {

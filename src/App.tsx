@@ -53,7 +53,7 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -917,8 +917,14 @@ export default function App() {
     isPalletCharge: false,
     palletCostCadMt: 15.00,
     palletType: '',
-    paymentTerms: undefined
+    paymentTerms: undefined,
+    addContractLines: false
   });
+
+  // Contract lines state for quote page
+  const [quoteContractLines, setQuoteContractLines] = useState<ContractLine[]>([]);
+  const [newContractLineProduct, setNewContractLineProduct] = useState('');
+  const [newContractLineDifferential, setNewContractLineDifferential] = useState(0);
 
   // Auto-calculate market inputs based on contract dates
   useEffect(() => {
@@ -1346,15 +1352,14 @@ export default function App() {
   const toggleContractActive = (id: string) => {
     const contract = contracts.find(c => c.id === id);
     if (!contract) return;
-    // If trying to inactivate, check for outstanding orders
+    // If trying to inactivate, check for ANY orders (any status) against this contract
     if (contract.active !== false) {
-      const hasOutstandingOrders = orders.some(o =>
-        o.status === 'Open' &&
+      const hasOrders = orders.some(o =>
         (o.contractNumber === contract.contractNumber ||
           o.lineItems.some(li => li.contractNumber === contract.contractNumber))
       );
-      if (hasOutstandingOrders) {
-        setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has outstanding open orders.`);
+      if (hasOrders) {
+        setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has orders against it. All orders must be removed before inactivation.`);
         setContractInactivateConfirmId(null);
         return;
       }
@@ -1383,7 +1388,7 @@ export default function App() {
   const createContract = () => {
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
     const selectedCustomer = customers.find(c => c.name === customer) || customers[0];
-    
+
     const newContract: Contract = {
       id: `CON-${Date.now()}`,
       contractNumber: `CON-${new Date().getFullYear()}-${String(contracts.length + 1).padStart(3, '0')}`,
@@ -1394,10 +1399,10 @@ export default function App() {
       volumeOutstanding: config.volumeMt,
       startDate: config.contractStartDate || new Date().toISOString().split('T')[0],
       endDate: config.contractEndDate || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-      skuName: selectedSku.name,
+      skuName: config.addContractLines ? 'Bulk Sugar' : selectedSku.name,
       origin: config.origin,
       destination: config.destination,
-      finalPrice: calculations.finalMt,
+      finalPrice: config.addContractLines ? (calculations.finalMt - calculations.differential) : calculations.finalMt,
       currency: config.currency,
       notes: `Generated from quote tool for ${customer}`,
       shippingTerms: config.shippingTerms || '',
@@ -1409,11 +1414,14 @@ export default function App() {
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
       palletType: config.palletType || '',
       margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0,
-      active: true
+      active: true,
+      contractLines: config.addContractLines ? quoteContractLines : undefined
     };
 
     setContracts([...contracts, newContract]);
     setShowContractConfirm(false);
+    setQuoteContractLines([]);
+    setConfig(prev => ({ ...prev, addContractLines: false }));
     setActivePage('Contracts');
   };
 
@@ -4588,20 +4596,7 @@ export default function App() {
             </select>
           </section>
 
-          <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-            <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
-              <Package size={14} /> Product Selection
-            </h2>
-            <select 
-              value={selectedSkuId}
-              onChange={(e) => setSelectedSkuId(e.target.value)}
-              className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
-            >
-              {skus.map(sku => (
-                <option key={sku.id} value={sku.id}>{sku.name.toUpperCase()}</option>
-              ))}
-            </select>
-          </section>
+          {/* Product Selection removed — contracts booked as Bulk Sugar by default, or add contract lines */}
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
@@ -4709,13 +4704,102 @@ export default function App() {
 
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] uppercase font-bold opacity-60">Export</label>
-                  <button 
+                  <button
                     onClick={() => handleToggleChange('isExport')}
                     className={`w-10 h-5 rounded-full relative transition-colors ${config.isExport ? 'bg-[#141414]' : 'bg-slate-300'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${config.isExport ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Add Contract Lines</label>
+                  <button
+                    onClick={() => setConfig(prev => ({ ...prev, addContractLines: !prev.addContractLines }))}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${config.addContractLines ? 'bg-[#141414]' : 'bg-slate-300'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${config.addContractLines ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                {config.addContractLines && (
+                  <div className="bg-[#F5F5F5] border border-[#141414]/10 p-4 space-y-3">
+                    <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Lines — Product Specific Pricing</div>
+                    <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-end">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
+                        <select
+                          value={newContractLineProduct}
+                          onChange={(e) => setNewContractLineProduct(e.target.value)}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                        >
+                          <option value="">Select Product</option>
+                          {skus.filter(s => !quoteContractLines.some(cl => cl.productName === s.name)).map(s => (
+                            <option key={s.id} value={s.name}>{s.name.toUpperCase()}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Differential ($/MT)</label>
+                        <input
+                          type="number"
+                          value={newContractLineDifferential}
+                          onChange={(e) => setNewContractLineDifferential(parseFloat(e.target.value) || 0)}
+                          step="0.01"
+                          className="w-28 bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (!newContractLineProduct) return;
+                          const bulkPrice = calculations.finalMt - calculations.differential; // Base bulk price without SKU premium
+                          const lineFinalPrice = bulkPrice + newContractLineDifferential;
+                          setQuoteContractLines(prev => [...prev, {
+                            id: `CL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                            productName: newContractLineProduct,
+                            differentialCadMt: newContractLineDifferential,
+                            finalPriceMt: lineFinalPrice
+                          }]);
+                          setNewContractLineProduct('');
+                          setNewContractLineDifferential(0);
+                        }}
+                        className="py-2 px-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+
+                    {quoteContractLines.length > 0 && (
+                      <div className="border border-[#141414]/10 overflow-hidden">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase">
+                              <th className="p-2 text-left">Product</th>
+                              <th className="p-2 text-right">Differential</th>
+                              <th className="p-2 text-right">Final Price/MT</th>
+                              <th className="p-2 w-8"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {quoteContractLines.map(cl => (
+                              <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
+                                <td className="p-2 font-bold">{cl.productName}</td>
+                                <td className="p-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                                <td className="p-2 text-right font-bold">${cl.finalPriceMt.toFixed(2)}</td>
+                                <td className="p-2">
+                                  <button onClick={() => setQuoteContractLines(prev => prev.filter(l => l.id !== cl.id))} className="p-0.5 hover:bg-red-500 hover:text-white transition-all">
+                                    <X size={12} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="text-[10px] italic opacity-50">Products added as contract lines will have product-specific pricing. The base bulk price is {calculations.currencySymbol} ${(calculations.finalMt - calculations.differential).toFixed(2)}/MT.</div>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
@@ -4880,7 +4964,9 @@ export default function App() {
                 </>
               )}
 
-              <DataRow label={`Differential ${calculations.currencySymbol} (MT)`} value={`${calculations.differential.toFixed(2)}`} />
+              {!config.addContractLines && (
+                <DataRow label={`Differential ${calculations.currencySymbol} (MT)`} value={`${calculations.differential.toFixed(2)}`} />
+              )}
               
               {config.isDelivered && (
                 <DataRow label={`Delivered Freight (${calculations.currencySymbol}/MT)`} value={`${calculations.deliveredFreight.toFixed(2)}`} />
@@ -4895,11 +4981,40 @@ export default function App() {
                 <DataRow label="Payment Terms" value={`${config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms || ''}`} />
               )}
 
+              {config.addContractLines && quoteContractLines.length > 0 && (
+                <div className="p-4 border-t border-[#141414]">
+                  <div className="text-[10px] uppercase font-bold opacity-50 mb-3">Contract Line Pricing</div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-[#141414]/20 text-[10px] uppercase opacity-60">
+                        <th className="pb-2 text-left">Product</th>
+                        <th className="pb-2 text-right">Differential</th>
+                        <th className="pb-2 text-right">Final Price/MT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-[#141414]/10">
+                        <td className="py-2 font-bold italic opacity-60">Bulk Sugar (base)</td>
+                        <td className="py-2 text-right">$0.00</td>
+                        <td className="py-2 text-right font-bold">{calculations.currencySymbol} ${(calculations.finalMt - calculations.differential).toFixed(2)}</td>
+                      </tr>
+                      {quoteContractLines.map(cl => (
+                        <tr key={cl.id} className="border-b border-[#141414]/10">
+                          <td className="py-2 font-bold">{cl.productName}</td>
+                          <td className="py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                          <td className="py-2 text-right font-bold">{calculations.currencySymbol} ${cl.finalPriceMt.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <div className="p-6 bg-[#F5F5F5] grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-1">
-                  <div className="text-[10px] uppercase opacity-50">Final Rate (MT)</div>
-                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}</div>
-                  <div className="text-[10px] italic">{calculations.currencySymbol} per Metric Ton</div>
+                  <div className="text-[10px] uppercase opacity-50">{config.addContractLines ? 'Bulk Rate (MT)' : 'Final Rate (MT)'}</div>
+                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${config.addContractLines ? (calculations.finalMt - calculations.differential).toFixed(2) : calculations.finalMt.toFixed(2)}</div>
+                  <div className="text-[10px] italic">{calculations.currencySymbol} per Metric Ton {config.addContractLines ? '(no differential)' : ''}</div>
                 </div>
                 <div className="space-y-1">
                   <div className="text-[10px] uppercase opacity-50">Unit Price ({calculations.selectedSku.netWeightKg ? `${calculations.selectedSku.netWeightKg}kg` : 'MT'})</div>
@@ -5651,12 +5766,34 @@ export default function App() {
                       <div className="font-bold text-right">{confirmCustomer.customerNumber}</div>
                     </>}
                     <div className="opacity-60">Product (SKU)</div>
-                    <div className="font-bold text-right">{confirmSku.name}</div>
-                    <div className="opacity-60">Product Group</div>
-                    <div className="font-bold text-right">{confirmSku.productGroup}</div>
-                    <div className="opacity-60">Category</div>
-                    <div className="font-bold text-right">{confirmSku.category}</div>
+                    <div className="font-bold text-right">{config.addContractLines ? 'Bulk Sugar' : confirmSku.name}</div>
+                    <div className="opacity-60">Contract Type</div>
+                    <div className="font-bold text-right">{config.addContractLines ? 'Contract Lines (Product Specific)' : 'Bulk Contract'}</div>
                   </div>
+
+                  {config.addContractLines && quoteContractLines.length > 0 && (
+                    <>
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Contract Lines</div>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-[#141414]/20 text-[10px] uppercase opacity-60">
+                            <th className="pb-1 text-left">Product</th>
+                            <th className="pb-1 text-right">Differential</th>
+                            <th className="pb-1 text-right">Final Price/MT</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {quoteContractLines.map(cl => (
+                            <tr key={cl.id} className="border-b border-[#141414]/10">
+                              <td className="py-1 font-bold">{cl.productName}</td>
+                              <td className="py-1 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                              <td className="py-1 text-right font-bold">{calculations.currencySymbol} ${cl.finalPriceMt.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
+                  )}
 
                   {/* Raw Material & Pricing */}
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Raw Material & Pricing</div>
@@ -6755,6 +6892,94 @@ export default function App() {
                     />
                   </div>
                 </div>
+
+                {/* Contract Lines Section */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Lines — Product Specific Pricing</div>
+                  <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-end">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
+                      <select
+                        id="editContractLineProduct"
+                        className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                      >
+                        <option value="">Select Product</option>
+                        {skus.filter(s => !(editingContract.contractLines || []).some(cl => cl.productName === s.name)).map(s => (
+                          <option key={s.id} value={s.name}>{s.name.toUpperCase()}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Differential ($/MT)</label>
+                      <input
+                        id="editContractLineDiff"
+                        type="number"
+                        defaultValue={0}
+                        step="0.01"
+                        className="w-28 bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        const productEl = document.getElementById('editContractLineProduct') as HTMLSelectElement;
+                        const diffEl = document.getElementById('editContractLineDiff') as HTMLInputElement;
+                        const productName = productEl?.value;
+                        const diff = parseFloat(diffEl?.value) || 0;
+                        if (!productName) return;
+                        const bulkPrice = editingContract.finalPrice - (skus.find(s => s.name === editingContract.skuName)?.premiumCadMt || 0);
+                        const newLine: ContractLine = {
+                          id: `CL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                          productName,
+                          differentialCadMt: diff,
+                          finalPriceMt: editingContract.finalPrice + diff
+                        };
+                        setEditingContract({
+                          ...editingContract,
+                          contractLines: [...(editingContract.contractLines || []), newLine]
+                        });
+                        if (productEl) productEl.value = '';
+                        if (diffEl) diffEl.value = '0';
+                      }}
+                      className="py-2 px-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+
+                  {(editingContract.contractLines || []).length > 0 && (
+                    <div className="border border-[#141414]/10 overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase">
+                            <th className="p-2 text-left">Product</th>
+                            <th className="p-2 text-right">Differential</th>
+                            <th className="p-2 text-right">Final Price/MT</th>
+                            <th className="p-2 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(editingContract.contractLines || []).map(cl => (
+                            <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
+                              <td className="p-2 font-bold">{cl.productName}</td>
+                              <td className="p-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                              <td className="p-2 text-right font-bold">${cl.finalPriceMt.toFixed(2)}</td>
+                              <td className="p-2">
+                                <button onClick={() => setEditingContract({
+                                  ...editingContract,
+                                  contractLines: (editingContract.contractLines || []).filter(l => l.id !== cl.id)
+                                })} className="p-0.5 hover:bg-red-500 hover:text-white transition-all">
+                                  <X size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="text-[10px] italic opacity-50">Add product-specific lines with custom differentials. Items can only be ordered against contracts with matching contract lines.</div>
+                </div>
+
                 <div className="flex gap-4 pt-4">
                   <button
                     onClick={() => {
@@ -6765,7 +6990,7 @@ export default function App() {
                   >
                     Save Changes
                   </button>
-                  <button 
+                  <button
                     onClick={() => setEditingContract(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -6881,6 +7106,31 @@ export default function App() {
                     <div className="font-bold text-right">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice * selectedContractDetail.contractVolume).toFixed(2)}</div>
                   </div>
                 </div>
+
+                {/* Contract Lines */}
+                {selectedContractDetail.contractLines && selectedContractDetail.contractLines.length > 0 && (
+                  <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                    <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Lines</div>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-[#141414]/20 text-[10px] uppercase opacity-60">
+                          <th className="pb-2 text-left">Product</th>
+                          <th className="pb-2 text-right">Differential</th>
+                          <th className="pb-2 text-right">Final Price/MT</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedContractDetail.contractLines.map(cl => (
+                          <tr key={cl.id} className="border-b border-[#141414]/10">
+                            <td className="py-2 font-bold">{cl.productName}</td>
+                            <td className="py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                            <td className="py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Notes */}
                 {selectedContractDetail.notes && (
@@ -8584,6 +8834,14 @@ export default function App() {
                           // Get contract for pricing and volume validation
                           const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
                           if (!contract) { setErrorBox('Contract not found'); return; }
+                          // Validate product against contract lines if contract has lines
+                          if (contract.contractLines && contract.contractLines.length > 0) {
+                            const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
+                            if (!matchingLine) {
+                              setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
+                              return;
+                            }
+                          }
                           // Calculate existing usage on this contract from current line items
                           const existingWeightOnContract = orderLineItems
                             .filter(li => li.contractNumber === newLineItem.contractNumber)
@@ -8593,8 +8851,9 @@ export default function App() {
                             setErrorBox(`Insufficient contract volume. Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, this item requires ${totalWeight.toFixed(2)} MT`);
                             return;
                           }
-                          // Calculate amounts from contract finalPrice
-                          const mtAmount = contract.finalPrice;
+                          // Use contract line price if available, otherwise use contract finalPrice
+                          const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
+                          const mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
                           const unitAmount = mtAmount * netWeightKg / 1000; // Price per unit = $/MT × MT/unit
                           const lineAmount = totalWeight * mtAmount;
                           const lineItem: OrderLineItem = {
@@ -9310,7 +9569,6 @@ export default function App() {
           const targetContract = contracts.find(c => c.id === contractInactivateConfirmId);
           const isCurrentlyActive = targetContract?.active !== false;
           const hasOutstandingOrders = isCurrentlyActive && orders.some(o =>
-            o.status === 'Open' &&
             (o.contractNumber === targetContract?.contractNumber ||
               o.lineItems.some(li => li.contractNumber === targetContract?.contractNumber))
           );
@@ -9333,7 +9591,7 @@ export default function App() {
                     <div className="bg-red-50 border border-red-300 p-3 flex items-start gap-2">
                       <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
                       <p className="text-xs text-red-800">
-                        <span className="font-bold">Cannot inactivate.</span> Contract <span className="font-bold">{targetContract?.contractNumber}</span> has outstanding open orders that must be completed or cancelled first.
+                        <span className="font-bold">Cannot inactivate.</span> Contract <span className="font-bold">{targetContract?.contractNumber}</span> has orders against it. All orders must be removed before inactivation.
                       </p>
                     </div>
                   )}
