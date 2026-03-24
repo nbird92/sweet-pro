@@ -160,6 +160,7 @@ export interface Contract {
   palletCharge?: number;
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   palletType?: 'CHEP' | 'One Way' | '';
+  margin?: number; // Margin in CAD/MT
 }
 
 export interface Shipment {

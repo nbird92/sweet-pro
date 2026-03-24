@@ -1388,7 +1388,8 @@ export default function App() {
       exportDuty: calculations.exportDuty,
       palletCharge: calculations.palletCharge,
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
-      palletType: config.palletType || ''
+      palletType: config.palletType || '',
+      margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0
     };
 
     setContracts([...contracts, newContract]);
@@ -2394,21 +2395,27 @@ export default function App() {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id']);
 
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Customer Directory</h2>
-            <button 
+        <div>
+          {/* Dark Banner Header */}
+          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Users size={20} />
+              <h2 className="text-sm font-bold uppercase tracking-widest">Customer Directory</h2>
+              <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{filteredCustomers.length} records</span>
+            </div>
+            <button
               onClick={addCustomer}
-              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
             >
               <Plus size={14} /> Add Customer
             </button>
           </div>
-          
-          <SearchInput 
-            value={searchTerm} 
-            onChange={setSearchTerm} 
-            placeholder="Search customers by name, default location or ID..." 
+
+          <div className="p-6 space-y-4">
+          <SearchInput
+            value={searchTerm}
+            onChange={setSearchTerm}
+            placeholder="Search customers by name, default location or ID..."
           />
 
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
@@ -2428,7 +2435,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]">
                 {filteredCustomers.map(c => (
                   <React.Fragment key={c.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors group">
+                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingCustomer(c)}>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.id}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
@@ -2436,7 +2443,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultPaymentTerms || '—'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.salespersonId ? people.find(p => p.id === c.salespersonId)?.name || 'Unknown' : '-'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultCarrierCode || '-'}</td>
-                      <td className="p-4 text-xs flex items-center gap-2">
+                      <td className="p-4 text-xs flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => toggleRow(c.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
@@ -2560,6 +2567,7 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       );
@@ -4284,7 +4292,8 @@ export default function App() {
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="FX Rate" sortKey="fxRate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="#11 Raw (USD/MT)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="#11 Raw (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
@@ -4303,7 +4312,8 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${c.rawPriceUsdMt.toFixed(2)}` : '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${(c.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                         <button
@@ -4333,7 +4343,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={13} className="p-0">
+                          <td colSpan={14} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -6708,6 +6718,16 @@ export default function App() {
                       <option value="One Way">One Way Pallet</option>
                     </select>
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Margin (CAD/MT)</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.margin || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, margin: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
                 </div>
                 <div className="flex gap-4 pt-4">
                   <button
@@ -6811,8 +6831,10 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
                     <div className="opacity-60">FX Rate (USD/CAD)</div>
                     <div className="font-bold text-right">{selectedContractDetail.fxRate?.toFixed(2) || '—'}</div>
-                    <div className="opacity-60">Raw #11 (USD/MT)</div>
-                    <div className="font-bold text-right">{selectedContractDetail.rawPriceUsdMt ? `$${selectedContractDetail.rawPriceUsdMt.toFixed(2)}` : '—'}</div>
+                    <div className="opacity-60">Raw #11 (USD/cwt)</div>
+                    <div className="font-bold text-right">{selectedContractDetail.rawPriceUsdMt ? `$${(selectedContractDetail.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</div>
+                    <div className="opacity-60">Margin (CAD/MT)</div>
+                    <div className="font-bold text-right">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}` : '—'}</div>
                     <div className="opacity-60">Delivered Freight</div>
                     <div className="font-bold text-right">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</div>
                     <div className="opacity-60">Export Duty</div>
@@ -7496,19 +7518,22 @@ export default function App() {
           </div>
         )}
 
-        {editingCustomer && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div 
+        {editingCustomer && !getModalState('customer').minimized && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}>
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('customer').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.id}</h3>
-                <button onClick={() => setEditingCustomer(null)} className="hover:opacity-70">
-                  <X size={18} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setModalMinimized('customer', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('customer', !getModalState('customer').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('customer').maximized ? 'Restore' : 'Maximize'}>{getModalState('customer').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setEditingCustomer(null); resetModalState('customer'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                </div>
               </div>
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
@@ -7685,13 +7710,14 @@ export default function App() {
                     onClick={() => {
                       setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
                       setEditingCustomer(null);
+                      resetModalState('customer');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
                     Save Changes
                   </button>
-                  <button 
-                    onClick={() => setEditingCustomer(null)}
+                  <button
+                    onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
                     Cancel
