@@ -251,6 +251,7 @@ export default function App() {
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ orderId: string; newStatus: Order['status'] } | null>(null);
   const [orderDeleteConfirmId, setOrderDeleteConfirmId] = useState<string | null>(null);
+  const [shipmentDeleteConfirmId, setShipmentDeleteConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: 'Hamilton' | 'Vancouver'; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
   const [isCreatingTransferShipment, setIsCreatingTransferShipment] = useState(false);
@@ -1334,7 +1335,19 @@ export default function App() {
   };
 
   const deleteShipment = (id: string) => {
+    // Find the shipment to get its BOL, then update linked order status
+    const shipment = hamiltonShipments.find(s => s.id === id) || vancouverShipments.find(s => s.id === id);
     setHamiltonShipments(hamiltonShipments.filter(s => s.id !== id));
+    setVancouverShipments(vancouverShipments.filter(s => s.id !== id));
+    // Reset linked order status so user knows to create a new pick up appointment
+    if (shipment?.bol) {
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      if (linkedOrder && linkedOrder.status === 'Confirmed') {
+        // Order stays confirmed but shipment date is cleared
+        setOrders(orders.map(o => o.id === linkedOrder.id ? { ...o, shipmentDate: undefined } : o));
+      }
+    }
+    setShipmentDeleteConfirmId(null);
   };
 
 
@@ -2242,7 +2255,7 @@ export default function App() {
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
                                                         </td>
                                                       </tr>
@@ -2305,7 +2318,7 @@ export default function App() {
                                                               className="p-0.5 hover:bg-emerald-600 hover:text-white transition-all" title="Add Shipment"><Plus size={10} /></button>
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
                                                         </td>
                                                       </tr>
@@ -2341,7 +2354,7 @@ export default function App() {
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => deleteShipment(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
                                                         </td>
                                                       </tr>
@@ -2864,6 +2877,8 @@ export default function App() {
 
     if (activePage === 'Orders') {
       const filteredOrders = orders.filter(ord => {
+        // Hide hidden orders unless search matches
+        if (ord.hidden && !searchTerm) return false;
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -2995,6 +3010,7 @@ export default function App() {
                                       } else if (e.target.value === 'delete') {
                                         setHamiltonShipments(hamiltonShipments.filter(s => s.bol !== ord.bolNumber));
                                         setVancouverShipments(vancouverShipments.filter(s => s.bol !== ord.bolNumber));
+                                        // Clear shipment date — order stays Confirmed so "Create Pick Up Appointment" shows
                                         setOrders(orders.map(o => o.id === ord.id ? { ...o, shipmentDate: undefined } : o));
                                       }
                                     }}
@@ -3064,9 +3080,15 @@ export default function App() {
                           <button onClick={() => toggleRow(ord.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
                             {expandedRows.has(ord.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
-                          <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                            <Trash2 size={14} />
-                          </button>
+                          {ord.status === 'Confirmed' || ord.status === 'Cancelled' ? (
+                            <button onClick={() => setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: !o.hidden } : o))} className="p-1 hover:bg-amber-500 hover:text-white transition-all" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
+                              {ord.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                            </button>
+                          ) : (
+                            <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete order">
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                           </div>
                         </td>
                       </tr>
@@ -8535,6 +8557,51 @@ export default function App() {
                   >
                     {editingOrder ? 'Save Changes' : 'Create Order'}
                   </button>
+                  {!editingOrder && (
+                    <button
+                      onClick={() => {
+                        if (!orderCustomerId || orderLineItems.length === 0 || !orderPO) {
+                          setErrorBox('Please select customer, add line items, and enter PO number');
+                          return;
+                        }
+                        const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
+                        const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
+                        const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
+                        const orderLocation = firstContract?.origin || '';
+                        const newOrder: Order = {
+                          id: `ORD-${Date.now()}`,
+                          bolNumber: generateBOLNumber(orderLineItems),
+                          customer: customers.find(c => c.id === orderCustomerId)?.name || '',
+                          product: orderLineItems.map(li => li.productName).join(', '),
+                          contractNumber: contractNumbers.join(', '),
+                          po: orderPO,
+                          date: new Date().toISOString().split('T')[0],
+                          shipmentDate: orderShipmentDate || undefined,
+                          deliveryDate: orderDeliveryDate || undefined,
+                          status: 'Confirmed',
+                          lineItems: orderLineItems,
+                          amount: totalAmount,
+                          carrier: orderCarrier || undefined,
+                          shippingTerms: orderShippingTerms || undefined,
+                          location: orderLocation,
+                          palletType: firstContract?.palletType || '',
+                        };
+                        setOrders([...orders, newOrder]);
+                        setIsAddingOrder(false);
+                        setEditingOrder(null);
+                        setOrderLineItems([]);
+                        setOrderCustomerId('');
+                        setOrderPO('');
+                        setOrderShipmentDate('');
+                        setOrderDeliveryDate('');
+                        setOrderCarrier('Customer Pick Up');
+                        setOrderShippingTerms('');
+                      }}
+                      className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
+                    >
+                      Save &amp; Confirm Order
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setIsAddingOrder(false);
@@ -8970,6 +9037,40 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setOrderDeleteConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Shipment Delete Confirmation */}
+        {shipmentDeleteConfirmId && (
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={20} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Delete Shipment</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete this shipment? The linked order will need a new pick up appointment.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => deleteShipment(shipmentDeleteConfirmId)}
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                  >
+                    Yes, Delete
+                  </button>
+                  <button
+                    onClick={() => setShipmentDeleteConfirmId(null)}
                     className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
                   >
                     Cancel

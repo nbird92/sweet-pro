@@ -333,6 +333,7 @@ export interface Order {
   location?: string;       // shipping origin from contract
   splitNumber?: string;    // user-entered split number
   palletType?: 'CHEP' | 'One Way' | ''; // from contract
+  hidden?: boolean;        // hide instead of delete for confirmed orders (BOL permanently reserved)
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [
