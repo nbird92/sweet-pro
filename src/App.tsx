@@ -917,7 +917,8 @@ export default function App() {
     isPalletCharge: false,
     palletCostCadMt: 15.00,
     palletType: '',
-    paymentTerms: undefined
+    paymentTerms: undefined,
+    customerDifferentialCadMt: 0
   });
 
   // Auto-calculate market inputs based on contract dates
@@ -1393,7 +1394,7 @@ export default function App() {
       volumeOutstanding: config.volumeMt,
       startDate: config.contractStartDate || new Date().toISOString().split('T')[0],
       endDate: config.contractEndDate || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-      skuName: 'Bulk Sugar',
+      skuName: selectedSku.name,
       origin: config.origin,
       destination: config.destination,
       finalPrice: calculations.finalMt,
@@ -1458,8 +1459,14 @@ export default function App() {
 
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
     
-    // Start with the appropriate base price (Bulk — no SKU differential)
+    // Start with the appropriate base price
     let finalCadMt = config.origin === 'Vancouver' ? fcaVancouverBulk : fcaHamiltonBulk;
+
+    // Add SKU Premium (Differential)
+    finalCadMt += selectedSku.premiumCadMt;
+
+    // Add Customer Differential
+    finalCadMt += config.customerDifferentialCadMt;
 
     // Add Freight ONLY if Delivered toggle is selected
     if (config.isDelivered) {
@@ -1514,7 +1521,8 @@ export default function App() {
       fcaHamiltonBulk: convert(fcaHamiltonBulk),
       fcaVancouverBulk: convert(fcaVancouverBulk),
       vancouverSupplyChainCost: convert(totalSupplyChainCostPerMt),
-      differential: 0, // No differential on bulk contracts — differentials applied via contract lines
+      differential: convert(selectedSku.premiumCadMt),
+      customerDifferential: convert(config.customerDifferentialCadMt),
       deliveredFreight: config.isDelivered ? convert(freightCost / (config.volumePerLoadMt || 1)) : 0,
       exportDuty: convertUsd(config.exportDutyUsdMt),
       palletCharge: config.isPalletCharge ? convert(config.palletCostCadMt) : 0,
@@ -4584,7 +4592,21 @@ export default function App() {
             </select>
           </section>
 
-          {/* Product Selection removed — contracts booked as Bulk Sugar by default, or add contract lines */}
+          <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+            <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
+              <Package size={14} /> Product Selection
+            </h2>
+            <select
+              value={selectedSkuId}
+              onChange={(e) => setSelectedSkuId(e.target.value)}
+              className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
+            >
+              {skus.map(s => <option key={s.id} value={s.id}>{s.name.toUpperCase()}</option>)}
+            </select>
+            <div className="mt-2 text-[10px] italic opacity-50">
+              SKU Differential: CAD ${(skus.find(s => s.id === selectedSkuId)?.premiumCadMt || 0).toFixed(2)}/MT
+            </div>
+          </section>
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
@@ -4678,6 +4700,7 @@ export default function App() {
               <InputField label="USD/CAD FX Rate" value={config.fxRate} onChange={(v) => handleInputChange('fxRate', v)} step="0.0001" />
               <InputField label="Contract Volume (MT)" value={config.volumeMt} onChange={(v) => handleInputChange('volumeMt', v)} />
               <InputField label="Refining Margin (CAD/MT)" value={config.refiningMarginCadMt} onChange={(v) => handleInputChange('refiningMarginCadMt', v)} />
+              <InputField label="Customer Differential (CAD/MT)" value={config.customerDifferentialCadMt} onChange={(v) => handleInputChange('customerDifferentialCadMt', v)} />
 
               <div className="pt-4 border-t border-[#141414]/10 space-y-3">
                 <div className="flex items-center justify-between">
@@ -4863,7 +4886,12 @@ export default function App() {
                 </>
               )}
 
-              {/* Differential removed — all contracts are bulk priced; differentials added via contract lines after creation */}
+              {calculations.differential !== 0 && (
+                <DataRow label={`Product Differential — ${calculations.selectedSku.name} (${calculations.currencySymbol}/MT)`} value={`${calculations.differential.toFixed(2)}`} />
+              )}
+              {calculations.customerDifferential !== 0 && (
+                <DataRow label={`Customer Differential (${calculations.currencySymbol}/MT)`} value={`${calculations.customerDifferential.toFixed(2)}`} />
+              )}
               
               {config.isDelivered && (
                 <DataRow label={`Delivered Freight (${calculations.currencySymbol}/MT)`} value={`${calculations.deliveredFreight.toFixed(2)}`} />
@@ -4880,7 +4908,7 @@ export default function App() {
 
               <div className="p-6 bg-[#F5F5F5] grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-1">
-                  <div className="text-[10px] uppercase opacity-50">Bulk Rate (MT)</div>
+                  <div className="text-[10px] uppercase opacity-50">Final Rate (MT)</div>
                   <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}</div>
                   <div className="text-[10px] italic">{calculations.currencySymbol} per Metric Ton</div>
                 </div>
@@ -5634,9 +5662,13 @@ export default function App() {
                       <div className="font-bold text-right">{confirmCustomer.customerNumber}</div>
                     </>}
                     <div className="opacity-60">Product (SKU)</div>
-                    <div className="font-bold text-right">Bulk Sugar</div>
-                    <div className="opacity-60">Contract Type</div>
-                    <div className="font-bold text-right">Bulk Contract</div>
+                    <div className="font-bold text-right">{confirmSku.name}</div>
+                    <div className="opacity-60">Product Differential</div>
+                    <div className="font-bold text-right">CAD ${confirmSku.premiumCadMt.toFixed(2)}/MT</div>
+                    {config.customerDifferentialCadMt !== 0 && (<>
+                      <div className="opacity-60">Customer Differential</div>
+                      <div className="font-bold text-right">CAD ${config.customerDifferentialCadMt.toFixed(2)}/MT</div>
+                    </>)}
                   </div>
 
                   {/* Raw Material & Pricing */}
@@ -5656,6 +5688,14 @@ export default function App() {
                     <div className="font-bold text-right">CAD ${config.refiningMarginCadMt.toFixed(2)}</div>
                     <div className="opacity-60">FCA {config.origin} Bulk</div>
                     <div className="font-bold text-right">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</div>
+                    {calculations.differential !== 0 && (<>
+                      <div className="opacity-60">Product Differential ({confirmSku.name})</div>
+                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.differential.toFixed(2)}/MT</div>
+                    </>)}
+                    {config.customerDifferentialCadMt !== 0 && (<>
+                      <div className="opacity-60">Customer Differential</div>
+                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.customerDifferential.toFixed(2)}/MT</div>
+                    </>)}
                   </div>
 
                   {/* Logistics & Shipping */}

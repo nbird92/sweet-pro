@@ -23,6 +23,7 @@ export interface CommodityConfig {
   palletType?: 'CHEP' | 'One Way' | '';
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
+  customerDifferentialCadMt: number; // Customer-specific differential (CAD/MT)
 }
 
 export interface SKU {
