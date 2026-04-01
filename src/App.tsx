@@ -1700,14 +1700,6 @@ export default function App() {
         weeklyTotals[s.week].tolling += s.qty * config.refiningMarginCadMt;
       });
 
-      // Volume by Customer
-      const customerVolume: { [week: string]: { [customer: string]: number } } = {};
-      completedShipments.forEach(s => {
-        if (!customerVolume[s.week]) customerVolume[s.week] = {};
-        if (!customerVolume[s.week][s.customer]) customerVolume[s.week][s.customer] = 0;
-        customerVolume[s.week][s.customer] += s.qty;
-      });
-
       // Volume by Product
       const productVolume: { [week: string]: { [product: string]: number } } = {};
       completedShipments.forEach(s => {
@@ -1759,38 +1751,41 @@ export default function App() {
               </table>
             </div>
 
-            {/* Volume by Customer */}
+            {/* Shipment Schedule Summary */}
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Volume by Customer (MT)</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Shipment Schedule</h3>
               </div>
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                    <th className="p-4">Week</th>
+                    <th className="p-4">Date</th>
                     <th className="p-4">Customer</th>
-                    <th className="p-4">Volume (MT)</th>
+                    <th className="p-4">Product</th>
+                    <th className="p-4">MT</th>
+                    <th className="p-4">Appointment</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
-                  {sortedWeeks.flatMap(week => 
-                    Object.entries(customerVolume[week]).map(([cust, vol], i) => (
-                      <tr key={`${week}-${cust}`} className="hover:bg-[#F9F9F9]">
-                        {i === 0 ? (
-                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10" rowSpan={Object.keys(customerVolume[week]).length}>
-                            {week}
-                          </td>
-                        ) : null}
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{cust}</td>
-                        <td className="p-4 text-xs font-bold">{vol.toLocaleString()} MT</td>
+                  {(() => {
+                    const allShipments = [...hamiltonShipments, ...vancouverShipments]
+                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled')
+                      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                    if (allShipments.length === 0) return (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-xs opacity-50 italic">No upcoming shipments.</td>
                       </tr>
-                    ))
-                  )}
-                  {sortedWeeks.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="p-6 text-center text-xs opacity-50 italic">No data available.</td>
-                    </tr>
-                  )}
+                    );
+                    return allShipments.slice(0, 20).map(s => (
+                      <tr key={s.id} className="hover:bg-[#F9F9F9]">
+                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.date || '—'}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.product || '—'}</td>
+                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.qty}</td>
+                        <td className="p-4 text-xs">{s.time || '—'}</td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
