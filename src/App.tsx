@@ -1768,8 +1768,9 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
                   {(() => {
+                    const today = new Date().toISOString().split('T')[0];
                     const allShipments = [...hamiltonShipments, ...vancouverShipments]
-                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled')
+                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled' && (s.date || '') >= today)
                       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
                     if (allShipments.length === 0) return (
                       <tr>
