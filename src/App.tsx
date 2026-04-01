@@ -264,6 +264,7 @@ export default function App() {
   const [orderDeleteConfirmId, setOrderDeleteConfirmId] = useState<string | null>(null);
   const [shipmentDeleteConfirmId, setShipmentDeleteConfirmId] = useState<string | null>(null);
   const [contractInactivateConfirmId, setContractInactivateConfirmId] = useState<string | null>(null);
+  const [orderHideConfirmId, setOrderHideConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: 'Hamilton' | 'Vancouver'; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
   const [isCreatingTransferShipment, setIsCreatingTransferShipment] = useState(false);
@@ -1347,14 +1348,20 @@ export default function App() {
   const toggleContractActive = (id: string) => {
     const contract = contracts.find(c => c.id === id);
     if (!contract) return;
-    // If trying to inactivate, check for ANY orders (any status) against this contract
+    // If trying to inactivate, check for uninvoiced orders against this contract
     if (contract.active !== false) {
-      const hasOrders = orders.some(o =>
+      const contractOrders = orders.filter(o =>
+        o.status !== 'Cancelled' &&
         (o.contractNumber === contract.contractNumber ||
           o.lineItems.some(li => li.contractNumber === contract.contractNumber))
       );
-      if (hasOrders) {
-        setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has orders against it. All orders must be removed before inactivation.`);
+      // Check if any of those orders are not yet invoiced
+      const uninvoicedOrders = contractOrders.filter(o => {
+        const hasInvoice = invoices.some(inv => inv.bolNumber === o.bolNumber && inv.status !== 'Cancelled');
+        return !hasInvoice || o.status === 'Open';
+      });
+      if (uninvoicedOrders.length > 0) {
+        setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has ${uninvoicedOrders.length} uninvoiced order(s). All orders must be invoiced before inactivation.`);
         setContractInactivateConfirmId(null);
         return;
       }
@@ -2821,13 +2828,32 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <span className="font-bold uppercase text-[10px]" style={{ color: getStatusColor(i.status).text }}>{i.status}</span>
+                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={i.status}
+                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, status: e.target.value } : inv))}
+                          className="bg-transparent font-bold uppercase text-[10px] focus:outline-none cursor-pointer"
+                          style={{ color: getStatusColor(i.status).text }}
+                        >
+                          <option value="Open">Open</option>
+                          <option value="Sent">Sent</option>
+                          <option value="Paid">Paid</option>
+                          <option value="Overdue">Overdue</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
                       </td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
                         {calculatedDueDate || '—'}
                       </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{i.splitNo || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={i.splitNo || ''}
+                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
+                          placeholder="—"
+                          className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                        />
+                      </td>
                       <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
                           <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
@@ -2851,10 +2877,6 @@ export default function App() {
                             >
                               <div className="p-6 space-y-4">
                                 <div className="grid grid-cols-4 gap-6">
-                                  <div>
-                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Invoice ID</div>
-                                    <div className="text-xs font-bold">{i.id}</div>
-                                  </div>
                                   <div>
                                     <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Carrier</div>
                                     <div className="text-xs font-bold">{i.carrier || '—'}</div>
@@ -3134,7 +3156,7 @@ export default function App() {
                             {expandedRows.has(ord.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
                           {ord.status === 'Confirmed' || ord.status === 'Cancelled' ? (
-                            <button onClick={() => setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: !o.hidden } : o))} className="p-1 hover:bg-amber-500 hover:text-white transition-all" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
+                            <button onClick={() => ord.hidden ? setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)) : setOrderHideConfirmId(ord.id)} className="p-1 hover:bg-amber-500 hover:text-white transition-all" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
                               {ord.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
                             </button>
                           ) : (
@@ -4320,6 +4342,7 @@ export default function App() {
                   <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Volume on Order (MT)" sortKey="volumeOnOrder" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
@@ -4348,6 +4371,14 @@ export default function App() {
                           {(c.volumeTaken || 0).toFixed(2)}
                         </button>
                       </td>
+                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                        {(() => {
+                          const volumeOnOrder = orders
+                            .filter(o => o.status !== 'Cancelled' && (o.contractNumber === c.contractNumber || o.lineItems.some(li => li.contractNumber === c.contractNumber)))
+                            .reduce((sum, o) => sum + (o.lineItems.reduce((s, li) => s + (li.contractNumber === c.contractNumber ? li.qty : 0), 0) || o.amount / (c.finalPrice || 1)), 0);
+                          return volumeOnOrder.toFixed(2);
+                        })()}
+                      </td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
@@ -4373,7 +4404,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={15} className="p-0">
+                          <td colSpan={16} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -5803,32 +5834,9 @@ export default function App() {
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
             lines.push(`Volume: ${config.volumeMt} MT`);
             lines.push(`Currency: ${config.currency}`);
-            if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
-            lines.push('');
-            lines.push('COST BREAKDOWN');
-            lines.push('-------------------------------------');
             lines.push(`Raw Sugar (USD/MT): $${calculations.rawMtUsd.toFixed(2)}`);
             lines.push(`Ocean Freight (USD/MT): $${calculations.oceanFreightUsd.toFixed(2)}`);
-            lines.push(`Total USD: $${calculations.totalUsd.toFixed(2)}`);
-            lines.push(`Yield Multiplier: ${calculations.yieldLoss.toFixed(2)}x`);
-            lines.push(`Total Cost of Raws (${cs}/MT): $${calculations.totalCostOfRawsCad.toFixed(2)}`);
-            if (emailIncludeMargin) {
-              lines.push(`Margin (${cs}/MT): $${calculations.marginCadMt.toFixed(2)}`);
-            }
-            lines.push(`FCA ${config.origin} Bulk (${cs}/MT): $${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}`);
-            if (config.origin === 'Vancouver') {
-              lines.push(`Supply Chain Costs (${cs}/MT): $${calculations.vancouverSupplyChainCost.toFixed(2)}`);
-            }
-            lines.push(`Differential (${cs}/MT): $${calculations.differential.toFixed(2)}`);
-            if (config.isDelivered) {
-              lines.push(`Delivered Freight (${cs}/MT): $${calculations.deliveredFreight.toFixed(2)}`);
-            }
-            if (config.isExport) {
-              lines.push(`Export Duty (${cs}/MT): $${calculations.exportDuty.toFixed(2)}`);
-            }
-            if (config.isPalletCharge) {
-              lines.push(`Pallet Charge (${cs}/MT): $${calculations.palletCharge.toFixed(2)} — ${config.palletType || 'Standard'}`);
-            }
+            if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
             const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
             if (emailPaymentTerms) {
               lines.push(`Payment Terms: ${emailPaymentTerms}`);
@@ -5838,7 +5846,6 @@ export default function App() {
             lines.push('-------------------------------------');
             lines.push(`Final Price: ${cs} $${calculations.finalMt.toFixed(2)}/MT`);
             lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
-            lines.push(`Total Quote Value: ${cs} $${calculations.totalQuoteValue.toFixed(2)}`);
             lines.push('');
             lines.push('Please let us know if you have any questions or would like to proceed.');
             lines.push('');
@@ -9411,6 +9418,43 @@ export default function App() {
           </div>
         )}
 
+        {/* Hide Order Confirmation */}
+        {orderHideConfirmId && (
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={20} className="text-amber-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Hide Order</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to hide order <span className="font-bold">{orders.find(o => o.id === orderHideConfirmId)?.bolNumber || orderHideConfirmId}</span>? The order will be hidden from the table but the BOL number will remain reserved.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      setOrders(orders.map(o => o.id === orderHideConfirmId ? { ...o, hidden: true } : o));
+                      setOrderHideConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-amber-600 text-white text-xs font-bold uppercase hover:bg-amber-700 transition-all"
+                  >
+                    Yes, Hide
+                  </button>
+                  <button
+                    onClick={() => setOrderHideConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {/* Shipment Delete Confirmation */}
         {shipmentDeleteConfirmId && (
           <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
@@ -9449,10 +9493,17 @@ export default function App() {
         {contractInactivateConfirmId && (() => {
           const targetContract = contracts.find(c => c.id === contractInactivateConfirmId);
           const isCurrentlyActive = targetContract?.active !== false;
-          const hasOutstandingOrders = isCurrentlyActive && orders.some(o =>
-            (o.contractNumber === targetContract?.contractNumber ||
-              o.lineItems.some(li => li.contractNumber === targetContract?.contractNumber))
-          );
+          const hasUninvoicedOrders = isCurrentlyActive && (() => {
+            const contractOrders = orders.filter(o =>
+              o.status !== 'Cancelled' &&
+              (o.contractNumber === targetContract?.contractNumber ||
+                o.lineItems.some(li => li.contractNumber === targetContract?.contractNumber))
+            );
+            return contractOrders.some(o => {
+              const hasInvoice = invoices.some(inv => inv.bolNumber === o.bolNumber && inv.status !== 'Cancelled');
+              return !hasInvoice || o.status === 'Open';
+            });
+          })();
           return (
             <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
               <motion.div
@@ -9468,15 +9519,15 @@ export default function App() {
                   </h3>
                 </div>
                 <div className="p-6 space-y-4">
-                  {isCurrentlyActive && hasOutstandingOrders && (
+                  {isCurrentlyActive && hasUninvoicedOrders && (
                     <div className="bg-red-50 border border-red-300 p-3 flex items-start gap-2">
                       <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
                       <p className="text-xs text-red-800">
-                        <span className="font-bold">Cannot inactivate.</span> Contract <span className="font-bold">{targetContract?.contractNumber}</span> has orders against it. All orders must be removed before inactivation.
+                        <span className="font-bold">Cannot inactivate.</span> Contract <span className="font-bold">{targetContract?.contractNumber}</span> has uninvoiced orders against it. All orders must be invoiced before inactivation.
                       </p>
                     </div>
                   )}
-                  {isCurrentlyActive && !hasOutstandingOrders && (
+                  {isCurrentlyActive && !hasUninvoicedOrders && (
                     <div className="bg-amber-50 border border-amber-300 p-3 flex items-start gap-2">
                       <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
                       <div className="text-xs text-amber-800 space-y-1">
@@ -9491,7 +9542,7 @@ export default function App() {
                     </p>
                   )}
                   <div className="flex gap-4">
-                    {!(isCurrentlyActive && hasOutstandingOrders) && (
+                    {!(isCurrentlyActive && hasUninvoicedOrders) && (
                       <button
                         onClick={() => toggleContractActive(contractInactivateConfirmId)}
                         className={`flex-1 py-3 text-white text-xs font-bold uppercase transition-all ${isCurrentlyActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
@@ -9503,7 +9554,7 @@ export default function App() {
                       onClick={() => setContractInactivateConfirmId(null)}
                       className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
                     >
-                      {isCurrentlyActive && hasOutstandingOrders ? 'Close' : 'Cancel'}
+                      {isCurrentlyActive && hasUninvoicedOrders ? 'Close' : 'Cancel'}
                     </button>
                   </div>
                 </div>
