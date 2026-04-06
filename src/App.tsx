@@ -1898,8 +1898,8 @@ export default function App() {
       const bayColumns = ['Client', 'Product', 'PO', 'BOL', 'QTY', 'Carrier', 'Arrives', 'Start', 'Out'];
 
       return (
-        <div className="p-4 space-y-3">
-          <div className="flex justify-between items-center">
+        <div className="px-2 py-3 space-y-3">
+          <div className="flex justify-between items-center px-2">
             <div className="space-y-0.5">
               <h2 className="text-xl font-bold uppercase tracking-tighter">Shipment Schedule</h2>
               <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
@@ -1997,18 +1997,18 @@ export default function App() {
 
                                 {isDayExp && (
                                   <div className="overflow-x-auto">
-                                    <table className="text-left border-collapse w-max">
+                                    <table className="text-left border-collapse w-full table-fixed">
                                       <thead>
-                                        <tr className="bg-[#141414] text-[#E4E3E0] text-[7px] uppercase font-bold">
-                                          <th className="px-1 py-0.5 border-r border-[#E4E3E0]/20 whitespace-nowrap">Time</th>
+                                        <tr className="bg-[#141414] text-[#E4E3E0] text-[9px] uppercase font-bold">
+                                          <th className="px-2 py-1 border-r border-[#E4E3E0]/20 whitespace-nowrap" style={{ width: '50px' }}>Time</th>
                                           {locationBays.map(bay => (
-                                            <th key={bay} colSpan={bayColumns.length} className="px-1 py-0.5 border-r border-[#E4E3E0]/20 text-center whitespace-nowrap">{bay}</th>
+                                            <th key={bay} colSpan={bayColumns.length} className="px-2 py-1 border-r border-[#E4E3E0]/20 text-center whitespace-nowrap">{bay}</th>
                                           ))}
                                         </tr>
-                                        <tr className="bg-[#F5F5F5] text-[7px] uppercase font-bold border-b border-[#141414]/10">
-                                          <th className="px-1 py-0.5 border-r border-[#141414]/10"></th>
+                                        <tr className="bg-[#F5F5F5] text-[8px] uppercase font-bold border-b border-[#141414]/10">
+                                          <th className="px-2 py-1 border-r border-[#141414]/10"></th>
                                           {locationBays.map(bay => bayColumns.map(col => (
-                                            <th key={`${bay}-${col}`} className="px-1 py-0.5 border-r border-[#141414]/5 whitespace-nowrap">{col}</th>
+                                            <th key={`${bay}-${col}`} className="px-2 py-1 border-r border-[#141414]/5 whitespace-nowrap">{col}</th>
                                           )))}
                                         </tr>
                                       </thead>
@@ -2016,25 +2016,25 @@ export default function App() {
                                         {locationTimeSlots.map(slot => {
                                           return (
                                             <tr key={slot} className="border-b border-[#141414]/5 hover:bg-[#F5F5F5] transition-colors">
-                                              <td className="px-1 py-0.5 text-[8px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap">{slot}</td>
+                                              <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap">{slot}</td>
                                               {locationBays.map(bay => {
                                                 const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
                                                 const s = shipments[0];
                                                 if (!s) {
                                                   return bayColumns.map((col, ci) => (
-                                                    <td key={`${bay}-${slot}-${ci}`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 opacity-15">—</td>
+                                                    <td key={`${bay}-${slot}-${ci}`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 opacity-15">—</td>
                                                   ));
                                                 }
                                                 return [
-                                                  <td key={`${bay}-${slot}-cust`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-black whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
-                                                  <td key={`${bay}-${slot}-prod`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
-                                                  <td key={`${bay}-${slot}-po`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
-                                                  <td key={`${bay}-${slot}-bol`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 font-mono whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
-                                                  <td key={`${bay}-${slot}-qty`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
-                                                  <td key={`${bay}-${slot}-car`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
-                                                  <td key={`${bay}-${slot}-arr`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
-                                                  <td key={`${bay}-${slot}-srt`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
-                                                  <td key={`${bay}-${slot}-out`} className="px-1 py-0.5 text-[8px] border-r border-[#141414]/5 whitespace-nowrap" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
+                                                  <td key={`${bay}-${slot}-cust`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
+                                                  <td key={`${bay}-${slot}-prod`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
+                                                  <td key={`${bay}-${slot}-po`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
+                                                  <td key={`${bay}-${slot}-bol`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
+                                                  <td key={`${bay}-${slot}-qty`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
+                                                  <td key={`${bay}-${slot}-car`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
+                                                  <td key={`${bay}-${slot}-arr`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
+                                                  <td key={`${bay}-${slot}-srt`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
+                                                  <td key={`${bay}-${slot}-out`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
                                                 ];
                                               })}
                                             </tr>
