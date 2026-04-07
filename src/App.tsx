@@ -315,7 +315,14 @@ export default function App() {
 
           if (!entry.date) { skippedRows++; continue; }
 
-          const date = entry.date.trim();
+          // Normalize date: accept M/D/YYYY, MM/DD/YYYY, YYYY-MM-DD
+          let date = entry.date.trim();
+          const slashMatch = date.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (slashMatch) {
+            const [, m, d, yr] = slashMatch;
+            date = `${yr}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+          }
+
           let week = entry.week;
           let day = entry.day;
           try {
@@ -326,12 +333,25 @@ export default function App() {
             continue;
           }
 
+          // Normalize time: convert "1:30:00 PM" or "13:30:00" to "13:30"
+          let time = (entry.time || '08:00').trim();
+          const timeMatch = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+          if (timeMatch) {
+            let [, h, min, , ampm] = timeMatch;
+            let hour = parseInt(h);
+            if (ampm) {
+              if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+              if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+            }
+            time = `${hour.toString().padStart(2, '0')}:${min}`;
+          }
+
           newShipments.push({
             id: entry.id || `SHIP-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             week,
             date,
             day,
-            time: entry.time || '08:00',
+            time,
             bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))?.bays[0] || ''),
             customer: entry.customer || '',
             product: entry.product || '',
@@ -350,7 +370,11 @@ export default function App() {
             trailerNo: entry.trailerno || entry.trailerNo || '',
             colour: entry.colour || '',
             lotNumber: entry.lotnumber || entry.lotNumber || '',
-            deliveryDate: entry.deliverydate || entry.deliveryDate || ''
+            deliveryDate: (() => {
+              const dd = entry.deliverydate || entry.deliveryDate || '';
+              const ddMatch = dd.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+              return ddMatch ? `${ddMatch[3]}-${ddMatch[1].padStart(2, '0')}-${ddMatch[2].padStart(2, '0')}` : dd;
+            })()
           });
         }
 
