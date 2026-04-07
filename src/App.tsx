@@ -283,6 +283,99 @@ export default function App() {
   const [hamiltonShipments, setHamiltonShipments] = useState<Shipment[]>([]);
   const [vancouverShipments, setVancouverShipments] = useState<Shipment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const orderFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportOrderCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows.');
+          return;
+        }
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        // Require at least customer and product columns
+        if (!headers.includes('customer')) {
+          alert(`CSV is missing a required "customer" column.\n\nFound columns: ${headers.join(', ')}`);
+          return;
+        }
+
+        const newOrders: Order[] = [];
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          headers.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+
+          if (!entry.customer) { skippedRows++; continue; }
+
+          // Normalize dates
+          const normalizeDate = (d: string) => {
+            const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+          };
+          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
+          const shipmentDate = normalizeDate(entry.shipmentdate || entry.shipmentDate || entry.shipdate || '');
+          const deliveryDate = normalizeDate(entry.deliverydate || entry.deliveryDate || '');
+
+          const product = entry.product || entry.productname || '';
+          const qty = parseFloat(entry.qty || entry.quantity || entry.volume || '0') || 0;
+          const contractNumber = entry.contractnumber || entry.contract || '';
+          const amount = parseFloat(entry.amount || entry.total || '0') || 0;
+          const bolNumber = entry.bolnumber || entry.bol || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+          const lineItem: OrderLineItem = {
+            id: `LI-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            productName: product,
+            qty,
+            contractNumber,
+            netWeightPerUnit: 0,
+            totalWeight: qty,
+            unitAmount: amount > 0 ? amount / (qty || 1) : 0,
+            mtAmount: amount > 0 ? amount / (qty || 1) : 0,
+            lineAmount: amount
+          };
+
+          newOrders.push({
+            id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            bolNumber,
+            customer: entry.customer,
+            product,
+            contractNumber,
+            po: entry.po || entry.ponumber || '',
+            date,
+            shipmentDate: shipmentDate || undefined,
+            deliveryDate: deliveryDate || undefined,
+            status: (entry.status === 'Confirmed' || entry.status === 'Cancelled') ? entry.status : 'Open',
+            lineItems: [lineItem],
+            amount,
+            carrier: entry.carrier || '',
+            shippingTerms: (entry.shippingterms || '') as any || '',
+            location: entry.location || entry.origin || '',
+            palletType: (entry.pallettype || '') as any || ''
+          });
+        }
+
+        if (newOrders.length > 0) {
+          setOrders(prev => [...prev, ...newOrders]);
+          alert(`Successfully imported ${newOrders.length} order${newOrders.length > 1 ? 's' : ''}.${skippedRows > 0 ? ` (${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped)` : ''}`);
+        } else {
+          alert(`No orders could be imported.\n\n${skippedRows > 0 ? `${skippedRows} row(s) skipped due to missing customer.` : 'The file may be empty or in an unexpected format.'}`);
+        }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
 
   const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -2986,6 +3079,21 @@ export default function App() {
               <span className="text-[10px] opacity-50 font-mono">{filteredOrders.length} records</span>
             </div>
             <div className="flex gap-3">
+              <button onClick={() => {
+                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'amount', 'carrier', 'status', 'location', 'shippingTerms', 'palletType'];
+                  const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodeURI(csvContent));
+                  link.setAttribute("download", "order_template.csv");
+                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Template
+              </button>
+              <button onClick={() => orderFileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <FileText size={12} /> Import CSV
+              </button>
               <button
                 onClick={() => setIsAddingBatchOrder(true)}
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
@@ -5003,11 +5111,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-mono selection:bg-[#141414] selection:text-[#E4E3E0] flex">
-      {/* Hidden File Input for CSV Import — use sr-only instead of hidden to ensure click() works in all browsers */}
+      {/* Hidden File Inputs for CSV Import */}
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleImportCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={orderFileInputRef}
+        onChange={handleImportOrderCSV}
         accept=".csv"
         className="sr-only"
       />
