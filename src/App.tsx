@@ -3138,7 +3138,8 @@ export default function App() {
                   <th className="p-3 border-r border-[#E4E3E0]/20">Shipment Date</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Delivery Date</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Carrier</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Amount ($)</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Price/MT</th>
+                  <th className="p-3 border-r border-[#E4E3E0]/20">Currency</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
                   <th className="p-3 border-r border-[#E4E3E0]/20">Split No.</th>
@@ -3149,7 +3150,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={15} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={16} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       No orders yet. Use "Add Order" to create new orders.
                     </td>
                   </tr>
@@ -3169,7 +3170,18 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || '—'}</td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">${ord.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                        {(() => {
+                          const ordContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                          const ordContract = contracts.find(c => c.contractNumber === ordContractNum);
+                          return (<>
+                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
+                              {ordContract?.finalPrice ? `$${ordContract.finalPrice.toFixed(2)}` : ord.amount ? `$${ord.amount.toFixed(2)}` : '—'}
+                            </td>
+                            <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
+                              {ordContract?.currency || '—'}
+                            </td>
+                          </>);
+                        })()}
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={ord.status}
