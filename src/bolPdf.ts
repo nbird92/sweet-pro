@@ -172,10 +172,10 @@ export function generateBolPdf({
   // Row 16: Postal Code | Postal Code
   const deliverToPostal = customer?.postalCode || '';
   const shipperPostal = shipFromLocation?.postalCode || '';
-  drawLabelCell(doc, 'Postal Code', L, y, 25, rh);
-  drawValueCell(doc, deliverToPostal, L + 25, y, halfW - 25, rh);
-  drawLabelCell(doc, 'Postal Code', R, y, 25, rh);
-  drawValueCell(doc, shipperPostal, R + 25, y, halfW - 25, rh);
+  drawLabelCell(doc, 'Postal Code', L, y, 20, rh);
+  drawValueCell(doc, deliverToPostal, L + 20, y, halfW - 20, rh);
+  drawLabelCell(doc, 'Postal Code', R, y, 20, rh);
+  drawValueCell(doc, shipperPostal, R + 20, y, halfW - 20, rh);
   y += rh + 2;
 
   // ═══════════════════════════════════════════════════════════
@@ -254,7 +254,7 @@ export function generateBolPdf({
       1: { cellWidth: 'auto' },
       2: { halign: 'center', cellWidth: 25 },
       3: { halign: 'right', cellWidth: 34 },
-      4: { halign: 'right', cellWidth: 36 },
+      4: { halign: 'right', cellWidth: 37 },
     },
     didParseCell: (data) => {
       // Bold the Total row
@@ -275,83 +275,84 @@ export function generateBolPdf({
   y += 3;
 
   // ═══════════════════════════════════════════════════════════
-  // ROW 32: Freight Terms (left) | Trailer Number (right)
+  // FOOTER ROWS: Uniform label widths for column alignment
   // ═══════════════════════════════════════════════════════════
-  const shippingTerms = order?.shippingTerms || '';
-  const ftLabelW = 28;
+  const lbl = 28;  // uniform left label width
+  const rlbl = 34; // uniform right label width
   const cbSize = 3.5; // checkbox size
-  const ftOptW = (halfW - ftLabelW) / 3;
-  drawLabelCell(doc, 'Freight Terms:', L, y, ftLabelW, rh);
+  const sigH = 7;
+
+  // ROW 32: Freight Terms (left) | Trailer Number (right)
+  const shippingTerms = order?.shippingTerms || '';
+  const ftOptW = (halfW - lbl) / 3;
+  drawLabelCell(doc, 'Freight Terms:', L, y, lbl, rh);
   // Prepaid option + checkbox
-  drawRect(doc, L + ftLabelW, y, ftOptW, rh);
+  drawRect(doc, L + lbl, y, ftOptW, rh);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(BLACK);
-  doc.text('Prepaid', L + ftLabelW + 2, y + rh / 2 + 1);
-  doc.rect(L + ftLabelW + ftOptW - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
-  if (shippingTerms === 'FOB') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  doc.text('Prepaid', L + lbl + 2, y + rh / 2 + 1);
+  doc.rect(L + lbl + ftOptW - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'FOB') { doc.setFont('helvetica', 'bold'); doc.text('X', L + lbl + ftOptW - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
   // Collect option + checkbox
-  drawRect(doc, L + ftLabelW + ftOptW, y, ftOptW, rh);
+  drawRect(doc, L + lbl + ftOptW, y, ftOptW, rh);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-  doc.text('Collect', L + ftLabelW + ftOptW + 2, y + rh / 2 + 1);
-  doc.rect(L + ftLabelW + ftOptW * 2 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
-  if (shippingTerms === 'DAP' || shippingTerms === 'DDP') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW * 2 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  doc.text('Collect', L + lbl + ftOptW + 2, y + rh / 2 + 1);
+  doc.rect(L + lbl + ftOptW * 2 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'DAP' || shippingTerms === 'DDP') { doc.setFont('helvetica', 'bold'); doc.text('X', L + lbl + ftOptW * 2 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
   // Third Party option + checkbox
-  drawRect(doc, L + ftLabelW + ftOptW * 2, y, ftOptW, rh);
+  drawRect(doc, L + lbl + ftOptW * 2, y, ftOptW, rh);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-  doc.text('Third Party', L + ftLabelW + ftOptW * 2 + 2, y + rh / 2 + 1);
-  doc.rect(L + ftLabelW + ftOptW * 3 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
-  if (shippingTerms === 'FCA') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW * 3 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  doc.text('Third Party', L + lbl + ftOptW * 2 + 2, y + rh / 2 + 1);
+  doc.rect(L + lbl + ftOptW * 3 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'FCA') { doc.setFont('helvetica', 'bold'); doc.text('X', L + lbl + ftOptW * 3 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
   // Trailer Number on right
-  drawLabelCell(doc, 'Trailer Number:', R, y, 32, rh);
-  drawValueCell(doc, shipment.trailerNo || '', R + 32, y, halfW - 32, rh);
+  drawLabelCell(doc, 'Trailer Number:', R, y, rlbl, rh);
+  drawValueCell(doc, shipment.trailerNo || '', R + rlbl, y, halfW - rlbl, rh);
   y += rh;
 
-  // ═══════════════════════════════════════════════════════════
   // ROW 33: Origin of Good | Seal number(s)
-  // ═══════════════════════════════════════════════════════════
   const originOfGoods = shipment.originOfGoods || shipFromLocation?.name || order?.location || '';
   const sealNums = shipment.sealNumbers?.filter(Boolean).join(', ') || '';
-  drawLabelCell(doc, 'Origin of Good:', L, y, 30, rh);
-  drawValueCell(doc, originOfGoods, L + 30, y, halfW - 30, rh);
-  drawLabelCell(doc, 'Seal number(s):', R, y, 30, rh);
-  drawValueCell(doc, sealNums, R + 30, y, halfW - 30, rh);
+  drawLabelCell(doc, 'Origin of Good:', L, y, lbl, rh);
+  drawValueCell(doc, originOfGoods, L + lbl, y, halfW - lbl, rh);
+  drawLabelCell(doc, 'Seal number(s):', R, y, rlbl, rh);
+  drawValueCell(doc, sealNums, R + rlbl, y, halfW - rlbl, rh);
   y += rh;
 
   // ROW 34: Empty
   drawRect(doc, L, y, W, rh);
   y += rh + 2;
 
-  // ═══════════════════════════════════════════════════════════
   // ROW 35: Consignor | Sucro Can Canada Inc. | All Goods received in good condition
-  // ═══════════════════════════════════════════════════════════
-  const sigH = 7;
-  drawLabelCell(doc, 'Consignor:', L, y, 25, sigH);
-  drawValueCell(doc, 'Sucro Can Canada Inc.', L + 25, y, halfW - 25, sigH);
+  drawLabelCell(doc, 'Consignor:', L, y, lbl, sigH);
+  drawValueCell(doc, 'Sucro Can Canada Inc.', L + lbl, y, halfW - lbl, sigH);
+  drawLabelCell(doc, '', R, y, rlbl, sigH);
   drawRect(doc, R, y, halfW, sigH);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  doc.text('All Goods received in good condition', R + 12, y + sigH / 2 + 1);
+  doc.setTextColor(BLACK);
+  doc.text('All Goods received in good condition', R + 2, y + sigH / 2 + 1);
   y += sigH;
 
   // ROW 36: Date | Date
-  drawLabelCell(doc, 'Date:', L, y, 20, sigH);
-  drawValueCell(doc, shipment.date || '', L + 20, y, halfW - 20, sigH);
-  drawLabelCell(doc, 'Date:', R, y, 20, sigH);
-  drawValueCell(doc, shipment.date || '', R + 20, y, halfW - 20, sigH);
+  drawLabelCell(doc, 'Date:', L, y, lbl, sigH);
+  drawValueCell(doc, shipment.date || '', L + lbl, y, halfW - lbl, sigH);
+  drawLabelCell(doc, 'Date:', R, y, rlbl, sigH);
+  drawValueCell(doc, shipment.date || '', R + rlbl, y, halfW - rlbl, sigH);
   y += sigH;
 
   // ROW 37: Shipper | Carrier name
   const shipperSigName = shipFromLocation?.name || order?.location || 'Sucro Can Canada';
-  drawLabelCell(doc, 'Shipper:', L, y, 20, sigH);
-  drawValueCell(doc, shipperSigName, L + 20, y, halfW - 20, sigH);
-  drawLabelCell(doc, 'Carrier name:', R, y, 30, sigH);
-  drawValueCell(doc, carrierName, R + 30, y, halfW - 30, sigH);
+  drawLabelCell(doc, 'Shipper:', L, y, lbl, sigH);
+  drawValueCell(doc, shipperSigName, L + lbl, y, halfW - lbl, sigH);
+  drawLabelCell(doc, 'Carrier name:', R, y, rlbl, sigH);
+  drawValueCell(doc, carrierName, R + rlbl, y, halfW - rlbl, sigH);
   y += sigH;
 
   // ROW 38: Print name | Carrier signature
-  drawLabelCell(doc, 'Print name:', L, y, 25, sigH);
-  drawValueCell(doc, '', L + 25, y, halfW - 25, sigH);
-  drawLabelCell(doc, 'Carrier signature:', R, y, 35, sigH);
-  drawValueCell(doc, '', R + 35, y, halfW - 35, sigH);
+  drawLabelCell(doc, 'Print name:', L, y, lbl, sigH);
+  drawValueCell(doc, '', L + lbl, y, halfW - lbl, sigH);
+  drawLabelCell(doc, 'Carrier signature:', R, y, rlbl, sigH);
+  drawValueCell(doc, '', R + rlbl, y, halfW - rlbl, sigH);
   y += sigH + 4;
 
   // ═══════════════════════════════════════════════════════════
