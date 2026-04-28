@@ -203,8 +203,8 @@ export function generateBolPdf({
 
       lineItemsData.push([
         item.totalWeight ? item.totalWeight.toFixed(2) : '',
-        item.qty ? item.qty.toString() : '',
         item.productName || '',
+        item.qty ? item.qty.toString() : '',
         itemNet ? itemNet.toFixed(2) : '',
         itemGross ? itemGross.toFixed(2) : '',
       ]);
@@ -212,8 +212,8 @@ export function generateBolPdf({
   } else {
     lineItemsData.push([
       shipment.qty ? shipment.qty.toString() : '',
-      '',
       shipment.product || '',
+      '',
       '',
       '',
     ]);
@@ -224,7 +224,7 @@ export function generateBolPdf({
     lineItemsData.push(['', '', '', '', '']);
   }
 
-  // Add Total row
+  // Add Total row — "Total" in the Qty (Units) column to match template
   lineItemsData.push([
     '', '', 'Total',
     totalNetWeight ? totalNetWeight.toFixed(2) : '0',
@@ -234,7 +234,7 @@ export function generateBolPdf({
   autoTable(doc, {
     startY: y,
     margin: { left: M, right: M },
-    head: [['Qty (MT)', 'Qty (Units)', 'Description Of Goods', 'Net Weight (Kg)', 'Gross Weight (Kg)']],
+    head: [['Qty (MT)', 'Description Of Goods', 'Qty (Units)', 'Net Weight (Kg)', 'Gross Weight (Kg)']],
     body: lineItemsData,
     styles: {
       fontSize: 8,
@@ -250,11 +250,11 @@ export function generateBolPdf({
       fontSize: 8,
     },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 28 },
-      1: { halign: 'center', cellWidth: 28 },
-      2: { cellWidth: 'auto' },
-      3: { halign: 'right', cellWidth: 32 },
-      4: { halign: 'right', cellWidth: 32 },
+      0: { halign: 'center', cellWidth: 25 },
+      1: { cellWidth: 'auto' },
+      2: { halign: 'center', cellWidth: 25 },
+      3: { halign: 'right', cellWidth: 34 },
+      4: { halign: 'right', cellWidth: 36 },
     },
     didParseCell: (data) => {
       // Bold the Total row
@@ -278,11 +278,29 @@ export function generateBolPdf({
   // ROW 32: Freight Terms (left) | Trailer Number (right)
   // ═══════════════════════════════════════════════════════════
   const shippingTerms = order?.shippingTerms || '';
-  const ftW = (halfW - 28) / 3;
-  drawLabelCell(doc, 'Freight Terms:', L, y, 28, rh);
-  drawValueCell(doc, 'Prepaid', L + 28, y, ftW, rh);
-  drawValueCell(doc, 'Collect', L + 28 + ftW, y, ftW, rh);
-  drawValueCell(doc, 'Third Party', L + 28 + ftW * 2, y, ftW, rh);
+  const ftLabelW = 28;
+  const cbSize = 3.5; // checkbox size
+  const ftOptW = (halfW - ftLabelW) / 3;
+  drawLabelCell(doc, 'Freight Terms:', L, y, ftLabelW, rh);
+  // Prepaid option + checkbox
+  drawRect(doc, L + ftLabelW, y, ftOptW, rh);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(BLACK);
+  doc.text('Prepaid', L + ftLabelW + 2, y + rh / 2 + 1);
+  doc.rect(L + ftLabelW + ftOptW - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'FOB') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  // Collect option + checkbox
+  drawRect(doc, L + ftLabelW + ftOptW, y, ftOptW, rh);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  doc.text('Collect', L + ftLabelW + ftOptW + 2, y + rh / 2 + 1);
+  doc.rect(L + ftLabelW + ftOptW * 2 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'DAP' || shippingTerms === 'DDP') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW * 2 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  // Third Party option + checkbox
+  drawRect(doc, L + ftLabelW + ftOptW * 2, y, ftOptW, rh);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  doc.text('Third Party', L + ftLabelW + ftOptW * 2 + 2, y + rh / 2 + 1);
+  doc.rect(L + ftLabelW + ftOptW * 3 - cbSize - 3, y + (rh - cbSize) / 2, cbSize, cbSize, 'S');
+  if (shippingTerms === 'FCA') { doc.setFont('helvetica', 'bold'); doc.text('X', L + ftLabelW + ftOptW * 3 - cbSize - 3 + 0.6, y + (rh + cbSize) / 2 - 0.3); }
+  // Trailer Number on right
   drawLabelCell(doc, 'Trailer Number:', R, y, 32, rh);
   drawValueCell(doc, shipment.trailerNo || '', R + 32, y, halfW - 32, rh);
   y += rh;
