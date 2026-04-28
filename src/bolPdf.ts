@@ -172,10 +172,10 @@ export function generateBolPdf({
   // Row 16: Postal Code | Postal Code
   const deliverToPostal = customer?.postalCode || '';
   const shipperPostal = shipFromLocation?.postalCode || '';
-  drawLabelCell(doc, 'Postal Code', L, y, 20, rh);
-  drawValueCell(doc, deliverToPostal, L + 20, y, halfW - 20, rh);
-  drawLabelCell(doc, 'Postal Code', R, y, 20, rh);
-  drawValueCell(doc, shipperPostal, R + 20, y, halfW - 20, rh);
+  drawLabelCell(doc, 'Postal Code', L, y, 25, rh);
+  drawValueCell(doc, deliverToPostal, L + 25, y, halfW - 25, rh);
+  drawLabelCell(doc, 'Postal Code', R, y, 25, rh);
+  drawValueCell(doc, shipperPostal, R + 25, y, halfW - 25, rh);
   y += rh + 2;
 
   // ═══════════════════════════════════════════════════════════
@@ -325,7 +325,6 @@ export function generateBolPdf({
   // ROW 35: Consignor | Sucro Can Canada Inc. | All Goods received in good condition
   drawLabelCell(doc, 'Consignor:', L, y, lbl, sigH);
   drawValueCell(doc, 'Sucro Can Canada Inc.', L + lbl, y, halfW - lbl, sigH);
-  drawLabelCell(doc, '', R, y, rlbl, sigH);
   drawRect(doc, R, y, halfW, sigH);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
