@@ -327,8 +327,10 @@ export default function App() {
           const product = entry.product || entry.productname || '';
           const qty = parseFloat(entry.qty || entry.quantity || entry.volume || '0') || 0;
           const contractNumber = entry.contractnumber || entry.contract || '';
-          const amount = parseFloat(entry.amount || entry.total || '0') || 0;
+          const pricePerMt = parseFloat(entry.pricepermt || entry.pricepmt || entry.price || '0') || 0;
+          const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(entry.amount || entry.total || '0') || 0);
           const bolNumber = entry.bolnumber || entry.bol || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const splitNumber = entry.splitnumber || entry.split || '';
 
           const lineItem: OrderLineItem = {
             id: `LI-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -358,6 +360,7 @@ export default function App() {
             carrier: entry.carrier || '',
             shippingTerms: (entry.shippingterms || '') as any || '',
             location: entry.location || entry.origin || '',
+            splitNumber: splitNumber || undefined,
             palletType: (entry.pallettype || '') as any || ''
           });
         }
@@ -3080,7 +3083,7 @@ export default function App() {
             </div>
             <div className="flex gap-3">
               <button onClick={() => {
-                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'amount', 'carrier', 'status', 'location', 'shippingTerms', 'palletType'];
+                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'pricePerMt', 'currency', 'carrier', 'status', 'location', 'shippingTerms', 'palletType', 'paymentTerms', 'splitNumber'];
                   const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
