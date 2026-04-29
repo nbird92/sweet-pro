@@ -5653,7 +5653,7 @@ export default function App() {
       {/* PDF Preview Modal */}
       <AnimatePresence>
         {pdfPreview && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md" onClick={handleClosePdfPreview}>
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md" onClick={handleClosePdfPreview}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
