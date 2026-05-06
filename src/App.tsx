@@ -3178,7 +3178,7 @@ export default function App() {
                           const ordContract = contracts.find(c => c.contractNumber === ordContractNum);
                           return (<>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
-                              {ordContract?.finalPrice ? `$${ordContract.finalPrice.toFixed(2)}` : ord.amount ? `$${ord.amount.toFixed(2)}` : '—'}
+                              {ordContract?.finalPrice ? `$${ordContract.finalPrice.toFixed(2)}` : totalWeight > 0 && ord.amount ? `$${(ord.amount / totalWeight).toFixed(2)}` : '—'}
                             </td>
                             <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
                               {ordContract?.currency || '—'}
