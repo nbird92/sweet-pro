@@ -309,8 +309,9 @@ export default function App() {
           return;
         }
 
-        const newOrders: Order[] = [];
-        const updatedBols: string[] = [];
+        let workingOrders = [...orders]; // Build final array directly
+        let newCount = 0;
+        let updatedCount = 0;
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
@@ -337,36 +338,33 @@ export default function App() {
           const splitNumber = entry.splitnumber || entry.split || '';
           const currency = entry.currency || '';
 
-          // Check if order with this BOL already exists — update it instead of duplicating
-          const existingOrder = orders.find(o => o.bolNumber === bolNumber);
-          if (existingOrder) {
-            updatedBols.push(bolNumber);
-            setOrders(prev => prev.map(o => {
-              if (o.bolNumber !== bolNumber) return o;
-              const updatedLineItems = o.lineItems.map((li, idx) => idx === 0 ? {
-                ...li,
-                productName: product || li.productName,
-                qty: qty || li.qty,
-                contractNumber: contractNumber || li.contractNumber,
-                totalWeight: qty || li.totalWeight,
-                unitAmount: amount > 0 ? amount / (qty || 1) : li.unitAmount,
-                mtAmount: amount > 0 ? amount / (qty || 1) : li.mtAmount,
-                lineAmount: amount || li.lineAmount
-              } : li);
-              return {
-                ...o,
-                product: product || o.product,
-                contractNumber: contractNumber || o.contractNumber,
-                amount: amount || o.amount,
-                currency: currency || o.currency,
-                splitNumber: splitNumber || o.splitNumber,
-                carrier: entry.carrier || o.carrier,
-                shippingTerms: (entry.shippingterms || o.shippingTerms) as any,
-                location: entry.location || entry.origin || o.location,
-                palletType: (entry.pallettype || o.palletType) as any,
-                lineItems: updatedLineItems,
-              };
-            }));
+          const existingIdx = workingOrders.findIndex(o => o.bolNumber === bolNumber);
+          if (existingIdx >= 0) {
+            updatedCount++;
+            const o = workingOrders[existingIdx];
+            const updatedLineItems = o.lineItems.map((li, idx) => idx === 0 ? {
+              ...li,
+              productName: product || li.productName,
+              qty: qty || li.qty,
+              contractNumber: contractNumber || li.contractNumber,
+              totalWeight: qty || li.totalWeight,
+              unitAmount: amount > 0 ? amount / (qty || 1) : li.unitAmount,
+              mtAmount: amount > 0 ? amount / (qty || 1) : li.mtAmount,
+              lineAmount: amount || li.lineAmount
+            } : li);
+            workingOrders[existingIdx] = {
+              ...o,
+              product: product || o.product,
+              contractNumber: contractNumber || o.contractNumber,
+              amount: amount || o.amount,
+              currency: currency || o.currency,
+              splitNumber: splitNumber || o.splitNumber,
+              carrier: entry.carrier || o.carrier,
+              shippingTerms: (entry.shippingterms || o.shippingTerms) as any,
+              location: entry.location || entry.origin || o.location,
+              palletType: (entry.pallettype || o.palletType) as any,
+              lineItems: updatedLineItems,
+            };
             continue;
           }
 
@@ -382,7 +380,8 @@ export default function App() {
             lineAmount: amount
           };
 
-          newOrders.push({
+          newCount++;
+          workingOrders.push({
             id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             bolNumber,
             customer: entry.customer,
@@ -404,25 +403,18 @@ export default function App() {
           });
         }
 
-        if (newOrders.length > 0) {
-          setOrders(prev => [...prev, ...newOrders]);
-        }
-        // Immediately sync to Firebase so imported data persists
-        if (newOrders.length > 0 || updatedBols.length > 0) {
-          setTimeout(async () => {
-            try {
-              let latestOrders: Order[] = [];
-              setOrders(prev => { latestOrders = prev; return prev; });
-              await syncCollection(COLLECTIONS.orders, latestOrders);
-              lastSyncedData.current.orders = JSON.stringify(latestOrders);
-              setSyncStatus('synced');
-              setLastSynced(new Date());
-            } catch (e) { console.error('Order sync failed:', e); }
-          }, 500);
+        if (newCount > 0 || updatedCount > 0) {
+          setOrders(workingOrders);
+          // Immediately sync to Firebase
+          syncCollection(COLLECTIONS.orders, workingOrders).then(() => {
+            lastSyncedData.current.orders = JSON.stringify(workingOrders);
+            setSyncStatus('synced');
+            setLastSynced(new Date());
+          }).catch(e => console.error('Order sync failed:', e));
         }
         const parts: string[] = [];
-        if (newOrders.length > 0) parts.push(`${newOrders.length} new order${newOrders.length > 1 ? 's' : ''} imported`);
-        if (updatedBols.length > 0) parts.push(`${updatedBols.length} existing order${updatedBols.length > 1 ? 's' : ''} updated`);
+        if (newCount > 0) parts.push(`${newCount} new order${newCount > 1 ? 's' : ''} imported`);
+        if (updatedCount > 0) parts.push(`${updatedCount} existing order${updatedCount > 1 ? 's' : ''} updated`);
         if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
         if (parts.length > 0) {
           alert(parts.join(', ') + '.');
@@ -458,8 +450,9 @@ export default function App() {
           return;
         }
 
-        const newInvoices: Invoice[] = [];
-        const updatedBols: string[] = [];
+        let workingInvoices = [...invoices];
+        let newCount = 0;
+        let updatedCount = 0;
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
@@ -489,33 +482,32 @@ export default function App() {
           const location = entry.location || '';
           const invoiceNumber = entry.invoicenumber || entry.invoice || '';
 
-          // Check if invoice with this BOL already exists — update instead
-          const existingInvoice = invoices.find(inv => inv.bolNumber === bolNumber);
-          if (existingInvoice) {
-            updatedBols.push(bolNumber);
-            setInvoices(prev => prev.map(inv => {
-              if (inv.bolNumber !== bolNumber) return inv;
-              return {
-                ...inv,
-                invoiceNumber: invoiceNumber || inv.invoiceNumber,
-                customer: customer || inv.customer,
-                product: product || inv.product,
-                po: po || inv.po,
-                qty: qty || inv.qty,
-                amount: amount || inv.amount,
-                carrier: carrier || inv.carrier,
-                status: entry.status ? status : inv.status,
-                splitNo: splitNo || inv.splitNo,
-                dueDate: dueDate || inv.dueDate,
-                contractNumber: contractNumber || inv.contractNumber,
-                shippingTerms: shippingTerms || inv.shippingTerms,
-                location: location || inv.location,
-              };
-            }));
+          // Check if invoice with this BOL already exists — update in working array
+          const existingIdx = workingInvoices.findIndex(inv => inv.bolNumber === bolNumber);
+          if (existingIdx !== -1) {
+            updatedCount++;
+            const inv = workingInvoices[existingIdx];
+            workingInvoices[existingIdx] = {
+              ...inv,
+              invoiceNumber: invoiceNumber || inv.invoiceNumber,
+              customer: customer || inv.customer,
+              product: product || inv.product,
+              po: po || inv.po,
+              qty: qty || inv.qty,
+              amount: amount || inv.amount,
+              carrier: carrier || inv.carrier,
+              status: entry.status ? status : inv.status,
+              splitNo: splitNo || inv.splitNo,
+              dueDate: dueDate || inv.dueDate,
+              contractNumber: contractNumber || inv.contractNumber,
+              shippingTerms: shippingTerms || inv.shippingTerms,
+              location: location || inv.location,
+            };
             continue;
           }
 
-          newInvoices.push({
+          newCount++;
+          workingInvoices.push({
             id: `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             invoiceNumber: invoiceNumber || undefined,
             bolNumber,
@@ -536,26 +528,18 @@ export default function App() {
           });
         }
 
-        if (newInvoices.length > 0) {
-          setInvoices(prev => [...prev, ...newInvoices]);
-        }
-        // Immediately sync to Firebase so imported data persists
-        if (newInvoices.length > 0 || updatedBols.length > 0) {
-          setTimeout(async () => {
-            try {
-              // Re-read latest state via functional update trick
-              let latestInvoices: Invoice[] = [];
-              setInvoices(prev => { latestInvoices = prev; return prev; });
-              await syncCollection(COLLECTIONS.invoices, latestInvoices);
-              lastSyncedData.current.invoices = JSON.stringify(latestInvoices);
-              setSyncStatus('synced');
-              setLastSynced(new Date());
-            } catch (e) { console.error('Invoice sync failed:', e); }
-          }, 500);
+        // Set state and sync to Firebase with the same array — no race condition
+        if (newCount > 0 || updatedCount > 0) {
+          setInvoices(workingInvoices);
+          syncCollection(COLLECTIONS.invoices, workingInvoices).then(() => {
+            lastSyncedData.current.invoices = JSON.stringify(workingInvoices);
+            setSyncStatus('synced');
+            setLastSynced(new Date());
+          }).catch(e => console.error('Invoice sync failed:', e));
         }
         const parts: string[] = [];
-        if (newInvoices.length > 0) parts.push(`${newInvoices.length} new invoice${newInvoices.length > 1 ? 's' : ''} imported`);
-        if (updatedBols.length > 0) parts.push(`${updatedBols.length} existing invoice${updatedBols.length > 1 ? 's' : ''} updated`);
+        if (newCount > 0) parts.push(`${newCount} new invoice${newCount > 1 ? 's' : ''} imported`);
+        if (updatedCount > 0) parts.push(`${updatedCount} existing invoice${updatedCount > 1 ? 's' : ''} updated`);
         if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
         if (parts.length > 0) {
           alert(parts.join(', ') + '.');
@@ -591,8 +575,9 @@ export default function App() {
           return;
         }
 
-        const newContracts: Contract[] = [];
-        const updatedNums: string[] = [];
+        let workingContracts = [...contracts];
+        let newCount = 0;
+        let updatedCount = 0;
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
@@ -629,44 +614,43 @@ export default function App() {
           const palletType = entry.pallettype || '';
           const margin = parseFloat(entry.margin || '0') || 0;
 
-          // Check if contract with this number already exists — update instead
-          const existingContract = contracts.find(c => c.contractNumber === contractNumber);
-          if (existingContract) {
-            updatedNums.push(contractNumber);
-            setContracts(prev => prev.map(c => {
-              if (c.contractNumber !== contractNumber) return c;
-              const updatedVolume = contractVolume || c.contractVolume;
-              const updatedTaken = volumeTaken || c.volumeTaken;
-              return {
-                ...c,
-                customerNumber: customerNumber || c.customerNumber,
-                customerName: customerName || c.customerName,
-                contractVolume: updatedVolume,
-                volumeTaken: updatedTaken,
-                volumeOutstanding: updatedVolume - updatedTaken,
-                startDate: startDate || c.startDate,
-                endDate: endDate || c.endDate,
-                skuName: skuName || c.skuName,
-                origin: origin || c.origin,
-                destination: destination || c.destination,
-                finalPrice: finalPrice || c.finalPrice,
-                currency: entry.currency ? currency : c.currency,
-                notes: notes || c.notes,
-                shippingTerms: shippingTerms || c.shippingTerms,
-                fxRate: fxRate || c.fxRate,
-                rawPriceUsdMt: rawPriceUsdMt || c.rawPriceUsdMt,
-                deliveredFreight: deliveredFreight || c.deliveredFreight,
-                exportDuty: exportDuty || c.exportDuty,
-                palletCharge: palletCharge || c.palletCharge,
-                paymentTerms: paymentTerms || c.paymentTerms,
-                palletType: (palletType || c.palletType) as any,
-                margin: margin || c.margin,
-              };
-            }));
+          // Check if contract with this number already exists — update in working array
+          const existingIdx = workingContracts.findIndex(c => c.contractNumber === contractNumber);
+          if (existingIdx !== -1) {
+            updatedCount++;
+            const c = workingContracts[existingIdx];
+            const updatedVolume = contractVolume || c.contractVolume;
+            const updatedTaken = volumeTaken || c.volumeTaken;
+            workingContracts[existingIdx] = {
+              ...c,
+              customerNumber: customerNumber || c.customerNumber,
+              customerName: customerName || c.customerName,
+              contractVolume: updatedVolume,
+              volumeTaken: updatedTaken,
+              volumeOutstanding: updatedVolume - updatedTaken,
+              startDate: startDate || c.startDate,
+              endDate: endDate || c.endDate,
+              skuName: skuName || c.skuName,
+              origin: origin || c.origin,
+              destination: destination || c.destination,
+              finalPrice: finalPrice || c.finalPrice,
+              currency: entry.currency ? currency : c.currency,
+              notes: notes || c.notes,
+              shippingTerms: shippingTerms || c.shippingTerms,
+              fxRate: fxRate || c.fxRate,
+              rawPriceUsdMt: rawPriceUsdMt || c.rawPriceUsdMt,
+              deliveredFreight: deliveredFreight || c.deliveredFreight,
+              exportDuty: exportDuty || c.exportDuty,
+              palletCharge: palletCharge || c.palletCharge,
+              paymentTerms: paymentTerms || c.paymentTerms,
+              palletType: (palletType || c.palletType) as any,
+              margin: margin || c.margin,
+            };
             continue;
           }
 
-          newContracts.push({
+          newCount++;
+          workingContracts.push({
             id: `CON-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             contractNumber,
             customerNumber,
@@ -695,25 +679,18 @@ export default function App() {
           });
         }
 
-        if (newContracts.length > 0) {
-          setContracts(prev => [...prev, ...newContracts]);
-        }
-        // Immediately sync to Firebase so imported data persists
-        if (newContracts.length > 0 || updatedNums.length > 0) {
-          setTimeout(async () => {
-            try {
-              let latestContracts: Contract[] = [];
-              setContracts(prev => { latestContracts = prev; return prev; });
-              await syncCollection(COLLECTIONS.contracts, latestContracts);
-              lastSyncedData.current.contracts = JSON.stringify(latestContracts);
-              setSyncStatus('synced');
-              setLastSynced(new Date());
-            } catch (e) { console.error('Contract sync failed:', e); }
-          }, 500);
+        // Set state and sync to Firebase with the same array — no race condition
+        if (newCount > 0 || updatedCount > 0) {
+          setContracts(workingContracts);
+          syncCollection(COLLECTIONS.contracts, workingContracts).then(() => {
+            lastSyncedData.current.contracts = JSON.stringify(workingContracts);
+            setSyncStatus('synced');
+            setLastSynced(new Date());
+          }).catch(e => console.error('Contract sync failed:', e));
         }
         const parts: string[] = [];
-        if (newContracts.length > 0) parts.push(`${newContracts.length} new contract${newContracts.length > 1 ? 's' : ''} imported`);
-        if (updatedNums.length > 0) parts.push(`${updatedNums.length} existing contract${updatedNums.length > 1 ? 's' : ''} updated`);
+        if (newCount > 0) parts.push(`${newCount} new contract${newCount > 1 ? 's' : ''} imported`);
+        if (updatedCount > 0) parts.push(`${updatedCount} existing contract${updatedCount > 1 ? 's' : ''} updated`);
         if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
         if (parts.length > 0) {
           alert(parts.join(', ') + '.');
