@@ -321,7 +321,8 @@ export default function App() {
           const name = entry.name || entry.customername || '';
           if (!name) { skippedRows++; continue; }
 
-          const id = entry.id || entry.customernumber || '';
+          const id = entry.id || '';
+          const customerNumber = entry.customernumber || entry.custno || '';
           const itasCustomerName = entry.itascustomername || entry.itas || '';
           const defaultLocation = (entry.defaultlocation || entry.location || 'Hamilton') as 'Hamilton' | 'Vancouver';
           const address = entry.address || '';
@@ -338,9 +339,9 @@ export default function App() {
           const defaultCarrierCode = entry.defaultcarriercode || entry.carriercode || '';
           const notes = entry.notes || '';
 
-          // Match by name or ID
+          // Match by name, ID, or customerNumber
           const existingIdx = workingCustomers.findIndex(c =>
-            c.name.toLowerCase() === name.toLowerCase() || (id && c.id === id)
+            c.name.toLowerCase() === name.toLowerCase() || (id && c.id === id) || (customerNumber && c.customerNumber === customerNumber)
           );
           if (existingIdx >= 0) {
             updatedCount++;
@@ -348,6 +349,7 @@ export default function App() {
             workingCustomers[existingIdx] = {
               ...c,
               name: name || c.name,
+              customerNumber: customerNumber || c.customerNumber,
               itasCustomerName: itasCustomerName || c.itasCustomerName,
               defaultLocation: entry.defaultlocation || entry.location ? defaultLocation : c.defaultLocation,
               address: address || c.address,
@@ -368,9 +370,11 @@ export default function App() {
           }
 
           newCount++;
+          const newCustNum = customerNumber || getNextCustomerNumber(workingCustomers);
           workingCustomers.push({
-            id: id || `CUST-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            id: id || `CUST-${newCustNum}`,
             name,
+            customerNumber: newCustNum,
             itasCustomerName: itasCustomerName || undefined,
             defaultLocation,
             address: address || undefined,
@@ -2006,11 +2010,22 @@ export default function App() {
     setSkus(skus.filter(s => s.id !== id));
   };
 
+  const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
+    let maxNum = 0;
+    existingCustomers.forEach(c => {
+      const num = parseInt(c.customerNumber || '0', 10);
+      if (!isNaN(num) && num > maxNum) maxNum = num;
+    });
+    return String(maxNum + 1).padStart(5, '0');
+  };
+
   const addCustomer = () => {
-    const id = `CUST-${String(customers.length + 1).padStart(3, '0')}`;
+    const custNum = getNextCustomerNumber(customers);
+    const id = `CUST-${custNum}`;
     setNewCustomer({
       id,
       name: '',
+      customerNumber: custNum,
       defaultLocation: 'Hamilton',
       address: '',
       city: '',
@@ -3118,7 +3133,7 @@ export default function App() {
     }
 
     if (activePage === 'Customers') {
-      const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id']);
+      const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
 
       return (
         <div>
@@ -3131,7 +3146,7 @@ export default function App() {
             </div>
             <div className="flex gap-2">
               <button onClick={() => {
-                  const tplHeaders = ['name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+                  const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
                   const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
@@ -3172,7 +3187,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="No." sortKey="id" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Location" sortKey="defaultLocation" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Margin" sortKey="defaultMargin" currentSort={sortConfig} onSort={handleSort} />
@@ -3186,7 +3201,7 @@ export default function App() {
                 {filteredCustomers.map(c => (
                   <React.Fragment key={c.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingCustomer(c)}>
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.id}</td>
+                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.customerNumber || '—'}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
@@ -8092,8 +8107,8 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Customer ID</label>
-                    <input type="text" value={newCustomer.id} readOnly className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm opacity-50 outline-none" />
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer No.</label>
+                    <input type="text" value={newCustomer.customerNumber || ''} readOnly className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm opacity-50 outline-none" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer Name</label>
@@ -8599,7 +8614,7 @@ export default function App() {
               className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('customer').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.id}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.customerNumber || editingCustomer.id}</h3>
                 <div className="flex items-center gap-1">
                   <button onClick={() => setModalMinimized('customer', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
                   <button onClick={() => setModalMaximized('customer', !getModalState('customer').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('customer').maximized ? 'Restore' : 'Maximize'}>{getModalState('customer').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
@@ -8609,10 +8624,14 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer No.</label>
+                    <input type="text" value={editingCustomer.customerNumber || ''} readOnly className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm opacity-50 outline-none" />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer Name</label>
-                    <input 
-                      type="text" 
-                      value={editingCustomer.name} 
+                    <input
+                      type="text"
+                      value={editingCustomer.name}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, name: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
