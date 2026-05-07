@@ -286,6 +286,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
+  const contractFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportOrderCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -560,6 +561,164 @@ export default function App() {
           alert(parts.join(', ') + '.');
         } else {
           alert('No invoices could be imported. The file may be empty or in an unexpected format.');
+        }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  const handleImportContractCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows.');
+          return;
+        }
+        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        if (!csvHeaders.includes('contractnumber') && !csvHeaders.includes('contract')) {
+          alert(`CSV is missing a required "contractNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+          return;
+        }
+
+        const newContracts: Contract[] = [];
+        const updatedNums: string[] = [];
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+
+          const contractNumber = entry.contractnumber || entry.contract || '';
+          if (!contractNumber) { skippedRows++; continue; }
+
+          const normalizeDate = (d: string) => {
+            const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+          };
+
+          const customerNumber = entry.customernumber || entry.custno || '';
+          const customerName = entry.customername || entry.customer || '';
+          const contractVolume = parseFloat(entry.contractvolume || entry.volume || '0') || 0;
+          const volumeTaken = parseFloat(entry.volumetaken || '0') || 0;
+          const startDate = normalizeDate(entry.startdate || entry.start || '');
+          const endDate = normalizeDate(entry.enddate || entry.end || '');
+          const skuName = entry.skuname || entry.sku || entry.product || '';
+          const origin = entry.origin || '';
+          const destination = entry.destination || '';
+          const finalPrice = parseFloat(entry.finalprice || entry.price || '0') || 0;
+          const currency = entry.currency || 'CAD';
+          const notes = entry.notes || '';
+          const shippingTerms = entry.shippingterms || '';
+          const fxRate = parseFloat(entry.fxrate || entry.fx || '0') || 0;
+          const rawPriceUsdMt = parseFloat(entry.rawpriceusdmt || entry.rawprice || '0') || 0;
+          const deliveredFreight = parseFloat(entry.deliveredfreight || entry.freight || '0') || 0;
+          const exportDuty = parseFloat(entry.exportduty || entry.duty || '0') || 0;
+          const palletCharge = parseFloat(entry.palletcharge || '0') || 0;
+          const paymentTerms = entry.paymentterms || '';
+          const palletType = entry.pallettype || '';
+          const margin = parseFloat(entry.margin || '0') || 0;
+
+          // Check if contract with this number already exists — update instead
+          const existingContract = contracts.find(c => c.contractNumber === contractNumber);
+          if (existingContract) {
+            updatedNums.push(contractNumber);
+            setContracts(prev => prev.map(c => {
+              if (c.contractNumber !== contractNumber) return c;
+              const updatedVolume = contractVolume || c.contractVolume;
+              const updatedTaken = volumeTaken || c.volumeTaken;
+              return {
+                ...c,
+                customerNumber: customerNumber || c.customerNumber,
+                customerName: customerName || c.customerName,
+                contractVolume: updatedVolume,
+                volumeTaken: updatedTaken,
+                volumeOutstanding: updatedVolume - updatedTaken,
+                startDate: startDate || c.startDate,
+                endDate: endDate || c.endDate,
+                skuName: skuName || c.skuName,
+                origin: origin || c.origin,
+                destination: destination || c.destination,
+                finalPrice: finalPrice || c.finalPrice,
+                currency: entry.currency ? currency : c.currency,
+                notes: notes || c.notes,
+                shippingTerms: shippingTerms || c.shippingTerms,
+                fxRate: fxRate || c.fxRate,
+                rawPriceUsdMt: rawPriceUsdMt || c.rawPriceUsdMt,
+                deliveredFreight: deliveredFreight || c.deliveredFreight,
+                exportDuty: exportDuty || c.exportDuty,
+                palletCharge: palletCharge || c.palletCharge,
+                paymentTerms: paymentTerms || c.paymentTerms,
+                palletType: (palletType || c.palletType) as any,
+                margin: margin || c.margin,
+              };
+            }));
+            continue;
+          }
+
+          newContracts.push({
+            id: `CON-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            contractNumber,
+            customerNumber,
+            customerName,
+            contractVolume,
+            volumeTaken,
+            volumeOutstanding: contractVolume - volumeTaken,
+            startDate,
+            endDate,
+            skuName,
+            origin,
+            destination,
+            finalPrice,
+            currency,
+            notes: notes || undefined,
+            shippingTerms: shippingTerms || undefined,
+            fxRate: fxRate || undefined,
+            rawPriceUsdMt: rawPriceUsdMt || undefined,
+            deliveredFreight: deliveredFreight || undefined,
+            exportDuty: exportDuty || undefined,
+            palletCharge: palletCharge || undefined,
+            paymentTerms: paymentTerms || undefined,
+            palletType: (palletType || undefined) as any,
+            margin: margin || undefined,
+            active: true,
+          });
+        }
+
+        if (newContracts.length > 0) {
+          setContracts(prev => [...prev, ...newContracts]);
+        }
+        // Immediately sync to Firebase so imported data persists
+        if (newContracts.length > 0 || updatedNums.length > 0) {
+          setTimeout(async () => {
+            try {
+              let latestContracts: Contract[] = [];
+              setContracts(prev => { latestContracts = prev; return prev; });
+              await syncCollection(COLLECTIONS.contracts, latestContracts);
+              lastSyncedData.current.contracts = JSON.stringify(latestContracts);
+              setSyncStatus('synced');
+              setLastSynced(new Date());
+            } catch (e) { console.error('Contract sync failed:', e); }
+          }, 500);
+        }
+        const parts: string[] = [];
+        if (newContracts.length > 0) parts.push(`${newContracts.length} new contract${newContracts.length > 1 ? 's' : ''} imported`);
+        if (updatedNums.length > 0) parts.push(`${updatedNums.length} existing contract${updatedNums.length > 1 ? 's' : ''} updated`);
+        if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        if (parts.length > 0) {
+          alert(parts.join(', ') + '.');
+        } else {
+          alert('No contracts could be imported. The file may be empty or in an unexpected format.');
         }
       } catch (err) {
         alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -4721,6 +4880,23 @@ export default function App() {
               <h2 className="text-sm font-bold uppercase tracking-widest">Contract Management</h2>
               <span className="text-[10px] opacity-50 font-mono">{filteredContracts.length} records</span>
             </div>
+            <div className="flex gap-2">
+              <button onClick={() => {
+                  const tplHeaders = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodeURI(csvContent));
+                  link.setAttribute("download", "contract_template.csv");
+                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Template
+              </button>
+              <button onClick={() => contractFileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Upload size={12} /> Import CSV
+              </button>
+            </div>
           </div>
 
           <div className="px-6 pt-4">
@@ -5404,6 +5580,13 @@ export default function App() {
         type="file"
         ref={invoiceFileInputRef}
         onChange={handleImportInvoiceCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={contractFileInputRef}
+        onChange={handleImportContractCSV}
         accept=".csv"
         className="sr-only"
       />
