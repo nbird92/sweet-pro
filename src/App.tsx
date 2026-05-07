@@ -3145,7 +3145,9 @@ export default function App() {
                       {(() => {
                         const invContractNum = i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
                         const invContract = contracts.find(c => c.contractNumber === invContractNum);
-                        const pricePerMt = invContract?.finalPrice || (i.qty > 0 && i.amount ? i.amount / i.qty : 0);
+                        const ordTotalWt = linkedOrder ? linkedOrder.lineItems.reduce((sum, li) => sum + li.totalWeight, 0) : 0;
+                        const ordPricePerMt = invContract?.finalPrice || (ordTotalWt > 0 && linkedOrder?.amount ? linkedOrder.amount / ordTotalWt : 0);
+                        const pricePerMt = invContract?.finalPrice || (i.qty > 0 && i.amount ? i.amount / i.qty : 0) || ordPricePerMt;
                         return (
                           <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono">
                             {pricePerMt > 0 ? `$${pricePerMt.toFixed(2)}` : '—'}
