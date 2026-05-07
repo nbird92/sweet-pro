@@ -6669,7 +6669,7 @@ export default function App() {
 
                       const filteredBOLOrders = unscheduledOrders.filter(o => {
                         const matchesCustomer = !shipmentSearchCustomer || o.customer === shipmentSearchCustomer;
-                        const matchesBOL = !shipmentSearchBOL || o.bolNumber.toLowerCase().includes(shipmentSearchBOL.toLowerCase());
+                        const matchesBOL = !shipmentSearchBOL || o.bolNumber.toLowerCase().includes(shipmentSearchBOL.toLowerCase()) || (o.po || '').toLowerCase().includes(shipmentSearchBOL.toLowerCase());
                         return matchesCustomer && matchesBOL;
                       });
 
@@ -6723,17 +6723,18 @@ export default function App() {
                                 </select>
                               </div>
                               <div className="space-y-0.5">
-                                <label className="text-[10px] uppercase font-bold opacity-60">BOL Number</label>
+                                <label className="text-[10px] uppercase font-bold opacity-60">BOL / PO Number</label>
                                 <input
                                   type="text"
                                   value={shipmentSearchBOL}
                                   onChange={(e) => setShipmentSearchBOL(e.target.value)}
-                                  placeholder="Search BOL..."
+                                  placeholder="Search BOL or PO..."
                                   className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                                   list="bol-options"
                                 />
                                 <datalist id="bol-options">
-                                  {filteredBOLOrders.map(o => <option key={o.id} value={o.bolNumber} />)}
+                                  {unscheduledOrders.map(o => <option key={`bol-${o.id}`} value={o.bolNumber} />)}
+                                  {unscheduledOrders.filter(o => o.po).map(o => <option key={`po-${o.id}`} value={o.po} />)}
                                 </datalist>
                               </div>
                             </div>
