@@ -287,6 +287,133 @@ export default function App() {
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
   const contractFileInputRef = useRef<HTMLInputElement>(null);
+  const customerFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportCustomerCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows.');
+          return;
+        }
+        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        if (!csvHeaders.includes('name') && !csvHeaders.includes('customername')) {
+          alert(`CSV is missing a required "name" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+          return;
+        }
+
+        let workingCustomers = [...customers];
+        let newCount = 0;
+        let updatedCount = 0;
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+
+          const name = entry.name || entry.customername || '';
+          if (!name) { skippedRows++; continue; }
+
+          const id = entry.id || entry.customernumber || '';
+          const itasCustomerName = entry.itascustomername || entry.itas || '';
+          const defaultLocation = (entry.defaultlocation || entry.location || 'Hamilton') as 'Hamilton' | 'Vancouver';
+          const address = entry.address || '';
+          const city = entry.city || '';
+          const province = entry.province || entry.state || '';
+          const postalCode = entry.postalcode || entry.postal || entry.zip || '';
+          const defaultMargin = parseFloat(entry.defaultmargin || entry.margin || '0') || 0;
+          const contactEmail = entry.contactemail || entry.email || '';
+          const contactPhone = entry.contactphone || entry.phone || '';
+          const qaContractEmail = entry.qacontractemail || entry.qaemail || '';
+          const salesContactEmail = entry.salescontactemail || entry.salesemail || '';
+          const customerServiceEmail = entry.customerserviceemail || '';
+          const defaultPaymentTerms = entry.defaultpaymentterms || entry.paymentterms || '';
+          const defaultCarrierCode = entry.defaultcarriercode || entry.carriercode || '';
+          const notes = entry.notes || '';
+
+          // Match by name or ID
+          const existingIdx = workingCustomers.findIndex(c =>
+            c.name.toLowerCase() === name.toLowerCase() || (id && c.id === id)
+          );
+          if (existingIdx >= 0) {
+            updatedCount++;
+            const c = workingCustomers[existingIdx];
+            workingCustomers[existingIdx] = {
+              ...c,
+              name: name || c.name,
+              itasCustomerName: itasCustomerName || c.itasCustomerName,
+              defaultLocation: entry.defaultlocation || entry.location ? defaultLocation : c.defaultLocation,
+              address: address || c.address,
+              city: city || c.city,
+              province: province || c.province,
+              postalCode: postalCode || c.postalCode,
+              defaultMargin: defaultMargin || c.defaultMargin,
+              contactEmail: contactEmail || c.contactEmail,
+              contactPhone: contactPhone || c.contactPhone,
+              qaContractEmail: qaContractEmail || c.qaContractEmail,
+              salesContactEmail: salesContactEmail || c.salesContactEmail,
+              customerServiceEmail: customerServiceEmail || c.customerServiceEmail,
+              defaultPaymentTerms: defaultPaymentTerms || c.defaultPaymentTerms,
+              defaultCarrierCode: defaultCarrierCode || c.defaultCarrierCode,
+              notes: notes || c.notes,
+            };
+            continue;
+          }
+
+          newCount++;
+          workingCustomers.push({
+            id: id || `CUST-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            name,
+            itasCustomerName: itasCustomerName || undefined,
+            defaultLocation,
+            address: address || undefined,
+            city: city || undefined,
+            province: province || undefined,
+            postalCode: postalCode || undefined,
+            defaultMargin,
+            contactEmail: contactEmail || undefined,
+            contactPhone: contactPhone || undefined,
+            qaContractEmail: qaContractEmail || undefined,
+            salesContactEmail: salesContactEmail || undefined,
+            customerServiceEmail: customerServiceEmail || undefined,
+            defaultPaymentTerms: defaultPaymentTerms || undefined,
+            defaultCarrierCode: defaultCarrierCode || undefined,
+            notes: notes || undefined,
+          });
+        }
+
+        if (newCount > 0 || updatedCount > 0) {
+          setCustomers(workingCustomers);
+          syncCollection(COLLECTIONS.customers, workingCustomers).then(() => {
+            lastSyncedData.current.customers = JSON.stringify(workingCustomers);
+            setSyncStatus('synced');
+            setLastSynced(new Date());
+          }).catch(e => console.error('Customer sync failed:', e));
+        }
+        const parts: string[] = [];
+        if (newCount > 0) parts.push(`${newCount} new customer${newCount > 1 ? 's' : ''} imported`);
+        if (updatedCount > 0) parts.push(`${updatedCount} existing customer${updatedCount > 1 ? 's' : ''} updated`);
+        if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        if (parts.length > 0) {
+          alert(parts.join(', ') + '.');
+        } else {
+          alert('No customers could be imported. The file may be empty or in an unexpected format.');
+        }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
 
   const handleImportOrderCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -3002,12 +3129,36 @@ export default function App() {
               <h2 className="text-sm font-bold uppercase tracking-widest">Customer Directory</h2>
               <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{filteredCustomers.length} records</span>
             </div>
-            <button
-              onClick={addCustomer}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
-            >
-              <Plus size={14} /> Add Customer
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => {
+                  const tplHeaders = ['name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodeURI(csvContent));
+                  link.setAttribute("download", "customer_template.csv");
+                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Template
+              </button>
+              <button onClick={() => customerFileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Upload size={12} /> Import CSV
+              </button>
+              <button onClick={() => {
+                  const headers = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+                  exportCSV(headers, customers, 'customers_export.csv');
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Export
+              </button>
+              <button
+                onClick={addCustomer}
+                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              >
+                <Plus size={12} /> Add Customer
+              </button>
+            </div>
           </div>
 
           <div className="p-6 space-y-4">
@@ -5730,6 +5881,13 @@ export default function App() {
         type="file"
         ref={contractFileInputRef}
         onChange={handleImportContractCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={customerFileInputRef}
+        onChange={handleImportCustomerCSV}
         accept=".csv"
         className="sr-only"
       />
