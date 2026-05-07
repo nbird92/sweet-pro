@@ -473,6 +473,7 @@ export default function App() {
           const contractNumber = entry.contractnumber || entry.contract || '';
           const shippingTerms = entry.shippingterms || '';
           const location = entry.location || '';
+          const invoiceNumber = entry.invoicenumber || entry.invoice || '';
 
           // Check if invoice with this BOL already exists — update instead
           const existingInvoice = invoices.find(inv => inv.bolNumber === bolNumber);
@@ -482,6 +483,7 @@ export default function App() {
               if (inv.bolNumber !== bolNumber) return inv;
               return {
                 ...inv,
+                invoiceNumber: invoiceNumber || inv.invoiceNumber,
                 customer: customer || inv.customer,
                 product: product || inv.product,
                 po: po || inv.po,
@@ -501,6 +503,7 @@ export default function App() {
 
           newInvoices.push({
             id: `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            invoiceNumber: invoiceNumber || undefined,
             bolNumber,
             customer,
             product,
@@ -3051,7 +3054,7 @@ export default function App() {
             </div>
             <div className="flex gap-2">
               <button onClick={() => {
-                  const tplHeaders = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+                  const tplHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
                   const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
@@ -3087,12 +3090,14 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                  <SortableHeader label="Invoice No." sortKey="invoiceNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Date" sortKey="date" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer" sortKey="customer" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="PO No." sortKey="po" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Amount (CAD)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
@@ -3122,12 +3127,31 @@ export default function App() {
                   return (
                   <React.Fragment key={i.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
+                      <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={i.invoiceNumber || ''}
+                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, invoiceNumber: e.target.value } : inv))}
+                          placeholder="—"
+                          className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                        />
+                      </td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.product}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
+                      {(() => {
+                        const invContractNum = i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                        const invContract = contracts.find(c => c.contractNumber === invContractNum);
+                        const pricePerMt = invContract?.finalPrice || (i.qty > 0 && i.amount ? i.amount / i.qty : 0);
+                        return (
+                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono">
+                            {pricePerMt > 0 ? `$${pricePerMt.toFixed(2)}` : '—'}
+                          </td>
+                        );
+                      })()}
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         <select
@@ -3169,7 +3193,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(i.id) && (
                         <tr>
-                          <td colSpan={11} className="p-0">
+                          <td colSpan={13} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}

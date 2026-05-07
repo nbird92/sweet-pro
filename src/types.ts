@@ -298,6 +298,7 @@ export interface Transfer {
 
 export interface Invoice {
   id: string;
+  invoiceNumber?: string;
   bolNumber: string;
   customer: string;
   product: string;
