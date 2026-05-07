@@ -775,6 +775,11 @@ export default function App() {
             time = `${hour.toString().padStart(2, '0')}:${min}`;
           }
 
+          // Look up matching order by BOL to auto-fill missing fields
+          const bol = entry.bol || '';
+          const matchedOrder = bol ? orders.find(o => o.bolNumber === bol) : undefined;
+          const matchedLi = matchedOrder?.lineItems[0];
+
           newShipments.push({
             id: entry.id || `SHIP-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             week,
@@ -782,13 +787,13 @@ export default function App() {
             day,
             time,
             bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))?.bays[0] || ''),
-            customer: entry.customer || '',
-            product: entry.product || '',
-            contractNumber: entry.contractnumber || entry.contractNumber || '',
-            po: entry.po || '',
-            bol: entry.bol || '',
-            qty: parseFloat(entry.qty) || 0,
-            carrier: entry.carrier || '',
+            customer: entry.customer || matchedOrder?.customer || '',
+            product: entry.product || matchedLi?.productName || matchedOrder?.product || '',
+            contractNumber: entry.contractnumber || entry.contractNumber || matchedLi?.contractNumber || matchedOrder?.contractNumber || '',
+            po: entry.po || matchedOrder?.po || '',
+            bol,
+            qty: parseFloat(entry.qty) || matchedLi?.totalWeight || 0,
+            carrier: entry.carrier || matchedOrder?.carrier || '',
             arrive: entry.arrive || '',
             start: entry.start || '',
             out: entry.out || '',
@@ -802,7 +807,7 @@ export default function App() {
             deliveryDate: (() => {
               const dd = entry.deliverydate || entry.deliveryDate || '';
               const ddMatch = dd.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-              return ddMatch ? `${ddMatch[3]}-${ddMatch[1].padStart(2, '0')}-${ddMatch[2].padStart(2, '0')}` : dd;
+              return ddMatch ? `${ddMatch[3]}-${ddMatch[1].padStart(2, '0')}-${ddMatch[2].padStart(2, '0')}` : (dd || matchedOrder?.deliveryDate || '');
             })()
           });
         }
@@ -818,17 +823,20 @@ export default function App() {
             // Check if this slot already exists in working array
             const existingIdx = workingShipments.findIndex(ex => `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === key);
             if (existingIdx >= 0) {
-              // Merge missing info into existing record
+              // Merge missing info into existing record, also look up order by BOL
               const ex = workingShipments[existingIdx];
+              const mergedBol = s.bol || ex.bol;
+              const ord = mergedBol ? orders.find(o => o.bolNumber === mergedBol) : undefined;
+              const ordLi = ord?.lineItems[0];
               workingShipments[existingIdx] = {
                 ...ex,
-                customer: s.customer || ex.customer,
-                product: s.product || ex.product,
-                contractNumber: s.contractNumber || ex.contractNumber,
-                po: s.po || ex.po,
-                bol: s.bol || ex.bol,
-                qty: s.qty || ex.qty,
-                carrier: s.carrier || ex.carrier,
+                customer: s.customer || ex.customer || ord?.customer || '',
+                product: s.product || ex.product || ordLi?.productName || ord?.product || '',
+                contractNumber: s.contractNumber || ex.contractNumber || ordLi?.contractNumber || ord?.contractNumber || '',
+                po: s.po || ex.po || ord?.po || '',
+                bol: mergedBol || ex.bol,
+                qty: s.qty || ex.qty || ordLi?.totalWeight || 0,
+                carrier: s.carrier || ex.carrier || ord?.carrier || '',
                 arrive: s.arrive || ex.arrive,
                 start: s.start || ex.start,
                 out: s.out || ex.out,
@@ -838,7 +846,7 @@ export default function App() {
                 scaledQty: s.scaledQty || ex.scaledQty,
                 trailerNo: s.trailerNo || ex.trailerNo,
                 lotNumber: s.lotNumber || ex.lotNumber,
-                deliveryDate: s.deliveryDate || ex.deliveryDate,
+                deliveryDate: s.deliveryDate || ex.deliveryDate || ord?.deliveryDate || '',
               };
               updatedCount++;
               continue;
@@ -1362,6 +1370,48 @@ export default function App() {
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, qaTemplates, lastSynced, user]);
+
+  // Auto-fill missing shipment fields from matching orders by BOL number
+  const shipmentAutoFillRan = useRef(false);
+  useEffect(() => {
+    if (shipmentAutoFillRan.current) return;
+    if (orders.length === 0 || (hamiltonShipments.length === 0 && vancouverShipments.length === 0)) return;
+    shipmentAutoFillRan.current = true;
+
+    const fillFromOrders = (shipments: Shipment[]): { updated: Shipment[]; count: number } => {
+      let count = 0;
+      const updated = shipments.map(s => {
+        if (!s.bol) return s;
+        const order = orders.find(o => o.bolNumber === s.bol);
+        if (!order) return s;
+        const li = order.lineItems[0];
+        const needsFill =
+          !s.contractNumber || !s.customer || !s.product || !s.po || !s.carrier || !s.deliveryDate;
+        if (!needsFill) return s;
+        count++;
+        return {
+          ...s,
+          contractNumber: s.contractNumber || li?.contractNumber || order.contractNumber || s.contractNumber,
+          customer: s.customer || order.customer,
+          product: s.product || (li?.productName || order.product),
+          po: s.po || order.po,
+          carrier: s.carrier || order.carrier,
+          deliveryDate: s.deliveryDate || order.deliveryDate,
+        };
+      });
+      return { updated, count };
+    };
+
+    const ham = fillFromOrders(hamiltonShipments);
+    const van = fillFromOrders(vancouverShipments);
+    const totalFilled = ham.count + van.count;
+
+    if (totalFilled > 0) {
+      console.log(`Auto-filled ${totalFilled} shipment(s) from order data`);
+      if (ham.count > 0) setHamiltonShipments(ham.updated);
+      if (van.count > 0) setVancouverShipments(van.updated);
+    }
+  }, [orders, hamiltonShipments, vancouverShipments]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
