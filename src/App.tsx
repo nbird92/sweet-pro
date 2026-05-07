@@ -1559,6 +1559,27 @@ export default function App() {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedBays, setExpandedBays] = useState<Set<string>>(new Set());
 
+  // CSV export helper — escapes fields and triggers download
+  const exportCSV = useCallback((headers: string[], rows: Record<string, any>[], filename: string) => {
+    const escape = (val: any) => {
+      if (val == null) return '';
+      const str = String(val);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) return `"${str.replace(/"/g, '""')}"`;
+      return str;
+    };
+    const csvLines = [headers.join(',')];
+    rows.forEach(row => {
+      csvLines.push(headers.map(h => escape(row[h])).join(','));
+    });
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, []);
+
   const weeksList = useMemo(() => Array.from({ length: 52 }, (_, i) => `Week ${i + 1}`), []);
   const daysList = useMemo(() => ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], []);
   // Generate time slots for a location based on its appointment schedule settings
@@ -2747,6 +2768,13 @@ export default function App() {
                 className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
                 <Download size={12} /> Template
               </button>
+              <button onClick={() => {
+                  const headers = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
+                  exportCSV(headers, locationShipments, `${locationName.toLowerCase()}_shipments_export.csv`);
+                }}
+                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
+                <Download size={12} /> Export
+              </button>
               <button onClick={() => fileInputRef.current?.click()}
                 className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
                 <FileText size={12} /> Import CSV
@@ -3322,8 +3350,12 @@ export default function App() {
               <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Printer size={12} /> Batch Print
               </button>
-              <button className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
-                <Download size={12} /> Export All
+              <button onClick={() => {
+                  const headers = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+                  exportCSV(headers, invoices, 'invoices_export.csv');
+                }}
+                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
+                <Download size={12} /> Export
               </button>
             </div>
           </div>
@@ -3575,6 +3607,38 @@ export default function App() {
                 }}
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Download size={12} /> Template
+              </button>
+              <button onClick={() => {
+                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'pricePerMt', 'currency', 'carrier', 'status', 'location', 'shippingTerms', 'palletType', 'paymentTerms', 'splitNumber'];
+                  const rows = orders.map(o => {
+                    const li = o.lineItems[0];
+                    const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
+                    const contract = contracts.find(c => c.contractNumber === o.contractNumber);
+                    return {
+                      bolNumber: o.bolNumber,
+                      customer: o.customer,
+                      product: o.product || li?.productName || '',
+                      contractNumber: o.contractNumber || li?.contractNumber || '',
+                      po: o.po,
+                      date: o.date,
+                      shipmentDate: o.shipmentDate || '',
+                      deliveryDate: o.deliveryDate || '',
+                      qty: totalWeight,
+                      pricePerMt: contract?.finalPrice || (totalWeight > 0 ? o.amount / totalWeight : 0),
+                      currency: contract?.currency || o.currency || '',
+                      carrier: o.carrier,
+                      status: o.status,
+                      location: o.location || '',
+                      shippingTerms: o.shippingTerms || '',
+                      palletType: o.palletType || '',
+                      paymentTerms: contract?.paymentTerms || '',
+                      splitNumber: o.splitNumber || '',
+                    };
+                  });
+                  exportCSV(headers, rows, 'orders_export.csv');
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Export
               </button>
               <button onClick={() => orderFileInputRef.current?.click()}
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
@@ -4956,6 +5020,20 @@ export default function App() {
                 }}
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Download size={12} /> Template
+              </button>
+              <button onClick={() => {
+                  const headers = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+                  const rows = contracts.map(c => ({
+                    ...c,
+                    volumeOutstanding: undefined,
+                    id: undefined,
+                    active: undefined,
+                    contractLines: undefined,
+                  }));
+                  exportCSV(headers, rows, 'contracts_export.csv');
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Export
               </button>
               <button onClick={() => contractFileInputRef.current?.click()}
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
