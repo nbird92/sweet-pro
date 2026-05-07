@@ -332,6 +332,7 @@ export default function App() {
           const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(entry.amount || entry.total || '0') || 0);
           const bolNumber = entry.bolnumber || entry.bol || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const splitNumber = entry.splitnumber || entry.split || '';
+          const currency = entry.currency || '';
 
           // Check if order with this BOL already exists — update it instead of duplicating
           const existingOrder = orders.find(o => o.bolNumber === bolNumber);
@@ -354,6 +355,7 @@ export default function App() {
                 product: product || o.product,
                 contractNumber: contractNumber || o.contractNumber,
                 amount: amount || o.amount,
+                currency: currency || o.currency,
                 splitNumber: splitNumber || o.splitNumber,
                 carrier: entry.carrier || o.carrier,
                 shippingTerms: (entry.shippingterms || o.shippingTerms) as any,
@@ -390,6 +392,7 @@ export default function App() {
             status: (entry.status === 'Confirmed' || entry.status === 'Cancelled') ? entry.status : 'Open',
             lineItems: [lineItem],
             amount,
+            currency: currency || undefined,
             carrier: entry.carrier || '',
             shippingTerms: (entry.shippingterms || '') as any || '',
             location: entry.location || entry.origin || '',
@@ -3220,7 +3223,7 @@ export default function App() {
                               {ordContract?.finalPrice ? `$${ordContract.finalPrice.toFixed(2)}` : totalWeight > 0 && ord.amount ? `$${(ord.amount / totalWeight).toFixed(2)}` : '—'}
                             </td>
                             <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
-                              {ordContract?.currency || '—'}
+                              {ordContract?.currency || ord.currency || '—'}
                             </td>
                           </>);
                         })()}

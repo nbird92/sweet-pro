@@ -345,6 +345,7 @@ export interface Order {
   shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
   location?: string;       // shipping origin from contract
   splitNumber?: string;    // user-entered split number
+  currency?: string;       // currency from CSV or contract (e.g. "CAD", "USD")
   palletType?: 'CHEP' | 'One Way' | ''; // from contract
   hidden?: boolean;        // hide instead of delete for confirmed orders (BOL permanently reserved)
 }
