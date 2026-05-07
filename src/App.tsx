@@ -45,7 +45,8 @@ import {
   Minimize2,
   Maximize2,
   Minus,
-  Power
+  Power,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -284,6 +285,7 @@ export default function App() {
   const [vancouverShipments, setVancouverShipments] = useState<Shipment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportOrderCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -412,6 +414,122 @@ export default function App() {
           alert(parts.join(', ') + '.');
         } else {
           alert('No orders could be imported. The file may be empty or in an unexpected format.');
+        }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  const handleImportInvoiceCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows.');
+          return;
+        }
+        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        if (!csvHeaders.includes('bolnumber') && !csvHeaders.includes('bol')) {
+          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+          return;
+        }
+
+        const newInvoices: Invoice[] = [];
+        const updatedBols: string[] = [];
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+
+          const bolNumber = entry.bolnumber || entry.bol || '';
+          if (!bolNumber) { skippedRows++; continue; }
+
+          // Normalize dates
+          const normalizeDate = (d: string) => {
+            const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+          };
+          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
+          const dueDate = normalizeDate(entry.duedate || entry.due || '');
+          const customer = entry.customer || '';
+          const product = entry.product || '';
+          const po = entry.po || entry.ponumber || '';
+          const qty = parseFloat(entry.qty || entry.quantity || '0') || 0;
+          const amount = parseFloat(entry.amount || entry.total || '0') || 0;
+          const carrier = entry.carrier || '';
+          const status = entry.status || 'Pending';
+          const splitNo = entry.splitno || entry.split || '';
+          const contractNumber = entry.contractnumber || entry.contract || '';
+          const shippingTerms = entry.shippingterms || '';
+          const location = entry.location || '';
+
+          // Check if invoice with this BOL already exists — update instead
+          const existingInvoice = invoices.find(inv => inv.bolNumber === bolNumber);
+          if (existingInvoice) {
+            updatedBols.push(bolNumber);
+            setInvoices(prev => prev.map(inv => {
+              if (inv.bolNumber !== bolNumber) return inv;
+              return {
+                ...inv,
+                customer: customer || inv.customer,
+                product: product || inv.product,
+                po: po || inv.po,
+                qty: qty || inv.qty,
+                amount: amount || inv.amount,
+                carrier: carrier || inv.carrier,
+                status: entry.status ? status : inv.status,
+                splitNo: splitNo || inv.splitNo,
+                dueDate: dueDate || inv.dueDate,
+                contractNumber: contractNumber || inv.contractNumber,
+                shippingTerms: shippingTerms || inv.shippingTerms,
+                location: location || inv.location,
+              };
+            }));
+            continue;
+          }
+
+          newInvoices.push({
+            id: `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            bolNumber,
+            customer,
+            product,
+            po,
+            qty,
+            carrier,
+            amount,
+            shipmentId: '',
+            date,
+            status,
+            splitNo: splitNo || undefined,
+            dueDate: dueDate || undefined,
+            contractNumber: contractNumber || undefined,
+            shippingTerms: shippingTerms || undefined,
+            location: location || undefined,
+          });
+        }
+
+        if (newInvoices.length > 0) {
+          setInvoices(prev => [...prev, ...newInvoices]);
+        }
+        const parts: string[] = [];
+        if (newInvoices.length > 0) parts.push(`${newInvoices.length} new invoice${newInvoices.length > 1 ? 's' : ''} imported`);
+        if (updatedBols.length > 0) parts.push(`${updatedBols.length} existing invoice${updatedBols.length > 1 ? 's' : ''} updated`);
+        if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        if (parts.length > 0) {
+          alert(parts.join(', ') + '.');
+        } else {
+          alert('No invoices could be imported. The file may be empty or in an unexpected format.');
         }
       } catch (err) {
         alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -2932,6 +3050,21 @@ export default function App() {
               <span className="text-[10px] opacity-50 font-mono">{filteredInvoices.length} records</span>
             </div>
             <div className="flex gap-2">
+              <button onClick={() => {
+                  const tplHeaders = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
+                  const link = document.createElement("a");
+                  link.setAttribute("href", encodeURI(csvContent));
+                  link.setAttribute("download", "invoice_template.csv");
+                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                }}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Download size={12} /> Template
+              </button>
+              <button onClick={() => invoiceFileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+                <Upload size={12} /> Import CSV
+              </button>
               <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Printer size={12} /> Batch Print
               </button>
@@ -5211,6 +5344,13 @@ export default function App() {
         type="file"
         ref={orderFileInputRef}
         onChange={handleImportOrderCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={invoiceFileInputRef}
+        onChange={handleImportInvoiceCSV}
         accept=".csv"
         className="sr-only"
       />
