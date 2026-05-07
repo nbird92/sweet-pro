@@ -801,12 +801,28 @@ export default function App() {
         }
 
         if (newShipments.length > 0) {
-          if (activePage === 'Hamilton Shipments') {
-            setHamiltonShipments(prev => [...prev, ...newShipments]);
-          } else {
-            setVancouverShipments(prev => [...prev, ...newShipments]);
+          // Deduplicate: only import shipments whose week+day+time+bay slot is not already taken
+          const existingShipments = activePage === 'Hamilton Shipments' ? hamiltonShipments : vancouverShipments;
+          const existingSlots = new Set(existingShipments.map(s => `${s.week}|${s.day}|${s.time}|${s.bay}`));
+          const uniqueNew: Shipment[] = [];
+          const importSlots = new Set<string>();
+          let dupeCount = 0;
+          for (const s of newShipments) {
+            const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
+            if (existingSlots.has(key) || importSlots.has(key)) { dupeCount++; continue; }
+            importSlots.add(key);
+            uniqueNew.push(s);
           }
-          alert(`Successfully imported ${newShipments.length} shipment${newShipments.length > 1 ? 's' : ''}.${skippedRows > 0 ? ` (${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped due to missing/invalid date)` : ''}`);
+          if (activePage === 'Hamilton Shipments') {
+            setHamiltonShipments(prev => [...prev, ...uniqueNew]);
+          } else {
+            setVancouverShipments(prev => [...prev, ...uniqueNew]);
+          }
+          const parts: string[] = [];
+          if (uniqueNew.length > 0) parts.push(`${uniqueNew.length} shipment${uniqueNew.length > 1 ? 's' : ''} imported`);
+          if (dupeCount > 0) parts.push(`${dupeCount} duplicate${dupeCount > 1 ? 's' : ''} skipped`);
+          if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (missing/invalid date)`);
+          alert(parts.join(', ') + '.');
         } else {
           alert(`No shipments could be imported from the CSV.\n\n${skippedRows > 0 ? `${skippedRows} row(s) were skipped because they had missing or invalid dates.` : 'The file may be empty or in an unexpected format.'}\n\nUse the Template button to download the expected format.`);
         }
@@ -1083,9 +1099,32 @@ export default function App() {
           : [];
         const vancouver = mapped.filter((s: any) => vancBays.some((b: string) => s.bay === b));
         const hamilton = mapped.filter((s: any) => !vancBays.some((b: string) => s.bay === b));
-        setHamiltonShipments(hamilton);
-        setVancouverShipments(vancouver);
-        lastSyncedData.current.shipments = JSON.stringify(mapped);
+        // Deduplicate: one shipment per week+day+time+bay, keep first occurrence
+        const dedup = (arr: Shipment[]) => {
+          const seen = new Set<string>();
+          return arr.filter(s => {
+            const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        };
+        const dedupHamilton = dedup(hamilton);
+        const dedupVancouver = dedup(vancouver);
+        const totalRemoved = (hamilton.length - dedupHamilton.length) + (vancouver.length - dedupVancouver.length);
+        setHamiltonShipments(dedupHamilton);
+        setVancouverShipments(dedupVancouver);
+        const dedupAll = [...dedupHamilton, ...dedupVancouver];
+        // If duplicates were removed, sync cleaned data to Firebase
+        if (totalRemoved > 0) {
+          console.log(`Removed ${totalRemoved} duplicate shipment(s)`);
+          syncCollection(COLLECTIONS.shipments, dedupAll).then(() => {
+            lastSyncedData.current.shipments = JSON.stringify(dedupAll);
+            setSyncStatus('synced');
+            setLastSynced(new Date());
+          }).catch(e => console.error('Shipment dedup sync failed:', e));
+        }
+        lastSyncedData.current.shipments = JSON.stringify(dedupAll);
       }
       if (data.locations?.length) {
         const mapped = data.locations.map((l: any, idx: number) => ({
