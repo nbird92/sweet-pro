@@ -8460,9 +8460,19 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">ITAS Customer Name</label>
+                    <input
+                      type="text"
+                      value={editingCustomer.itasCustomerName || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, itasCustomerName: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="ITAS customer name..."
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
-                    <select 
-                      value={editingCustomer.defaultLocation} 
+                    <select
+                      value={editingCustomer.defaultLocation}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultLocation: e.target.value as 'Hamilton' | 'Vancouver' })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >

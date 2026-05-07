@@ -60,6 +60,7 @@ export interface Customer {
   salespersonId?: string;
   defaultCarrierCode?: string;
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
+  itasCustomerName?: string;
 }
 
 export interface Person {
