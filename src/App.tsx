@@ -676,6 +676,7 @@ export default function App() {
   const [emailSubject, setEmailSubject] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+  const [orderSortConfig, setOrderSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'shipmentDate', direction: 'asc' });
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
@@ -1708,6 +1709,15 @@ export default function App() {
   const handleSort = (key: string) => {
     setSortConfig(prev => {
       if (prev?.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const handleOrderSort = (key: string) => {
+    setOrderSortConfig(prev => {
+      if (prev.key === key) {
         return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
       }
       return { key, direction: 'asc' };
@@ -3113,6 +3123,27 @@ export default function App() {
           ord.po.toLowerCase().includes(searchTerm.toLowerCase()) ||
           (ord.carrier || '').toLowerCase().includes(searchTerm.toLowerCase());
         return matchesSearch;
+      }).sort((a, b) => {
+        const key = orderSortConfig.key;
+        let aVal: any = '';
+        let bVal: any = '';
+        if (key === 'totalWeight') {
+          aVal = a.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
+          bVal = b.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
+        } else if (key === 'pricePerMt') {
+          const aContract = contracts.find(c => c.contractNumber === (a.contractNumber || a.lineItems.map(li => li.contractNumber).filter(Boolean)[0]));
+          const bContract = contracts.find(c => c.contractNumber === (b.contractNumber || b.lineItems.map(li => li.contractNumber).filter(Boolean)[0]));
+          const aTotalWt = a.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
+          const bTotalWt = b.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
+          aVal = aContract?.finalPrice || (aTotalWt > 0 && a.amount ? a.amount / aTotalWt : 0);
+          bVal = bContract?.finalPrice || (bTotalWt > 0 && b.amount ? b.amount / bTotalWt : 0);
+        } else {
+          aVal = (a as any)[key] ?? '';
+          bVal = (b as any)[key] ?? '';
+        }
+        if (aVal < bVal) return orderSortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return orderSortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
       });
 
       return (
@@ -3174,21 +3205,21 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <th className="p-3 border-r border-[#E4E3E0]/20">BOL Number</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Customer</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Product</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Contract #</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Total Weight (KG)</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">PO #</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Shipment Date</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Delivery Date</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Carrier</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Price/MT</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Currency</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Split No.</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Appointment</th>
+                  <SortableHeader label="BOL Number" sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Customer" sortKey="customer" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="PO #" sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Delivery Date" sortKey="deliveryDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Carrier" sortKey="carrier" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Currency" sortKey="currency" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Status" sortKey="status" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Location" sortKey="location" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Split No." sortKey="splitNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Appointment" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
