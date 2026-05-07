@@ -2323,8 +2323,8 @@ export default function App() {
       });
       filteredShipments.forEach(s => {
         if (groupedData[s.week]?.[s.bay]?.[s.day]) {
-          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [];
-          groupedData[s.week][s.bay][s.day][s.time].push(s);
+          // One shipment per time slot per day per bay — skip duplicates
+          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [s];
         }
       });
 
@@ -2570,8 +2570,8 @@ export default function App() {
       });
       filteredShipments.forEach(s => {
         if (groupedData[s.week]?.[s.bay]?.[s.day]) {
-          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [];
-          groupedData[s.week][s.bay][s.day][s.time].push(s);
+          // One shipment per time slot per day per bay — skip duplicates
+          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [s];
         }
       });
 
@@ -2761,7 +2761,8 @@ export default function App() {
                                                         </tr>
                                                       );
                                                     }
-                                                    return shipments.map(s => (
+                                                    const s = shipments[0];
+                                                    return (
                                                       <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${!isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
@@ -2799,7 +2800,7 @@ export default function App() {
                                                           </div>
                                                         </td>
                                                       </tr>
-                                                    ));
+                                                    );
                                                   })}
                                                 </tbody>
                                               </table>
