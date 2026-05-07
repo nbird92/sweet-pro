@@ -354,8 +354,14 @@ export default function App() {
             } : li);
             workingOrders[existingIdx] = {
               ...o,
+              customer: entry.customer || o.customer,
               product: product || o.product,
               contractNumber: contractNumber || o.contractNumber,
+              po: (entry.po || entry.ponumber) || o.po,
+              date: date || o.date,
+              shipmentDate: shipmentDate || o.shipmentDate,
+              deliveryDate: deliveryDate || o.deliveryDate,
+              status: entry.status ? (entry.status as any) : o.status,
               amount: amount || o.amount,
               currency: currency || o.currency,
               splitNumber: splitNumber || o.splitNumber,
@@ -493,6 +499,7 @@ export default function App() {
               customer: customer || inv.customer,
               product: product || inv.product,
               po: po || inv.po,
+              date: date || inv.date,
               qty: qty || inv.qty,
               amount: amount || inv.amount,
               carrier: carrier || inv.carrier,
@@ -801,26 +808,66 @@ export default function App() {
         }
 
         if (newShipments.length > 0) {
-          // Deduplicate: only import shipments whose week+day+time+bay slot is not already taken
-          const existingShipments = activePage === 'Hamilton Shipments' ? hamiltonShipments : vancouverShipments;
-          const existingSlots = new Set(existingShipments.map(s => `${s.week}|${s.day}|${s.time}|${s.bay}`));
-          const uniqueNew: Shipment[] = [];
+          // Merge into existing: update missing fields on existing records, add truly new ones
+          let workingShipments = [...(activePage === 'Hamilton Shipments' ? hamiltonShipments : vancouverShipments)];
           const importSlots = new Set<string>();
-          let dupeCount = 0;
+          let newCount = 0;
+          let updatedCount = 0;
           for (const s of newShipments) {
             const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
-            if (existingSlots.has(key) || importSlots.has(key)) { dupeCount++; continue; }
+            // Check if this slot already exists in working array
+            const existingIdx = workingShipments.findIndex(ex => `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === key);
+            if (existingIdx >= 0) {
+              // Merge missing info into existing record
+              const ex = workingShipments[existingIdx];
+              workingShipments[existingIdx] = {
+                ...ex,
+                customer: s.customer || ex.customer,
+                product: s.product || ex.product,
+                contractNumber: s.contractNumber || ex.contractNumber,
+                po: s.po || ex.po,
+                bol: s.bol || ex.bol,
+                qty: s.qty || ex.qty,
+                carrier: s.carrier || ex.carrier,
+                arrive: s.arrive || ex.arrive,
+                start: s.start || ex.start,
+                out: s.out || ex.out,
+                status: s.status !== 'Confirmed' ? s.status : ex.status || s.status,
+                notes: s.notes || ex.notes,
+                color: s.color || ex.color,
+                scaledQty: s.scaledQty || ex.scaledQty,
+                trailerNo: s.trailerNo || ex.trailerNo,
+                lotNumber: s.lotNumber || ex.lotNumber,
+                deliveryDate: s.deliveryDate || ex.deliveryDate,
+              };
+              updatedCount++;
+              continue;
+            }
+            // Skip duplicates within the same import batch
+            if (importSlots.has(key)) continue;
             importSlots.add(key);
-            uniqueNew.push(s);
+            newCount++;
+            workingShipments.push(s);
           }
           if (activePage === 'Hamilton Shipments') {
-            setHamiltonShipments(prev => [...prev, ...uniqueNew]);
+            setHamiltonShipments(workingShipments);
           } else {
-            setVancouverShipments(prev => [...prev, ...uniqueNew]);
+            setVancouverShipments(workingShipments);
+          }
+          // Sync merged data to Firebase
+          if (newCount > 0 || updatedCount > 0) {
+            const allShipments = activePage === 'Hamilton Shipments'
+              ? [...workingShipments, ...vancouverShipments]
+              : [...hamiltonShipments, ...workingShipments];
+            syncCollection(COLLECTIONS.shipments, allShipments).then(() => {
+              lastSyncedData.current.shipments = JSON.stringify(allShipments);
+              setSyncStatus('synced');
+              setLastSynced(new Date());
+            }).catch(e => console.error('Shipment sync failed:', e));
           }
           const parts: string[] = [];
-          if (uniqueNew.length > 0) parts.push(`${uniqueNew.length} shipment${uniqueNew.length > 1 ? 's' : ''} imported`);
-          if (dupeCount > 0) parts.push(`${dupeCount} duplicate${dupeCount > 1 ? 's' : ''} skipped`);
+          if (newCount > 0) parts.push(`${newCount} new shipment${newCount > 1 ? 's' : ''} imported`);
+          if (updatedCount > 0) parts.push(`${updatedCount} existing shipment${updatedCount > 1 ? 's' : ''} updated`);
           if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (missing/invalid date)`);
           alert(parts.join(', ') + '.');
         } else {
