@@ -2469,33 +2469,50 @@ export default function App() {
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {locationTimeSlots.map(slot => {
-                                          return (
-                                            <tr key={slot} className="border-b border-[#141414]/5 hover:bg-[#F5F5F5] transition-colors">
-                                              <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap">{slot}</td>
-                                              {locationBays.map(bay => {
-                                                const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
-                                                const s = shipments[0];
-                                                if (!s) {
-                                                  return bayColumns.map((col, ci) => (
-                                                    <td key={`${bay}-${slot}-${ci}`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 opacity-15">—</td>
-                                                  ));
-                                                }
-                                                return [
-                                                  <td key={`${bay}-${slot}-cust`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
-                                                  <td key={`${bay}-${slot}-prod`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
-                                                  <td key={`${bay}-${slot}-po`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
-                                                  <td key={`${bay}-${slot}-bol`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
-                                                  <td key={`${bay}-${slot}-qty`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
-                                                  <td key={`${bay}-${slot}-car`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
-                                                  <td key={`${bay}-${slot}-arr`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
-                                                  <td key={`${bay}-${slot}-srt`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
-                                                  <td key={`${bay}-${slot}-out`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
-                                                ];
-                                              })}
-                                            </tr>
-                                          );
-                                        })}
+                                        {(() => {
+                                          // Merge standard slots with non-standard imported times across all bays
+                                          const nonStdTimes = new Set<string>();
+                                          locationBays.forEach(b => {
+                                            const dayData = groupedData[week]?.[b]?.[day] || {};
+                                            Object.keys(dayData).forEach(t => {
+                                              if (!locationTimeSlots.includes(t) && dayData[t]?.length > 0) nonStdTimes.add(t);
+                                            });
+                                          });
+                                          const merged = [...locationTimeSlots, ...nonStdTimes].sort();
+                                          return merged.map(slot => {
+                                            const isStd = locationTimeSlots.includes(slot);
+                                            // Skip non-standard slots that have no shipments in any bay
+                                            if (!isStd) {
+                                              const hasAny = locationBays.some(b => (groupedData[week]?.[b]?.[day]?.[slot] || []).length > 0);
+                                              if (!hasAny) return null;
+                                            }
+                                            return (
+                                              <tr key={slot} className={`border-b border-[#141414]/5 transition-colors ${!isStd ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-[#F5F5F5]'}`}>
+                                                <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap ${!isStd ? 'text-amber-700' : ''}`}>{slot}</td>
+                                                {locationBays.map(bay => {
+                                                  const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
+                                                  const s = shipments[0];
+                                                  if (!s) {
+                                                    return bayColumns.map((col, ci) => (
+                                                      <td key={`${bay}-${slot}-${ci}`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 opacity-15">—</td>
+                                                    ));
+                                                  }
+                                                  return [
+                                                    <td key={`${bay}-${slot}-cust`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
+                                                    <td key={`${bay}-${slot}-prod`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
+                                                    <td key={`${bay}-${slot}-po`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
+                                                    <td key={`${bay}-${slot}-bol`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
+                                                    <td key={`${bay}-${slot}-qty`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
+                                                    <td key={`${bay}-${slot}-car`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
+                                                    <td key={`${bay}-${slot}-arr`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
+                                                    <td key={`${bay}-${slot}-srt`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
+                                                    <td key={`${bay}-${slot}-out`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
+                                                  ];
+                                                })}
+                                              </tr>
+                                            );
+                                          });
+                                        })()}
                                       </tbody>
                                     </table>
                                   </div>
@@ -2668,11 +2685,12 @@ export default function App() {
                                       const displayDate = formatDateMMM_DD(dateStr);
                                       const isToday = isCurrentWk && day === currentDay;
 
-                                      // Get all shipments for this day (including outside 6-18 range)
+                                      // Get all shipments for this day (including non-standard times)
                                       const dayShipments = groupedData[week]?.[bay]?.[day] || {};
                                       const allDayTimes = Object.keys(dayShipments).filter(t => dayShipments[t]?.length > 0);
-                                      // Times outside display range that have shipments
-                                      const outsideRangeTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
+                                      // Merge standard slots with any non-standard times that have shipments
+                                      const nonStandardTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
+                                      const mergedTimeSlots = [...locationTimeSlots, ...nonStandardTimes].sort();
                                       const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
 
                                       return (
@@ -2718,44 +2736,12 @@ export default function App() {
                                                   </tr>
                                                 </thead>
                                                 <tbody>
-                                                  {/* Out-of-range shipments (before schedule start) */}
-                                                  {outsideRangeTimes.filter(t => t < locStartTime).sort().map(slot => (
-                                                    dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
-                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
-                                                          <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
-                                                          </select>
-                                                        </td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
-                                                          <div className="flex gap-0.5">
-                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
-                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
-                                                          </div>
-                                                        </td>
-                                                      </tr>
-                                                    ))
-                                                  ))}
-                                                  {/* Standard time slots from location schedule */}
-                                                  {locationTimeSlots.map(slot => {
+                                                  {/* All time slots: standard + non-standard imported times, sorted chronologically */}
+                                                  {mergedTimeSlots.map(slot => {
+                                                    const isStandardSlot = locationTimeSlots.includes(slot);
                                                     const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
+                                                    // Non-standard slot with no shipments: skip (only shows when it has data)
+                                                    if (!isStandardSlot && shipments.length === 0) return null;
                                                     if (shipments.length === 0) {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
@@ -2776,8 +2762,8 @@ export default function App() {
                                                       );
                                                     }
                                                     return shipments.map(s => (
-                                                      <tr key={s.id} className="hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
-                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
+                                                      <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${!isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
+                                                        <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
@@ -2815,41 +2801,6 @@ export default function App() {
                                                       </tr>
                                                     ));
                                                   })}
-                                                  {/* Out-of-range shipments (after schedule end) */}
-                                                  {outsideRangeTimes.filter(t => t >= locEndTime).sort().map(slot => (
-                                                    dayShipments[slot]?.map(s => (
-                                                      <tr key={s.id} className="hover:bg-amber-50 transition-colors border-b border-[#141414]/5 bg-amber-50/50 cursor-pointer" style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
-                                                        <td className="px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5">{slot}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
-                                                          <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
-                                                          </select>
-                                                        </td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
-                                                        <td className="px-1 py-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
-                                                          <div className="flex gap-0.5">
-                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
-                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
-                                                          </div>
-                                                        </td>
-                                                      </tr>
-                                                    ))
-                                                  ))}
                                                 </tbody>
                                               </table>
                                             </div>
