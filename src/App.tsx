@@ -5235,6 +5235,7 @@ export default function App() {
                   <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
+                  <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
                   <SortableHeader label="FX Rate" sortKey="fxRate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="#11 Raw (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
@@ -5257,6 +5258,7 @@ export default function App() {
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${(c.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
@@ -5302,7 +5304,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={16} className="p-0">
+                          <td colSpan={17} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
