@@ -307,6 +307,7 @@ export default function App() {
         }
 
         const newOrders: Order[] = [];
+        const updatedBols: string[] = [];
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
@@ -331,6 +332,38 @@ export default function App() {
           const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(entry.amount || entry.total || '0') || 0);
           const bolNumber = entry.bolnumber || entry.bol || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const splitNumber = entry.splitnumber || entry.split || '';
+
+          // Check if order with this BOL already exists — update it instead of duplicating
+          const existingOrder = orders.find(o => o.bolNumber === bolNumber);
+          if (existingOrder) {
+            updatedBols.push(bolNumber);
+            setOrders(prev => prev.map(o => {
+              if (o.bolNumber !== bolNumber) return o;
+              const updatedLineItems = o.lineItems.map((li, idx) => idx === 0 ? {
+                ...li,
+                productName: product || li.productName,
+                qty: qty || li.qty,
+                contractNumber: contractNumber || li.contractNumber,
+                totalWeight: qty || li.totalWeight,
+                unitAmount: amount > 0 ? amount / (qty || 1) : li.unitAmount,
+                mtAmount: amount > 0 ? amount / (qty || 1) : li.mtAmount,
+                lineAmount: amount || li.lineAmount
+              } : li);
+              return {
+                ...o,
+                product: product || o.product,
+                contractNumber: contractNumber || o.contractNumber,
+                amount: amount || o.amount,
+                splitNumber: splitNumber || o.splitNumber,
+                carrier: entry.carrier || o.carrier,
+                shippingTerms: (entry.shippingterms || o.shippingTerms) as any,
+                location: entry.location || entry.origin || o.location,
+                palletType: (entry.pallettype || o.palletType) as any,
+                lineItems: updatedLineItems,
+              };
+            }));
+            continue;
+          }
 
           const lineItem: OrderLineItem = {
             id: `LI-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -367,9 +400,15 @@ export default function App() {
 
         if (newOrders.length > 0) {
           setOrders(prev => [...prev, ...newOrders]);
-          alert(`Successfully imported ${newOrders.length} order${newOrders.length > 1 ? 's' : ''}.${skippedRows > 0 ? ` (${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped)` : ''}`);
+        }
+        const parts: string[] = [];
+        if (newOrders.length > 0) parts.push(`${newOrders.length} new order${newOrders.length > 1 ? 's' : ''} imported`);
+        if (updatedBols.length > 0) parts.push(`${updatedBols.length} existing order${updatedBols.length > 1 ? 's' : ''} updated`);
+        if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        if (parts.length > 0) {
+          alert(parts.join(', ') + '.');
         } else {
-          alert(`No orders could be imported.\n\n${skippedRows > 0 ? `${skippedRows} row(s) skipped due to missing customer.` : 'The file may be empty or in an unexpected format.'}`);
+          alert('No orders could be imported. The file may be empty or in an unexpected format.');
         }
       } catch (err) {
         alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
