@@ -2490,6 +2490,17 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
+                  {sortedWeeks.length > 0 && (() => {
+                    const grandVolume = sortedWeeks.reduce((sum, w) => sum + weeklyTotals[w].volume, 0);
+                    const grandTolling = sortedWeeks.reduce((sum, w) => sum + weeklyTotals[w].tolling, 0);
+                    return (
+                      <tr className="bg-[#141414] text-[#E4E3E0]">
+                        <td className="p-4 text-xs font-bold uppercase tracking-wider">Grand Total</td>
+                        <td className="p-4 text-xs font-bold">{grandVolume.toLocaleString()} MT</td>
+                        <td className="p-4 text-xs font-bold">CAD ${grandTolling.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })()}
                   {sortedWeeks.map(week => (
                     <tr key={week} className="hover:bg-[#F9F9F9]">
                       <td className="p-4 text-xs font-bold">{week}</td>
