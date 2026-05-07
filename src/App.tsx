@@ -406,6 +406,19 @@ export default function App() {
         if (newOrders.length > 0) {
           setOrders(prev => [...prev, ...newOrders]);
         }
+        // Immediately sync to Firebase so imported data persists
+        if (newOrders.length > 0 || updatedBols.length > 0) {
+          setTimeout(async () => {
+            try {
+              let latestOrders: Order[] = [];
+              setOrders(prev => { latestOrders = prev; return prev; });
+              await syncCollection(COLLECTIONS.orders, latestOrders);
+              lastSyncedData.current.orders = JSON.stringify(latestOrders);
+              setSyncStatus('synced');
+              setLastSynced(new Date());
+            } catch (e) { console.error('Order sync failed:', e); }
+          }, 500);
+        }
         const parts: string[] = [];
         if (newOrders.length > 0) parts.push(`${newOrders.length} new order${newOrders.length > 1 ? 's' : ''} imported`);
         if (updatedBols.length > 0) parts.push(`${updatedBols.length} existing order${updatedBols.length > 1 ? 's' : ''} updated`);
@@ -524,6 +537,20 @@ export default function App() {
 
         if (newInvoices.length > 0) {
           setInvoices(prev => [...prev, ...newInvoices]);
+        }
+        // Immediately sync to Firebase so imported data persists
+        if (newInvoices.length > 0 || updatedBols.length > 0) {
+          setTimeout(async () => {
+            try {
+              // Re-read latest state via functional update trick
+              let latestInvoices: Invoice[] = [];
+              setInvoices(prev => { latestInvoices = prev; return prev; });
+              await syncCollection(COLLECTIONS.invoices, latestInvoices);
+              lastSyncedData.current.invoices = JSON.stringify(latestInvoices);
+              setSyncStatus('synced');
+              setLastSynced(new Date());
+            } catch (e) { console.error('Invoice sync failed:', e); }
+          }, 500);
         }
         const parts: string[] = [];
         if (newInvoices.length > 0) parts.push(`${newInvoices.length} new invoice${newInvoices.length > 1 ? 's' : ''} imported`);
