@@ -58,6 +58,7 @@ import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN,
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
+import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
@@ -2382,6 +2383,7 @@ export default function App() {
     { name: 'Hamilton Shipments', icon: Calendar },
     { name: 'Vancouver Shipments', icon: Calendar },
     { name: 'Customers', icon: Users },
+    { name: 'Sales Stats', icon: TrendingUp },
     { name: 'Supply Chain', icon: Truck },
     { name: 'Contracts', icon: FileText },
     { name: 'Transfers', icon: ArrowRightLeft },
@@ -4705,6 +4707,18 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
+      );
+    }
+
+    if (activePage === 'Sales Stats') {
+      return (
+        <SalesStatsPage
+          invoices={invoices}
+          orders={orders}
+          customers={customers}
+          contracts={contracts}
+          skus={skus}
+        />
       );
     }
 
