@@ -32,6 +32,7 @@ export const COLLECTIONS = {
   vendors: 'vendors',
   chepPalletMovements: 'chepPalletMovements',
   salesLeads: 'salesLeads',
+  sampleRequests: 'sampleRequests',
   qaTemplates: 'qaTemplates',
 } as const;
 

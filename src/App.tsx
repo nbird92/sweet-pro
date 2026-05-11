@@ -54,11 +54,11 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
-import SalesStatsPage from './components/SalesStatsPage';
+// import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
@@ -213,12 +213,16 @@ export default function App() {
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
   const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
+  const [sampleRequests, setSampleRequests] = useState<SampleRequest[]>(INITIAL_SAMPLE_REQUESTS);
   const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
   const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
   const [newLeadFollowUp, setNewLeadFollowUp] = useState<Record<string, { date: string; description: string; infoSent: string }>>({});
+  const [showAddSampleModal, setShowAddSampleModal] = useState(false);
+  const [editingSampleRequest, setEditingSampleRequest] = useState<SampleRequest | null>(null);
+  const [newSampleData, setNewSampleData] = useState<SampleRequest>({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
@@ -1413,6 +1417,10 @@ export default function App() {
         setSalesLeads(data.salesLeads);
         lastSyncedData.current.salesleads = JSON.stringify(data.salesLeads);
       }
+      if (data.sampleRequests?.length) {
+        setSampleRequests(data.sampleRequests);
+        lastSyncedData.current.samplerequests = JSON.stringify(data.sampleRequests);
+      }
       if (data.qaTemplates?.length) {
         setQaTemplates(data.qaTemplates);
         lastSyncedData.current.qatemplates = JSON.stringify(data.qaTemplates);
@@ -1475,6 +1483,7 @@ export default function App() {
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
         { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
+        { collection: COLLECTIONS.sampleRequests, key: 'samplerequests', data: sampleRequests },
         { collection: COLLECTIONS.qaTemplates, key: 'qatemplates', data: qaTemplates },
       ];
 
@@ -1501,7 +1510,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, qaTemplates, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, lastSynced, user]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
@@ -2383,7 +2392,7 @@ export default function App() {
     { name: 'Hamilton Shipments', icon: Calendar },
     { name: 'Vancouver Shipments', icon: Calendar },
     { name: 'Customers', icon: Users },
-    { name: 'Sales Stats', icon: TrendingUp },
+    { name: 'Reports', icon: TrendingUp },
     { name: 'Supply Chain', icon: Truck },
     { name: 'Contracts', icon: FileText },
     { name: 'Transfers', icon: ArrowRightLeft },
@@ -4706,19 +4715,288 @@ export default function App() {
                 }} />
             )}
           </AnimatePresence>
+
+          {/* ─── Sample Requests Table ─── */}
+          <div className="pt-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold uppercase tracking-tighter">Sample Requests</h2>
+              <button onClick={() => {
+                setNewSampleData({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
+                setShowAddSampleModal(true);
+              }}
+                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
+                <Plus size={14} /> Add Sample Request
+              </button>
+            </div>
+
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                    <th className="p-3 w-8"></th>
+                    <SortableHeader label="Customer" sortKey="customer" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Sample Product" sortKey="sampleProduct" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Sales Person" sortKey="salespersonId" currentSort={sortConfig} onSort={handleSort} />
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Follow-ups</th>
+                    <th className="p-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#141414]/10">
+                  {sampleRequests.length === 0 && (
+                    <tr><td colSpan={8} className="p-6 text-center text-xs font-bold opacity-40 italic">No sample requests yet. Click "Add Sample Request" to create one.</td></tr>
+                  )}
+                  {sampleRequests.map(sr => {
+                    const salesperson = people.find(p => p.id === sr.salespersonId);
+                    const isExpanded = expandedRows.has(sr.id);
+                    return (
+                      <React.Fragment key={sr.id}>
+                        <tr className="hover:bg-[#F9F9F9] transition-colors cursor-pointer" onClick={() => setEditingSampleRequest({ ...sr })}>
+                          <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleRow(sr.id); }}>
+                            {sr.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                          </td>
+                          <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{sr.customer}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.shipmentDate || '—'}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.sampleProduct}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.location}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.followUps.filter(f => !f.completed).length}/{sr.followUps.length}</td>
+                          <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => setEditingSampleRequest({ ...sr })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
+                              <button onClick={() => setSampleRequests(sampleRequests.filter(s => s.id !== sr.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                        {isExpanded && sr.followUps.length > 0 && sr.followUps.map(fu => (
+                          <tr key={fu.id} className="bg-[#F9F9F9]">
+                            <td className="p-2 pl-6"></td>
+                            <td className="p-2 text-[10px] opacity-60" colSpan={2}>
+                              <button onClick={() => {
+                                const updatedFollowUps = sr.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
+                                setSampleRequests(sampleRequests.map(s => s.id === sr.id ? { ...s, followUps: updatedFollowUps } : s));
+                              }} className="inline-flex items-center gap-1">
+                                {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
+                                <span className={fu.completed ? 'line-through' : ''}>{fu.description}</span>
+                              </button>
+                            </td>
+                            <td className="p-2 text-[10px] opacity-60">{fu.date}</td>
+                            <td className="p-2 text-[10px] opacity-60" colSpan={2}>—</td>
+                            <td colSpan={2}></td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Add Sample Request Modal */}
+          <AnimatePresence>
+            {showAddSampleModal && (
+              <motion.div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+                  <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                    <h3 className="text-xs font-bold uppercase tracking-widest">Add Sample Request</h3>
+                    <button onClick={() => setShowAddSampleModal(false)} className="hover:opacity-70"><X size={18} /></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Customer</label>
+                        <select value={newSampleData.customer} onChange={e => setNewSampleData({ ...newSampleData, customer: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select customer...</option>
+                          {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Shipment Date</label>
+                        <input type="date" value={newSampleData.shipmentDate} onChange={e => setNewSampleData({ ...newSampleData, shipmentDate: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Sample Product</label>
+                        <select value={newSampleData.sampleProduct} onChange={e => setNewSampleData({ ...newSampleData, sampleProduct: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select product...</option>
+                          {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                        <select value={newSampleData.location} onChange={e => setNewSampleData({ ...newSampleData, location: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select location...</option>
+                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Sales Person</label>
+                        <select value={newSampleData.salespersonId} onChange={e => setNewSampleData({ ...newSampleData, salespersonId: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select salesperson...</option>
+                          {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Status</label>
+                        <select value={newSampleData.status} onChange={e => setNewSampleData({ ...newSampleData, status: e.target.value as SampleRequest['status'] })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="Pending">Pending</option>
+                          <option value="Shipped">Shipped</option>
+                          <option value="Delivered">Delivered</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
+                      <textarea value={newSampleData.notes || ''} onChange={e => setNewSampleData({ ...newSampleData, notes: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none h-20" placeholder="Additional notes..." />
+                    </div>
+                  </div>
+                  <div className="flex border-t border-[#141414]">
+                    <button onClick={() => {
+                      if (!newSampleData.customer) { alert('Please select a customer'); return; }
+                      setSampleRequests(prev => [...prev, { ...newSampleData, id: `SR-${Date.now()}`, createdAt: new Date().toISOString() }]);
+                      setShowAddSampleModal(false);
+                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all">Save</button>
+                    <button onClick={() => setShowAddSampleModal(false)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Edit Sample Request Modal */}
+          <AnimatePresence>
+            {editingSampleRequest && (
+              <motion.div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+                  <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                    <h3 className="text-xs font-bold uppercase tracking-widest">Edit Sample Request</h3>
+                    <button onClick={() => setEditingSampleRequest(null)} className="hover:opacity-70"><X size={18} /></button>
+                  </div>
+                  <div className="p-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Customer</label>
+                        <select value={editingSampleRequest.customer} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, customer: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select customer...</option>
+                          {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Shipment Date</label>
+                        <input type="date" value={editingSampleRequest.shipmentDate} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, shipmentDate: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Sample Product</label>
+                        <select value={editingSampleRequest.sampleProduct} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, sampleProduct: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select product...</option>
+                          {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                        <select value={editingSampleRequest.location} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, location: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select location...</option>
+                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Sales Person</label>
+                        <select value={editingSampleRequest.salespersonId} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, salespersonId: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="">Select salesperson...</option>
+                          {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Status</label>
+                        <select value={editingSampleRequest.status} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, status: e.target.value as SampleRequest['status'] })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
+                          <option value="Pending">Pending</option>
+                          <option value="Shipped">Shipped</option>
+                          <option value="Delivered">Delivered</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
+                      <textarea value={editingSampleRequest.notes || ''} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, notes: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none h-20" placeholder="Additional notes..." />
+                    </div>
+                    {/* Follow-ups */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Follow-ups</label>
+                      {editingSampleRequest.followUps.map(fu => (
+                        <div key={fu.id} className="flex items-center gap-2 bg-[#F5F5F5] border border-[#141414]/10 p-2">
+                          <button onClick={() => {
+                            const updated = editingSampleRequest.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
+                            setEditingSampleRequest({ ...editingSampleRequest, followUps: updated });
+                          }}>
+                            {fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}
+                          </button>
+                          <span className={`text-xs flex-1 ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</span>
+                          <span className="text-[10px] opacity-40">{fu.date}</span>
+                          <button onClick={() => setEditingSampleRequest({ ...editingSampleRequest, followUps: editingSampleRequest.followUps.filter(f => f.id !== fu.id) })}
+                            className="p-0.5 hover:text-red-600"><Trash2 size={12} /></button>
+                        </div>
+                      ))}
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Follow-up description..." id="sampleFollowUpDesc"
+                          className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" />
+                        <button onClick={() => {
+                          const desc = (document.getElementById('sampleFollowUpDesc') as HTMLInputElement)?.value;
+                          if (!desc) return;
+                          setEditingSampleRequest({
+                            ...editingSampleRequest,
+                            followUps: [...editingSampleRequest.followUps, { id: `SRF-${Date.now()}`, date: new Date().toISOString().split('T')[0], description: desc, completed: false }]
+                          });
+                          (document.getElementById('sampleFollowUpDesc') as HTMLInputElement).value = '';
+                        }} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80">
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex border-t border-[#141414]">
+                    <button onClick={() => {
+                      setSampleRequests(sampleRequests.map(s => s.id === editingSampleRequest.id ? editingSampleRequest : s));
+                      setEditingSampleRequest(null);
+                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all">Save</button>
+                    <button onClick={() => setEditingSampleRequest(null)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       );
     }
 
-    if (activePage === 'Sales Stats') {
+    if (activePage === 'Reports') {
       return (
-        <SalesStatsPage
-          invoices={invoices}
-          orders={orders}
-          customers={customers}
-          contracts={contracts}
-          skus={skus}
-        />
+        <div className="p-6 space-y-8">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-bold uppercase tracking-tighter">Reports</h2>
+          </div>
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] p-8 text-center">
+            <p className="text-sm opacity-50">Reports page — coming soon.</p>
+          </div>
+        </div>
       );
     }
 

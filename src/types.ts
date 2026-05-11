@@ -588,6 +588,28 @@ export interface SalesLead {
 
 export const INITIAL_SALES_LEADS: SalesLead[] = [];
 
+export interface SampleRequestFollowUp {
+  id: string;
+  date: string;
+  description: string;
+  completed: boolean;
+}
+
+export interface SampleRequest {
+  id: string;
+  customer: string;
+  shipmentDate: string;
+  sampleProduct: string;
+  location: string;
+  salespersonId: string;
+  notes?: string;
+  status: 'Pending' | 'Shipped' | 'Delivered' | 'Cancelled';
+  followUps: SampleRequestFollowUp[];
+  createdAt: string;
+}
+
+export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];
+
 export interface QATemplate {
   id: string;
   name: string;
