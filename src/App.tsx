@@ -2671,9 +2671,6 @@ export default function App() {
         return <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] whitespace-nowrap ${cls}`}>{status}</span>;
       };
 
-      // Bay column headers for side-by-side layout
-      const bayColumns = ['Client', 'Product', 'PO', 'BOL', 'QTY', 'Carrier', 'Arrives', 'Start', 'Out'];
-
       return (
         <div className="px-2 py-3 space-y-3">
           <div className="flex justify-between items-center px-2">
@@ -2774,68 +2771,64 @@ export default function App() {
 
                                 {isDayExp && (
                                   <div className="overflow-x-auto">
-                                    <table className="text-left border-collapse w-full table-fixed">
-                                      <thead>
-                                        <tr className="bg-[#141414] text-[#E4E3E0] text-[9px] uppercase font-bold">
-                                          <th className="px-2 py-1 border-r border-[#E4E3E0]/20 whitespace-nowrap" style={{ width: '50px' }}>Time</th>
-                                          {locationBays.map(bay => (
-                                            <th key={bay} colSpan={bayColumns.length} className="px-2 py-1 border-r border-[#E4E3E0]/20 text-center whitespace-nowrap">{bay}</th>
-                                          ))}
-                                        </tr>
-                                        <tr className="bg-[#F5F5F5] text-[8px] uppercase font-bold border-b border-[#141414]/10">
-                                          <th className="px-2 py-1 border-r border-[#141414]/10"></th>
-                                          {locationBays.map(bay => bayColumns.map(col => (
-                                            <th key={`${bay}-${col}`} className="px-2 py-1 border-r border-[#141414]/5 whitespace-nowrap">{col}</th>
-                                          )))}
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {(() => {
-                                          // Merge standard slots with non-standard imported times across all bays
-                                          const nonStdTimes = new Set<string>();
-                                          locationBays.forEach(b => {
-                                            const dayData = groupedData[week]?.[b]?.[day] || {};
-                                            Object.keys(dayData).forEach(t => {
-                                              if (!locationTimeSlots.includes(t) && dayData[t]?.length > 0) nonStdTimes.add(t);
-                                            });
-                                          });
-                                          const merged = [...locationTimeSlots, ...nonStdTimes].sort();
-                                          return merged.map(slot => {
-                                            const isStd = locationTimeSlots.includes(slot);
-                                            // Skip non-standard slots that have no shipments in any bay
-                                            if (!isStd) {
-                                              const hasAny = locationBays.some(b => (groupedData[week]?.[b]?.[day]?.[slot] || []).length > 0);
-                                              if (!hasAny) return null;
-                                            }
-                                            return (
-                                              <tr key={slot} className={`border-b border-[#141414]/5 transition-colors ${!isStd ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-[#F5F5F5]'}`}>
-                                                <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap ${!isStd ? 'text-amber-700' : ''}`}>{slot}</td>
-                                                {locationBays.map(bay => {
-                                                  const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
-                                                  const s = shipments[0];
-                                                  if (!s) {
-                                                    return bayColumns.map((col, ci) => (
-                                                      <td key={`${bay}-${slot}-${ci}`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 opacity-15">—</td>
-                                                    ));
-                                                  }
-                                                  return [
-                                                    <td key={`${bay}-${slot}-cust`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>,
-                                                    <td key={`${bay}-${slot}-prod`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>,
-                                                    <td key={`${bay}-${slot}-po`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>,
-                                                    <td key={`${bay}-${slot}-bol`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>,
-                                                    <td key={`${bay}-${slot}-qty`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>,
-                                                    <td key={`${bay}-${slot}-car`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>,
-                                                    <td key={`${bay}-${slot}-arr`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>,
-                                                    <td key={`${bay}-${slot}-srt`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>,
-                                                    <td key={`${bay}-${slot}-out`} className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>,
-                                                  ];
+                                    {(() => {
+                                      // Collect appointments per bay, only bays with data
+                                      const baysWithData = locationBays.filter(bay => {
+                                        const dayData = groupedData[week]?.[bay]?.[day] || {};
+                                        return Object.values(dayData).some(arr => arr.length > 0);
+                                      });
+                                      if (baysWithData.length === 0) {
+                                        return <div className="px-3 py-4 text-center text-[10px] opacity-40 italic">No appointments</div>;
+                                      }
+                                      return baysWithData.map(bay => {
+                                        const dayData = groupedData[week]?.[bay]?.[day] || {};
+                                        const appointments = Object.entries(dayData)
+                                          .filter(([_, arr]) => arr.length > 0)
+                                          .sort(([a], [b]) => a.localeCompare(b));
+                                        if (appointments.length === 0) return null;
+                                        return (
+                                          <div key={bay}>
+                                            <div className="bg-[#141414] text-[#E4E3E0] px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest">{bay}</div>
+                                            <table className="text-left border-collapse w-full">
+                                              <thead>
+                                                <tr className="bg-[#F5F5F5] text-[8px] uppercase font-bold border-b border-[#141414]/10">
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5" style={{ width: '50px' }}>Time</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Client</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Product</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">PO</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">BOL</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">QTY</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Carrier</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Arrives</th>
+                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Start</th>
+                                                  <th className="px-2 py-1">Out</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {appointments.map(([slot, arr]) => {
+                                                  const s = arr[0];
+                                                  const isStd = locationTimeSlots.includes(slot);
+                                                  return (
+                                                    <tr key={slot} className={`border-b border-[#141414]/5 transition-colors ${!isStd ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-[#F5F5F5]'}`}>
+                                                      <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap ${!isStd ? 'text-amber-700' : ''}`}>{slot}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>
+                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>
+                                                      <td className="px-2 py-1 text-[10px]" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>
+                                                    </tr>
+                                                  );
                                                 })}
-                                              </tr>
-                                            );
-                                          });
-                                        })()}
-                                      </tbody>
-                                    </table>
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        );
+                                      });
+                                    })()}
                                   </div>
                                 )}
                               </div>
