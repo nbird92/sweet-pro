@@ -3738,6 +3738,11 @@ export default function App() {
       const filteredOrders = orders.filter(ord => {
         // Hide hidden orders unless search matches
         if (ord.hidden && !searchTerm) return false;
+        // Hide orders that have been shipped and invoiced (matching invoice by BOL, not cancelled)
+        if (ord.status !== 'Cancelled') {
+          const hasInvoice = invoices.some(inv => inv.bolNumber === ord.bolNumber && inv.status !== 'Cancelled');
+          if (hasInvoice) return false;
+        }
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
