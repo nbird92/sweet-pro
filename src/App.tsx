@@ -3743,6 +3743,11 @@ export default function App() {
           const hasInvoice = invoices.some(inv => inv.bolNumber === ord.bolNumber && inv.status !== 'Cancelled');
           if (hasInvoice) return false;
         }
+        // Hide cancelled orders with shipment dates in the past
+        if (ord.status === 'Cancelled') {
+          const shipDate = ord.shipmentDate || ord.deliveryDate || '';
+          if (!shipDate || shipDate < new Date().toISOString().split('T')[0]) return false;
+        }
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
