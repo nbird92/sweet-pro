@@ -2486,6 +2486,53 @@ export default function App() {
             <h2 className="text-xl font-bold uppercase tracking-tighter">Operational Dashboard</h2>
           </div>
 
+          {/* Weekly Completed Totals Chart */}
+          {sortedWeeks.length > 0 && (() => {
+            const chronoWeeks = [...sortedWeeks].reverse();
+            const maxVolume = Math.max(...chronoWeeks.map(w => weeklyTotals[w].volume), 1);
+            const maxTolling = Math.max(...chronoWeeks.map(w => weeklyTotals[w].tolling), 1);
+            const grandVolume = chronoWeeks.reduce((sum, w) => sum + weeklyTotals[w].volume, 0);
+            const grandTolling = chronoWeeks.reduce((sum, w) => sum + weeklyTotals[w].tolling, 0);
+            return (
+              <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals</h3>
+                  <div className="flex gap-6 text-[10px]">
+                    <span>Total Volume: <strong>{Math.round(grandVolume).toLocaleString()} MT</strong></span>
+                    <span>Total Tolling: <strong>CAD ${Math.round(grandTolling).toLocaleString()}</strong></span>
+                  </div>
+                </div>
+                <div className="p-4">
+                  <div className="flex items-end gap-1" style={{ height: '180px' }}>
+                    {chronoWeeks.map(week => {
+                      const volPct = (weeklyTotals[week].volume / maxVolume) * 100;
+                      const tolPct = (weeklyTotals[week].tolling / maxTolling) * 100;
+                      return (
+                        <div key={week} className="flex-1 flex flex-col items-center gap-0.5 h-full justify-end group relative">
+                          {/* Tooltip */}
+                          <div className="absolute bottom-full mb-2 bg-[#141414] text-[#E4E3E0] px-2 py-1 text-[9px] rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                            <div className="font-bold">{week}</div>
+                            <div>Volume: {Math.round(weeklyTotals[week].volume).toLocaleString()} MT</div>
+                            <div>Tolling: CAD ${Math.round(weeklyTotals[week].tolling).toLocaleString()}</div>
+                          </div>
+                          <div className="flex gap-0.5 items-end w-full justify-center" style={{ height: 'calc(100% - 20px)' }}>
+                            <div className="bg-[#141414] rounded-t-sm transition-all hover:bg-[#333] min-h-[2px]" style={{ height: `${Math.max(volPct, 1)}%`, width: '40%' }} title={`${Math.round(weeklyTotals[week].volume)} MT`}></div>
+                            <div className="bg-emerald-500 rounded-t-sm transition-all hover:bg-emerald-400 min-h-[2px]" style={{ height: `${Math.max(tolPct, 1)}%`, width: '40%' }} title={`CAD $${Math.round(weeklyTotals[week].tolling)}`}></div>
+                          </div>
+                          <span className="text-[8px] font-bold opacity-50 truncate w-full text-center">{week.replace('Week ', 'W')}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-center gap-6 mt-3 text-[10px]">
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-[#141414] rounded-sm"></div> Volume (MT)</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded-sm"></div> Tolling Fees (CAD)</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Weekly Totals Table */}
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
