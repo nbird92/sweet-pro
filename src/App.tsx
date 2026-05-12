@@ -2200,6 +2200,7 @@ export default function App() {
   const [isAddingSugarType, setIsAddingSugarType] = useState(false);
   const [newSugarTypeName, setNewSugarTypeName] = useState('');
   const [newSugarTypeAbbr, setNewSugarTypeAbbr] = useState('');
+  const [editingSugarType, setEditingSugarType] = useState<SugarType | null>(null);
   const [newFreightRate, setNewFreightRate] = useState<FreightRate>({
     id: '',
     origin: 'Hamilton',
@@ -2218,6 +2219,18 @@ export default function App() {
     else newExpanded.add(id);
     setExpandedRows(newExpanded);
   };
+
+  // Auto-expand Product Groups and Sugar Types tables when navigating to Products page
+  useEffect(() => {
+    if (activePage === 'Products') {
+      setExpandedRows(prev => {
+        const next = new Set(prev);
+        next.add('pg-table');
+        next.add('st-table');
+        return next;
+      });
+    }
+  }, [activePage]);
 
   const deleteCustomer = (id: string) => {
     setCustomers(customers.filter(c => c.id !== id));
@@ -4511,8 +4524,18 @@ export default function App() {
                             <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{st.name}</td>
                             <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{st.abbreviation}</td>
                             <td className="p-4 text-xs border-r border-[#141414]/10">{productCount}</td>
-                            <td className="p-4 text-xs">
-                              <button onClick={() => setSugarTypes(sugarTypes.filter(item => item.id !== st.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                            <td className="p-4 text-xs flex gap-2">
+                              <button onClick={() => setEditingSugarType({ ...st })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                                <Edit2 size={14} />
+                              </button>
+                              <button onClick={() => {
+                                const oldName = st.name;
+                                setSugarTypes(sugarTypes.filter(item => item.id !== st.id));
+                                // Clear sugarType from any products that used this type
+                                qaProducts.filter(q => q.sugarType === oldName).forEach(q => {
+                                  setQaProducts(prev => prev.map(p => p.id === q.id ? { ...p, sugarType: undefined } : p));
+                                });
+                              }} className="p-1 hover:bg-red-500 hover:text-white transition-all">
                                 <Trash2 size={14} />
                               </button>
                             </td>
@@ -9063,6 +9086,69 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => { setIsAddingSugarType(false); setNewSugarTypeName(''); setNewSugarTypeAbbr(''); }}
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {editingSugarType && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setEditingSugarType(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Sugar Type</h3>
+                <button onClick={() => setEditingSugarType(null)} className="hover:opacity-70">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Sugar Type Name</label>
+                  <input
+                    type="text"
+                    value={editingSugarType.name}
+                    onChange={(e) => setEditingSugarType({ ...editingSugarType, name: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-bold"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Abbreviation</label>
+                  <input
+                    type="text"
+                    value={editingSugarType.abbreviation}
+                    onChange={(e) => setEditingSugarType({ ...editingSugarType, abbreviation: e.target.value.toUpperCase().slice(0, 4) })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono font-bold uppercase"
+                    maxLength={4}
+                  />
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <button
+                    onClick={() => {
+                      const oldName = sugarTypes.find(st => st.id === editingSugarType.id)?.name;
+                      setSugarTypes(sugarTypes.map(st => st.id === editingSugarType.id ? editingSugarType : st));
+                      // Update any QA products that referenced the old name
+                      if (oldName && oldName !== editingSugarType.name) {
+                        setQaProducts(prev => prev.map(p => p.sugarType === oldName ? { ...p, sugarType: editingSugarType.name } : p));
+                      }
+                      setEditingSugarType(null);
+                    }}
+                    disabled={!editingSugarType.name.trim() || !editingSugarType.abbreviation.trim()}
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                  >
+                    Save Changes
+                  </button>
+                  <button
+                    onClick={() => setEditingSugarType(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
                     Cancel
