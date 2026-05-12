@@ -586,44 +586,61 @@ export default function App() {
           alert('CSV file is empty or has no data rows.');
           return;
         }
-        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const rawHeaders = parseCSVRow(lines[0]);
+        const csvHeaders = rawHeaders.map(normalizeHeader);
 
-        if (!csvHeaders.includes('bolnumber') && !csvHeaders.includes('bol')) {
-          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+        const hasBol = csvHeaders.some(h => ['bolnumber', 'bol', 'bolno', 'bol#', 'billoflading'].includes(h));
+        if (!hasBol) {
+          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${rawHeaders.join(', ')}`);
           return;
         }
+
+        const normalizeDate = (d: string) => {
+          if (!d) return '';
+          const m1 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (m1) return `${m1[3]}-${m1[1].padStart(2, '0')}-${m1[2].padStart(2, '0')}`;
+          const months: Record<string, string> = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+          const m2 = d.match(/^(\d{1,2})[-\/](\w{3})[-\/](\d{4})$/i);
+          if (m2) return `${m2[3]}-${months[m2[2].toLowerCase()] || '01'}-${m2[1].padStart(2, '0')}`;
+          const m3 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+          if (m3) return `20${m3[3]}-${m3[1].padStart(2, '0')}-${m3[2].padStart(2, '0')}`;
+          return d;
+        };
+
+        const get = (entry: any, ...keys: string[]): string => {
+          for (const k of keys) {
+            const val = entry[k];
+            if (val !== undefined && val !== '') return val;
+          }
+          return '';
+        };
 
         let workingInvoices = [...invoices];
         let newCount = 0;
         let updatedCount = 0;
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
+          const values = parseCSVRow(lines[i]);
           const entry: any = {};
           csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
 
-          const bolNumber = entry.bolnumber || entry.bol || '';
+          const bolNumber = get(entry, 'bolnumber', 'bol', 'bolno', 'bol#', 'billoflading');
           if (!bolNumber) { skippedRows++; continue; }
 
-          // Normalize dates
-          const normalizeDate = (d: string) => {
-            const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
-          };
-          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
-          const dueDate = normalizeDate(entry.duedate || entry.due || '');
-          const customer = entry.customer || '';
-          const product = entry.product || '';
-          const po = entry.po || entry.ponumber || '';
-          const qty = parseFloat(entry.qty || entry.quantity || '0') || 0;
-          const amount = parseFloat(entry.amount || entry.total || '0') || 0;
-          const carrier = entry.carrier || '';
-          const status = entry.status || 'Pending';
-          const splitNo = entry.splitno || entry.split || '';
-          const contractNumber = entry.contractnumber || entry.contract || '';
-          const shippingTerms = entry.shippingterms || '';
-          const location = entry.location || '';
-          const invoiceNumber = entry.invoicenumber || entry.invoice || '';
+          const invoiceNumber = get(entry, 'invoicenumber', 'invoice', 'invoiceno', 'invoice#', 'invno', 'inv#');
+          const customer = get(entry, 'customer', 'customername', 'client', 'clientname', 'soldto');
+          const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
+          const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
+          const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
+          const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
+          const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
+          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
+          const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
+          const status = get(entry, 'status', 'invoicestatus') || 'Pending';
+          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#');
+          const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
+          const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
           // Check if invoice with this BOL already exists — overwrite all fields from CSV
           const existingIdx = workingInvoices.findIndex(inv => inv.bolNumber === bolNumber);
@@ -632,7 +649,7 @@ export default function App() {
             const inv = workingInvoices[existingIdx];
             workingInvoices[existingIdx] = {
               ...inv,
-              invoiceNumber: invoiceNumber,
+              invoiceNumber,
               customer,
               product,
               po,
@@ -652,7 +669,7 @@ export default function App() {
 
           newCount++;
           workingInvoices.push({
-            id: `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            id: `INV-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
             invoiceNumber: invoiceNumber || undefined,
             bolNumber,
             customer,
@@ -699,6 +716,42 @@ export default function App() {
     event.target.value = '';
   };
 
+  // Robust CSV row parser that handles quoted fields with commas, newlines, and escaped quotes
+  const parseCSVRow = (row: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (i + 1 < row.length && row[i + 1] === '"') {
+            current += '"';
+            i++; // skip escaped quote
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          current += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === ',') {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  // Normalize CSV header to a canonical key: strip spaces, special chars, lowercase
+  const normalizeHeader = (h: string): string => h.trim().toLowerCase().replace(/[\s_\-\.#]+/g, '');
+
   const handleReplaceInvoiceCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -716,53 +769,85 @@ export default function App() {
           alert('CSV file is empty or has no data rows.');
           return;
         }
-        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const rawHeaders = parseCSVRow(lines[0]);
+        const csvHeaders = rawHeaders.map(normalizeHeader);
 
-        if (!csvHeaders.includes('bolnumber') && !csvHeaders.includes('bol')) {
-          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+        // Debug: show what was parsed
+        const hasBol = csvHeaders.some(h => ['bolnumber', 'bol', 'bolno', 'bol#'].includes(h));
+        if (!hasBol) {
+          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${rawHeaders.join(', ')}\n\nNormalized: ${csvHeaders.join(', ')}`);
           return;
         }
 
         const normalizeDate = (d: string) => {
-          const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-          return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+          if (!d) return '';
+          // MM/DD/YYYY
+          const m1 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (m1) return `${m1[3]}-${m1[1].padStart(2, '0')}-${m1[2].padStart(2, '0')}`;
+          // DD-MMM-YYYY (e.g. 15-Jan-2025)
+          const months: Record<string, string> = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+          const m2 = d.match(/^(\d{1,2})[-\/](\w{3})[-\/](\d{4})$/i);
+          if (m2) return `${m2[3]}-${months[m2[2].toLowerCase()] || '01'}-${m2[1].padStart(2, '0')}`;
+          // M/D/YY
+          const m3 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+          if (m3) return `20${m3[3]}-${m3[1].padStart(2, '0')}-${m3[2].padStart(2, '0')}`;
+          return d; // already YYYY-MM-DD or other format
+        };
+
+        const get = (entry: any, ...keys: string[]): string => {
+          for (const k of keys) {
+            const val = entry[k];
+            if (val !== undefined && val !== '') return val;
+          }
+          return '';
         };
 
         const newInvoices: Invoice[] = [];
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
+          const values = parseCSVRow(lines[i]);
           const entry: any = {};
           csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
 
-          const bolNumber = entry.bolnumber || entry.bol || '';
+          const bolNumber = get(entry, 'bolnumber', 'bol', 'bolno', 'bol#', 'billoflading');
           if (!bolNumber) { skippedRows++; continue; }
 
-          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
-          const dueDate = normalizeDate(entry.duedate || entry.due || '');
-          const invoiceNumber = entry.invoicenumber || entry.invoice || '';
+          const invoiceNumber = get(entry, 'invoicenumber', 'invoice', 'invoiceno', 'invoice#', 'invno', 'inv#');
+          const customer = get(entry, 'customer', 'customername', 'client', 'clientname', 'soldto');
+          const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
+          const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
+          const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
+          const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
+          const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'dateDue'));
+          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
+          const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
+          const status = get(entry, 'status', 'invoicestatus') || 'Pending';
+          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#');
+          const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
+          const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
-          // Preserve the existing ID if this BOL existed before, so Firestore doc IDs stay stable
+          // Preserve the existing ID if this BOL existed before
           const existingInv = invoices.find(inv => inv.bolNumber === bolNumber);
 
           newInvoices.push({
-            id: existingInv?.id || `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            id: existingInv?.id || `INV-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
             invoiceNumber: invoiceNumber || undefined,
             bolNumber,
-            customer: entry.customer || '',
-            product: entry.product || '',
-            po: entry.po || entry.ponumber || '',
-            qty: parseFloat(entry.qty || entry.quantity || '0') || 0,
-            carrier: entry.carrier || '',
-            amount: parseFloat(entry.amount || entry.total || '0') || 0,
+            customer,
+            product,
+            po,
+            qty,
+            carrier,
+            amount,
             shipmentId: existingInv?.shipmentId || '',
             date,
-            status: entry.status || 'Pending',
-            splitNo: (entry.splitno || entry.split || '') || undefined,
+            status,
+            splitNo: splitNo || undefined,
             dueDate: dueDate || undefined,
-            contractNumber: (entry.contractnumber || entry.contract || '') || undefined,
-            shippingTerms: (entry.shippingterms || '') || undefined,
-            location: (entry.location || '') || undefined,
+            contractNumber: contractNumber || undefined,
+            shippingTerms: shippingTerms || undefined,
+            location: location || undefined,
           });
         }
 
