@@ -438,42 +438,59 @@ export default function App() {
           alert('CSV file is empty or has no data rows.');
           return;
         }
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const rawHeaders = parseCSVRow(lines[0]);
+        const headers = rawHeaders.map(normalizeHeader);
 
         // Require at least customer and product columns
-        if (!headers.includes('customer')) {
-          alert(`CSV is missing a required "customer" column.\n\nFound columns: ${headers.join(', ')}`);
+        if (!headers.some(h => ['customer', 'customername', 'client'].includes(h))) {
+          alert(`CSV is missing a required "customer" column.\n\nFound columns: ${rawHeaders.join(', ')}`);
           return;
         }
+
+        const get = (entry: any, ...keys: string[]): string => {
+          for (const k of keys) {
+            const val = entry[k];
+            if (val !== undefined && val !== '') return String(val);
+          }
+          return '';
+        };
 
         let workingOrders = [...orders]; // Build final array directly
         let newCount = 0;
         let updatedCount = 0;
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
+          const values = parseCSVRow(lines[i]);
           const entry: any = {};
           headers.forEach((h, idx) => { entry[h] = values[idx] || ''; });
 
-          if (!entry.customer) { skippedRows++; continue; }
+          const customer = get(entry, 'customer', 'customername', 'client', 'clientname', 'soldto');
+          if (!customer) { skippedRows++; continue; }
 
           // Normalize dates
           const normalizeDate = (d: string) => {
-            const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+            if (!d) return '';
+            const m1 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (m1) return `${m1[3]}-${m1[1].padStart(2, '0')}-${m1[2].padStart(2, '0')}`;
+            const months: Record<string, string> = { jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+            const m2 = d.match(/^(\d{1,2})[-\/](\w{3})[-\/](\d{4})$/i);
+            if (m2) return `${m2[3]}-${months[m2[2].toLowerCase()] || '01'}-${m2[1].padStart(2, '0')}`;
+            const m3 = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+            if (m3) return `20${m3[3]}-${m3[1].padStart(2, '0')}-${m3[2].padStart(2, '0')}`;
+            return d;
           };
-          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
-          const shipmentDate = normalizeDate(entry.shipmentdate || entry.shipmentDate || entry.shipdate || '');
-          const deliveryDate = normalizeDate(entry.deliverydate || entry.deliveryDate || '');
+          const date = normalizeDate(get(entry, 'date', 'orderdate') || new Date().toISOString().split('T')[0]);
+          const shipmentDate = normalizeDate(get(entry, 'shipmentdate', 'shipdate', 'shippingdate'));
+          const deliveryDate = normalizeDate(get(entry, 'deliverydate', 'delivery'));
 
-          const product = entry.product || entry.productname || '';
-          const qty = parseFloat(entry.qty || entry.quantity || entry.volume || '0') || 0;
-          const contractNumber = entry.contractnumber || entry.contract || '';
-          const pricePerMt = parseFloat(entry.pricepermt || entry.pricepmt || entry.price || '0') || 0;
-          const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(entry.amount || entry.total || '0') || 0);
-          const bolNumber = entry.bolnumber || entry.bol || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-          const splitNumber = entry.splitnumber || entry.split || '';
-          const currency = entry.currency || '';
+          const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
+          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
+          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'price', 'pricemt') || '0') || 0;
+          const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(get(entry, 'amount', 'total', 'totalamount') || '0') || 0);
+          const bolNumber = get(entry, 'bolnumber', 'bol', 'bolno', 'bol#', 'billoflading') || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const splitNumber = get(entry, 'splitnumber', 'splitno', 'split', 'split#', 'splno');
+          const currency = get(entry, 'currency', 'curr');
 
           const existingIdx = workingOrders.findIndex(o => o.bolNumber === bolNumber);
           if (existingIdx >= 0) {
@@ -491,21 +508,21 @@ export default function App() {
             } : li);
             workingOrders[existingIdx] = {
               ...o,
-              customer: entry.customer || o.customer,
+              customer: customer || o.customer,
               product: product || o.product,
               contractNumber: contractNumber || o.contractNumber,
-              po: (entry.po || entry.ponumber) || o.po,
+              po: get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder') || o.po,
               date: date || o.date,
               shipmentDate: shipmentDate || o.shipmentDate,
               deliveryDate: deliveryDate || o.deliveryDate,
-              status: entry.status ? (entry.status as any) : o.status,
+              status: get(entry, 'status') ? (get(entry, 'status') as any) : o.status,
               amount: amount || o.amount,
               currency: currency || o.currency,
               splitNumber: splitNumber || o.splitNumber,
-              carrier: entry.carrier || o.carrier,
-              shippingTerms: (entry.shippingterms || o.shippingTerms) as any,
-              location: entry.location || entry.origin || o.location,
-              palletType: (entry.pallettype || o.palletType) as any,
+              carrier: get(entry, 'carrier', 'carriername', 'trucker', 'transport') || o.carrier,
+              shippingTerms: (get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms') || o.shippingTerms) as any,
+              location: get(entry, 'location', 'shiplocation', 'origin', 'warehouse') || o.location,
+              palletType: (get(entry, 'pallettype', 'pallet') || o.palletType) as any,
               lineItems: updatedLineItems,
             };
             continue;
@@ -527,22 +544,22 @@ export default function App() {
           workingOrders.push({
             id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             bolNumber,
-            customer: entry.customer,
+            customer,
             product,
             contractNumber,
-            po: entry.po || entry.ponumber || '',
+            po: get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder'),
             date,
             shipmentDate: shipmentDate || undefined,
             deliveryDate: deliveryDate || undefined,
-            status: (entry.status === 'Confirmed' || entry.status === 'Cancelled') ? entry.status : 'Open',
+            status: (get(entry, 'status') === 'Confirmed' || get(entry, 'status') === 'Cancelled') ? get(entry, 'status') as any : 'Open',
             lineItems: [lineItem],
             amount,
             currency: currency || undefined,
-            carrier: entry.carrier || '',
-            shippingTerms: (entry.shippingterms || '') as any || '',
-            location: entry.location || entry.origin || '',
+            carrier: get(entry, 'carrier', 'carriername', 'trucker', 'transport'),
+            shippingTerms: (get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms') || '') as any || '',
+            location: get(entry, 'location', 'shiplocation', 'origin', 'warehouse'),
             splitNumber: splitNumber || undefined,
-            palletType: (entry.pallettype || '') as any || ''
+            palletType: (get(entry, 'pallettype', 'pallet') || '') as any || ''
           });
         }
 
@@ -610,7 +627,7 @@ export default function App() {
         const get = (entry: any, ...keys: string[]): string => {
           for (const k of keys) {
             const val = entry[k];
-            if (val !== undefined && val !== '') return val;
+            if (val !== undefined && val !== '') return String(val);
           }
           return '';
         };
@@ -638,7 +655,7 @@ export default function App() {
           const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
-          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#');
+          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
@@ -797,7 +814,7 @@ export default function App() {
         const get = (entry: any, ...keys: string[]): string => {
           for (const k of keys) {
             const val = entry[k];
-            if (val !== undefined && val !== '') return val;
+            if (val !== undefined && val !== '') return String(val);
           }
           return '';
         };
@@ -818,12 +835,12 @@ export default function App() {
           const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
-          const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'dateDue'));
+          const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'datedue'));
           const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
           const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
-          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#');
+          const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
