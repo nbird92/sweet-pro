@@ -291,6 +291,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceReplaceFileInputRef = useRef<HTMLInputElement>(null);
   const contractFileInputRef = useRef<HTMLInputElement>(null);
   const customerFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -689,6 +690,96 @@ export default function App() {
         } else {
           alert('No invoices could be imported. The file may be empty or in an unexpected format.');
         }
+      } catch (err) {
+        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    };
+    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  const handleReplaceInvoiceCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!confirm(`This will REPLACE ALL invoices with only the records in this CSV file. Any existing invoices not in the CSV will be permanently removed.\n\nAre you sure you want to continue?`)) {
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) {
+          alert('CSV file is empty or has no data rows.');
+          return;
+        }
+        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+        if (!csvHeaders.includes('bolnumber') && !csvHeaders.includes('bol')) {
+          alert(`CSV is missing a required "bolNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+          return;
+        }
+
+        const normalizeDate = (d: string) => {
+          const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d;
+        };
+
+        const newInvoices: Invoice[] = [];
+        let skippedRows = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const entry: any = {};
+          csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+
+          const bolNumber = entry.bolnumber || entry.bol || '';
+          if (!bolNumber) { skippedRows++; continue; }
+
+          const date = normalizeDate(entry.date || new Date().toISOString().split('T')[0]);
+          const dueDate = normalizeDate(entry.duedate || entry.due || '');
+          const invoiceNumber = entry.invoicenumber || entry.invoice || '';
+
+          // Preserve the existing ID if this BOL existed before, so Firestore doc IDs stay stable
+          const existingInv = invoices.find(inv => inv.bolNumber === bolNumber);
+
+          newInvoices.push({
+            id: existingInv?.id || `INV-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            invoiceNumber: invoiceNumber || undefined,
+            bolNumber,
+            customer: entry.customer || '',
+            product: entry.product || '',
+            po: entry.po || entry.ponumber || '',
+            qty: parseFloat(entry.qty || entry.quantity || '0') || 0,
+            carrier: entry.carrier || '',
+            amount: parseFloat(entry.amount || entry.total || '0') || 0,
+            shipmentId: existingInv?.shipmentId || '',
+            date,
+            status: entry.status || 'Pending',
+            splitNo: (entry.splitno || entry.split || '') || undefined,
+            dueDate: dueDate || undefined,
+            contractNumber: (entry.contractnumber || entry.contract || '') || undefined,
+            shippingTerms: (entry.shippingterms || '') || undefined,
+            location: (entry.location || '') || undefined,
+          });
+        }
+
+        const removedCount = invoices.length - invoices.filter(inv => newInvoices.some(n => n.bolNumber === inv.bolNumber)).length;
+
+        setInvoices(newInvoices);
+        syncCollection(COLLECTIONS.invoices, newInvoices).then(() => {
+          lastSyncedData.current.invoices = JSON.stringify(newInvoices);
+          setSyncStatus('synced');
+          setLastSynced(new Date());
+        }).catch(e => console.error('Invoice sync failed:', e));
+
+        const parts: string[] = [];
+        parts.push(`${newInvoices.length} invoice${newInvoices.length !== 1 ? 's' : ''} imported`);
+        if (removedCount > 0) parts.push(`${removedCount} old invoice${removedCount !== 1 ? 's' : ''} removed`);
+        if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        alert(parts.join(', ') + '.');
       } catch (err) {
         alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
@@ -3575,6 +3666,10 @@ export default function App() {
                 className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Upload size={12} /> Import CSV
               </button>
+              <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
+                className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
+                <Upload size={12} /> Import &amp; Replace
+              </button>
               <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
                 <Printer size={12} /> Batch Print
               </button>
@@ -6244,6 +6339,13 @@ export default function App() {
         type="file"
         ref={invoiceFileInputRef}
         onChange={handleImportInvoiceCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={invoiceReplaceFileInputRef}
+        onChange={handleReplaceInvoiceCSV}
         accept=".csv"
         className="sr-only"
       />
