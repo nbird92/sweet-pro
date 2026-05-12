@@ -588,6 +588,7 @@ export default function QualityAssurancePage({
                 <SortHeader label="Name" sortKey="skuName" />
                 <SortHeader label="Product Group" sortKey="productGroup" />
                 <SortHeader label="Sugar Type" sortKey="sugarType" />
+                <SortHeader label="Shortform" sortKey="shortform" />
                 <SortHeader label="Conv./Organic" sortKey="category" />
                 <SortHeader label="Max Color" sortKey="maxColor" />
                 <SortHeader label="Location" sortKey="location" />
@@ -623,6 +624,10 @@ export default function QualityAssurancePage({
                       </span>
                     </td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
+                      const st = sugarTypes.find(s => s.name === p.sugarType);
+                      return st ? `${st.abbreviation}${p.maxColor}` : '—';
+                    })()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
@@ -1427,9 +1432,16 @@ export default function QualityAssurancePage({
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">POL (Port of Loading)</label>
                         <input value={editData?.pol || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, pol: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Santos, BR" />
                       </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</label>
+                        <div className="bg-white border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
+                          const st = sugarTypes.find(s => s.name === editData?.sugarType);
+                          return st ? `${st.abbreviation}${editData?.maxColor || 0}` : '—';
+                        })()}</div>
+                      </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-5 gap-4">
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{displayData.skuName}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Group</div><div className="text-xs font-bold">{displayData.productGroup}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Category</div><div className="text-xs font-bold">{displayData.category}</div></div>
@@ -1439,6 +1451,10 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">POL</div><div className="text-xs font-bold">{displayData.pol || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
+                        const st = sugarTypes.find(s => s.name === displayData.sugarType);
+                        return st ? `${st.abbreviation}${displayData.maxColor}` : '—';
+                      })()}</div></div>
                     </div>
                   )}
                 </div>

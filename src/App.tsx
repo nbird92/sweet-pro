@@ -2199,6 +2199,7 @@ export default function App() {
   });
   const [isAddingSugarType, setIsAddingSugarType] = useState(false);
   const [newSugarTypeName, setNewSugarTypeName] = useState('');
+  const [newSugarTypeAbbr, setNewSugarTypeAbbr] = useState('');
   const [newFreightRate, setNewFreightRate] = useState<FreightRate>({
     id: '',
     origin: 'Hamilton',
@@ -4497,6 +4498,7 @@ export default function App() {
                     <thead>
                       <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
                         <th className="p-4 border-r border-[#141414]/10">Sugar Type</th>
+                        <th className="p-4 border-r border-[#141414]/10">Abbreviation</th>
                         <th className="p-4 border-r border-[#141414]/10">Products</th>
                         <th className="p-4">Actions</th>
                       </tr>
@@ -4507,6 +4509,7 @@ export default function App() {
                         return (
                           <tr key={st.id} className="hover:bg-[#F9F9F9] transition-colors">
                             <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{st.name}</td>
+                            <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{st.abbreviation}</td>
                             <td className="p-4 text-xs border-r border-[#141414]/10">{productCount}</td>
                             <td className="p-4 text-xs">
                               <button onClick={() => setSugarTypes(sugarTypes.filter(item => item.id !== st.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
@@ -9032,21 +9035,34 @@ export default function App() {
                     placeholder="e.g., Granulated, Liquid, Icing"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Abbreviation</label>
+                  <input
+                    type="text"
+                    value={newSugarTypeAbbr}
+                    onChange={(e) => setNewSugarTypeAbbr(e.target.value.toUpperCase().slice(0, 4))}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono font-bold uppercase"
+                    placeholder="e.g., GC, LC, IC"
+                    maxLength={4}
+                  />
+                  <p className="text-[9px] opacity-40">Short code used in product shortform (e.g., GC for Granulated)</p>
+                </div>
                 <div className="flex gap-4 pt-4">
                   <button
                     onClick={() => {
                       const id = `ST-${String(sugarTypes.length + 1).padStart(3, '0')}-${Date.now()}`;
-                      setSugarTypes([...sugarTypes, { id, name: newSugarTypeName.trim() }]);
+                      setSugarTypes([...sugarTypes, { id, name: newSugarTypeName.trim(), abbreviation: newSugarTypeAbbr.trim() }]);
                       setNewSugarTypeName('');
+                      setNewSugarTypeAbbr('');
                       setIsAddingSugarType(false);
                     }}
-                    disabled={!newSugarTypeName.trim() || sugarTypes.some(st => st.name.toLowerCase() === newSugarTypeName.trim().toLowerCase())}
+                    disabled={!newSugarTypeName.trim() || !newSugarTypeAbbr.trim() || sugarTypes.some(st => st.name.toLowerCase() === newSugarTypeName.trim().toLowerCase())}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
                   >
                     Add Sugar Type
                   </button>
                   <button
-                    onClick={() => setIsAddingSugarType(false)}
+                    onClick={() => { setIsAddingSugarType(false); setNewSugarTypeName(''); setNewSugarTypeAbbr(''); }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
                     Cancel

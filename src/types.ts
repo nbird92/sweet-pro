@@ -541,14 +541,16 @@ export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
 export interface SugarType {
   id: string;
   name: string;
+  abbreviation: string;
 }
 
 export const INITIAL_SUGAR_TYPES: SugarType[] = [
-  { id: 'ST-001', name: 'Granulated' },
-  { id: 'ST-002', name: 'Liquid' },
-  { id: 'ST-003', name: 'Icing' },
-  { id: 'ST-004', name: 'Brown' },
-  { id: 'ST-005', name: 'Yellow' },
+  { id: 'ST-001', name: 'Granulated', abbreviation: 'GC' },
+  { id: 'ST-002', name: 'Liquid', abbreviation: 'LC' },
+  { id: 'ST-003', name: 'Icing', abbreviation: 'IC' },
+  { id: 'ST-004', name: 'Brown', abbreviation: 'BR' },
+  { id: 'ST-005', name: 'Yellow', abbreviation: 'YW' },
+  { id: 'ST-006', name: 'Molasses', abbreviation: 'ML' },
 ];
 
 export interface Vendor {
