@@ -624,27 +624,27 @@ export default function App() {
           const location = entry.location || '';
           const invoiceNumber = entry.invoicenumber || entry.invoice || '';
 
-          // Check if invoice with this BOL already exists — update in working array
+          // Check if invoice with this BOL already exists — overwrite all fields from CSV
           const existingIdx = workingInvoices.findIndex(inv => inv.bolNumber === bolNumber);
           if (existingIdx !== -1) {
             updatedCount++;
             const inv = workingInvoices[existingIdx];
             workingInvoices[existingIdx] = {
               ...inv,
-              invoiceNumber: invoiceNumber || inv.invoiceNumber,
-              customer: customer || inv.customer,
-              product: product || inv.product,
-              po: po || inv.po,
-              date: date || inv.date,
-              qty: qty || inv.qty,
-              amount: amount || inv.amount,
-              carrier: carrier || inv.carrier,
-              status: entry.status ? status : inv.status,
-              splitNo: splitNo || inv.splitNo,
-              dueDate: dueDate || inv.dueDate,
-              contractNumber: contractNumber || inv.contractNumber,
-              shippingTerms: shippingTerms || inv.shippingTerms,
-              location: location || inv.location,
+              invoiceNumber: invoiceNumber,
+              customer,
+              product,
+              po,
+              date,
+              qty,
+              amount,
+              carrier,
+              status,
+              splitNo: splitNo || undefined,
+              dueDate: dueDate || undefined,
+              contractNumber: contractNumber || undefined,
+              shippingTerms: shippingTerms || undefined,
+              location: location || undefined,
             };
             continue;
           }
