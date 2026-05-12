@@ -34,6 +34,7 @@ export const COLLECTIONS = {
   salesLeads: 'salesLeads',
   sampleRequests: 'sampleRequests',
   qaTemplates: 'qaTemplates',
+  sugarTypes: 'sugarTypes',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem } from '../types';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType } from '../types';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
@@ -12,6 +12,7 @@ interface QualityAssurancePageProps {
   locations: Location[];
   vendors: Vendor[];
   qaTemplates: QATemplate[];
+  sugarTypes: SugarType[];
   onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
@@ -41,6 +42,7 @@ export default function QualityAssurancePage({
   locations,
   vendors,
   qaTemplates,
+  sugarTypes,
   onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
@@ -75,6 +77,26 @@ export default function QualityAssurancePage({
       });
     }
   }, [skus, qaProducts, onAddQAProduct]);
+
+  // Auto-categorize sugar type for products that don't have one set
+  useEffect(() => {
+    qaProducts.forEach(qa => {
+      if (qa.sugarType) return; // Already categorized
+      const name = qa.skuName.toLowerCase();
+      let autoType: string | undefined;
+      if (qa.productGroup === 'Liquid' || name.includes('liquid')) {
+        autoType = 'Liquid';
+      } else if (
+        (name.includes('fine granulated') && (qa.productGroup === 'Tote' || name.includes('tote'))) ||
+        (name.includes('fine granulated') && (qa.productGroup === 'Bulk' || name.includes('bulk')))
+      ) {
+        autoType = 'Granulated';
+      }
+      if (autoType && sugarTypes.some(st => st.name === autoType)) {
+        onUpdateQAProduct({ ...qa, sugarType: autoType });
+      }
+    });
+  }, [qaProducts.length]); // Only run when product count changes (initial load)
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
@@ -565,6 +587,7 @@ export default function QualityAssurancePage({
                 <SortHeader label="Prod No." sortKey="id" />
                 <SortHeader label="Name" sortKey="skuName" />
                 <SortHeader label="Product Group" sortKey="productGroup" />
+                <SortHeader label="Sugar Type" sortKey="sugarType" />
                 <SortHeader label="Conv./Organic" sortKey="category" />
                 <SortHeader label="Max Color" sortKey="maxColor" />
                 <SortHeader label="Location" sortKey="location" />
@@ -599,6 +622,7 @@ export default function QualityAssurancePage({
                         {p.productGroup}
                       </span>
                     </td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
@@ -1223,6 +1247,13 @@ export default function QualityAssurancePage({
                       </select>
                     </div>
                     <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</label>
+                      <select value={newProductData.sugarType || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, sugarType: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Select Sugar Type</option>
+                        {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
                       <select value={newProductData.location} onChange={(e) => setNewProductData(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                         <option value="">Select Location</option>
@@ -1367,6 +1398,13 @@ export default function QualityAssurancePage({
                         </select>
                       </div>
                       <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</label>
+                        <select value={editData?.sugarType || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, sugarType: e.target.value || undefined } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          <option value="">Select Sugar Type</option>
+                          {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
                         <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                           <option value="">Select Location</option>
@@ -1395,6 +1433,7 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{displayData.skuName}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Group</div><div className="text-xs font-bold">{displayData.productGroup}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Category</div><div className="text-xs font-bold">{displayData.category}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</div><div className="text-xs font-bold">{displayData.sugarType || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div><div className="text-xs font-bold">{displayData.location}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>

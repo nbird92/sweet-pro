@@ -54,7 +54,7 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -215,6 +215,7 @@ export default function App() {
   const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
   const [sampleRequests, setSampleRequests] = useState<SampleRequest[]>(INITIAL_SAMPLE_REQUESTS);
   const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
+  const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
@@ -652,7 +653,8 @@ export default function App() {
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
           const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
-          const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
+          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
+          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
@@ -672,6 +674,7 @@ export default function App() {
               po,
               date,
               qty,
+              pricePerMt: pricePerMt || undefined,
               amount,
               carrier,
               status,
@@ -694,6 +697,7 @@ export default function App() {
             po,
             qty,
             carrier,
+            pricePerMt: pricePerMt || undefined,
             amount,
             shipmentId: '',
             date,
@@ -837,7 +841,8 @@ export default function App() {
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'datedue'));
           const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
-          const amount = parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0;
+          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
+          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
@@ -856,6 +861,7 @@ export default function App() {
             po,
             qty,
             carrier,
+            pricePerMt: pricePerMt || undefined,
             amount,
             shipmentId: existingInv?.shipmentId || '',
             date,
@@ -1618,6 +1624,10 @@ export default function App() {
         setQaTemplates(data.qaTemplates);
         lastSyncedData.current.qatemplates = JSON.stringify(data.qaTemplates);
       }
+      if (data.sugarTypes?.length) {
+        setSugarTypes(data.sugarTypes);
+        lastSyncedData.current.sugartypes = JSON.stringify(data.sugarTypes);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1678,6 +1688,7 @@ export default function App() {
         { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
         { collection: COLLECTIONS.sampleRequests, key: 'samplerequests', data: sampleRequests },
         { collection: COLLECTIONS.qaTemplates, key: 'qatemplates', data: qaTemplates },
+        { collection: COLLECTIONS.sugarTypes, key: 'sugartypes', data: sugarTypes },
       ];
 
       try {
@@ -1703,7 +1714,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lastSynced, user]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
@@ -2186,6 +2197,8 @@ export default function App() {
     color: '#E4E3E0',
     bolCode: ''
   });
+  const [isAddingSugarType, setIsAddingSugarType] = useState(false);
+  const [newSugarTypeName, setNewSugarTypeName] = useState('');
   const [newFreightRate, setNewFreightRate] = useState<FreightRate>({
     id: '',
     origin: 'Hamilton',
@@ -3754,7 +3767,7 @@ export default function App() {
             </div>
             <div className="flex gap-2">
               <button onClick={() => {
-                  const tplHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+                  const tplHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
                   const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
                   const link = document.createElement("a");
                   link.setAttribute("href", encodeURI(csvContent));
@@ -3776,7 +3789,7 @@ export default function App() {
                 <Printer size={12} /> Batch Print
               </button>
               <button onClick={() => {
-                  const headers = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'amount', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+                  const headers = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
                   exportCSV(headers, invoices, 'invoices_export.csv');
                 }}
                 className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
@@ -3806,7 +3819,6 @@ export default function App() {
                   <SortableHeader label="PO No." sortKey="po" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Amount (CAD)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
@@ -3850,19 +3862,19 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.product}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
-                      {(() => {
-                        const invContractNum = i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
-                        const invContract = contracts.find(c => c.contractNumber === invContractNum);
-                        const ordTotalWt = linkedOrder ? linkedOrder.lineItems.reduce((sum, li) => sum + li.totalWeight, 0) : 0;
-                        const ordPricePerMt = invContract?.finalPrice || (ordTotalWt > 0 && linkedOrder?.amount ? linkedOrder.amount / ordTotalWt : 0);
-                        const pricePerMt = invContract?.finalPrice || (i.qty > 0 && i.amount ? i.amount / i.qty : 0) || ordPricePerMt;
-                        return (
-                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono">
-                            {pricePerMt > 0 ? `$${pricePerMt.toFixed(2)}` : '—'}
-                          </td>
-                        );
-                      })()}
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">${i.amount.toLocaleString()}</td>
+                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={i.pricePerMt ?? ''}
+                          onChange={(e) => {
+                            const ppm = parseFloat(e.target.value) || 0;
+                            setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
+                          }}
+                          placeholder="—"
+                          className="bg-transparent w-20 focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                        />
+                      </td>
                       <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         <select
                           value={i.status}
@@ -4395,6 +4407,12 @@ export default function App() {
             <h2 className="text-xl font-bold uppercase tracking-tighter">Product Catalog</h2>
             <div className="flex gap-2">
               <button
+                onClick={() => setIsAddingSugarType(true)}
+                className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+              >
+                <Plus size={14} /> Add Sugar Type
+              </button>
+              <button
                 onClick={addProductGroup}
                 className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
               >
@@ -4459,9 +4477,55 @@ export default function App() {
             </AnimatePresence>
           </div>
 
-          <SearchInput 
-            value={searchTerm} 
-            onChange={setSearchTerm} 
+          {/* Sugar Types Table */}
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-widest">Sugar Types</h3>
+              <button onClick={() => toggleRow('st-table')} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
+                {expandedRows.has('st-table') ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+            </div>
+            <AnimatePresence>
+              {expandedRows.has('st-table') && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                        <th className="p-4 border-r border-[#141414]/10">Sugar Type</th>
+                        <th className="p-4 border-r border-[#141414]/10">Products</th>
+                        <th className="p-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#141414]/10">
+                      {sugarTypes.map(st => {
+                        const productCount = qaProducts.filter(q => q.sugarType === st.name).length;
+                        return (
+                          <tr key={st.id} className="hover:bg-[#F9F9F9] transition-colors">
+                            <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{st.name}</td>
+                            <td className="p-4 text-xs border-r border-[#141414]/10">{productCount}</td>
+                            <td className="p-4 text-xs">
+                              <button onClick={() => setSugarTypes(sugarTypes.filter(item => item.id !== st.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <SearchInput
+            value={searchTerm}
+            onChange={setSearchTerm}
             placeholder="Search products by name, group, location or ID..." 
           />
           
@@ -4737,6 +4801,7 @@ export default function App() {
           locations={locations}
           vendors={vendors}
           qaTemplates={qaTemplates}
+          sugarTypes={sugarTypes}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
@@ -6699,13 +6764,15 @@ export default function App() {
               </div>
               <div className="p-6 space-y-5">
                 {/* Invoice-level fields */}
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
                     <div className="text-sm font-bold">{editingInvoiceCard.bolNumber}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
                     <div className="text-sm font-bold">{editingInvoiceCard.customer}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
                     <div className="text-sm">{editingInvoiceCard.po || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
+                    <div className="text-sm font-bold font-mono">{editingInvoiceCard.pricePerMt ? `$${editingInvoiceCard.pricePerMt.toFixed(2)}` : '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
                     <div className="text-sm font-bold">${editingInvoiceCard.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div></div>
                 </div>
@@ -8939,9 +9006,60 @@ export default function App() {
           </div>
         )}
 
+        {isAddingSugarType && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingSugarType(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Add Sugar Type</h3>
+                <button onClick={() => setIsAddingSugarType(false)} className="hover:opacity-70">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Sugar Type Name</label>
+                  <input
+                    type="text"
+                    value={newSugarTypeName}
+                    onChange={(e) => setNewSugarTypeName(e.target.value)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-bold"
+                    placeholder="e.g., Granulated, Liquid, Icing"
+                  />
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <button
+                    onClick={() => {
+                      const id = `ST-${String(sugarTypes.length + 1).padStart(3, '0')}-${Date.now()}`;
+                      setSugarTypes([...sugarTypes, { id, name: newSugarTypeName.trim() }]);
+                      setNewSugarTypeName('');
+                      setIsAddingSugarType(false);
+                    }}
+                    disabled={!newSugarTypeName.trim() || sugarTypes.some(st => st.name.toLowerCase() === newSugarTypeName.trim().toLowerCase())}
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                  >
+                    Add Sugar Type
+                  </button>
+                  <button
+                    onClick={() => setIsAddingSugarType(false)}
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {editingProductGroup && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}

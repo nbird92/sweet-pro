@@ -307,6 +307,7 @@ export interface Invoice {
   qty: number;
   carrier: string;
   amount: number;
+  pricePerMt?: number; // Price per metric ton — amount = pricePerMt × qty
   shipmentId: string;
   date: string;
   status: string;
@@ -532,9 +533,23 @@ export interface QAProduct {
   certificates: QADocument[];
   pol?: string; // Port of Loading
   billOfMaterials?: BOMItem[];
+  sugarType?: string; // e.g. Granulated, Liquid, Icing, Brown, Yellow
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
+
+export interface SugarType {
+  id: string;
+  name: string;
+}
+
+export const INITIAL_SUGAR_TYPES: SugarType[] = [
+  { id: 'ST-001', name: 'Granulated' },
+  { id: 'ST-002', name: 'Liquid' },
+  { id: 'ST-003', name: 'Icing' },
+  { id: 'ST-004', name: 'Brown' },
+  { id: 'ST-005', name: 'Yellow' },
+];
 
 export interface Vendor {
   id: string;
