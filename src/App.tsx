@@ -1900,6 +1900,7 @@ export default function App() {
   }, [config.contractStartDate, config.contractEndDate, marketData]);
 
   const [selectedSkuId, setSelectedSkuId] = useState(INITIAL_SKUS[1].id);
+  const [selectedSugarTypeId, setSelectedSugarTypeId] = useState<string>('');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedBays, setExpandedBays] = useState<Set<string>>(new Set());
@@ -6155,18 +6156,21 @@ export default function App() {
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
-              <Package size={14} /> Product Selection
+              <Package size={14} /> Sugar Type
             </h2>
             <select
-              value={selectedSkuId}
-              onChange={(e) => setSelectedSkuId(e.target.value)}
+              value={selectedSugarTypeId}
+              onChange={(e) => setSelectedSugarTypeId(e.target.value)}
               className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
             >
-              {skus.map(s => <option key={s.id} value={s.id}>{s.name.toUpperCase()}</option>)}
+              <option value="">— Select Sugar Type —</option>
+              {sugarTypes.map(st => <option key={st.id} value={st.id}>{st.name.toUpperCase()}</option>)}
             </select>
-            <div className="mt-2 text-[10px] italic opacity-50">
-              SKU Differential: CAD ${(skus.find(s => s.id === selectedSkuId)?.premiumCadMt || 0).toFixed(2)}/MT
-            </div>
+            {selectedSugarTypeId && (
+              <div className="mt-2 text-[10px] italic opacity-50">
+                Abbreviation: {sugarTypes.find(st => st.id === selectedSugarTypeId)?.abbreviation || '—'}
+              </div>
+            )}
           </section>
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
