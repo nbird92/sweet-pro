@@ -9097,13 +9097,12 @@ export default function App() {
         )}
 
         {editingSugarType && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setEditingSugarType(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Sugar Type</h3>
@@ -9130,20 +9129,19 @@ export default function App() {
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono font-bold uppercase"
                     maxLength={4}
                   />
+                  <p className="text-[9px] opacity-40">Short code used in product shortform (e.g., GC for Granulated)</p>
                 </div>
                 <div className="flex gap-4 pt-4">
                   <button
                     onClick={() => {
                       const oldName = sugarTypes.find(st => st.id === editingSugarType.id)?.name;
                       setSugarTypes(sugarTypes.map(st => st.id === editingSugarType.id ? editingSugarType : st));
-                      // Update any QA products that referenced the old name
                       if (oldName && oldName !== editingSugarType.name) {
                         setQaProducts(prev => prev.map(p => p.sugarType === oldName ? { ...p, sugarType: editingSugarType.name } : p));
                       }
                       setEditingSugarType(null);
                     }}
-                    disabled={!editingSugarType.name.trim() || !editingSugarType.abbreviation.trim()}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
                     Save Changes
                   </button>
