@@ -2233,6 +2233,7 @@ export default function App() {
     }
   }, [activePage]);
 
+  const [customerDeleteConfirmId, setCustomerDeleteConfirmId] = useState<string | null>(null);
   const deleteCustomer = (id: string) => {
     setCustomers(customers.filter(c => c.id !== id));
   };
@@ -3498,7 +3499,7 @@ export default function App() {
                         <button onClick={() => setEditingCustomer(c)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Customer">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={() => deleteCustomer(c.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Customer">
+                        <button onClick={() => setCustomerDeleteConfirmId(c.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Customer">
                           <Trash2 size={14} />
                         </button>
                       </td>
@@ -11087,6 +11088,43 @@ export default function App() {
                     </>
                   );
                 })()}
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Customer Delete Confirmation Dialog */}
+        {customerDeleteConfirmId && (
+          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={20} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Delete Customer</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete <span className="font-bold">{customers.find(c => c.id === customerDeleteConfirmId)?.name || customerDeleteConfirmId}</span>? This action cannot be undone.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      deleteCustomer(customerDeleteConfirmId);
+                      setCustomerDeleteConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                  >
+                    Yes, Delete
+                  </button>
+                  <button
+                    onClick={() => setCustomerDeleteConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
