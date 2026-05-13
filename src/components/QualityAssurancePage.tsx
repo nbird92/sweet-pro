@@ -594,7 +594,6 @@ export default function QualityAssurancePage({
                 <SortHeader label="Location" sortKey="location" />
                 <SortHeader label="Net Weight (KG)" sortKey="netWeightKg" />
                 <SortHeader label="Gross Weight (KG)" sortKey="grossWeightKg" />
-                <SortHeader label="POL" sortKey="pol" />
                 <th className="p-4">Actions</th>
               </tr>
             </thead>
@@ -633,7 +632,6 @@ export default function QualityAssurancePage({
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.netWeightKg ?? '-'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.grossWeightKg ?? '-'}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.pol || '—'}</td>
                     <td className="p-4">
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(p.id); }}
@@ -1429,10 +1427,6 @@ export default function QualityAssurancePage({
                         <input type="number" value={editData?.maxColor || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, maxColor: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">POL (Port of Loading)</label>
-                        <input value={editData?.pol || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, pol: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Santos, BR" />
-                      </div>
-                      <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</label>
                         <div className="bg-white border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
@@ -1450,7 +1444,6 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">POL</div><div className="text-xs font-bold">{displayData.pol || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
                         return st ? `${st.abbreviation}${displayData.maxColor}` : '—';
