@@ -4887,7 +4887,15 @@ export default function App() {
           sugarTypes={sugarTypes}
           people={people}
           productGroups={productGroups}
+          shipments={[...hamiltonShipments, ...vancouverShipments]}
           onUpdateLotCodes={setLotCodes}
+          onUpdateShipments={(updated) => {
+            // Split back into hamilton / vancouver based on existing membership
+            const hamIds = new Set(hamiltonShipments.map(s => s.id));
+            const vanIds = new Set(vancouverShipments.map(s => s.id));
+            setHamiltonShipments(updated.filter(s => hamIds.has(s.id)));
+            setVancouverShipments(updated.filter(s => vanIds.has(s.id)));
+          }}
         />
       );
     }

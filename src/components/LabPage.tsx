@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { LotCode, SugarType, Person, ProductGroup } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { LotCode, SugarType, Person, ProductGroup, Shipment } from '../types';
+import { Plus, X, Trash2, Edit2, AlertCircle, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface LabPageProps {
@@ -8,7 +8,9 @@ interface LabPageProps {
   sugarTypes: SugarType[];
   people: Person[];
   productGroups: ProductGroup[];
+  shipments: Shipment[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
+  onUpdateShipments: (shipments: Shipment[]) => void;
 }
 
 const EMPTY_FORM = {
@@ -19,6 +21,7 @@ const EMPTY_FORM = {
   invert: '', ash: '', moisture: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
   weeklyVerification: '', sugarType: '', countryOfOrigin: '',
+  bolNumber: '', customerPo: '',
 };
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
@@ -34,49 +37,35 @@ function getJulianDay(dateStr: string): string {
 
 // Generate lot code: HS-[sugarType][productGroup][orgConv][YY][JJJ][silo]
 function generateLotCode(form: typeof EMPTY_FORM): string {
-  // 1. Plant prefix
   const plant = 'HS';
-
-  // 2. Sugar type code: R=Granulated, L=Liquid, M=Molasses
   const sugarTypeMap: Record<string, string> = {
     'Granulated': 'R', 'Liquid': 'L', 'Molasses': 'M',
     'Icing': 'I', 'Brown': 'B', 'Yellow': 'Y',
   };
   const sugarCode = sugarTypeMap[form.sugarType] || '?';
-
-  // 3. Product group code: 00=Bulk, 10=Totes, 50=Packaged
   const pg = form.productGroup.toLowerCase();
-  let pgCode = '00'; // default to bulk
+  let pgCode = '00';
   if (pg.includes('tote')) {
     pgCode = '10';
   } else if (pg.includes('pack') || pg.includes('bag')) {
     pgCode = '50';
   }
-
-  // 4. Organic/Conventional: B=Organic, C=Conventional
   const catCode = form.category === 'Organic' ? 'B' : form.category === 'Conventional' ? 'C' : '?';
-
-  // 5. YY = last 2 digits of year
   let yy = '??';
-  if (form.date) {
-    yy = form.date.slice(2, 4);
-  }
-
-  // 6. JJJ = Julian date
+  if (form.date) { yy = form.date.slice(2, 4); }
   const jjj = form.julianDate || '???';
-
-  // 7. Silo: N=North, S=South
   const siloCode = form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
-
   return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}${siloCode}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, onUpdateLotCodes }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, onUpdateLotCodes, onUpdateShipments }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
+  const [showShipmentPicker, setShowShipmentPicker] = useState(false);
+  const [shipmentSearch, setShipmentSearch] = useState('');
 
   const qaPeople = people.filter(p => p.department === 'QA');
 
@@ -84,14 +73,26 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
     ? lotCodes.filter(lc => lc.sugarType === filterSugarType)
     : lotCodes;
 
-  // Update form and auto-compute lot code + julian date
+  // Filter shipments for the search picker
+  const filteredShipments = useMemo(() => {
+    if (!shipmentSearch.trim()) return shipments;
+    const q = shipmentSearch.toLowerCase();
+    return shipments.filter(s =>
+      (s.bol || '').toLowerCase().includes(q) ||
+      (s.po || '').toLowerCase().includes(q) ||
+      (s.customer || '').toLowerCase().includes(q) ||
+      (s.product || '').toLowerCase().includes(q) ||
+      (s.carrier || '').toLowerCase().includes(q) ||
+      (s.date || '').toLowerCase().includes(q) ||
+      (s.status || '').toLowerCase().includes(q)
+    );
+  }, [shipments, shipmentSearch]);
+
   const updateForm = (patch: Partial<typeof EMPTY_FORM>) => {
     const next = { ...formData, ...patch };
-    // Auto-compute Julian date when date changes
     if ('date' in patch && patch.date) {
       next.julianDate = getJulianDay(patch.date);
     }
-    // Auto-generate lot number
     next.lotNumber = generateLotCode(next);
     setFormData(next);
   };
@@ -111,13 +112,43 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
+      bolNumber: lc.bolNumber || '', customerPo: lc.customerPo || '',
     });
     setEditingLot(lc);
   };
 
+  // Auto-assign lot code to shipment when BOL/PO is filled
+  const autoAssignToShipment = (lotNum: string, bolNumber: string, customerPo: string, countryOfOrigin: string) => {
+    if (!bolNumber && !customerPo) return;
+    // Find matching shipment by BOL or PO
+    const match = shipments.find(s =>
+      (bolNumber && s.bol && s.bol === bolNumber) ||
+      (customerPo && s.po && s.po === customerPo)
+    );
+    if (match) {
+      const currentLotNums = match.lotNumbers || (match.lotNumber ? [match.lotNumber] : []);
+      if (!currentLotNums.includes(lotNum)) {
+        const updatedLotNums = [...currentLotNums, lotNum];
+        // Also update origin of goods from lot code country of origin
+        const existingOrigins = match.originOfGoods ? match.originOfGoods.split(', ').filter(Boolean) : [];
+        if (countryOfOrigin && !existingOrigins.includes(countryOfOrigin)) {
+          existingOrigins.push(countryOfOrigin);
+        }
+        const updatedShipments = shipments.map(s =>
+          s.id === match.id
+            ? { ...s, lotNumbers: updatedLotNums, lotNumber: updatedLotNums[0] || '', originOfGoods: existingOrigins.join(', ') }
+            : s
+        );
+        onUpdateShipments(updatedShipments);
+      }
+    }
+  };
+
   const handleSave = () => {
     if (editingLot) {
-      onUpdateLotCodes(lotCodes.map(lc => lc.id === editingLot.id ? { ...editingLot, ...formData } : lc));
+      const updated = { ...editingLot, ...formData };
+      onUpdateLotCodes(lotCodes.map(lc => lc.id === editingLot.id ? updated : lc));
+      autoAssignToShipment(updated.lotNumber, updated.bolNumber, updated.customerPo, updated.countryOfOrigin);
       setEditingLot(null);
     } else {
       const newLot: LotCode = {
@@ -126,6 +157,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
         createdAt: new Date().toISOString(),
       } as LotCode;
       onUpdateLotCodes([...lotCodes, newLot]);
+      autoAssignToShipment(newLot.lotNumber, newLot.bolNumber, newLot.customerPo, newLot.countryOfOrigin);
       setIsAdding(false);
     }
   };
@@ -133,6 +165,12 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
   const handleDelete = (id: string) => {
     onUpdateLotCodes(lotCodes.filter(lc => lc.id !== id));
     setDeleteConfirmId(null);
+  };
+
+  const handleSelectShipment = (s: Shipment) => {
+    setFormData({ ...formData, bolNumber: s.bol || '', customerPo: s.po || '' });
+    setShowShipmentPicker(false);
+    setShipmentSearch('');
   };
 
   const isOpen = isAdding || !!editingLot;
@@ -171,6 +209,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
             <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
               <th className="p-3 border-r border-[#141414]/10">Lot #</th>
               <th className="p-3 border-r border-[#141414]/10">Date</th>
+              <th className="p-3 border-r border-[#141414]/10">BOL #</th>
               <th className="p-3 border-r border-[#141414]/10">Tank #</th>
               <th className="p-3 border-r border-[#141414]/10">Sugar Type</th>
               <th className="p-3 border-r border-[#141414]/10">Brix</th>
@@ -187,11 +226,12 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
             {filtered.length === 0 ? (
-              <tr><td colSpan={14} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
+              <tr><td colSpan={15} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
             ) : filtered.map(lc => (
               <tr key={lc.id} className="hover:bg-[#F9F9F9] transition-colors">
                 <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{lc.lotNumber}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.date || '—'}</td>
+                <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{lc.bolNumber || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.tankNumber || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.sugarType || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.brix || '—'}</td>
@@ -241,6 +281,55 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
                     <div className="text-sm font-mono font-bold">{formData.lotNumber || '—'}</div>
                   </div>
                   <div className="text-[9px] opacity-40 text-right">HS-[Type][Group][Conv/Org][YY][JJJ][Silo]</div>
+                </div>
+
+                {/* BOL Number & Customer PO with Search button */}
+                <div className="bg-blue-50 border border-blue-200 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-blue-800">Shipment Link</span>
+                    <button
+                      onClick={() => { setShowShipmentPicker(true); setShipmentSearch(''); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                    >
+                      <Search size={11} /> Search for BOL / PO Number
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-50">BOL Number</label>
+                      <input type="text" value={formData.bolNumber}
+                        onChange={(e) => setFormData({ ...formData, bolNumber: e.target.value })}
+                        className="w-full bg-white border border-blue-300 p-2 text-sm focus:outline-none focus:border-blue-500" placeholder="e.g. BOL-12345" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Customer PO #</label>
+                      <input type="text" value={formData.customerPo}
+                        onChange={(e) => setFormData({ ...formData, customerPo: e.target.value })}
+                        className="w-full bg-white border border-blue-300 p-2 text-sm focus:outline-none focus:border-blue-500" placeholder="e.g. PO-67890" />
+                    </div>
+                  </div>
+                  {(formData.bolNumber || formData.customerPo) && (() => {
+                    const matched = shipments.find(s =>
+                      (formData.bolNumber && s.bol === formData.bolNumber) ||
+                      (formData.customerPo && s.po === formData.customerPo)
+                    );
+                    return matched ? (
+                      <div className="text-[10px] text-blue-700 bg-blue-100 border border-blue-200 px-2 py-1.5 flex items-center gap-2">
+                        <span className="font-bold">Matched:</span>
+                        <span>{matched.customer}</span>
+                        <span className="opacity-50">|</span>
+                        <span>{matched.product}</span>
+                        <span className="opacity-50">|</span>
+                        <span className="font-mono">{matched.bol}</span>
+                        <span className="opacity-50">|</span>
+                        <span>{matched.date}</span>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1.5">
+                        No matching shipment found — lot code will be saved but not auto-assigned
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
@@ -387,6 +476,86 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
                     Cancel
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Shipment Search Picker Modal */}
+      <AnimatePresence>
+        {showShipmentPicker && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full overflow-hidden max-h-[85vh] flex flex-col"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Search Shipments</h3>
+                <button onClick={() => { setShowShipmentPicker(false); setShipmentSearch(''); }} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              <div className="p-4 border-b border-[#141414]/10 shrink-0">
+                <div className="flex items-center gap-2 bg-[#F5F5F5] border border-[#141414] px-3 py-2">
+                  <Search size={14} className="opacity-40" />
+                  <input
+                    type="text"
+                    value={shipmentSearch}
+                    onChange={(e) => setShipmentSearch(e.target.value)}
+                    className="flex-1 bg-transparent text-sm focus:outline-none"
+                    placeholder="Search by BOL, PO, customer, product, carrier, date, status..."
+                    autoFocus
+                  />
+                  {shipmentSearch && (
+                    <button onClick={() => setShipmentSearch('')} className="opacity-40 hover:opacity-100"><X size={14} /></button>
+                  )}
+                </div>
+                <div className="text-[10px] opacity-40 mt-1">{filteredShipments.length} shipment{filteredShipments.length !== 1 ? 's' : ''} found</div>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0">
+                    <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                      <th className="p-3 border-r border-[#141414]/10">BOL #</th>
+                      <th className="p-3 border-r border-[#141414]/10">PO #</th>
+                      <th className="p-3 border-r border-[#141414]/10">Customer</th>
+                      <th className="p-3 border-r border-[#141414]/10">Product</th>
+                      <th className="p-3 border-r border-[#141414]/10">Date</th>
+                      <th className="p-3 border-r border-[#141414]/10">Carrier</th>
+                      <th className="p-3 border-r border-[#141414]/10">Status</th>
+                      <th className="p-3">Select</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#141414]/10">
+                    {filteredShipments.length === 0 ? (
+                      <tr><td colSpan={8} className="p-8 text-center text-xs opacity-50">No shipments match your search.</td></tr>
+                    ) : filteredShipments.map(s => (
+                      <tr key={s.id} className="hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => handleSelectShipment(s)}>
+                        <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{s.bol || '—'}</td>
+                        <td className="p-3 text-xs font-mono border-r border-[#141414]/10">{s.po || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{s.product || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{s.date || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{s.carrier || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">
+                          <span className={`px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                            (s.status || '').toLowerCase() === 'completed' ? 'bg-green-100 text-green-700' :
+                            (s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-100 text-yellow-700' :
+                            (s.status || '').toLowerCase() === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>{s.status || '—'}</span>
+                        </td>
+                        <td className="p-3 text-xs">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleSelectShipment(s); }}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                          >Select</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </motion.div>
           </div>

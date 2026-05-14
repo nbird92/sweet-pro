@@ -577,6 +577,8 @@ export interface LotCode {
   weeklyVerification: string;
   sugarType: string;
   countryOfOrigin: string;
+  bolNumber: string;
+  customerPo: string;
   createdAt: string;
 }
 
