@@ -198,6 +198,7 @@ export interface Shipment {
   trailerNo?: string;
   colour?: string;
   lotNumber?: string;
+  lotNumbers?: string[];
   deliveryDate?: string;
   sealNumbers?: string[];
   originOfGoods?: string;
@@ -573,6 +574,7 @@ export interface LotCode {
   notes: string;
   weeklyVerification: string;
   sugarType: string;
+  countryOfOrigin: string;
   createdAt: string;
 }
 

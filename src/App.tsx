@@ -1184,6 +1184,7 @@ export default function App() {
                 scaledQty: s.scaledQty || ex.scaledQty,
                 trailerNo: s.trailerNo || ex.trailerNo,
                 lotNumber: s.lotNumber || ex.lotNumber,
+                lotNumbers: (s.lotNumbers && s.lotNumbers.length > 0) ? s.lotNumbers : ex.lotNumbers,
                 deliveryDate: s.deliveryDate || ex.deliveryDate || ord?.deliveryDate || '',
               };
               updatedCount++;
@@ -3388,7 +3389,7 @@ export default function App() {
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || ''}>{(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || '—'}</td>
                                                         <td className="px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
                                                           <div className="flex gap-0.5">
                                                             <button onClick={() => {
@@ -8000,16 +8001,6 @@ export default function App() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Lot Number</label>
-                        <input
-                          type="text"
-                          value={editingShipment.lotNumber || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, lotNumber: e.target.value})}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                          placeholder="Enter lot number"
-                        />
-                      </div>
-                      <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">Scaled Qty (MT)</label>
                         <input
                           type="number"
@@ -8031,13 +8022,72 @@ export default function App() {
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">Origin of Goods</label>
-                        <input
-                          type="text"
-                          value={editingShipment.originOfGoods || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, originOfGoods: e.target.value})}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                          placeholder="Origin of goods"
-                        />
+                        <div className="bg-[#F5F5F5] border border-[#141414]/20 p-2 text-sm min-h-[38px]">
+                          {(() => {
+                            const nums = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
+                            const origins = nums.map(ln => {
+                              const lc = lotCodes.find(l => l.lotNumber === ln);
+                              return lc?.countryOfOrigin || '';
+                            }).filter(Boolean);
+                            const unique = [...new Set(origins)];
+                            return unique.length > 0 ? unique.join(', ') : <span className="opacity-40">Auto-populated from lot codes</span>;
+                          })()}
+                        </div>
+                      </div>
+                      <div className="space-y-1 md:col-span-3">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Lot Codes</label>
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {(editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : [])).map((ln, idx) => {
+                            const matchedLot = lotCodes.find(l => l.lotNumber === ln);
+                            return (
+                            <div key={idx} className="flex items-center gap-1 bg-[#E4E3E0] px-2 py-1 text-sm border border-[#141414]/20">
+                              <span className="font-mono">{ln}</span>
+                              {matchedLot?.countryOfOrigin && <span className="text-[10px] opacity-50 ml-1">({matchedLot.countryOfOrigin})</span>}
+                              <button
+                                onClick={() => {
+                                  const current = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
+                                  const updated = [...current];
+                                  updated.splice(idx, 1);
+                                  const nums = updated;
+                                  const origins = nums.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
+                                  const uniqueOrigins = [...new Set(origins)].join(', ');
+                                  setEditingShipment({...editingShipment, lotNumbers: updated, lotNumber: updated[0] || '', originOfGoods: uniqueOrigins});
+                                }}
+                                className="ml-1 text-red-500 hover:text-red-700 font-bold text-xs"
+                              >×</button>
+                            </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex gap-2">
+                          <select
+                            id="lot-code-select"
+                            className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                            defaultValue=""
+                          >
+                            <option value="" disabled>— Select lot code to add —</option>
+                            {lotCodes
+                              .filter(lc => !(editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : [])).includes(lc.lotNumber))
+                              .map(lc => (
+                                <option key={lc.id} value={lc.lotNumber}>{lc.lotNumber}{lc.sugarType ? ` (${lc.sugarType})` : ''}{lc.countryOfOrigin ? ` — ${lc.countryOfOrigin}` : ''}</option>
+                              ))}
+                          </select>
+                          <button
+                            onClick={() => {
+                              const select = document.getElementById('lot-code-select') as HTMLSelectElement;
+                              const val = select?.value;
+                              if (val) {
+                                const current = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
+                                const updated = [...current, val];
+                                const origins = updated.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
+                                const uniqueOrigins = [...new Set(origins)].join(', ');
+                                setEditingShipment({...editingShipment, lotNumbers: updated, lotNumber: updated[0] || '', originOfGoods: uniqueOrigins});
+                                select.value = '';
+                              }
+                            }}
+                            className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs uppercase font-bold hover:bg-opacity-80 transition-all"
+                          >Add</button>
+                        </div>
                       </div>
                       <div className="space-y-1 md:col-span-3">
                         <label className="text-[10px] uppercase font-bold opacity-60">Seal Numbers</label>

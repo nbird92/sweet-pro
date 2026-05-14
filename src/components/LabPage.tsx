@@ -18,7 +18,7 @@ const EMPTY_FORM = {
   brix: '', ph: '', color: '', temperature: '',
   invert: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
-  weeklyVerification: '', sugarType: '',
+  weeklyVerification: '', sugarType: '', countryOfOrigin: '',
 };
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
@@ -110,7 +110,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
-      notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType,
+      notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
     });
     setEditingLot(lc);
   };
@@ -293,6 +293,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
                       <option value="North">North</option>
                       <option value="South">South</option>
                     </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Country of Origin</label>
+                    <input type="text" value={formData.countryOfOrigin}
+                      onChange={(e) => updateForm({ countryOfOrigin: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. Brazil, Guatemala" />
                   </div>
 
                   {/* Existing fields */}
