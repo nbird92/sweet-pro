@@ -12,38 +12,51 @@ interface GenerateCoaParams {
 }
 
 const BLACK = '#141414';
-const GREEN = [0, 128, 0] as const;
+const DARK_GREEN = '#1a5c2e';
 
-function drawRect(doc: jsPDF, x: number, y: number, w: number, h: number, fill?: readonly number[]) {
-  if (fill) {
-    doc.setFillColor(fill[0], fill[1], fill[2]);
-    doc.rect(x, y, w, h, 'FD');
-  } else {
-    doc.rect(x, y, w, h, 'S');
-  }
-}
+// ── Shared helpers matching BOL / Order Confirmation style ──
 
-function drawBlackHeader(doc: jsPDF, text: string, x: number, y: number, w: number, h = 7): number {
+function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number, width: number): number {
   doc.setFillColor(BLACK);
-  doc.rect(x, y, w, h, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(255, 255, 255);
-  doc.text(text, x + w / 2, y + h / 2 + 1, { align: 'center' });
-  doc.setTextColor(BLACK);
-  return y + h;
-}
-
-function drawLabelValue(doc: jsPDF, label: string, value: string, x: number, y: number, labelW: number, valueW: number, h: number) {
-  doc.setDrawColor(100, 100, 100);
-  doc.rect(x, y, labelW, h, 'S');
+  doc.rect(x, y, width, 7, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
+  doc.setTextColor(255, 255, 255);
+  doc.text(text, x + 2, y + 5);
   doc.setTextColor(BLACK);
-  doc.text(label, x + 2, y + h / 2 + 1);
-  doc.rect(x + labelW, y, valueW, h, 'S');
+  return y + 7;
+}
+
+function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 13): number {
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(100, 100, 100);
+  doc.text(label.toUpperCase(), x + 2, y + 4.5);
   doc.setFont('helvetica', 'normal');
-  doc.text(value || '', x + labelW + 2, y + h / 2 + 1);
+  doc.setFontSize(9);
+  doc.setTextColor(BLACK);
+  const maxWidth = width - 4;
+  let displayValue = value || '';
+  while (doc.getTextWidth(displayValue) > maxWidth && displayValue.length > 0) {
+    displayValue = displayValue.slice(0, -1);
+  }
+  doc.text(displayValue, x + 2, y + 10);
+  doc.setDrawColor(200, 200, 200);
+  doc.rect(x, y, width, height);
+  return y + height;
+}
+
+function drawInfoField(doc: jsPDF, label: string, value: string, x: number, y: number, width: number): void {
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(100, 100, 100);
+  doc.text(label.toUpperCase(), x + 2, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(BLACK);
+  doc.text(value || '—', x + 2, y + 5.5);
+  doc.setDrawColor(200, 200, 200);
+  doc.rect(x, y - 3.5, width, 12);
 }
 
 function isLiquidSugar(sugarType: string): boolean {
@@ -52,108 +65,117 @@ function isLiquidSugar(sugarType: string): boolean {
 }
 
 // ============================================================
-// GRANULATED COA — Hamilton Granulated COA template
+// SHARED COA LAYOUT — used by both Granulated and Liquid
 // ============================================================
-function generateGranulatedCoa(
+function generateCoaPage(
   doc: jsPDF,
-  params: GenerateCoaParams & { shipmentLotCodes: LotCode[] }
+  shipment: Shipment,
+  order: Order | undefined,
+  customer: Customer | undefined,
+  shipFromLocation: Location | undefined,
+  shipmentLotCodes: LotCode[],
+  qaProducts: QAProduct[],
+  templateSubtitle: string,
+  parameters: { name: string; spec: string; unit: string; key: string | null }[],
 ) {
-  const { shipment, order, customer, shipFromLocation, shipmentLotCodes, qaProducts } = params;
   const pageWidth = doc.internal.pageSize.getWidth();
-  const M = 12;
-  const W = pageWidth - M * 2;
-  const halfW = W / 2;
-  const L = M;
-  const R = M + halfW;
-  const rh = 7;
-  const lblW = 38;
-  const valW = halfW - lblW;
+  const M = 14;
+  const contentWidth = pageWidth - M * 2;
+  const halfWidth = contentWidth / 2;
+  const leftCol = M;
+  const rightCol = M + halfWidth + 2;
+  const rightHalf = halfWidth - 2;
 
-  doc.setDrawColor(100, 100, 100);
-  doc.setLineWidth(0.3);
-
-  // ── HEADER ──
-  let y = 12;
+  // ═══════════════════════════════════════════════════════════
+  // HEADER — matches BOL / Order Confirmation
+  // ═══════════════════════════════════════════════════════════
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
+  doc.setFontSize(22);
   doc.setTextColor(BLACK);
-  doc.text('Certificate of Analysis', pageWidth / 2, y + 6, { align: 'center' });
-  doc.setFontSize(11);
-  doc.setTextColor(GREEN[0], GREEN[1], GREEN[2]);
-  doc.text('Sucro Can Canada Inc.', pageWidth / 2, y + 14, { align: 'center' });
+  doc.text('Certificate of Analysis', leftCol, 20);
+
+  doc.setFontSize(16);
+  doc.setTextColor(DARK_GREEN);
+  doc.text('Sucro Canada', pageWidth - M, 16, { align: 'right' });
   doc.setFontSize(7);
-  doc.setTextColor(100, 100, 100);
-  doc.text('Hamilton Sherman Plant', pageWidth / 2, y + 19, { align: 'center' });
-  doc.setTextColor(BLACK);
-  y += 26;
+  doc.setTextColor(150, 150, 150);
+  doc.text('sucrosourcing.com', pageWidth - M, 21, { align: 'right' });
 
-  // ── PRODUCT & SHIPMENT INFO ──
-  y = drawBlackHeader(doc, 'PRODUCT & SHIPMENT INFORMATION', L, y, W) + 0;
+  // Divider
+  doc.setDrawColor(BLACK);
+  doc.setLineWidth(0.5);
+  doc.line(leftCol, 25, pageWidth - M, 25);
 
+  let y = 32;
+
+  // ═══════════════════════════════════════════════════════════
+  // TOP INFO ROW — 4 equal-width fields
+  // ═══════════════════════════════════════════════════════════
+  const fieldW = contentWidth / 4;
   const productName = shipment.product || order?.product || '';
-  const qaProduct = qaProducts.find(p => p.skuName === productName);
-  const lotNums = shipmentLotCodes.map(lc => lc.lotNumber).join(', ');
-  const origins = [...new Set(shipmentLotCodes.map(lc => lc.countryOfOrigin).filter(Boolean))].join(', ');
   const bolNum = shipment.bol || order?.bolNumber || '';
+  const lotNums = shipmentLotCodes.map(lc => lc.lotNumber).join(', ');
+  const testDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
+
+  const topFields = [
+    { label: 'BOL #', value: bolNum },
+    { label: 'Customer PO #', value: order?.po || shipment.po || '' },
+    { label: 'Test Date', value: testDates },
+    { label: 'Ship Date', value: shipment.date || '' },
+  ];
+  topFields.forEach((f, i) => {
+    drawInfoField(doc, f.label, f.value, leftCol + i * fieldW, y, fieldW);
+  });
+  y += 14;
+
+  // ═══════════════════════════════════════════════════════════
+  // PRODUCT INFO (left) & SHIPMENT INFO (right)
+  // ═══════════════════════════════════════════════════════════
+  const headerY = y;
+  y = drawSectionHeader(doc, 'PRODUCT INFORMATION', leftCol, y, halfWidth);
+  drawSectionHeader(doc, 'SHIPMENT INFORMATION', rightCol, headerY, rightHalf);
+
+  const qaProduct = qaProducts.find(p => p.skuName === productName);
+  const origins = [...new Set(shipmentLotCodes.map(lc => lc.countryOfOrigin).filter(Boolean))].join(', ');
   const category = shipmentLotCodes.length > 0 ? shipmentLotCodes[0].category : (qaProduct?.category || '');
+  const productGroup = qaProduct?.productGroup || (shipmentLotCodes.length > 0 ? shipmentLotCodes[0].productGroup : '');
 
-  drawLabelValue(doc, 'Product:', productName, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'BOL #:', bolNum, R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Customer:', customer?.name || shipment.customer || '', L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Customer PO #:', order?.po || shipment.po || '', R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Lot Code(s):', lotNums, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Ship Date:', shipment.date || '', R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Country of Origin:', origins, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Category:', category, R, y, lblW, valW, rh);
-  y += rh;
+  let ly = y;
+  ly = drawFieldRow(doc, 'Product', productName, leftCol, ly, halfWidth);
+  ly = drawFieldRow(doc, 'Product Group', productGroup, leftCol, ly, halfWidth);
+  ly = drawFieldRow(doc, 'Category', category, leftCol, ly, halfWidth);
+  ly = drawFieldRow(doc, 'Country of Origin', origins, leftCol, ly, halfWidth);
 
   const shipperName = shipFromLocation?.name || order?.location || 'Hamilton Sherman Plant';
-  drawLabelValue(doc, 'Ship From:', shipperName, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Quantity:', shipment.qty ? `${shipment.qty} MT` : '', R, y, lblW, valW, rh);
-  y += rh + 3;
+  let ry = y;
+  ry = drawFieldRow(doc, 'Customer', customer?.name || shipment.customer || '', rightCol, ry, rightHalf);
+  ry = drawFieldRow(doc, 'Lot Code(s)', lotNums, rightCol, ry, rightHalf);
+  ry = drawFieldRow(doc, 'Ship From', shipperName, rightCol, ry, rightHalf);
+  ry = drawFieldRow(doc, 'Quantity', shipment.qty ? `${shipment.qty} MT` : '', rightCol, ry, rightHalf);
 
-  // ── SPECIFICATIONS vs ACTUAL RESULTS TABLE ──
-  y = drawBlackHeader(doc, 'QUALITY ANALYSIS', L, y, W) + 0;
+  y = Math.max(ly, ry) + 3;
 
-  // Determine spec values from QA product
-  const specs = qaProduct?.specifications;
+  // ═══════════════════════════════════════════════════════════
+  // QUALITY ANALYSIS TABLE
+  // ═══════════════════════════════════════════════════════════
+  y = drawSectionHeader(doc, `QUALITY ANALYSIS — ${templateSubtitle}`, leftCol, y, contentWidth);
 
-  // Build rows for each lot code
   const hasMultiple = shipmentLotCodes.length > 1;
 
-  // Granulated parameters
-  const parameters = [
-    { name: 'Polarization / Brix', spec: specs?.brix || '99.80 Min', unit: '°Z / °Bx', key: 'brix' as const },
-    { name: 'Color (ICUMSA)', spec: specs?.color || '45 Max', unit: 'IU', key: 'color' as const },
-    { name: 'Moisture', spec: specs?.moisture || '0.04 Max', unit: '%', key: 'moisture' as const },
-    { name: 'Ash (Conductivity)', spec: specs?.ash || '0.04 Max', unit: '%', key: 'ash' as const },
-    { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' as const },
-    { name: 'Granulation', spec: specs?.granulation || '', unit: '', key: null },
-    { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
-    { name: 'pH', spec: '', unit: '', key: 'ph' as const },
-    { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' as const },
-  ];
+  // Helper to extract a lot code result value
+  const getLotValue = (lc: LotCode, key: string | null, pName: string): string => {
+    if (key === null) {
+      if (pName.includes('Odour') || pName.includes('Flavour')) return lc.flavourOdourOk === 'Yes' ? 'Normal' : lc.flavourOdourOk === 'No' ? 'Abnormal' : '';
+      return '';
+    }
+    return (lc as any)[key] || '';
+  };
 
   if (hasMultiple) {
-    // Multiple lot codes — show each as a column
     const head = [['Parameter', 'Specification', 'Unit', ...shipmentLotCodes.map(lc => lc.lotNumber)]];
     const body = parameters.map(p => {
       const row: string[] = [p.name, p.spec, p.unit];
-      shipmentLotCodes.forEach(lc => {
-        if (p.key === null) {
-          if (p.name.includes('Odour')) row.push(lc.flavourOdourOk === 'Yes' ? 'Normal' : lc.flavourOdourOk === 'No' ? 'Abnormal' : '');
-          else if (p.name.includes('Granulation')) row.push('');
-          else row.push('');
-        } else {
-          row.push(lc[p.key] || '');
-        }
-      });
+      shipmentLotCodes.forEach(lc => row.push(getLotValue(lc, p.key, p.name)));
       return row;
     });
 
@@ -162,290 +184,103 @@ function generateGranulatedCoa(
       margin: { left: M, right: M },
       head,
       body,
-      styles: { fontSize: 8, cellPadding: 2.5, lineColor: [100, 100, 100], lineWidth: 0.3, textColor: [20, 20, 20] },
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
+      styles: { fontSize: 8, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
+      headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 7 },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 40 },
-        1: { cellWidth: 30 },
-        2: { cellWidth: 18, halign: 'center' },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 16, halign: 'center' },
       },
     });
   } else {
-    // Single lot code
     const lc = shipmentLotCodes[0];
     const head = [['Parameter', 'Specification', 'Unit', 'Result']];
-    const body = parameters.map(p => {
-      let result = '';
-      if (lc) {
-        if (p.key === null) {
-          if (p.name.includes('Odour')) result = lc.flavourOdourOk === 'Yes' ? 'Normal' : lc.flavourOdourOk === 'No' ? 'Abnormal' : '';
-          else if (p.name.includes('Granulation')) result = '';
-        } else {
-          result = lc[p.key] || '';
-        }
-      }
-      return [p.name, p.spec, p.unit, result];
-    });
+    const body = parameters.map(p => [
+      p.name,
+      p.spec,
+      p.unit,
+      lc ? getLotValue(lc, p.key, p.name) : '',
+    ]);
 
     autoTable(doc, {
       startY: y,
       margin: { left: M, right: M },
       head,
       body,
-      styles: { fontSize: 8, cellPadding: 2.5, lineColor: [100, 100, 100], lineWidth: 0.3, textColor: [20, 20, 20] },
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      styles: { fontSize: 8, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
+      headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 7 },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 48 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 22, halign: 'center' },
+        1: { cellWidth: 42 },
+        2: { cellWidth: 20, halign: 'center' },
         3: { halign: 'center' },
       },
     });
   }
 
   y = (doc as any).lastAutoTable?.finalY || y + 60;
-  y += 5;
+  y += 3;
 
-  // ── TESTER INFORMATION ──
+  // ═══════════════════════════════════════════════════════════
+  // TESTER & TEST INFO — 3 equal fields
+  // ═══════════════════════════════════════════════════════════
+  const thirdW = contentWidth / 3;
   const testers = [...new Set(shipmentLotCodes.map(lc => lc.testerName).filter(Boolean))].join(', ');
-  const testDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
+  const weeklyVerifications = [...new Set(shipmentLotCodes.map(lc => lc.weeklyVerification).filter(Boolean))].join(', ');
 
-  drawLabelValue(doc, 'Tested By:', testers, L, y, lblW, W - lblW, rh);
-  y += rh;
-  drawLabelValue(doc, 'Test Date(s):', testDates, L, y, lblW, W - lblW, rh);
-  y += rh + 5;
+  drawInfoField(doc, 'Tested By', testers, leftCol, y, thirdW);
+  drawInfoField(doc, 'Test Date', testDates, leftCol + thirdW, y, thirdW);
+  drawInfoField(doc, 'Weekly Verification', weeklyVerifications, leftCol + thirdW * 2, y, thirdW);
+  y += 17;
 
-  // ── CERTIFICATION ──
-  y = drawBlackHeader(doc, 'CERTIFICATION', L, y, W) + 0;
-  drawRect(doc, L, y, W, 22);
+  // ═══════════════════════════════════════════════════════════
+  // CERTIFICATION
+  // ═══════════════════════════════════════════════════════════
+  y = drawSectionHeader(doc, 'CERTIFICATION', leftCol, y, contentWidth);
+  doc.setDrawColor(200, 200, 200);
+  doc.rect(leftCol, y, contentWidth, 16);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.setTextColor(BLACK);
+  doc.setTextColor(80, 80, 80);
   doc.text(
     'We hereby certify that the above product has been tested and the results are as shown above.',
-    L + 3, y + 5
+    leftCol + 3, y + 5
   );
   doc.text(
     'This product complies with all applicable food safety regulations and is fit for human consumption.',
-    L + 3, y + 10
+    leftCol + 3, y + 10
   );
-  y += 22;
+  y += 19;
 
-  // ── SIGNATURES ──
-  y += 3;
-  const sigLbl = 32;
-  const sigW = halfW - sigLbl;
-  drawLabelValue(doc, 'QA Approved By:', '', L, y, sigLbl, sigW, 12);
-  drawLabelValue(doc, 'Date:', '', R, y, 20, halfW - 20, 12);
-  y += 14;
+  // ═══════════════════════════════════════════════════════════
+  // SIGNATURES — QA Approved By (tester from lot code) & Authorized By
+  // ═══════════════════════════════════════════════════════════
+  const sigHeaderY = y;
+  y = drawSectionHeader(doc, 'QA APPROVAL', leftCol, y, halfWidth);
+  drawSectionHeader(doc, 'AUTHORIZATION', rightCol, sigHeaderY, rightHalf);
 
-  drawLabelValue(doc, 'Authorized By:', '', L, y, sigLbl, sigW, 12);
-  drawLabelValue(doc, 'Date:', '', R, y, 20, halfW - 20, 12);
-  y += 16;
+  const sigRowH = 11;
+  const lotCodeDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
 
-  // ── FOOTER ──
+  let qy = y;
+  qy = drawFieldRow(doc, 'QA Approved By', testers, leftCol, qy, halfWidth, sigRowH);
+  qy = drawFieldRow(doc, 'Date', lotCodeDates, leftCol, qy, halfWidth, sigRowH);
+  qy = drawFieldRow(doc, 'Signature', '', leftCol, qy, halfWidth, sigRowH);
+
+  let ay = y;
+  ay = drawFieldRow(doc, 'Authorized By', '', rightCol, ay, rightHalf, sigRowH);
+  ay = drawFieldRow(doc, 'Date', '', rightCol, ay, rightHalf, sigRowH);
+  ay = drawFieldRow(doc, 'Signature', '', rightCol, ay, rightHalf, sigRowH);
+
+  y = Math.max(qy, ay) + 5;
+
+  // ═══════════════════════════════════════════════════════════
+  // FOOTER
+  // ═══════════════════════════════════════════════════════════
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
-  doc.setTextColor(120, 120, 120);
-  doc.text('Sucro Can Canada Inc. | Hamilton Sherman Plant | www.sucrocan.com', pageWidth / 2, y, { align: 'center' });
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-CA')}`, pageWidth / 2, y + 4, { align: 'center' });
-}
-
-// ============================================================
-// LIQUID COA — Hamilton Liquid COA template
-// ============================================================
-function generateLiquidCoa(
-  doc: jsPDF,
-  params: GenerateCoaParams & { shipmentLotCodes: LotCode[] }
-) {
-  const { shipment, order, customer, shipFromLocation, shipmentLotCodes, qaProducts } = params;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const M = 12;
-  const W = pageWidth - M * 2;
-  const halfW = W / 2;
-  const L = M;
-  const R = M + halfW;
-  const rh = 7;
-  const lblW = 38;
-  const valW = halfW - lblW;
-
-  doc.setDrawColor(100, 100, 100);
-  doc.setLineWidth(0.3);
-
-  // ── HEADER ──
-  let y = 12;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.setTextColor(BLACK);
-  doc.text('Certificate of Analysis', pageWidth / 2, y + 6, { align: 'center' });
-  doc.setFontSize(11);
-  doc.setTextColor(GREEN[0], GREEN[1], GREEN[2]);
-  doc.text('Sucro Can Canada Inc.', pageWidth / 2, y + 14, { align: 'center' });
-  doc.setFontSize(7);
-  doc.setTextColor(100, 100, 100);
-  doc.text('Hamilton Sherman Plant — Liquid Sugar', pageWidth / 2, y + 19, { align: 'center' });
-  doc.setTextColor(BLACK);
-  y += 26;
-
-  // ── PRODUCT & SHIPMENT INFO ──
-  y = drawBlackHeader(doc, 'PRODUCT & SHIPMENT INFORMATION', L, y, W) + 0;
-
-  const productName = shipment.product || order?.product || '';
-  const qaProduct = qaProducts.find(p => p.skuName === productName);
-  const lotNums = shipmentLotCodes.map(lc => lc.lotNumber).join(', ');
-  const origins = [...new Set(shipmentLotCodes.map(lc => lc.countryOfOrigin).filter(Boolean))].join(', ');
-  const bolNum = shipment.bol || order?.bolNumber || '';
-  const category = shipmentLotCodes.length > 0 ? shipmentLotCodes[0].category : (qaProduct?.category || '');
-
-  drawLabelValue(doc, 'Product:', productName, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'BOL #:', bolNum, R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Customer:', customer?.name || shipment.customer || '', L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Customer PO #:', order?.po || shipment.po || '', R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Lot Code(s):', lotNums, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Ship Date:', shipment.date || '', R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Country of Origin:', origins, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Category:', category, R, y, lblW, valW, rh);
-  y += rh;
-
-  const shipperName = shipFromLocation?.name || order?.location || 'Hamilton Sherman Plant';
-  drawLabelValue(doc, 'Ship From:', shipperName, L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Quantity:', shipment.qty ? `${shipment.qty} MT` : '', R, y, lblW, valW, rh);
-  y += rh;
-
-  drawLabelValue(doc, 'Tank #:', [...new Set(shipmentLotCodes.map(lc => lc.tankNumber).filter(Boolean))].join(', '), L, y, lblW, valW, rh);
-  drawLabelValue(doc, 'Silo:', [...new Set(shipmentLotCodes.map(lc => lc.silo).filter(Boolean))].join(', '), R, y, lblW, valW, rh);
-  y += rh + 3;
-
-  // ── QUALITY ANALYSIS TABLE ──
-  y = drawBlackHeader(doc, 'QUALITY ANALYSIS', L, y, W) + 0;
-
-  const specs = qaProduct?.specifications;
-
-  // Liquid-specific parameters
-  const parameters = [
-    { name: 'Brix', spec: specs?.brix || '67.0 Min', unit: '°Bx', key: 'brix' as const },
-    { name: 'Color (ICUMSA)', spec: specs?.color || '45 Max', unit: 'IU', key: 'color' as const },
-    { name: 'pH', spec: '', unit: '', key: 'ph' as const },
-    { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' as const },
-    { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' as const },
-    { name: 'Ash (Conductivity)', spec: specs?.ash || '', unit: '%', key: 'ash' as const },
-    { name: 'Turbidity', spec: specs?.turbidity || '', unit: 'NTU', key: null },
-    { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
-  ];
-
-  const hasMultiple = shipmentLotCodes.length > 1;
-
-  if (hasMultiple) {
-    const head = [['Parameter', 'Specification', 'Unit', ...shipmentLotCodes.map(lc => lc.lotNumber)]];
-    const body = parameters.map(p => {
-      const row: string[] = [p.name, p.spec, p.unit];
-      shipmentLotCodes.forEach(lc => {
-        if (p.key === null) {
-          if (p.name.includes('Odour')) row.push(lc.flavourOdourOk === 'Yes' ? 'Normal' : lc.flavourOdourOk === 'No' ? 'Abnormal' : '');
-          else row.push('');
-        } else {
-          row.push(lc[p.key] || '');
-        }
-      });
-      return row;
-    });
-
-    autoTable(doc, {
-      startY: y,
-      margin: { left: M, right: M },
-      head,
-      body,
-      styles: { fontSize: 8, cellPadding: 2.5, lineColor: [100, 100, 100], lineWidth: 0.3, textColor: [20, 20, 20] },
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 7.5 },
-      columnStyles: {
-        0: { fontStyle: 'bold', cellWidth: 40 },
-        1: { cellWidth: 30 },
-        2: { cellWidth: 18, halign: 'center' },
-      },
-    });
-  } else {
-    const lc = shipmentLotCodes[0];
-    const head = [['Parameter', 'Specification', 'Unit', 'Result']];
-    const body = parameters.map(p => {
-      let result = '';
-      if (lc) {
-        if (p.key === null) {
-          if (p.name.includes('Odour')) result = lc.flavourOdourOk === 'Yes' ? 'Normal' : lc.flavourOdourOk === 'No' ? 'Abnormal' : '';
-        } else {
-          result = lc[p.key] || '';
-        }
-      }
-      return [p.name, p.spec, p.unit, result];
-    });
-
-    autoTable(doc, {
-      startY: y,
-      margin: { left: M, right: M },
-      head,
-      body,
-      styles: { fontSize: 8, cellPadding: 2.5, lineColor: [100, 100, 100], lineWidth: 0.3, textColor: [20, 20, 20] },
-      headStyles: { fillColor: [20, 20, 20], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-      columnStyles: {
-        0: { fontStyle: 'bold', cellWidth: 48 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 22, halign: 'center' },
-        3: { halign: 'center' },
-      },
-    });
-  }
-
-  y = (doc as any).lastAutoTable?.finalY || y + 60;
-  y += 5;
-
-  // ── TESTER INFORMATION ──
-  const testers = [...new Set(shipmentLotCodes.map(lc => lc.testerName).filter(Boolean))].join(', ');
-  const testDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
-
-  drawLabelValue(doc, 'Tested By:', testers, L, y, lblW, W - lblW, rh);
-  y += rh;
-  drawLabelValue(doc, 'Test Date(s):', testDates, L, y, lblW, W - lblW, rh);
-  y += rh + 5;
-
-  // ── CERTIFICATION ──
-  y = drawBlackHeader(doc, 'CERTIFICATION', L, y, W) + 0;
-  drawRect(doc, L, y, W, 22);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(BLACK);
-  doc.text(
-    'We hereby certify that the above product has been tested and the results are as shown above.',
-    L + 3, y + 5
-  );
-  doc.text(
-    'This product complies with all applicable food safety regulations and is fit for human consumption.',
-    L + 3, y + 10
-  );
-  y += 22;
-
-  // ── SIGNATURES ──
-  y += 3;
-  const sigLbl = 32;
-  const sigW = halfW - sigLbl;
-  drawLabelValue(doc, 'QA Approved By:', '', L, y, sigLbl, sigW, 12);
-  drawLabelValue(doc, 'Date:', '', R, y, 20, halfW - 20, 12);
-  y += 14;
-
-  drawLabelValue(doc, 'Authorized By:', '', L, y, sigLbl, sigW, 12);
-  drawLabelValue(doc, 'Date:', '', R, y, 20, halfW - 20, 12);
-  y += 16;
-
-  // ── FOOTER ──
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7);
-  doc.setTextColor(120, 120, 120);
-  doc.text('Sucro Can Canada Inc. | Hamilton Sherman Plant | www.sucrocan.com', pageWidth / 2, y, { align: 'center' });
-  doc.text(`Generated: ${new Date().toLocaleDateString('en-CA')}`, pageWidth / 2, y + 4, { align: 'center' });
+  doc.setTextColor(150, 150, 150);
+  doc.text('Sucro Can Canada Inc. | Hamilton Sherman Plant | sucrosourcing.com', pageWidth / 2, y, { align: 'center' });
 }
 
 // ============================================================
@@ -467,18 +302,59 @@ export function generateCoaPdf({
     .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
     .filter((lc): lc is LotCode => !!lc);
 
-  // Determine which template to use based on the sugar type of the lot codes or the product
+  // Determine sugar type from lot codes or QA product
+  const productName = shipment.product || order?.product || '';
+  const qaProduct = qaProducts.find(p => p.skuName === productName);
   const sugarType = shipmentLotCodes.length > 0
     ? shipmentLotCodes[0].sugarType
-    : (qaProducts.find(p => p.skuName === (shipment.product || order?.product))?.sugarType || '');
+    : (qaProduct?.sugarType || '');
 
-  const params = { shipment, order, customer, shipFromLocation, lotCodes, qaProducts, shipmentLotCodes };
+  // Get specification values from the QA product table
+  const specs = qaProduct?.specifications;
+
+  // Build the parameter list based on sugar type
+  let templateSubtitle: string;
+  let parameters: { name: string; spec: string; unit: string; key: string | null }[];
 
   if (isLiquidSugar(sugarType)) {
-    generateLiquidCoa(doc, params);
+    templateSubtitle = 'LIQUID SUGAR';
+    parameters = [
+      { name: 'Brix', spec: specs?.brix || '', unit: '°Bx', key: 'brix' },
+      { name: 'Color (ICUMSA)', spec: specs?.color || '', unit: 'IU', key: 'color' },
+      { name: 'pH', spec: '', unit: '', key: 'ph' },
+      { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' },
+      { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' },
+      { name: 'Ash (Conductivity)', spec: specs?.ash || '', unit: '%', key: 'ash' },
+      { name: 'Moisture', spec: specs?.moisture || '', unit: '%', key: 'moisture' },
+      { name: 'Turbidity', spec: specs?.turbidity || '', unit: 'NTU', key: null },
+      { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
+    ];
   } else {
-    generateGranulatedCoa(doc, params);
+    templateSubtitle = 'GRANULATED SUGAR';
+    parameters = [
+      { name: 'Polarization / Brix', spec: specs?.brix || '', unit: '°Z / °Bx', key: 'brix' },
+      { name: 'Color (ICUMSA)', spec: specs?.color || '', unit: 'IU', key: 'color' },
+      { name: 'Moisture', spec: specs?.moisture || '', unit: '%', key: 'moisture' },
+      { name: 'Ash (Conductivity)', spec: specs?.ash || '', unit: '%', key: 'ash' },
+      { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' },
+      { name: 'Granulation', spec: specs?.granulation || '', unit: '', key: null },
+      { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
+      { name: 'pH', spec: '', unit: '', key: 'ph' },
+      { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' },
+    ];
   }
+
+  generateCoaPage(
+    doc,
+    shipment,
+    order,
+    customer,
+    shipFromLocation,
+    shipmentLotCodes,
+    qaProducts,
+    templateSubtitle,
+    parameters,
+  );
 
   const bolNum = shipment.bol || order?.bolNumber || '';
   const filename = `COA_${bolNum || 'draft'}_${(shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;

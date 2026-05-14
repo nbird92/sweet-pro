@@ -294,14 +294,19 @@ export function generateBolPdf({
   y = Math.max(csy, rsy) + 5;
 
   // ═══════════════════════════════════════════════════════════
-  // NOTES
+  // NOTES — clamp height so box stays within page margin
   // ═══════════════════════════════════════════════════════════
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const bottomMargin = 14;
+  const maxNotesH = Math.max(14, pageHeight - bottomMargin - y);
+  const notesH = Math.min(18, maxNotesH);
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.setTextColor(100, 100, 100);
   doc.text('NOTES', leftCol + 2, y + 3);
   doc.setDrawColor(200, 200, 200);
-  doc.rect(leftCol, y, contentWidth, 18);
+  doc.rect(leftCol, y, contentWidth, notesH);
   if (shipment.notes) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
