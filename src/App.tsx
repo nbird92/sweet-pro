@@ -2639,7 +2639,7 @@ export default function App() {
     { name: 'Sales Leads', icon: Users },
     { name: 'People', icon: Users },
     { name: 'Quality Assurance', icon: ClipboardCheck },
-    { name: 'Lab', icon: FlaskConical },
+    { name: 'Hamilton Lab', icon: FlaskConical },
     { name: 'Vendors', icon: Briefcase },
   ];
 
@@ -4857,12 +4857,13 @@ export default function App() {
       );
     }
 
-    if (activePage === 'Lab') {
+    if (activePage === 'Hamilton Lab') {
       return (
         <LabPage
           lotCodes={lotCodes}
           sugarTypes={sugarTypes}
           people={people}
+          productGroups={productGroups}
           onUpdateLotCodes={setLotCodes}
         />
       );

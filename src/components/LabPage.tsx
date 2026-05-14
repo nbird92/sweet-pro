@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LotCode, SugarType, Person } from '../types';
+import { LotCode, SugarType, Person, ProductGroup } from '../types';
 import { Plus, X, Trash2, Edit2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -7,21 +7,73 @@ interface LabPageProps {
   lotCodes: LotCode[];
   sugarTypes: SugarType[];
   people: Person[];
+  productGroups: ProductGroup[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
 }
 
-const EMPTY_LOT_CODE: Omit<LotCode, 'id' | 'createdAt'> = {
-  lotNumber: '', tankNumber: '', brix: '', ph: '', color: '', temperature: '',
-  invert: '', flavourOdourOk: '', testerId: '', testerName: '', notes: '',
+const EMPTY_FORM = {
+  lotNumber: '', tankNumber: '', date: '', julianDate: '',
+  category: '' as 'Conventional' | 'Organic' | '',
+  productGroup: '', silo: '' as 'North' | 'South' | '',
+  brix: '', ph: '', color: '', temperature: '',
+  invert: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
+  testerId: '', testerName: '', notes: '',
   weeklyVerification: '', sugarType: '',
 };
 
-export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes }: LabPageProps) {
+// Get Julian day of the year (1-366) from a date string YYYY-MM-DD
+function getJulianDay(dateStr: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T12:00:00');
+  const start = new Date(d.getFullYear(), 0, 0);
+  const diff = d.getTime() - start.getTime();
+  const oneDay = 1000 * 60 * 60 * 24;
+  const day = Math.floor(diff / oneDay);
+  return String(day).padStart(3, '0');
+}
+
+// Generate lot code: HS-[sugarType][productGroup][orgConv][YY][JJJ][silo]
+function generateLotCode(form: typeof EMPTY_FORM): string {
+  // 1. Plant prefix
+  const plant = 'HS';
+
+  // 2. Sugar type code: R=Granulated, L=Liquid, M=Molasses
+  const sugarTypeMap: Record<string, string> = {
+    'Granulated': 'R', 'Liquid': 'L', 'Molasses': 'M',
+    'Icing': 'I', 'Brown': 'B', 'Yellow': 'Y',
+  };
+  const sugarCode = sugarTypeMap[form.sugarType] || '?';
+
+  // 3. Product group code: 00=Bulk/Liquid Bulk, 10=Tote, 50=Packaged/Bagged
+  const pgMap: Record<string, string> = {
+    'Bulk': '00', 'Liquid': '00', 'Tote': '10', 'Bagged': '50',
+  };
+  const pgCode = pgMap[form.productGroup] || '50';
+
+  // 4. Organic/Conventional: B=Organic, C=Conventional
+  const catCode = form.category === 'Organic' ? 'B' : form.category === 'Conventional' ? 'C' : '?';
+
+  // 5. YY = last 2 digits of year
+  let yy = '??';
+  if (form.date) {
+    yy = form.date.slice(2, 4);
+  }
+
+  // 6. JJJ = Julian date
+  const jjj = form.julianDate || '???';
+
+  // 7. Silo: N=North, S=South
+  const siloCode = form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
+
+  return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}${siloCode}`;
+}
+
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, onUpdateLotCodes }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ ...EMPTY_LOT_CODE });
+  const [formData, setFormData] = useState({ ...EMPTY_FORM });
 
   const qaPeople = people.filter(p => p.department === 'QA');
 
@@ -29,16 +81,32 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
     ? lotCodes.filter(lc => lc.sugarType === filterSugarType)
     : lotCodes;
 
+  // Update form and auto-compute lot code + julian date
+  const updateForm = (patch: Partial<typeof EMPTY_FORM>) => {
+    const next = { ...formData, ...patch };
+    // Auto-compute Julian date when date changes
+    if ('date' in patch && patch.date) {
+      next.julianDate = getJulianDay(patch.date);
+    }
+    // Auto-generate lot number
+    next.lotNumber = generateLotCode(next);
+    setFormData(next);
+  };
+
   const openAdd = () => {
-    setFormData({ ...EMPTY_LOT_CODE });
+    setFormData({ ...EMPTY_FORM });
     setIsAdding(true);
   };
 
   const openEdit = (lc: LotCode) => {
     setFormData({
-      lotNumber: lc.lotNumber, tankNumber: lc.tankNumber, brix: lc.brix,
-      ph: lc.ph, color: lc.color, temperature: lc.temperature, invert: lc.invert,
-      flavourOdourOk: lc.flavourOdourOk, testerId: lc.testerId, testerName: lc.testerName,
+      lotNumber: lc.lotNumber, tankNumber: lc.tankNumber,
+      date: lc.date || '', julianDate: lc.julianDate || '',
+      category: lc.category || '', productGroup: lc.productGroup || '',
+      silo: lc.silo || '',
+      brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
+      invert: lc.invert, flavourOdourOk: lc.flavourOdourOk,
+      testerId: lc.testerId, testerName: lc.testerName,
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType,
     });
     setEditingLot(lc);
@@ -70,7 +138,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
   return (
     <div className="p-6 space-y-4">
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold uppercase tracking-tighter">Lab</h2>
+        <h2 className="text-xl font-bold uppercase tracking-tighter">Hamilton Lab</h2>
       </div>
 
       {/* Lot Code Testing Log Table */}
@@ -99,6 +167,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
           <thead>
             <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
               <th className="p-3 border-r border-[#141414]/10">Lot #</th>
+              <th className="p-3 border-r border-[#141414]/10">Date</th>
               <th className="p-3 border-r border-[#141414]/10">Tank #</th>
               <th className="p-3 border-r border-[#141414]/10">Sugar Type</th>
               <th className="p-3 border-r border-[#141414]/10">Brix</th>
@@ -115,10 +184,11 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
             {filtered.length === 0 ? (
-              <tr><td colSpan={13} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
+              <tr><td colSpan={14} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
             ) : filtered.map(lc => (
               <tr key={lc.id} className="hover:bg-[#F9F9F9] transition-colors">
                 <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{lc.lotNumber}</td>
+                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.date || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.tankNumber || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.sugarType || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.brix || '—'}</td>
@@ -161,24 +231,72 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
                 <button onClick={() => { setIsAdding(false); setEditingLot(null); }} className="hover:opacity-70"><X size={18} /></button>
               </div>
               <div className="p-6 space-y-4">
+                {/* Auto-generated Lot Code preview */}
+                <div className="bg-[#F5F5F5] border border-[#141414]/20 p-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Generated Lot Code</div>
+                    <div className="text-sm font-mono font-bold">{formData.lotNumber || '—'}</div>
+                  </div>
+                  <div className="text-[9px] opacity-40 text-right">HS-[Type][Group][Conv/Org][YY][JJJ][Silo]</div>
+                </div>
+
                 <div className="grid grid-cols-3 gap-4">
+                  {/* Date & Julian Date */}
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Lot #</label>
-                    <input type="text" value={formData.lotNumber} onChange={(e) => setFormData({ ...formData, lotNumber: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="Enter lot number" />
+                    <label className="text-[10px] uppercase font-bold opacity-50">Date</label>
+                    <input type="date" value={formData.date}
+                      onChange={(e) => updateForm({ date: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Tank #</label>
-                    <input type="text" value={formData.tankNumber} onChange={(e) => setFormData({ ...formData, tankNumber: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="Enter tank number" />
+                    <label className="text-[10px] uppercase font-bold opacity-50">Julian Date</label>
+                    <div className="bg-[#F5F5F5] border border-[#141414]/20 p-2 text-sm font-mono font-bold">{formData.julianDate || '—'}</div>
+                    <p className="text-[9px] opacity-40">Auto-calculated from date</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Sugar Type</label>
-                    <select value={formData.sugarType} onChange={(e) => setFormData({ ...formData, sugarType: e.target.value })}
+                    <select value={formData.sugarType}
+                      onChange={(e) => updateForm({ sugarType: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
                       <option value="">— Select —</option>
                       {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
                     </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Conventional / Organic</label>
+                    <select value={formData.category}
+                      onChange={(e) => updateForm({ category: e.target.value as 'Conventional' | 'Organic' | '' })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">— Select —</option>
+                      <option value="Conventional">Conventional</option>
+                      <option value="Organic">Organic</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
+                    <select value={formData.productGroup}
+                      onChange={(e) => updateForm({ productGroup: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">— Select —</option>
+                      {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Silo</label>
+                    <select value={formData.silo}
+                      onChange={(e) => updateForm({ silo: e.target.value as 'North' | 'South' | '' })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">— Select —</option>
+                      <option value="North">North</option>
+                      <option value="South">South</option>
+                    </select>
+                  </div>
+
+                  {/* Existing fields */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Tank #</label>
+                    <input type="text" value={formData.tankNumber} onChange={(e) => setFormData({ ...formData, tankNumber: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="Enter tank number" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
@@ -240,7 +358,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, onUpdateLotCodes
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none min-h-[80px] resize-y" placeholder="Additional notes..." />
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button onClick={handleSave} disabled={!formData.lotNumber.trim()}
+                  <button onClick={handleSave} disabled={!formData.lotNumber || formData.lotNumber.includes('?')}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50">
                     {editingLot ? 'Save Changes' : 'Add Lot Code'}
                   </button>

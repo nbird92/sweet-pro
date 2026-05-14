@@ -557,6 +557,11 @@ export interface LotCode {
   id: string;
   lotNumber: string;
   tankNumber: string;
+  date: string;
+  julianDate: string;
+  category: 'Conventional' | 'Organic' | '';
+  productGroup: string;
+  silo: 'North' | 'South' | '';
   brix: string;
   ph: string;
   color: string;
