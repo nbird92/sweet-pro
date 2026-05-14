@@ -16,7 +16,7 @@ const EMPTY_FORM = {
   category: '' as 'Conventional' | 'Organic' | '',
   productGroup: '', silo: '' as 'North' | 'South' | '',
   brix: '', ph: '', color: '', temperature: '',
-  invert: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
+  invert: '', ash: '', moisture: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
   weeklyVerification: '', sugarType: '', countryOfOrigin: '',
 };
@@ -108,7 +108,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
       category: lc.category || '', productGroup: lc.productGroup || '',
       silo: lc.silo || '',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
-      invert: lc.invert, flavourOdourOk: lc.flavourOdourOk,
+      invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
     });
@@ -332,6 +332,16 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, o
                     <label className="text-[10px] uppercase font-bold opacity-50">Invert</label>
                     <input type="text" value={formData.invert} onChange={(e) => setFormData({ ...formData, invert: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.04" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Ash</label>
+                    <input type="text" value={formData.ash} onChange={(e) => setFormData({ ...formData, ash: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.02" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Moisture</label>
+                    <input type="text" value={formData.moisture} onChange={(e) => setFormData({ ...formData, moisture: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.03" />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Flavour/Odour OK</label>

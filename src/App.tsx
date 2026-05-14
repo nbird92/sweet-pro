@@ -55,6 +55,7 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
+import { generateCoaPdf } from './coaPdf';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
@@ -1350,6 +1351,27 @@ export default function App() {
     } catch (e: any) {
       console.error('Generate BOL failed:', e);
       setErrorBox('Failed to generate Bill of Lading: ' + (e.message || 'Unknown error'));
+    }
+  };
+
+  const handleGenerateCoa = (shipment: Shipment) => {
+    try {
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const cust = customers.find(c => c.name === shipment.customer);
+      const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
+      const { blobUrl, filename } = generateCoaPdf({
+        shipment,
+        order: linkedOrder,
+        customer: cust,
+        shipFromLocation: shipFromLoc,
+        lotCodes,
+        qaProducts,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis' });
+    } catch (e: any) {
+      console.error('Generate COA failed:', e);
+      setErrorBox('Failed to generate Certificate of Analysis: ' + (e.message || 'Unknown error'));
     }
   };
 
@@ -7116,7 +7138,7 @@ export default function App() {
             >
               {(() => {
                 const linkedTemplate = pdfPreview.templateType ? qaTemplates.find(t => t.type === pdfPreview.templateType) : null;
-                const previewTitle = pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview';
+                const previewTitle = pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Certificate of Analysis' ? 'Certificate of Analysis Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview';
                 return (
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-4">
@@ -8184,7 +8206,7 @@ export default function App() {
                         <FileText size={14} /> Preview BOL
                       </button>
                       <button
-                        onClick={() => editingShipment && handleGenerateBol(editingShipment)}
+                        onClick={() => editingShipment && handleGenerateCoa(editingShipment)}
                         className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
                       >
                         <FileText size={14} /> Preview COA

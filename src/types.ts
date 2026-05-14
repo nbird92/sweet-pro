@@ -568,6 +568,8 @@ export interface LotCode {
   color: string;
   temperature: string;
   invert: string;
+  ash: string;
+  moisture: string;
   flavourOdourOk: 'Yes' | 'No' | '';
   testerId: string;
   testerName: string;
