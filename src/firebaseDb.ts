@@ -35,6 +35,7 @@ export const COLLECTIONS = {
   sampleRequests: 'sampleRequests',
   qaTemplates: 'qaTemplates',
   sugarTypes: 'sugarTypes',
+  lotCodes: 'lotCodes',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

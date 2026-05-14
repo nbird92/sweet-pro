@@ -553,6 +553,26 @@ export const INITIAL_SUGAR_TYPES: SugarType[] = [
   { id: 'ST-006', name: 'Molasses', abbreviation: 'ML' },
 ];
 
+export interface LotCode {
+  id: string;
+  lotNumber: string;
+  tankNumber: string;
+  brix: string;
+  ph: string;
+  color: string;
+  temperature: string;
+  invert: string;
+  flavourOdourOk: 'Yes' | 'No' | '';
+  testerId: string;
+  testerName: string;
+  notes: string;
+  weeklyVerification: string;
+  sugarType: string;
+  createdAt: string;
+}
+
+export const INITIAL_LOT_CODES: LotCode[] = [];
+
 export interface Vendor {
   id: string;
   vendorNumber: string;

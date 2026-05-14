@@ -54,7 +54,7 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -216,6 +216,7 @@ export default function App() {
   const [sampleRequests, setSampleRequests] = useState<SampleRequest[]>(INITIAL_SAMPLE_REQUESTS);
   const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
   const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
+  const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
@@ -1628,6 +1629,10 @@ export default function App() {
         setSugarTypes(data.sugarTypes);
         lastSyncedData.current.sugartypes = JSON.stringify(data.sugarTypes);
       }
+      if (data.lotCodes?.length) {
+        setLotCodes(data.lotCodes);
+        lastSyncedData.current.lotcodes = JSON.stringify(data.lotCodes);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1689,6 +1694,7 @@ export default function App() {
         { collection: COLLECTIONS.sampleRequests, key: 'samplerequests', data: sampleRequests },
         { collection: COLLECTIONS.qaTemplates, key: 'qatemplates', data: qaTemplates },
         { collection: COLLECTIONS.sugarTypes, key: 'sugartypes', data: sugarTypes },
+        { collection: COLLECTIONS.lotCodes, key: 'lotcodes', data: lotCodes },
       ];
 
       try {
@@ -1714,7 +1720,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, lastSynced, user]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
@@ -4830,11 +4836,13 @@ export default function App() {
           vendors={vendors}
           qaTemplates={qaTemplates}
           sugarTypes={sugarTypes}
+          lotCodes={lotCodes}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
           onUpdateTemplates={setQaTemplates}
+          onUpdateLotCodes={setLotCodes}
         />
       );
     }
