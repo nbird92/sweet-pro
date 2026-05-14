@@ -44,11 +44,14 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   };
   const sugarCode = sugarTypeMap[form.sugarType] || '?';
 
-  // 3. Product group code: 00=Bulk/Liquid Bulk, 10=Tote, 50=Packaged/Bagged
-  const pgMap: Record<string, string> = {
-    'Bulk': '00', 'Liquid': '00', 'Tote': '10', 'Bagged': '50',
-  };
-  const pgCode = pgMap[form.productGroup] || '50';
+  // 3. Product group code: 00=Bulk, 10=Totes, 50=Packaged
+  const pg = form.productGroup.toLowerCase();
+  let pgCode = '00'; // default to bulk
+  if (pg.includes('tote')) {
+    pgCode = '10';
+  } else if (pg.includes('pack') || pg.includes('bag')) {
+    pgCode = '50';
+  }
 
   // 4. Organic/Conventional: B=Organic, C=Conventional
   const catCode = form.category === 'Organic' ? 'B' : form.category === 'Conventional' ? 'C' : '?';
