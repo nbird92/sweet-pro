@@ -2077,8 +2077,13 @@ export default function App() {
     setHamiltonShipments(updateFn);
     setVancouverShipments(updateFn);
 
-    // If status changed to Completed, create an invoice and deduct contract volume
+    // If status changed to Completed, update the linked order status, create an invoice and deduct contract volume
     if (status === 'Completed' && shipment.status !== 'Completed') {
+      // Update the linked order status to Completed
+      const completedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      if (completedOrder) {
+        setOrders(prev => prev.map(o => o.id === completedOrder.id ? { ...o, status: 'Completed' } : o));
+      }
       // Find the contract for this shipment to use contract pricing
       const contract = contracts.find(c => c.contractNumber === shipment.contractNumber);
       const invoiceAmount = contract
@@ -4217,15 +4222,18 @@ export default function App() {
                               }
                             }}
                             className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
+                              ord.status === 'Completed' ? 'bg-green-100 text-green-700' :
                               ord.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
                               ord.status === 'Open' ? 'bg-amber-100 text-amber-700' :
                               ord.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
                               'bg-slate-100 text-slate-700'
                             }`}
+                            disabled={ord.status === 'Completed'}
                           >
                             <option value="Open">Open</option>
                             <option value="Confirmed">Confirmed</option>
                             <option value="Cancelled">Cancelled</option>
+                            {ord.status === 'Completed' && <option value="Completed">Completed</option>}
                           </select>
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
@@ -4356,6 +4364,7 @@ export default function App() {
                                     <div>
                                       <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Status</div>
                                       <div className={`inline-block px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
+                                        ord.status === 'Completed' ? 'bg-green-100 text-green-700' :
                                         ord.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
                                         ord.status === 'Open' ? 'bg-amber-100 text-amber-700' :
                                         'bg-red-100 text-red-700'
@@ -8108,7 +8117,7 @@ export default function App() {
                           const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
                           const completedShipment = { ...editingShipment, status: 'Completed' };
                           setList(list.map(s => s.id === editingShipment.id ? completedShipment : s));
-                          // Trigger invoice creation via updateShipmentStatus
+                          // Trigger invoice creation + order status update via updateShipmentStatus
                           updateShipmentStatus(editingShipment.id, 'Completed');
                           setIsAddingShipment(false);
                           setEditingShipment(null);

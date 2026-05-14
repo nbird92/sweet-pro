@@ -341,7 +341,7 @@ export interface Order {
   date: string;
   shipmentDate?: string;
   deliveryDate?: string;
-  status: 'Open' | 'Confirmed' | 'Cancelled';
+  status: 'Open' | 'Confirmed' | 'Cancelled' | 'Completed';
   lineItems: OrderLineItem[];
   amount: number;
   carrier?: string;
