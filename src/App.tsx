@@ -46,7 +46,8 @@ import {
   Maximize2,
   Minus,
   Power,
-  Upload
+  Upload,
+  FlaskConical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -58,6 +59,7 @@ import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN,
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
+import LabPage from './components/LabPage';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -2632,6 +2634,7 @@ export default function App() {
     { name: 'Sales Leads', icon: Users },
     { name: 'People', icon: Users },
     { name: 'Quality Assurance', icon: ClipboardCheck },
+    { name: 'Lab', icon: FlaskConical },
     { name: 'Vendors', icon: Briefcase },
   ];
 
@@ -3359,7 +3362,7 @@ export default function App() {
                                                     }
                                                     const s = shipments[0];
                                                     return (
-                                                      <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${!isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} style={{ backgroundColor: s.color || undefined }} onClick={() => setEditingShipment(s)}>
+                                                      <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${(s.status || '').toLowerCase() === 'completed' ? 'bg-green-50 hover:bg-green-100' : (s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-50 hover:bg-yellow-100' : !isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} onClick={() => setEditingShipment(s)}>
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
@@ -4836,12 +4839,21 @@ export default function App() {
           vendors={vendors}
           qaTemplates={qaTemplates}
           sugarTypes={sugarTypes}
-          lotCodes={lotCodes}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
           onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
           onUpdateTemplates={setQaTemplates}
+        />
+      );
+    }
+
+    if (activePage === 'Lab') {
+      return (
+        <LabPage
+          lotCodes={lotCodes}
+          sugarTypes={sugarTypes}
+          people={people}
           onUpdateLotCodes={setLotCodes}
         />
       );
