@@ -3371,7 +3371,7 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
+                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={s.lotNumber || ''}>{s.lotNumber || '—'}</td>
@@ -7907,7 +7907,6 @@ export default function App() {
                         >
                           <option value="Confirmed">Confirmed</option>
                           <option value="In Progress">In Progress</option>
-                          <option value="Completed">Completed</option>
                           <option value="Cancelled">Cancelled</option>
                         </select>
                       </div>
@@ -7927,7 +7926,11 @@ export default function App() {
                         <input
                           type="time"
                           value={editingShipment.arrive || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, arrive: e.target.value})}
+                          onChange={(e) => {
+                            const updated = {...editingShipment, arrive: e.target.value};
+                            if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
+                            setEditingShipment(updated);
+                          }}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         />
                       </div>
@@ -7936,7 +7939,11 @@ export default function App() {
                         <input
                           type="time"
                           value={editingShipment.start || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, start: e.target.value})}
+                          onChange={(e) => {
+                            const updated = {...editingShipment, start: e.target.value};
+                            if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
+                            setEditingShipment(updated);
+                          }}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         />
                       </div>
@@ -7945,7 +7952,11 @@ export default function App() {
                         <input
                           type="time"
                           value={editingShipment.out || ''}
-                          onChange={(e) => setEditingShipment({...editingShipment, out: e.target.value})}
+                          onChange={(e) => {
+                            const updated = {...editingShipment, out: e.target.value};
+                            if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
+                            setEditingShipment(updated);
+                          }}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         />
                       </div>
@@ -8069,10 +8080,34 @@ export default function App() {
                         Save Changes
                       </button>
                       <button
+                        onClick={() => {
+                          if (!editingShipment) return;
+                          // Save current edits first
+                          const isHamilton = activePage === 'Hamilton Shipments';
+                          const list = isHamilton ? hamiltonShipments : vancouverShipments;
+                          const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
+                          const completedShipment = { ...editingShipment, status: 'Completed' };
+                          setList(list.map(s => s.id === editingShipment.id ? completedShipment : s));
+                          // Trigger invoice creation via updateShipmentStatus
+                          updateShipmentStatus(editingShipment.id, 'Completed');
+                          setIsAddingShipment(false);
+                          setEditingShipment(null);
+                        }}
+                        className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all"
+                      >
+                        <CheckCircle2 size={14} /> Complete & Bill
+                      </button>
+                      <button
                         onClick={() => editingShipment && handleGenerateBol(editingShipment)}
                         className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
                       >
                         <FileText size={14} /> Preview BOL
+                      </button>
+                      <button
+                        onClick={() => editingShipment && handleGenerateBol(editingShipment)}
+                        className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
+                      >
+                        <FileText size={14} /> Preview COA
                       </button>
                       <button
                         onClick={() => { setIsAddingShipment(false); setEditingShipment(null); }}
