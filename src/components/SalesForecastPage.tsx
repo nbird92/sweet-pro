@@ -9,6 +9,8 @@ import {
   Lock,
   Eye,
   BarChart3,
+  Search,
+  ArrowUpDown,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -139,6 +141,19 @@ export default function SalesForecastPage({
     fiscalYears.length > 0 ? fiscalYears[0].id : ''
   );
   const [forecastType, setForecastType] = useState<'Forecast' | 'Budget'>('Forecast');
+
+  // ── Search & Sort ───────────────────────────────────────────────────────
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customerSort, setCustomerSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: '', dir: 'asc' });
+  const [productSearch, setProductSearch] = useState('');
+  const [productSort, setProductSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: '', dir: 'asc' });
+
+  const toggleCustomerSort = (key: string) => {
+    setCustomerSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
+  const toggleProductSort = (key: string) => {
+    setProductSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  };
 
   // ── Modals ──────────────────────────────────────────────────────────────
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
@@ -605,6 +620,77 @@ export default function SalesForecastPage({
     [selectedFY, getCellValue]
   );
 
+  // ── Sorted & filtered customer forecasts ────────────────────────────────
+  const sortedCustomerForecasts = useMemo(() => {
+    let list = mergedForecasts;
+    // Search filter
+    if (customerSearch.trim()) {
+      const q = customerSearch.toLowerCase();
+      list = list.filter(cf =>
+        (cf.customerNumber || '').toLowerCase().includes(q) ||
+        cf.customerName.toLowerCase().includes(q) ||
+        cf.location.toLowerCase().includes(q)
+      );
+    }
+    // Sort
+    if (customerSort.key) {
+      list = [...list].sort((a, b) => {
+        let va: string | number = '';
+        let vb: string | number = '';
+        switch (customerSort.key) {
+          case 'customerNumber': va = a.customerNumber || ''; vb = b.customerNumber || ''; break;
+          case 'customerName': va = a.customerName; vb = b.customerName; break;
+          case 'location': va = a.location; vb = b.location; break;
+          case 'annual': va = getAnnualWithActuals(a); vb = getAnnualWithActuals(b); break;
+        }
+        if (typeof va === 'number' && typeof vb === 'number') {
+          return customerSort.dir === 'asc' ? va - vb : vb - va;
+        }
+        const cmp = String(va).localeCompare(String(vb));
+        return customerSort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [mergedForecasts, customerSearch, customerSort, getAnnualWithActuals]);
+
+  // ── Sorted & filtered product forecasts ────────────────────────────────
+  const sortedProductForecasts = useMemo(() => {
+    let list = productForecastRows;
+    if (productSearch.trim()) {
+      const q = productSearch.toLowerCase();
+      list = list.filter(r =>
+        r.productName.toLowerCase().includes(q) ||
+        r.location.toLowerCase().includes(q)
+      );
+    }
+    if (productSort.key) {
+      list = [...list].sort((a, b) => {
+        let va: string | number = '';
+        let vb: string | number = '';
+        switch (productSort.key) {
+          case 'productName': va = a.productName; vb = b.productName; break;
+          case 'location': va = a.location; vb = b.location; break;
+          case 'annual': va = a.annual; vb = b.annual; break;
+        }
+        if (typeof va === 'number' && typeof vb === 'number') {
+          return productSort.dir === 'asc' ? va - vb : vb - va;
+        }
+        const cmp = String(va).localeCompare(String(vb));
+        return productSort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [productForecastRows, productSearch, productSort]);
+
+  // ── Sort indicator helper ──────────────────────────────────────────────
+  const SortHeader = ({ label, sortKey, current, onToggle }: { label: string; sortKey: string; current: { key: string; dir: 'asc' | 'desc' }; onToggle: (k: string) => void }) => (
+    <button onClick={() => onToggle(sortKey)} className="flex items-center gap-1 hover:opacity-80 transition-opacity">
+      <span>{label}</span>
+      <ArrowUpDown size={10} className={current.key === sortKey ? 'opacity-100' : 'opacity-30'} />
+      {current.key === sortKey && <span className="text-[8px]">{current.dir === 'asc' ? '▲' : '▼'}</span>}
+    </button>
+  );
+
   // ─── Render ───────────────────────────────────────────────────────────
 
   if (fiscalYears.length === 0) {
@@ -691,22 +777,33 @@ export default function SalesForecastPage({
           <h2 className="text-xs font-bold uppercase tracking-widest">
             Customer {typeLabel}
           </h2>
+          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+            <Search size={12} className="opacity-50" />
+            <input
+              type="text"
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              placeholder="Search customers..."
+              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
+            />
+            {customerSearch && <button onClick={() => setCustomerSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          </div>
         </div>
         <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-[#141414]">
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Customer No.
+                  <SortHeader label="Customer No." sortKey="customerNumber" current={customerSort} onToggle={toggleCustomerSort} />
                 </th>
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Customer Name
+                  <SortHeader label="Customer Name" sortKey="customerName" current={customerSort} onToggle={toggleCustomerSort} />
                 </th>
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Location
+                  <SortHeader label="Location" sortKey="location" current={customerSort} onToggle={toggleCustomerSort} />
                 </th>
                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Annual {typeLabel} (MT)
+                  <div className="flex justify-end"><SortHeader label={`Annual ${typeLabel} (MT)`} sortKey="annual" current={customerSort} onToggle={toggleCustomerSort} /></div>
                 </th>
                 <th className="text-center px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
                   Actions
@@ -714,7 +811,7 @@ export default function SalesForecastPage({
               </tr>
             </thead>
             <tbody>
-              {mergedForecasts.map((cf) => {
+              {sortedCustomerForecasts.map((cf) => {
                 const annual = getAnnualWithActuals(cf);
                 return (
                   <tr
@@ -755,7 +852,7 @@ export default function SalesForecastPage({
                   </tr>
                 );
               })}
-              {mergedForecasts.length === 0 && (
+              {sortedCustomerForecasts.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
                     No customers found.
@@ -769,28 +866,39 @@ export default function SalesForecastPage({
 
       {/* ── Product Forecast Table ────────────────────────────────────────── */}
       <div>
-        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3">
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">
             Product {typeLabel}
           </h2>
+          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+            <Search size={12} className="opacity-50" />
+            <input
+              type="text"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Search products..."
+              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
+            />
+            {productSearch && <button onClick={() => setProductSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          </div>
         </div>
         <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-[#141414]">
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Product Name
+                  <SortHeader label="Product Name" sortKey="productName" current={productSort} onToggle={toggleProductSort} />
                 </th>
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Location
+                  <SortHeader label="Location" sortKey="location" current={productSort} onToggle={toggleProductSort} />
                 </th>
                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Annual {typeLabel} (MT)
+                  <div className="flex justify-end"><SortHeader label={`Annual ${typeLabel} (MT)`} sortKey="annual" current={productSort} onToggle={toggleProductSort} /></div>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {productForecastRows.map((row) => (
+              {sortedProductForecasts.map((row) => (
                 <tr
                   key={`${row.productName}|${row.location}`}
                   className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -807,7 +915,7 @@ export default function SalesForecastPage({
                   </td>
                 </tr>
               ))}
-              {productForecastRows.length === 0 && (
+              {sortedProductForecasts.length === 0 && (
                 <tr>
                   <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
                     No product {typeLabel.toLowerCase()} data yet.

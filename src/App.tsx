@@ -65,6 +65,7 @@ import QualityAssurancePage from './components/QualityAssurancePage';
 import LabPage from './components/LabPage';
 import FinancePage from './components/FinancePage';
 import SalesForecastPage from './components/SalesForecastPage';
+import ReportsPage from './components/ReportsPage';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -5439,14 +5440,14 @@ export default function App() {
 
     if (activePage === 'Reports') {
       return (
-        <div className="p-6 space-y-8">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Reports</h2>
-          </div>
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] p-8 text-center">
-            <p className="text-sm opacity-50">Reports page — coming soon.</p>
-          </div>
-        </div>
+        <ReportsPage
+          invoices={invoices}
+          orders={orders}
+          customers={customers}
+          customerForecasts={customerForecasts}
+          fiscalYears={fiscalYears}
+          shipments={[...hamiltonShipments, ...vancouverShipments]}
+        />
       );
     }
 
