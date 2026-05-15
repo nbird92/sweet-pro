@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Search,
   ArrowUpDown,
@@ -8,7 +8,11 @@ import {
   Package,
   BarChart3,
   ChevronDown,
+  Download,
+  FileSpreadsheet,
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import type {
   Invoice,
   Order,
@@ -307,6 +311,284 @@ export default function ReportsPage({
   const comboGrandMt = useMemo(() => topCombinations.reduce((s, r) => s + r.totalMt, 0), [topCombinations]);
   const comboGrandRev = useMemo(() => topCombinations.reduce((s, r) => s + r.totalRevenue, 0), [topCombinations]);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EXCEL EXPORT
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const HEADER_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF141414' } };
+  const HEADER_FONT: Partial<ExcelJS.Font> = { bold: true, color: { argb: 'FFE4E3E0' }, size: 10 };
+  const TOTAL_FILL: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+  const TOTAL_FONT: Partial<ExcelJS.Font> = { bold: true, size: 10 };
+  const TITLE_FONT: Partial<ExcelJS.Font> = { bold: true, size: 14 };
+  const SUBTITLE_FONT: Partial<ExcelJS.Font> = { bold: true, size: 10, color: { argb: 'FF666666' } };
+  const CURRENCY_FMT = '$#,##0.00';
+  const NUMBER_FMT = '#,##0.0';
+  const PCT_FMT = '0.0%';
+  const INT_FMT = '#,##0';
+
+  const applyHeaderRow = (ws: ExcelJS.Worksheet, rowNum: number) => {
+    const row = ws.getRow(rowNum);
+    row.eachCell((cell) => {
+      cell.fill = HEADER_FILL;
+      cell.font = HEADER_FONT;
+      cell.alignment = { vertical: 'middle', horizontal: cell.alignment?.horizontal || 'left' };
+      cell.border = {
+        bottom: { style: 'thin', color: { argb: 'FF141414' } },
+      };
+    });
+    row.height = 24;
+  };
+
+  const applyTotalRow = (ws: ExcelJS.Worksheet, rowNum: number) => {
+    const row = ws.getRow(rowNum);
+    row.eachCell((cell) => {
+      cell.fill = TOTAL_FILL;
+      cell.font = TOTAL_FONT;
+      cell.border = {
+        top: { style: 'medium', color: { argb: 'FF141414' } },
+      };
+    });
+    row.height = 22;
+  };
+
+  const addTitleRows = (ws: ExcelJS.Worksheet, title: string, subtitle: string): number => {
+    const titleRow = ws.addRow([title]);
+    titleRow.getCell(1).font = TITLE_FONT;
+    titleRow.height = 24;
+    const subRow = ws.addRow([subtitle]);
+    subRow.getCell(1).font = SUBTITLE_FONT;
+    subRow.height = 18;
+    ws.addRow([]); // blank row
+    return ws.rowCount;
+  };
+
+  const buildCustomerSheet = useCallback((wb: ExcelJS.Workbook) => {
+    const ws = wb.addWorksheet('Sales by Customer');
+    const dateStr = new Date().toLocaleDateString();
+    addTitleRows(ws, 'Sales Volume by Customer', `Generated ${dateStr} | ${customerSalesData.length} customers | ${formatNum(customerGrandTotalMt)} MT total`);
+
+    // Headers
+    const headerRowNum = ws.rowCount + 1;
+    ws.addRow(['#', 'Customer', 'Total (MT)', 'Revenue', 'Invoices', 'Avg $/MT', '% of Total']);
+    applyHeaderRow(ws, headerRowNum);
+    ws.getRow(headerRowNum).getCell(3).alignment = { horizontal: 'right' };
+    ws.getRow(headerRowNum).getCell(4).alignment = { horizontal: 'right' };
+    ws.getRow(headerRowNum).getCell(5).alignment = { horizontal: 'right' };
+    ws.getRow(headerRowNum).getCell(6).alignment = { horizontal: 'right' };
+    ws.getRow(headerRowNum).getCell(7).alignment = { horizontal: 'right' };
+
+    // Data rows
+    sortedCustomerSales.forEach((row, idx) => {
+      const r = ws.addRow([idx + 1, row.customer, row.totalMt, row.totalRevenue, row.orderCount, row.avgPrice, row.pctOfTotal / 100]);
+      r.getCell(3).numFmt = NUMBER_FMT;
+      r.getCell(4).numFmt = CURRENCY_FMT;
+      r.getCell(5).numFmt = INT_FMT;
+      r.getCell(6).numFmt = CURRENCY_FMT;
+      r.getCell(7).numFmt = PCT_FMT;
+      r.getCell(3).alignment = { horizontal: 'right' };
+      r.getCell(4).alignment = { horizontal: 'right' };
+      r.getCell(5).alignment = { horizontal: 'right' };
+      r.getCell(6).alignment = { horizontal: 'right' };
+      r.getCell(7).alignment = { horizontal: 'right' };
+      // Alternate row shading
+      if (idx % 2 === 1) {
+        r.eachCell((cell) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+        });
+      }
+    });
+
+    // Total row
+    const totalRowNum = ws.rowCount + 1;
+    const totalInvoices = customerSalesData.reduce((s, r) => s + r.orderCount, 0);
+    const avgAll = customerGrandTotalMt > 0 ? customerGrandTotalRev / customerGrandTotalMt : 0;
+    const r = ws.addRow(['', `Total (${customerSalesData.length} customers)`, customerGrandTotalMt, customerGrandTotalRev, totalInvoices, avgAll, 1]);
+    r.getCell(3).numFmt = NUMBER_FMT;
+    r.getCell(4).numFmt = CURRENCY_FMT;
+    r.getCell(5).numFmt = INT_FMT;
+    r.getCell(6).numFmt = CURRENCY_FMT;
+    r.getCell(7).numFmt = PCT_FMT;
+    r.getCell(3).alignment = { horizontal: 'right' };
+    r.getCell(4).alignment = { horizontal: 'right' };
+    r.getCell(5).alignment = { horizontal: 'right' };
+    r.getCell(6).alignment = { horizontal: 'right' };
+    r.getCell(7).alignment = { horizontal: 'right' };
+    applyTotalRow(ws, totalRowNum);
+
+    // Column widths
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 35;
+    ws.getColumn(3).width = 16;
+    ws.getColumn(4).width = 18;
+    ws.getColumn(5).width = 12;
+    ws.getColumn(6).width = 16;
+    ws.getColumn(7).width = 14;
+
+    // Freeze header
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
+  }, [sortedCustomerSales, customerSalesData, customerGrandTotalMt, customerGrandTotalRev]);
+
+  const buildProductSheet = useCallback((wb: ExcelJS.Workbook) => {
+    const ws = wb.addWorksheet('Sales by Product');
+    const dateStr = new Date().toLocaleDateString();
+    addTitleRows(ws, 'Sales Volume by Product', `Generated ${dateStr} | ${productSalesData.length} products | ${formatNum(productGrandTotalMt)} MT total`);
+
+    const headerRowNum = ws.rowCount + 1;
+    ws.addRow(['#', 'Product', 'Total (MT)', 'Revenue', 'Customers', 'Avg $/MT', '% of Total']);
+    applyHeaderRow(ws, headerRowNum);
+    for (let i = 3; i <= 7; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
+
+    sortedProductSales.forEach((row, idx) => {
+      const r = ws.addRow([idx + 1, row.product, row.totalMt, row.totalRevenue, row.customerCount, row.avgPrice, row.pctOfTotal / 100]);
+      r.getCell(3).numFmt = NUMBER_FMT;
+      r.getCell(4).numFmt = CURRENCY_FMT;
+      r.getCell(5).numFmt = INT_FMT;
+      r.getCell(6).numFmt = CURRENCY_FMT;
+      r.getCell(7).numFmt = PCT_FMT;
+      for (let i = 3; i <= 7; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      if (idx % 2 === 1) {
+        r.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
+      }
+    });
+
+    const totalRowNum = ws.rowCount + 1;
+    const avgAll = productGrandTotalMt > 0 ? productGrandTotalRev / productGrandTotalMt : 0;
+    const r = ws.addRow(['', `Total (${productSalesData.length} products)`, productGrandTotalMt, productGrandTotalRev, '', avgAll, 1]);
+    r.getCell(3).numFmt = NUMBER_FMT;
+    r.getCell(4).numFmt = CURRENCY_FMT;
+    r.getCell(6).numFmt = CURRENCY_FMT;
+    r.getCell(7).numFmt = PCT_FMT;
+    for (let i = 3; i <= 7; i++) r.getCell(i).alignment = { horizontal: 'right' };
+    applyTotalRow(ws, totalRowNum);
+
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 35;
+    ws.getColumn(3).width = 16;
+    ws.getColumn(4).width = 18;
+    ws.getColumn(5).width = 14;
+    ws.getColumn(6).width = 16;
+    ws.getColumn(7).width = 14;
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
+  }, [sortedProductSales, productSalesData, productGrandTotalMt, productGrandTotalRev]);
+
+  const buildMonthlySheet = useCallback((wb: ExcelJS.Workbook) => {
+    const ws = wb.addWorksheet('Monthly Trend');
+    const dateStr = new Date().toLocaleDateString();
+    const yearLabel = trendYear === 'all' ? 'All Years' : trendYear;
+    addTitleRows(ws, 'Monthly Sales Trend', `Generated ${dateStr} | ${yearLabel} | ${filteredMonthlyData.length} months | ${formatNum(monthlyGrandMt)} MT total`);
+
+    const headerRowNum = ws.rowCount + 1;
+    ws.addRow(['Month', 'Volume (MT)', 'Revenue', 'Invoices', 'Avg $/MT']);
+    applyHeaderRow(ws, headerRowNum);
+    for (let i = 2; i <= 5; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
+
+    filteredMonthlyData.forEach((d, idx) => {
+      const avg = d.totalMt > 0 ? d.totalRevenue / d.totalMt : 0;
+      const r = ws.addRow([`${MONTH_NAMES[d.month - 1]} ${d.year}`, d.totalMt, d.totalRevenue, d.invoiceCount, avg]);
+      r.getCell(2).numFmt = NUMBER_FMT;
+      r.getCell(3).numFmt = CURRENCY_FMT;
+      r.getCell(4).numFmt = INT_FMT;
+      r.getCell(5).numFmt = CURRENCY_FMT;
+      for (let i = 2; i <= 5; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      if (idx % 2 === 1) {
+        r.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
+      }
+    });
+
+    const totalRowNum = ws.rowCount + 1;
+    const totalInv = filteredMonthlyData.reduce((s, d) => s + d.invoiceCount, 0);
+    const avgAll = monthlyGrandMt > 0 ? monthlyGrandRev / monthlyGrandMt : 0;
+    const r = ws.addRow([`Total (${filteredMonthlyData.length} months)`, monthlyGrandMt, monthlyGrandRev, totalInv, avgAll]);
+    r.getCell(2).numFmt = NUMBER_FMT;
+    r.getCell(3).numFmt = CURRENCY_FMT;
+    r.getCell(4).numFmt = INT_FMT;
+    r.getCell(5).numFmt = CURRENCY_FMT;
+    for (let i = 2; i <= 5; i++) r.getCell(i).alignment = { horizontal: 'right' };
+    applyTotalRow(ws, totalRowNum);
+
+    ws.getColumn(1).width = 18;
+    ws.getColumn(2).width = 16;
+    ws.getColumn(3).width = 18;
+    ws.getColumn(4).width = 12;
+    ws.getColumn(5).width = 16;
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
+  }, [filteredMonthlyData, monthlyGrandMt, monthlyGrandRev, trendYear]);
+
+  const buildCombinationsSheet = useCallback((wb: ExcelJS.Workbook) => {
+    const ws = wb.addWorksheet('Customer-Product Combos');
+    const dateStr = new Date().toLocaleDateString();
+    addTitleRows(ws, 'Top Customer-Product Combinations', `Generated ${dateStr} | ${topCombinations.length} combinations | ${formatNum(comboGrandMt)} MT total`);
+
+    const headerRowNum = ws.rowCount + 1;
+    ws.addRow(['#', 'Customer', 'Product', 'Total (MT)', 'Revenue', 'Invoices', 'Avg $/MT', '% of Total']);
+    applyHeaderRow(ws, headerRowNum);
+    for (let i = 4; i <= 8; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
+
+    sortedTopCombinations.forEach((row, idx) => {
+      const r = ws.addRow([idx + 1, row.customer, row.product, row.totalMt, row.totalRevenue, row.invoiceCount, row.avgPrice, row.pctOfTotal / 100]);
+      r.getCell(4).numFmt = NUMBER_FMT;
+      r.getCell(5).numFmt = CURRENCY_FMT;
+      r.getCell(6).numFmt = INT_FMT;
+      r.getCell(7).numFmt = CURRENCY_FMT;
+      r.getCell(8).numFmt = PCT_FMT;
+      for (let i = 4; i <= 8; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      if (idx % 2 === 1) {
+        r.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
+      }
+    });
+
+    const totalRowNum = ws.rowCount + 1;
+    const totalInv = topCombinations.reduce((s, r) => s + r.invoiceCount, 0);
+    const avgAll = comboGrandMt > 0 ? comboGrandRev / comboGrandMt : 0;
+    const r = ws.addRow(['', `Total (${topCombinations.length} combos)`, '', comboGrandMt, comboGrandRev, totalInv, avgAll, 1]);
+    r.getCell(4).numFmt = NUMBER_FMT;
+    r.getCell(5).numFmt = CURRENCY_FMT;
+    r.getCell(6).numFmt = INT_FMT;
+    r.getCell(7).numFmt = CURRENCY_FMT;
+    r.getCell(8).numFmt = PCT_FMT;
+    for (let i = 4; i <= 8; i++) r.getCell(i).alignment = { horizontal: 'right' };
+    applyTotalRow(ws, totalRowNum);
+
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 30;
+    ws.getColumn(3).width = 30;
+    ws.getColumn(4).width = 16;
+    ws.getColumn(5).width = 18;
+    ws.getColumn(6).width = 12;
+    ws.getColumn(7).width = 16;
+    ws.getColumn(8).width = 14;
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
+  }, [sortedTopCombinations, topCombinations, comboGrandMt, comboGrandRev]);
+
+  const exportAllReports = useCallback(async () => {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Sweet Pro';
+    wb.created = new Date();
+    buildCustomerSheet(wb);
+    buildProductSheet(wb);
+    buildMonthlySheet(wb);
+    buildCombinationsSheet(wb);
+    const buf = await wb.xlsx.writeBuffer();
+    const dateStr = new Date().toISOString().slice(0, 10);
+    saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_Sales_Reports_${dateStr}.xlsx`);
+  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet]);
+
+  const exportSingleReport = useCallback(async (sheetName: string) => {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Sweet Pro';
+    wb.created = new Date();
+    switch (sheetName) {
+      case 'customer': buildCustomerSheet(wb); break;
+      case 'product': buildProductSheet(wb); break;
+      case 'monthly': buildMonthlySheet(wb); break;
+      case 'combinations': buildCombinationsSheet(wb); break;
+    }
+    const buf = await wb.xlsx.writeBuffer();
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const names: Record<string, string> = { customer: 'Sales_by_Customer', product: 'Sales_by_Product', monthly: 'Monthly_Trend', combinations: 'Customer_Product_Combos' };
+    saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_${names[sheetName] || 'Report'}_${dateStr}.xlsx`);
+  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet]);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -314,13 +596,23 @@ export default function ReportsPage({
       {/* Page Header */}
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-bold uppercase tracking-tighter">Reports</h2>
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-[10px] uppercase tracking-widest font-bold opacity-60">
-            Total Invoiced Volume
-          </span>
-          <span className="font-mono font-bold text-sm">
-            {formatNum(customerGrandTotalMt)} MT
-          </span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="text-[10px] uppercase tracking-widest font-bold opacity-60">
+              Total Invoiced Volume
+            </span>
+            <span className="font-mono font-bold text-sm">
+              {formatNum(customerGrandTotalMt)} MT
+            </span>
+          </div>
+          <button
+            onClick={exportAllReports}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors shadow-[2px_2px_0px_0px_rgba(20,20,20,0.3)]"
+            title="Export all reports to a single Excel workbook"
+          >
+            <FileSpreadsheet size={14} />
+            Export All to Excel
+          </button>
         </div>
       </div>
 
@@ -331,16 +623,21 @@ export default function ReportsPage({
             <Users size={14} />
             Sales Volume by Customer
           </h3>
-          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
-            <Search size={12} className="opacity-50" />
-            <input
-              type="text"
-              value={custSearch}
-              onChange={(e) => setCustSearch(e.target.value)}
-              placeholder="Search customers..."
-              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
-            />
-            {custSearch && <button onClick={() => setCustSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+              <Search size={12} className="opacity-50" />
+              <input
+                type="text"
+                value={custSearch}
+                onChange={(e) => setCustSearch(e.target.value)}
+                placeholder="Search customers..."
+                className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
+              />
+              {custSearch && <button onClick={() => setCustSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+            </div>
+            <button onClick={() => exportSingleReport('customer')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
+              <Download size={11} /> Excel
+            </button>
           </div>
         </div>
         <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
@@ -415,16 +712,21 @@ export default function ReportsPage({
             <Package size={14} />
             Sales Volume by Product
           </h3>
-          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
-            <Search size={12} className="opacity-50" />
-            <input
-              type="text"
-              value={prodSearch}
-              onChange={(e) => setProdSearch(e.target.value)}
-              placeholder="Search products..."
-              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
-            />
-            {prodSearch && <button onClick={() => setProdSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+              <Search size={12} className="opacity-50" />
+              <input
+                type="text"
+                value={prodSearch}
+                onChange={(e) => setProdSearch(e.target.value)}
+                placeholder="Search products..."
+                className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
+              />
+              {prodSearch && <button onClick={() => setProdSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+            </div>
+            <button onClick={() => exportSingleReport('product')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
+              <Download size={11} /> Excel
+            </button>
           </div>
         </div>
         <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
@@ -499,19 +801,24 @@ export default function ReportsPage({
             <TrendingUp size={14} />
             Monthly Sales Trend
           </h3>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-widest opacity-60">Year</span>
-            <div className="relative">
-              <select
-                value={trendYear}
-                onChange={(e) => setTrendYear(e.target.value)}
-                className="appearance-none bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 pr-7 focus:outline-none"
-              >
-                <option value="all">All Years</option>
-                {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[#E4E3E0]/50" />
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-widest opacity-60">Year</span>
+              <div className="relative">
+                <select
+                  value={trendYear}
+                  onChange={(e) => setTrendYear(e.target.value)}
+                  className="appearance-none bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 pr-7 focus:outline-none"
+                >
+                  <option value="all">All Years</option>
+                  {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[#E4E3E0]/50" />
+              </div>
             </div>
+            <button onClick={() => exportSingleReport('monthly')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
+              <Download size={11} /> Excel
+            </button>
           </div>
         </div>
         <div className="border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
@@ -589,16 +896,21 @@ export default function ReportsPage({
             <BarChart3 size={14} />
             Top Customer-Product Combinations
           </h3>
-          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
-            <Search size={12} className="opacity-50" />
-            <input
-              type="text"
-              value={topNSearch}
-              onChange={(e) => setTopNSearch(e.target.value)}
-              placeholder="Search customer or product..."
-              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-56 placeholder:text-[#E4E3E0]/40"
-            />
-            {topNSearch && <button onClick={() => setTopNSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+              <Search size={12} className="opacity-50" />
+              <input
+                type="text"
+                value={topNSearch}
+                onChange={(e) => setTopNSearch(e.target.value)}
+                placeholder="Search customer or product..."
+                className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-56 placeholder:text-[#E4E3E0]/40"
+              />
+              {topNSearch && <button onClick={() => setTopNSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+            </div>
+            <button onClick={() => exportSingleReport('combinations')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
+              <Download size={11} /> Excel
+            </button>
           </div>
         </div>
         <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
