@@ -4943,6 +4943,8 @@ export default function App() {
           skus={skus}
           locations={locations}
           invoices={invoices}
+          orders={orders}
+          shipments={[...hamiltonShipments, ...vancouverShipments]}
         />
       );
     }

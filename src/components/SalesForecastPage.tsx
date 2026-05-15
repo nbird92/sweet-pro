@@ -8,6 +8,7 @@ import {
   Save,
   Lock,
   Eye,
+  BarChart3,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type {
@@ -21,6 +22,8 @@ import type {
   SKU,
   Location,
   Invoice,
+  Order,
+  Shipment,
 } from '../types';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
@@ -34,6 +37,8 @@ interface SalesForecastPageProps {
   skus: SKU[];
   locations: Location[];
   invoices: Invoice[];
+  orders: Order[];
+  shipments: Shipment[];
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -126,6 +131,8 @@ export default function SalesForecastPage({
   skus,
   locations,
   invoices,
+  orders,
+  shipments,
 }: SalesForecastPageProps) {
   // ── Top Controls ────────────────────────────────────────────────────────
   const [selectedFiscalYearId, setSelectedFiscalYearId] = useState<string>(
@@ -375,6 +382,121 @@ export default function SalesForecastPage({
     []
   );
 
+  // ── Auto-populate forecasts from invoices, orders, and shipments ────────
+
+  const handleAutoPopulate = useCallback(() => {
+    if (!selectedFY) return;
+
+    // Build a map: customerName -> productName -> total MT from all sources
+    const salesMap = new Map<string, Map<string, number>>();
+    // Track the distinct months we have data for, to compute a proper average
+    const monthsWithData = new Set<string>();
+
+    const addToMap = (customerName: string, productName: string, qty: number, dateStr: string) => {
+      if (!customerName || !productName || !qty || !dateStr) return;
+      if (!salesMap.has(customerName)) salesMap.set(customerName, new Map());
+      const prodMap = salesMap.get(customerName)!;
+      prodMap.set(productName, (prodMap.get(productName) ?? 0) + qty);
+      monthsWithData.add(dateStr.slice(0, 7)); // YYYY-MM
+    };
+
+    // 1. Invoices — most reliable source (actual billed)
+    for (const inv of invoices) {
+      if (inv.qty && inv.customer && inv.product && inv.date) {
+        addToMap(inv.customer, inv.product, inv.qty, inv.date);
+      }
+    }
+
+    // 2. Orders — completed/confirmed orders with line items
+    for (const ord of orders) {
+      if (ord.status === 'Cancelled') continue;
+      // Skip if already captured via invoices (avoid double-counting)
+      // Orders with status Completed likely have invoices already,
+      // but include Confirmed/Open orders as pipeline
+      for (const li of ord.lineItems) {
+        if (li.productName && li.totalWeight && ord.date) {
+          addToMap(ord.customer, li.productName, li.totalWeight, ord.date);
+        }
+      }
+    }
+
+    // 3. Shipments — for additional volume data
+    for (const s of shipments) {
+      if (s.qty && s.customer && s.product && s.date) {
+        // Only add if we don't already have heavy invoice/order data for this customer+product
+        const custMap = salesMap.get(s.customer);
+        const existing = custMap?.get(s.product) ?? 0;
+        // Only add shipment data if no existing data from invoices/orders
+        if (existing === 0) {
+          addToMap(s.customer, s.product, s.qty, s.date);
+        }
+      }
+    }
+
+    // Calculate monthly average: total / number of distinct months with data
+    const numMonths = Math.max(1, monthsWithData.size);
+
+    // Build forecast entries for each customer
+    const updatedForecasts = [...customerForecasts];
+
+    for (const cust of customers) {
+      const prodMap = salesMap.get(cust.name);
+      if (!prodMap || prodMap.size === 0) continue;
+
+      // Check if this customer already has a forecast for this FY + type
+      const existingIdx = updatedForecasts.findIndex(
+        (cf) => cf.customerId === cust.id && cf.fiscalYearId === selectedFY.id && cf.type === forecastType
+      );
+
+      const lines: CustomerForecastLine[] = [];
+      let annualTotal = 0;
+
+      for (const [productName, totalQty] of prodMap) {
+        const monthlyAvg = totalQty / numMonths;
+        // Fill all 12 months with the monthly average
+        const entries: ForecastEntry[] = [];
+        for (let m = 0; m < 12; m++) {
+          entries.push({ periodIndex: m, value: Math.round(monthlyAvg * 10) / 10 });
+        }
+        const lineAnnual = monthlyAvg * 12;
+        annualTotal += lineAnnual;
+
+        // Determine location from product data
+        const qaProd = qaProducts.find((p) => p.skuName === productName);
+        const skuProd = skus.find((s) => s.name === productName);
+        const prodLocation = qaProd?.location || skuProd?.location || cust.defaultLocation;
+
+        lines.push({
+          id: generateId('CFL'),
+          productName,
+          location: prodLocation,
+          entries,
+        });
+      }
+
+      const forecast: CustomerForecast = {
+        id: existingIdx >= 0 ? updatedForecasts[existingIdx].id : generateId('CF'),
+        customerId: cust.id,
+        customerNumber: cust.customerNumber ?? '',
+        customerName: cust.name,
+        location: cust.defaultLocation,
+        fiscalYearId: selectedFY.id,
+        type: forecastType,
+        viewMode: 'Monthly',
+        lines,
+        annualForecast: Math.round(annualTotal * 10) / 10,
+      };
+
+      if (existingIdx >= 0) {
+        updatedForecasts[existingIdx] = forecast;
+      } else {
+        updatedForecasts.push(forecast);
+      }
+    }
+
+    onUpdateCustomerForecasts(updatedForecasts);
+  }, [selectedFY, customers, customerForecasts, forecastType, invoices, orders, shipments, qaProducts, skus, onUpdateCustomerForecasts]);
+
   // ── Available products for adding ───────────────────────────────────────
   const availableProducts = useMemo(() => {
     const prods: { name: string; location: string }[] = [];
@@ -549,6 +671,18 @@ export default function SalesForecastPage({
             <span className="uppercase tracking-widest font-bold">Budget Locked</span>
           </div>
         )}
+
+        {/* Auto-Populate Button */}
+        <div className="mt-5 ml-auto">
+          <button
+            onClick={handleAutoPopulate}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors shadow-[2px_2px_0px_0px_rgba(20,20,20,0.3)]"
+            title="Auto-populate forecast from current invoices, orders, and shipments using monthly averages × 12"
+          >
+            <BarChart3 size={14} />
+            Auto-Populate {typeLabel}
+          </button>
+        </div>
       </div>
 
       {/* ── Customer Forecast Table ───────────────────────────────────────── */}
