@@ -36,6 +36,8 @@ export const COLLECTIONS = {
   qaTemplates: 'qaTemplates',
   sugarTypes: 'sugarTypes',
   lotCodes: 'lotCodes',
+  fiscalYears: 'fiscalYears',
+  customerForecasts: 'customerForecasts',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

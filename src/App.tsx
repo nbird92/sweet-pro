@@ -47,7 +47,9 @@ import {
   Minus,
   Power,
   Upload,
-  FlaskConical
+  FlaskConical,
+  BarChart3,
+  Landmark
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -56,11 +58,13 @@ import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './fi
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
 import LabPage from './components/LabPage';
+import FinancePage from './components/FinancePage';
+import SalesForecastPage from './components/SalesForecastPage';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -220,6 +224,8 @@ export default function App() {
   const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
   const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
   const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
+  const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
+  const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
@@ -277,7 +283,7 @@ export default function App() {
   const [contractInactivateConfirmId, setContractInactivateConfirmId] = useState<string | null>(null);
   const [orderHideConfirmId, setOrderHideConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
-  const [shipmentCreationData, setShipmentCreationData] = useState<{ location: 'Hamilton' | 'Vancouver'; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
+  const [shipmentCreationData, setShipmentCreationData] = useState<{ location: string; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
   const [isCreatingTransferShipment, setIsCreatingTransferShipment] = useState(false);
   const [shipmentSearchCustomer, setShipmentSearchCustomer] = useState('');
   const [shipmentSearchBOL, setShipmentSearchBOL] = useState('');
@@ -1658,6 +1664,14 @@ export default function App() {
         setLotCodes(data.lotCodes);
         lastSyncedData.current.lotcodes = JSON.stringify(data.lotCodes);
       }
+      if (data.fiscalYears?.length) {
+        setFiscalYears(data.fiscalYears);
+        lastSyncedData.current.fiscalyears = JSON.stringify(data.fiscalYears);
+      }
+      if (data.customerForecasts?.length) {
+        setCustomerForecasts(data.customerForecasts);
+        lastSyncedData.current.customerforecasts = JSON.stringify(data.customerForecasts);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1720,6 +1734,8 @@ export default function App() {
         { collection: COLLECTIONS.qaTemplates, key: 'qatemplates', data: qaTemplates },
         { collection: COLLECTIONS.sugarTypes, key: 'sugartypes', data: sugarTypes },
         { collection: COLLECTIONS.lotCodes, key: 'lotcodes', data: lotCodes },
+        { collection: COLLECTIONS.fiscalYears, key: 'fiscalyears', data: fiscalYears },
+        { collection: COLLECTIONS.customerForecasts, key: 'customerforecasts', data: customerForecasts },
       ];
 
       try {
@@ -2664,6 +2680,8 @@ export default function App() {
     { name: 'Quality Assurance', icon: ClipboardCheck },
     { name: 'Hamilton Lab', icon: FlaskConical },
     { name: 'Vendors', icon: Briefcase },
+    { name: 'Finance', icon: Landmark },
+    { name: 'Sales Forecast', icon: BarChart3 },
   ];
 
   // Apply saved page order (any new pages not in saved order appear at the end)
@@ -3760,7 +3778,7 @@ export default function App() {
                           onChange={(e) => {
                             if (e.target.value === 'edit') {
                               const loc = transferShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver';
-                              setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: transferShipment.date, time: transferShipment.time, bay: transferShipment.bay, carrier: transferShipment.carrier, orderId: '', transferId: t.id });
+                              setShipmentCreationData({ location: loc, date: transferShipment.date, time: transferShipment.time, bay: transferShipment.bay, carrier: transferShipment.carrier, orderId: '', transferId: t.id });
                               setIsCreatingTransferShipment(true);
                               setIsCreatingShipments(true);
                             } else if (e.target.value === 'delete') {
@@ -3779,7 +3797,7 @@ export default function App() {
                           onClick={() => {
                             const fromLoc = locations.find(l => l.name.toLowerCase().includes(t.from.toLowerCase()));
                             const loc = fromLoc ? fromLoc.name : 'Hamilton';
-                            setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: t.shipmentDate || '', time: '', bay: '', carrier: t.carrier || '', orderId: '', transferId: t.id });
+                            setShipmentCreationData({ location: loc, date: t.shipmentDate || '', time: '', bay: '', carrier: t.carrier || '', orderId: '', transferId: t.id });
                             setIsCreatingTransferShipment(true);
                             setIsCreatingShipments(true);
                           }}
@@ -4272,7 +4290,10 @@ export default function App() {
                                     value="scheduled"
                                     onChange={(e) => {
                                       if (e.target.value === 'edit') {
-                                        setShipmentCreationData({ location: orderShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver', date: orderShipment.date, time: orderShipment.time, bay: orderShipment.bay, carrier: orderShipment.carrier, orderId: ord.id });
+                                        const editOrdContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                                        const editOrdContract = contracts.find(c => c.contractNumber === editOrdContractNum);
+                                        const editLocation = editOrdContract?.origin || ord.location || (orderShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver');
+                                        setShipmentCreationData({ location: editLocation, date: orderShipment.date, time: orderShipment.time, bay: orderShipment.bay, carrier: orderShipment.carrier, orderId: ord.id });
                                         setIsCreatingTransferShipment(false);
                                         setIsCreatingShipments(true);
                                       } else if (e.target.value === 'delete') {
@@ -4294,8 +4315,9 @@ export default function App() {
                               return (
                                 <button
                                   onClick={() => {
-                                    const customer = customers.find(c => c.name === ord.customer);
-                                    const location = customer?.defaultLocation || 'Hamilton';
+                                    const ordContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                                    const ordContract = contracts.find(c => c.contractNumber === ordContractNum);
+                                    const location = ordContract?.origin || ord.location || 'Hamilton';
                                     setShipmentCreationData({ location, date: ord.shipmentDate || '', time: '', bay: '', carrier: ord.carrier || '', orderId: ord.id });
                                     setIsCreatingTransferShipment(false);
                                     setIsCreatingShipments(true);
@@ -4888,6 +4910,7 @@ export default function App() {
           people={people}
           productGroups={productGroups}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
+          transfers={transfers}
           onUpdateLotCodes={setLotCodes}
           onUpdateShipments={(updated) => {
             // Split back into hamilton / vancouver based on existing membership
@@ -4896,6 +4919,30 @@ export default function App() {
             setHamiltonShipments(updated.filter(s => hamIds.has(s.id)));
             setVancouverShipments(updated.filter(s => vanIds.has(s.id)));
           }}
+        />
+      );
+    }
+
+    if (activePage === 'Finance') {
+      return (
+        <FinancePage
+          fiscalYears={fiscalYears}
+          onUpdateFiscalYears={setFiscalYears}
+        />
+      );
+    }
+
+    if (activePage === 'Sales Forecast') {
+      return (
+        <SalesForecastPage
+          fiscalYears={fiscalYears}
+          customers={customers}
+          customerForecasts={customerForecasts}
+          onUpdateCustomerForecasts={setCustomerForecasts}
+          qaProducts={qaProducts}
+          skus={skus}
+          locations={locations}
+          invoices={invoices}
         />
       );
     }
@@ -5632,7 +5679,7 @@ export default function App() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                    <SortableHeader label="Origin" sortKey="origin" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableHeader label="Location" sortKey="origin" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Destination" sortKey="destination" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Type" sortKey="freightType" currentSort={sortConfig} onSort={handleSort} />
                     <SortableHeader label="Carrier" sortKey="provider" currentSort={sortConfig} onSort={handleSort} />
@@ -6010,7 +6057,7 @@ export default function App() {
                                   <div className="text-xs font-bold">{c.skuName}</div>
                                 </div>
                                 <div className="space-y-1">
-                                  <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
+                                  <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
                                   <div className="text-xs font-bold">{c.origin}</div>
                                 </div>
                                 <div className="space-y-1">
@@ -7674,9 +7721,10 @@ export default function App() {
                                   <button
                                     onClick={() => {
                                       setIsAddingBatchShipment(false);
-                                      const customer = customers.find(c => c.name === o.customer);
-                                      const loc = customer?.defaultLocation || locationName;
-                                      setShipmentCreationData({ location: loc as 'Hamilton' | 'Vancouver', date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
+                                      const schedContractNum = o.contractNumber || o.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                                      const schedContract = contracts.find(c => c.contractNumber === schedContractNum);
+                                      const loc = schedContract?.origin || o.location || locationName;
+                                      setShipmentCreationData({ location: loc, date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
                                       setIsCreatingShipments(true);
                                     }}
                                     className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
@@ -7839,11 +7887,12 @@ export default function App() {
                                           onClick={() => {
                                             setIsAddingShipment(false);
                                             setEditingShipment(null);
-                                            const customer = customers.find(c => c.name === o.customer);
-                                            const loc = customer?.defaultLocation || locationName;
+                                            const sched2ContractNum = o.contractNumber || o.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+                                            const sched2Contract = contracts.find(c => c.contractNumber === sched2ContractNum);
+                                            const loc = sched2Contract?.origin || o.location || locationName;
                                             // Preserve pre-filled date/time/bay from schedule + button click
                                             setShipmentCreationData(prev => ({
-                                              location: prev.date ? prev.location : loc as 'Hamilton' | 'Vancouver',
+                                              location: prev.date ? prev.location : loc,
                                               date: prev.date || o.shipmentDate || '',
                                               time: prev.time || '',
                                               bay: prev.bay || '',
@@ -8250,14 +8299,14 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
-                    <select 
-                      value={newFreightRate.origin} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                    <select
+                      value={newFreightRate.origin}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select Location</option>
+                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -8391,7 +8440,7 @@ export default function App() {
                         setEditingContract({
                           ...editingContract,
                           customerName: e.target.value,
-                          customerNumber: selectedCust?.id || editingContract.customerNumber
+                          customerNumber: selectedCust?.customerNumber || selectedCust?.id || editingContract.customerNumber
                         });
                       }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
@@ -8437,14 +8486,14 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
                     <select
-                      value={editingContract.origin || 'Hamilton'}
+                      value={editingContract.origin || ''}
                       onChange={(e) => setEditingContract({ ...editingContract, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select Location</option>
+                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -8786,14 +8835,14 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
-                    <select 
-                      value={editingFreightRate.origin} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                    <select
+                      value={editingFreightRate.origin}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select Location</option>
+                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -9860,14 +9909,14 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
-                    <select 
-                      value={newFreightRate.origin} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                    <select
+                      value={newFreightRate.origin}
                       onChange={(e) => setNewFreightRate({ ...newFreightRate, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select Location</option>
+                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -9966,14 +10015,14 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Origin</label>
-                    <select 
-                      value={editingFreightRate.origin} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
+                    <select
+                      value={editingFreightRate.origin}
                       onChange={(e) => setEditingFreightRate({ ...editingFreightRate, origin: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select Location</option>
+                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -11561,7 +11610,7 @@ export default function App() {
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">{isCreatingTransferShipment ? 'Schedule Transfer Pick Up' : 'Create Shipments from Order'}</h3>
-                <button onClick={() => { setIsCreatingShipments(false); setIsCreatingTransferShipment(false); setShipmentCreationData({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsCreatingShipments(false); setIsCreatingTransferShipment(false); setShipmentCreationData({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -11581,7 +11630,8 @@ export default function App() {
                   const validBays = locationData ? locationData.bays : [];
 
                   // Get all shipments for selected location and date to build schedule summary
-                  const allLocationShipments = shipmentCreationData.location === 'Hamilton' ? hamiltonShipments : vancouverShipments;
+                  const isHamiltonLocation = shipmentCreationData.location.toLowerCase().includes('hamilton');
+                  const allLocationShipments = isHamiltonLocation ? hamiltonShipments : vancouverShipments;
                   const appointmentsForDay = shipmentCreationData.date
                     ? allLocationShipments.filter(s => s.date === shipmentCreationData.date).sort((a, b) => a.time.localeCompare(b.time))
                     : [];
@@ -11616,11 +11666,11 @@ export default function App() {
                             <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
                             <select
                               value={shipmentCreationData.location}
-                              onChange={(e) => setShipmentCreationData({...shipmentCreationData, location: e.target.value as 'Hamilton' | 'Vancouver', bay: '', time: ''})}
+                              onChange={(e) => setShipmentCreationData({...shipmentCreationData, location: e.target.value, bay: '', time: ''})}
                               className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                             >
-                              <option value="Hamilton">Hamilton</option>
-                              <option value="Vancouver">Vancouver</option>
+                              <option value="">Select Location</option>
+                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                             </select>
                           </div>
                           <div className="space-y-0.5">
@@ -11843,7 +11893,8 @@ export default function App() {
                                 color: ''
                               }));
 
-                              if (shipmentCreationData.location === 'Hamilton') {
+                              const saveToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');
+                              if (saveToHamilton) {
                                 setHamiltonShipments([...hamiltonShipments, ...newShipments]);
                               } else {
                                 setVancouverShipments([...vancouverShipments, ...newShipments]);
@@ -11872,7 +11923,8 @@ export default function App() {
                                 color: ''
                               };
 
-                              if (shipmentCreationData.location === 'Hamilton') {
+                              const saveTransferToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');
+                              if (saveTransferToHamilton) {
                                 setHamiltonShipments([...hamiltonShipments, newShipment]);
                               } else {
                                 setVancouverShipments([...vancouverShipments, newShipment]);
@@ -11881,7 +11933,7 @@ export default function App() {
 
                             setIsCreatingShipments(false);
                             setIsCreatingTransferShipment(false);
-                            setShipmentCreationData({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
+                            setShipmentCreationData({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
                           }}
                           className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                         >
@@ -11891,7 +11943,7 @@ export default function App() {
                           onClick={() => {
                             setIsCreatingShipments(false);
                             setIsCreatingTransferShipment(false);
-                            setShipmentCreationData({ location: 'Hamilton', date: '', time: '', bay: '', carrier: '', orderId: '' });
+                            setShipmentCreationData({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
                           }}
                           className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                         >

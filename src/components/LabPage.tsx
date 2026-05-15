@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { LotCode, SugarType, Person, ProductGroup, Shipment } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle, Search } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
+import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface LabPageProps {
@@ -9,6 +9,7 @@ interface LabPageProps {
   people: Person[];
   productGroups: ProductGroup[];
   shipments: Shipment[];
+  transfers: Transfer[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
   onUpdateShipments: (shipments: Shipment[]) => void;
 }
@@ -58,7 +59,7 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}${siloCode}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, onUpdateLotCodes, onUpdateShipments }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
@@ -66,6 +67,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
   const [showShipmentPicker, setShowShipmentPicker] = useState(false);
   const [shipmentSearch, setShipmentSearch] = useState('');
+  const [pickerTab, setPickerTab] = useState<'shipments' | 'transfers'>('shipments');
+  const csvInputRef = useRef<HTMLInputElement>(null);
 
   const qaPeople = people.filter(p => p.department === 'QA');
 
@@ -87,6 +90,80 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       (s.status || '').toLowerCase().includes(q)
     );
   }, [shipments, shipmentSearch]);
+
+  const filteredTransfers = useMemo(() => {
+    if (!shipmentSearch.trim()) return transfers;
+    const q = shipmentSearch.toLowerCase();
+    return transfers.filter(t =>
+      (t.transferNumber || '').toLowerCase().includes(q) ||
+      (t.from || '').toLowerCase().includes(q) ||
+      (t.to || '').toLowerCase().includes(q) ||
+      (t.product || '').toLowerCase().includes(q) ||
+      (t.carrier || '').toLowerCase().includes(q) ||
+      (t.shipmentDate || '').toLowerCase().includes(q) ||
+      (t.lotCode || '').toLowerCase().includes(q) ||
+      (t.status || '').toLowerCase().includes(q)
+    );
+  }, [transfers, shipmentSearch]);
+
+  const handleSelectTransfer = (t: Transfer) => {
+    setFormData({ ...formData, bolNumber: t.transferNumber || '', customerPo: t.lotCode || '' });
+    setShowShipmentPicker(false);
+    setShipmentSearch('');
+  };
+
+  // CSV Import
+  const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (!text) return;
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) return;
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      const newLots: LotCode[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+        const row: Record<string, string> = {};
+        headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+        const lc: LotCode = {
+          id: `LOT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}-${i}`,
+          lotNumber: row['lotnumber'] || row['lotcode'] || row['lot'] || '',
+          tankNumber: row['tanknumber'] || row['tank'] || '',
+          date: row['date'] || '',
+          julianDate: row['juliandate'] || (row['date'] ? getJulianDay(row['date']) : ''),
+          category: (row['category'] === 'Organic' ? 'Organic' : row['category'] === 'Conventional' ? 'Conventional' : '') as LotCode['category'],
+          productGroup: row['productgroup'] || '',
+          silo: (row['silo'] === 'North' ? 'North' : row['silo'] === 'South' ? 'South' : '') as LotCode['silo'],
+          brix: row['brix'] || '',
+          ph: row['ph'] || '',
+          color: row['color'] || row['colour'] || '',
+          temperature: row['temperature'] || row['temp'] || '',
+          invert: row['invert'] || '',
+          ash: row['ash'] || '',
+          moisture: row['moisture'] || '',
+          flavourOdourOk: (row['flavourodourok'] === 'Yes' ? 'Yes' : row['flavourodourok'] === 'No' ? 'No' : '') as LotCode['flavourOdourOk'],
+          testerId: row['testerid'] || '',
+          testerName: row['testername'] || row['tester'] || '',
+          notes: row['notes'] || '',
+          weeklyVerification: row['weeklyverification'] || '',
+          sugarType: row['sugartype'] || '',
+          countryOfOrigin: row['countryoforigin'] || row['origin'] || '',
+          bolNumber: row['bolnumber'] || row['bol'] || '',
+          customerPo: row['customerpo'] || row['po'] || '',
+          createdAt: new Date().toISOString(),
+        };
+        newLots.push(lc);
+      }
+      if (newLots.length > 0) {
+        onUpdateLotCodes([...lotCodes, ...newLots]);
+      }
+    };
+    reader.readAsText(file);
+    if (csvInputRef.current) csvInputRef.current.value = '';
+  };
 
   const updateForm = (patch: Partial<typeof EMPTY_FORM>) => {
     const next = { ...formData, ...patch };
@@ -195,6 +272,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
               <option value="">All Sugar Types</option>
               {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
             </select>
+            <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
+            <button
+              onClick={() => csvInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2a2a2a] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-[#3a3a3a] transition-all border border-[#E4E3E0]/20"
+            >
+              <Upload size={12} /> Import CSV
+            </button>
             <button
               onClick={openAdd}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#E4E3E0] text-[#141414] text-xs font-bold uppercase hover:bg-white transition-all"
@@ -291,7 +375,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                       onClick={() => { setShowShipmentPicker(true); setShipmentSearch(''); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
                     >
-                      <Search size={11} /> Search for BOL / PO Number
+                      <Search size={11} /> Search Shipments / Transfers
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -332,8 +416,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                   })()}
                 </div>
 
+                {/* Date row — stays at top in 3 cols */}
                 <div className="grid grid-cols-3 gap-4">
-                  {/* Date & Julian Date */}
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Date</label>
                     <input type="date" value={formData.date}
@@ -354,113 +438,131 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                       {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Conventional / Organic</label>
-                    <select value={formData.category}
-                      onChange={(e) => updateForm({ category: e.target.value as 'Conventional' | 'Organic' | '' })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">— Select —</option>
-                      <option value="Conventional">Conventional</option>
-                      <option value="Organic">Organic</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
-                    <select value={formData.productGroup}
-                      onChange={(e) => updateForm({ productGroup: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">— Select —</option>
-                      {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Silo</label>
-                    <select value={formData.silo}
-                      onChange={(e) => updateForm({ silo: e.target.value as 'North' | 'South' | '' })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">— Select —</option>
-                      <option value="North">North</option>
-                      <option value="South">South</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Country of Origin</label>
-                    <input type="text" value={formData.countryOfOrigin}
-                      onChange={(e) => updateForm({ countryOfOrigin: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. Brazil, Guatemala" />
-                  </div>
-
-                  {/* Existing fields */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Tank #</label>
-                    <input type="text" value={formData.tankNumber} onChange={(e) => setFormData({ ...formData, tankNumber: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="Enter tank number" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                    <input type="text" value={formData.brix} onChange={(e) => setFormData({ ...formData, brix: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 99.9" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">PH</label>
-                    <input type="text" value={formData.ph} onChange={(e) => setFormData({ ...formData, ph: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 7.0" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Color</label>
-                    <input type="text" value={formData.color} onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 45" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Temperature °C</label>
-                    <input type="text" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 25" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Invert</label>
-                    <input type="text" value={formData.invert} onChange={(e) => setFormData({ ...formData, invert: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.04" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Ash</label>
-                    <input type="text" value={formData.ash} onChange={(e) => setFormData({ ...formData, ash: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.02" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Moisture</label>
-                    <input type="text" value={formData.moisture} onChange={(e) => setFormData({ ...formData, moisture: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="e.g. 0.03" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Flavour/Odour OK</label>
-                    <select value={formData.flavourOdourOk} onChange={(e) => setFormData({ ...formData, flavourOdourOk: e.target.value as 'Yes' | 'No' | '' })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">— Select —</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Tester</label>
-                    <select
-                      value={formData.testerId}
-                      onChange={(e) => {
-                        const person = people.find(p => p.id === e.target.value);
-                        setFormData({ ...formData, testerId: e.target.value, testerName: person?.name || '' });
-                      }}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                    >
-                      <option value="">— Select Tester —</option>
-                      {qaPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Weekly Verification</label>
-                    <input type="text" value={formData.weeklyVerification} onChange={(e) => setFormData({ ...formData, weeklyVerification: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none" placeholder="Verification notes" />
-                  </div>
                 </div>
+
+                {/* Two-column table layout for remaining fields */}
+                <table className="w-full border-collapse border border-[#141414]/20">
+                  <thead>
+                    <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest font-bold border-b border-[#141414]/20">
+                      <th className="p-2 text-left border-r border-[#141414]/10 w-1/4">Field</th>
+                      <th className="p-2 text-left border-r border-[#141414]/10 w-1/4">Value</th>
+                      <th className="p-2 text-left border-r border-[#141414]/10 w-1/4">Field</th>
+                      <th className="p-2 text-left w-1/4">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Conventional / Organic</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <select value={formData.category} onChange={(e) => updateForm({ category: e.target.value as 'Conventional' | 'Organic' | '' })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
+                          <option value="">— Select —</option>
+                          <option value="Conventional">Conventional</option>
+                          <option value="Organic">Organic</option>
+                        </select>
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Product Group</td>
+                      <td className="p-1.5">
+                        <select value={formData.productGroup} onChange={(e) => updateForm({ productGroup: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
+                          <option value="">— Select —</option>
+                          {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Silo</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <select value={formData.silo} onChange={(e) => updateForm({ silo: e.target.value as 'North' | 'South' | '' })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
+                          <option value="">— Select —</option>
+                          <option value="North">North</option>
+                          <option value="South">South</option>
+                        </select>
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Country of Origin</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.countryOfOrigin} onChange={(e) => updateForm({ countryOfOrigin: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. Brazil" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Tank #</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <input type="text" value={formData.tankNumber} onChange={(e) => setFormData({ ...formData, tankNumber: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="Enter tank number" />
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Brix</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.brix} onChange={(e) => setFormData({ ...formData, brix: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 99.9" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">PH</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <input type="text" value={formData.ph} onChange={(e) => setFormData({ ...formData, ph: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 7.0" />
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Color</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.color} onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 45" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Temperature °C</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <input type="text" value={formData.temperature} onChange={(e) => setFormData({ ...formData, temperature: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 25" />
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Invert</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.invert} onChange={(e) => setFormData({ ...formData, invert: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 0.04" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Ash</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <input type="text" value={formData.ash} onChange={(e) => setFormData({ ...formData, ash: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 0.02" />
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Moisture</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.moisture} onChange={(e) => setFormData({ ...formData, moisture: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 0.03" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Flavour/Odour OK</td>
+                      <td className="p-1.5 border-r border-[#141414]/10">
+                        <select value={formData.flavourOdourOk} onChange={(e) => setFormData({ ...formData, flavourOdourOk: e.target.value as 'Yes' | 'No' | '' })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
+                          <option value="">— Select —</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Tester</td>
+                      <td className="p-1.5">
+                        <select value={formData.testerId}
+                          onChange={(e) => { const person = people.find(p => p.id === e.target.value); setFormData({ ...formData, testerId: e.target.value, testerName: person?.name || '' }); }}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
+                          <option value="">— Select Tester —</option>
+                          {qaPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Weekly Verification</td>
+                      <td className="p-1.5" colSpan={3}>
+                        <input type="text" value={formData.weeklyVerification} onChange={(e) => setFormData({ ...formData, weeklyVerification: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="Verification notes" />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
                   <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -493,8 +595,19 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full overflow-hidden max-h-[85vh] flex flex-col"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Search Shipments</h3>
-                <button onClick={() => { setShowShipmentPicker(false); setShipmentSearch(''); }} className="hover:opacity-70"><X size={18} /></button>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Search Shipments & Transfers</h3>
+                <button onClick={() => { setShowShipmentPicker(false); setShipmentSearch(''); setPickerTab('shipments'); }} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              {/* Tabs */}
+              <div className="flex border-b border-[#141414]/10 shrink-0">
+                <button
+                  onClick={() => setPickerTab('shipments')}
+                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'shipments' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
+                >Shipments ({filteredShipments.length})</button>
+                <button
+                  onClick={() => setPickerTab('transfers')}
+                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'transfers' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
+                >Transfers ({filteredTransfers.length})</button>
               </div>
               <div className="p-4 border-b border-[#141414]/10 shrink-0">
                 <div className="flex items-center gap-2 bg-[#F5F5F5] border border-[#141414] px-3 py-2">
@@ -504,16 +617,16 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     value={shipmentSearch}
                     onChange={(e) => setShipmentSearch(e.target.value)}
                     className="flex-1 bg-transparent text-sm focus:outline-none"
-                    placeholder="Search by BOL, PO, customer, product, carrier, date, status..."
+                    placeholder={pickerTab === 'shipments' ? 'Search by BOL, PO, customer, product, carrier, date, status...' : 'Search by transfer #, from, to, product, carrier, date...'}
                     autoFocus
                   />
                   {shipmentSearch && (
                     <button onClick={() => setShipmentSearch('')} className="opacity-40 hover:opacity-100"><X size={14} /></button>
                   )}
                 </div>
-                <div className="text-[10px] opacity-40 mt-1">{filteredShipments.length} shipment{filteredShipments.length !== 1 ? 's' : ''} found</div>
               </div>
               <div className="flex-1 overflow-y-auto">
+                {pickerTab === 'shipments' ? (
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0">
                     <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
@@ -556,6 +669,49 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     ))}
                   </tbody>
                 </table>
+                ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0">
+                    <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                      <th className="p-3 border-r border-[#141414]/10">Transfer #</th>
+                      <th className="p-3 border-r border-[#141414]/10">From</th>
+                      <th className="p-3 border-r border-[#141414]/10">To</th>
+                      <th className="p-3 border-r border-[#141414]/10">Product</th>
+                      <th className="p-3 border-r border-[#141414]/10">Amount (MT)</th>
+                      <th className="p-3 border-r border-[#141414]/10">Date</th>
+                      <th className="p-3 border-r border-[#141414]/10">Status</th>
+                      <th className="p-3">Select</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#141414]/10">
+                    {filteredTransfers.length === 0 ? (
+                      <tr><td colSpan={8} className="p-8 text-center text-xs opacity-50">No transfers match your search.</td></tr>
+                    ) : filteredTransfers.map(t => (
+                      <tr key={t.id} className="hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => handleSelectTransfer(t)}>
+                        <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{t.transferNumber || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{t.from || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{t.to || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{t.product || '—'}</td>
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{t.amount || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{t.shipmentDate || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">
+                          <span className={`px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                            (t.status || '').toLowerCase() === 'completed' ? 'bg-green-100 text-green-700' :
+                            (t.status || '').toLowerCase() === 'in transit' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-slate-100 text-slate-700'
+                          }`}>{t.status || '—'}</span>
+                        </td>
+                        <td className="p-3 text-xs">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleSelectTransfer(t); }}
+                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                          >Select</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                )}
               </div>
             </motion.div>
           </div>

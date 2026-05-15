@@ -669,3 +669,63 @@ export interface QATemplate {
 }
 
 export const INITIAL_QA_TEMPLATES: QATemplate[] = [];
+
+// ── Fiscal Year / Finance ──
+
+export interface FiscalPeriod {
+  id: string;
+  periodNumber: number; // 1-12
+  name: string;         // e.g. "Period 1", "January"
+  startDate: string;
+  endDate: string;
+}
+
+export interface FiscalQuarter {
+  id: string;
+  quarterNumber: number; // 1-4
+  name: string;          // e.g. "Q1"
+  startDate: string;
+  endDate: string;
+  budgetLockDate: string;
+}
+
+export interface FiscalYear {
+  id: string;
+  name: string;          // e.g. "FY 2026"
+  startDate: string;
+  endDate: string;
+  budgetLockDate: string;
+  quarters: FiscalQuarter[];
+  periods: FiscalPeriod[];
+}
+
+export const INITIAL_FISCAL_YEARS: FiscalYear[] = [];
+
+// ── Sales Forecast ──
+
+export interface ForecastEntry {
+  periodIndex: number;  // 0-11 for monthly, 0-51 for weekly
+  value: number;        // MT
+}
+
+export interface CustomerForecastLine {
+  id: string;
+  productName: string;
+  location: string;
+  entries: ForecastEntry[];
+}
+
+export interface CustomerForecast {
+  id: string;
+  customerId: string;
+  customerNumber: string;
+  customerName: string;
+  location: string;
+  fiscalYearId: string;
+  type: 'Forecast' | 'Budget';
+  viewMode: 'Monthly' | 'Weekly';
+  lines: CustomerForecastLine[];
+  annualForecast: number;  // sum of all line entries
+}
+
+export const INITIAL_CUSTOMER_FORECASTS: CustomerForecast[] = [];

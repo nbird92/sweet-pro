@@ -1,0 +1,1200 @@
+import React, { useState, useMemo, useCallback } from 'react';
+import {
+  X,
+  Edit2,
+  Trash2,
+  Plus,
+  ChevronDown,
+  Save,
+  Lock,
+  Eye,
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import type {
+  FiscalYear,
+  FiscalPeriod,
+  Customer,
+  CustomerForecast,
+  CustomerForecastLine,
+  ForecastEntry,
+  QAProduct,
+  SKU,
+  Location,
+  Invoice,
+} from '../types';
+
+// ─── Props ──────────────────────────────────────────────────────────────────
+
+interface SalesForecastPageProps {
+  fiscalYears: FiscalYear[];
+  customers: Customer[];
+  customerForecasts: CustomerForecast[];
+  onUpdateCustomerForecasts: (forecasts: CustomerForecast[]) => void;
+  qaProducts: QAProduct[];
+  skus: SKU[];
+  locations: Location[];
+  invoices: Invoice[];
+}
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const WEEK_LABELS = Array.from({ length: 52 }, (_, i) => `Wk ${i + 1}`);
+
+const TODAY = new Date();
+const TODAY_ISO = TODAY.toISOString().slice(0, 10);
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Return the fiscal period index (0-11) that contains a given date string (YYYY-MM-DD). */
+function periodIndexForDate(dateStr: string, periods: FiscalPeriod[]): number {
+  for (const p of periods) {
+    if (dateStr >= p.startDate && dateStr <= p.endDate) {
+      return p.periodNumber - 1;
+    }
+  }
+  return -1;
+}
+
+/** Return the week index (0-51) of a date within a fiscal year. */
+function weekIndexForDate(dateStr: string, fyStart: string): number {
+  const d = new Date(dateStr);
+  const start = new Date(fyStart);
+  const diff = d.getTime() - start.getTime();
+  const week = Math.floor(diff / (7 * 24 * 60 * 60 * 1000));
+  return Math.max(0, Math.min(51, week));
+}
+
+/** Check whether a fiscal period has ended (i.e. its endDate is before today). */
+function isPeriodPast(period: FiscalPeriod): boolean {
+  return period.endDate < TODAY_ISO;
+}
+
+/** Check whether a week (by index) has passed within a fiscal year. */
+function isWeekPast(weekIndex: number, fyStart: string): boolean {
+  const start = new Date(fyStart);
+  const weekEnd = new Date(start.getTime() + (weekIndex + 1) * 7 * 24 * 60 * 60 * 1000);
+  return weekEnd < TODAY;
+}
+
+/** Determine if budget is locked for an entire fiscal year. */
+function isBudgetLockedForYear(fy: FiscalYear): boolean {
+  return fy.budgetLockDate <= TODAY_ISO;
+}
+
+/** Determine if budget is locked for a specific period (checks quarter-level lock). */
+function isBudgetLockedForPeriod(periodIndex: number, fy: FiscalYear): boolean {
+  if (isBudgetLockedForYear(fy)) return true;
+  // Determine which quarter this period belongs to
+  const period = fy.periods[periodIndex];
+  if (!period) return false;
+  for (const q of fy.quarters) {
+    if (period.startDate >= q.startDate && period.endDate <= q.endDate) {
+      return q.budgetLockDate <= TODAY_ISO;
+    }
+  }
+  return false;
+}
+
+/** Determine if budget is locked for a specific week index. */
+function isBudgetLockedForWeek(weekIndex: number, fy: FiscalYear): boolean {
+  if (isBudgetLockedForYear(fy)) return true;
+  const start = new Date(fy.startDate);
+  const weekStart = new Date(start.getTime() + weekIndex * 7 * 24 * 60 * 60 * 1000);
+  const weekStartISO = weekStart.toISOString().slice(0, 10);
+  for (const q of fy.quarters) {
+    if (weekStartISO >= q.startDate && weekStartISO <= q.endDate) {
+      return q.budgetLockDate <= TODAY_ISO;
+    }
+  }
+  return false;
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
+export default function SalesForecastPage({
+  fiscalYears,
+  customers,
+  customerForecasts,
+  onUpdateCustomerForecasts,
+  qaProducts,
+  skus,
+  locations,
+  invoices,
+}: SalesForecastPageProps) {
+  // ── Top Controls ────────────────────────────────────────────────────────
+  const [selectedFiscalYearId, setSelectedFiscalYearId] = useState<string>(
+    fiscalYears.length > 0 ? fiscalYears[0].id : ''
+  );
+  const [forecastType, setForecastType] = useState<'Forecast' | 'Budget'>('Forecast');
+
+  // ── Modals ──────────────────────────────────────────────────────────────
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [productViewModalOpen, setProductViewModalOpen] = useState(false);
+  const [viewingProduct, setViewingProduct] = useState<{ productName: string; location: string } | null>(null);
+  const [productViewMode, setProductViewMode] = useState<'Monthly' | 'Weekly'>('Monthly');
+
+  // ── Modal state for customer forecast editing ───────────────────────────
+  const [modalViewMode, setModalViewMode] = useState<'Monthly' | 'Weekly'>('Monthly');
+  const [modalLines, setModalLines] = useState<CustomerForecastLine[]>([]);
+  const [addProductDropdownOpen, setAddProductDropdownOpen] = useState(false);
+  const [addProductSearch, setAddProductSearch] = useState('');
+  const [addProductLocation, setAddProductLocation] = useState('');
+
+  const selectedFY = useMemo(
+    () => fiscalYears.find((fy) => fy.id === selectedFiscalYearId) ?? null,
+    [fiscalYears, selectedFiscalYearId]
+  );
+
+  const typeLabel = forecastType === 'Forecast' ? 'Forecast' : 'Budget';
+
+  // ── Build forecasts for all customers (merging existing + empty) ────────
+  const mergedForecasts = useMemo(() => {
+    if (!selectedFY) return [];
+    return customers.map((cust) => {
+      const existing = customerForecasts.find(
+        (cf) =>
+          cf.customerId === cust.id &&
+          cf.fiscalYearId === selectedFY.id &&
+          cf.type === forecastType
+      );
+      if (existing) return existing;
+      // Create empty placeholder
+      return {
+        id: generateId('CF'),
+        customerId: cust.id,
+        customerNumber: cust.customerNumber ?? '',
+        customerName: cust.name,
+        location: cust.defaultLocation,
+        fiscalYearId: selectedFY.id,
+        type: forecastType,
+        viewMode: 'Monthly' as const,
+        lines: [] as CustomerForecastLine[],
+        annualForecast: 0,
+      } satisfies CustomerForecast;
+    });
+  }, [customers, customerForecasts, selectedFY, forecastType]);
+
+  // ── Actuals computation ─────────────────────────────────────────────────
+
+  /** Build a map: `${customerName}|${productName}|${periodIndex}` -> actual MT from invoices */
+  const actualsMap = useMemo(() => {
+    if (!selectedFY) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const inv of invoices) {
+      const invDate = inv.date;
+      if (!invDate) continue;
+      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
+      const pIdx = periodIndexForDate(invDate, selectedFY.periods);
+      if (pIdx < 0) continue;
+      const key = `${inv.customer}|${inv.product}|${pIdx}`;
+      map.set(key, (map.get(key) ?? 0) + inv.qty);
+    }
+    return map;
+  }, [invoices, selectedFY]);
+
+  /** Same for weekly */
+  const weeklyActualsMap = useMemo(() => {
+    if (!selectedFY) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const inv of invoices) {
+      const invDate = inv.date;
+      if (!invDate) continue;
+      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
+      const wIdx = weekIndexForDate(invDate, selectedFY.startDate);
+      const key = `${inv.customer}|${inv.product}|${wIdx}`;
+      map.set(key, (map.get(key) ?? 0) + inv.qty);
+    }
+    return map;
+  }, [invoices, selectedFY]);
+
+  // ── Product Forecast Table data ─────────────────────────────────────────
+  const productForecastRows = useMemo(() => {
+    const map = new Map<string, { productName: string; location: string; annual: number }>();
+    for (const cf of mergedForecasts) {
+      for (const line of cf.lines) {
+        const key = `${line.productName}|${line.location}`;
+        const existing = map.get(key);
+        const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
+        if (existing) {
+          existing.annual += lineTotal;
+        } else {
+          map.set(key, { productName: line.productName, location: line.location, annual: lineTotal });
+        }
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
+  }, [mergedForecasts]);
+
+  // ── Product view modal data ─────────────────────────────────────────────
+  const productViewData = useMemo(() => {
+    if (!viewingProduct || !selectedFY) return [] as { customerName: string; values: number[] }[];
+    const count = productViewMode === 'Monthly' ? 12 : 52;
+    const rows: { customerName: string; values: number[] }[] = [];
+    for (const cf of mergedForecasts) {
+      for (const line of cf.lines) {
+        if (line.productName === viewingProduct.productName && line.location === viewingProduct.location) {
+          const values = new Array(count).fill(0) as number[];
+          for (const e of line.entries) {
+            if (e.periodIndex >= 0 && e.periodIndex < count) {
+              values[e.periodIndex] += e.value;
+            }
+          }
+          rows.push({ customerName: cf.customerName, values });
+        }
+      }
+    }
+    return rows;
+  }, [viewingProduct, mergedForecasts, selectedFY, productViewMode]);
+
+  // ── Handlers ────────────────────────────────────────────────────────────
+
+  const openCustomerModal = useCallback(
+    (customerId: string) => {
+      const cf = mergedForecasts.find((f) => f.customerId === customerId);
+      if (!cf) return;
+      setEditingCustomerId(customerId);
+      setModalViewMode(cf.viewMode || 'Monthly');
+      setModalLines(cf.lines.map((l) => ({ ...l, entries: l.entries.map((e) => ({ ...e })) })));
+      setCustomerModalOpen(true);
+    },
+    [mergedForecasts]
+  );
+
+  const handleDeleteForecast = useCallback(
+    (customerId: string) => {
+      if (!confirm(`Delete all ${typeLabel.toLowerCase()} data for this customer?`)) return;
+      const updated = customerForecasts.filter(
+        (cf) =>
+          !(cf.customerId === customerId && cf.fiscalYearId === selectedFiscalYearId && cf.type === forecastType)
+      );
+      onUpdateCustomerForecasts(updated);
+    },
+    [customerForecasts, selectedFiscalYearId, forecastType, typeLabel, onUpdateCustomerForecasts]
+  );
+
+  const handleSaveCustomerForecast = useCallback(() => {
+    if (!editingCustomerId || !selectedFY) return;
+    const cust = customers.find((c) => c.id === editingCustomerId);
+    if (!cust) return;
+
+    const annualForecast = modalLines.reduce(
+      (sum, line) => sum + line.entries.reduce((s, e) => s + e.value, 0),
+      0
+    );
+
+    const newForecast: CustomerForecast = {
+      id: customerForecasts.find(
+        (cf) =>
+          cf.customerId === editingCustomerId &&
+          cf.fiscalYearId === selectedFY.id &&
+          cf.type === forecastType
+      )?.id ?? generateId('CF'),
+      customerId: editingCustomerId,
+      customerNumber: cust.customerNumber ?? '',
+      customerName: cust.name,
+      location: cust.defaultLocation,
+      fiscalYearId: selectedFY.id,
+      type: forecastType,
+      viewMode: modalViewMode,
+      lines: modalLines,
+      annualForecast,
+    };
+
+    // Replace or add
+    const idx = customerForecasts.findIndex(
+      (cf) =>
+        cf.customerId === editingCustomerId &&
+        cf.fiscalYearId === selectedFY.id &&
+        cf.type === forecastType
+    );
+    const updated = [...customerForecasts];
+    if (idx >= 0) {
+      updated[idx] = newForecast;
+    } else {
+      updated.push(newForecast);
+    }
+    onUpdateCustomerForecasts(updated);
+    setCustomerModalOpen(false);
+    setEditingCustomerId(null);
+  }, [
+    editingCustomerId,
+    selectedFY,
+    customers,
+    customerForecasts,
+    forecastType,
+    modalViewMode,
+    modalLines,
+    onUpdateCustomerForecasts,
+  ]);
+
+  const handleAddProductLine = useCallback(
+    (productName: string, location: string) => {
+      const newLine: CustomerForecastLine = {
+        id: generateId('CFL'),
+        productName,
+        location,
+        entries: [],
+      };
+      setModalLines((prev) => [...prev, newLine]);
+      setAddProductDropdownOpen(false);
+      setAddProductSearch('');
+      setAddProductLocation('');
+    },
+    []
+  );
+
+  const handleRemoveProductLine = useCallback((lineId: string) => {
+    setModalLines((prev) => prev.filter((l) => l.id !== lineId));
+  }, []);
+
+  const handleCellChange = useCallback(
+    (lineId: string, periodIndex: number, value: number) => {
+      setModalLines((prev) =>
+        prev.map((line) => {
+          if (line.id !== lineId) return line;
+          const existing = line.entries.find((e) => e.periodIndex === periodIndex);
+          let newEntries: ForecastEntry[];
+          if (existing) {
+            newEntries = line.entries.map((e) =>
+              e.periodIndex === periodIndex ? { ...e, value } : e
+            );
+          } else {
+            newEntries = [...line.entries, { periodIndex, value }];
+          }
+          return { ...line, entries: newEntries };
+        })
+      );
+    },
+    []
+  );
+
+  // ── Available products for adding ───────────────────────────────────────
+  const availableProducts = useMemo(() => {
+    const prods: { name: string; location: string }[] = [];
+    for (const qp of qaProducts) {
+      prods.push({ name: qp.skuName, location: qp.location });
+    }
+    for (const s of skus) {
+      if (!prods.some((p) => p.name === s.name && p.location === s.location)) {
+        prods.push({ name: s.name, location: s.location });
+      }
+    }
+    return prods;
+  }, [qaProducts, skus]);
+
+  const filteredAvailableProducts = useMemo(() => {
+    let filtered = availableProducts;
+    if (addProductSearch) {
+      const q = addProductSearch.toLowerCase();
+      filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
+    }
+    if (addProductLocation) {
+      filtered = filtered.filter((p) => p.location === addProductLocation);
+    }
+    return filtered;
+  }, [availableProducts, addProductSearch, addProductLocation]);
+
+  // ── Check budget lock for entire view ───────────────────────────────────
+  const isBudgetFullyLocked = forecastType === 'Budget' && selectedFY ? isBudgetLockedForYear(selectedFY) : false;
+
+  // ── Determine if a cell is editable ─────────────────────────────────────
+  const isCellEditable = useCallback(
+    (periodIndex: number, isWeekly: boolean): boolean => {
+      if (!selectedFY) return false;
+      // Past periods -> actuals, not editable
+      if (isWeekly) {
+        if (isWeekPast(periodIndex, selectedFY.startDate)) return false;
+      } else {
+        const period = selectedFY.periods[periodIndex];
+        if (period && isPeriodPast(period)) return false;
+      }
+      // Budget lock check
+      if (forecastType === 'Budget') {
+        if (isWeekly) {
+          if (isBudgetLockedForWeek(periodIndex, selectedFY)) return false;
+        } else {
+          if (isBudgetLockedForPeriod(periodIndex, selectedFY)) return false;
+        }
+      }
+      return true;
+    },
+    [selectedFY, forecastType]
+  );
+
+  // ── Get actual or forecast value for a cell ─────────────────────────────
+  const getCellValue = useCallback(
+    (
+      customerName: string,
+      productName: string,
+      periodIndex: number,
+      isWeekly: boolean,
+      forecastValue: number
+    ): { value: number; isActual: boolean } => {
+      if (!selectedFY) return { value: forecastValue, isActual: false };
+      const isPast = isWeekly
+        ? isWeekPast(periodIndex, selectedFY.startDate)
+        : selectedFY.periods[periodIndex]
+        ? isPeriodPast(selectedFY.periods[periodIndex])
+        : false;
+
+      if (isPast) {
+        const map = isWeekly ? weeklyActualsMap : actualsMap;
+        const key = `${customerName}|${productName}|${periodIndex}`;
+        const actual = map.get(key) ?? 0;
+        return { value: actual, isActual: true };
+      }
+      return { value: forecastValue, isActual: false };
+    },
+    [selectedFY, actualsMap, weeklyActualsMap]
+  );
+
+  // ── Location name lookup ────────────────────────────────────────────────
+  const locationName = useCallback(
+    (loc: string) => {
+      const found = locations.find((l) => l.name === loc || l.id === loc);
+      return found?.name ?? loc;
+    },
+    [locations]
+  );
+
+  // ── Annual forecast with actuals incorporated ───────────────────────────
+  const getAnnualWithActuals = useCallback(
+    (cf: CustomerForecast): number => {
+      if (!selectedFY) return cf.annualForecast;
+      let total = 0;
+      for (const line of cf.lines) {
+        const count = cf.viewMode === 'Weekly' ? 52 : 12;
+        for (let i = 0; i < count; i++) {
+          const entry = line.entries.find((e) => e.periodIndex === i);
+          const forecastVal = entry?.value ?? 0;
+          const { value } = getCellValue(cf.customerName, line.productName, i, cf.viewMode === 'Weekly', forecastVal);
+          total += value;
+        }
+      }
+      return total;
+    },
+    [selectedFY, getCellValue]
+  );
+
+  // ─── Render ───────────────────────────────────────────────────────────
+
+  if (fiscalYears.length === 0) {
+    return (
+      <div className="p-8 text-center text-sm text-gray-500">
+        No fiscal years configured. Please add a fiscal year in settings to use the Sales {typeLabel} page.
+      </div>
+    );
+  }
+
+  const editingCf = editingCustomerId
+    ? mergedForecasts.find((f) => f.customerId === editingCustomerId)
+    : null;
+
+  const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
+  const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
+
+  return (
+    <div className="space-y-6">
+      {/* ── Top Controls ──────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-4">
+        {/* Fiscal Year */}
+        <div className="relative">
+          <label className="text-[10px] uppercase font-bold tracking-widest opacity-60 block mb-1">
+            Fiscal Year
+          </label>
+          <div className="relative">
+            <select
+              value={selectedFiscalYearId}
+              onChange={(e) => setSelectedFiscalYearId(e.target.value)}
+              className="appearance-none w-48 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+            >
+              {fiscalYears.map((fy) => (
+                <option key={fy.id} value={fy.id}>
+                  {fy.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+
+        {/* Type Toggle */}
+        <div className="relative">
+          <label className="text-[10px] uppercase font-bold tracking-widest opacity-60 block mb-1">
+            Type
+          </label>
+          <div className="relative">
+            <select
+              value={forecastType}
+              onChange={(e) => setForecastType(e.target.value as 'Forecast' | 'Budget')}
+              className="appearance-none w-40 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+            >
+              <option value="Forecast">Forecast</option>
+              <option value="Budget">Budget</option>
+            </select>
+            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+
+        {isBudgetFullyLocked && (
+          <div className="flex items-center gap-1 text-xs text-red-600 mt-5">
+            <Lock size={14} />
+            <span className="uppercase tracking-widest font-bold">Budget Locked</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Customer Forecast Table ───────────────────────────────────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-widest">
+            Customer {typeLabel}
+          </h2>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Customer No.
+                </th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Customer Name
+                </th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Location
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Annual {typeLabel} (MT)
+                </th>
+                <th className="text-center px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {mergedForecasts.map((cf) => {
+                const annual = getAnnualWithActuals(cf);
+                return (
+                  <tr
+                    key={cf.customerId}
+                    className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => openCustomerModal(cf.customerId)}
+                  >
+                    <td className="px-4 py-2 font-mono">{cf.customerNumber || '—'}</td>
+                    <td className="px-4 py-2 font-medium">{cf.customerName}</td>
+                    <td className="px-4 py-2">{locationName(cf.location)}</td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      {annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCustomerModal(cf.customerId);
+                          }}
+                          className="p-1 hover:bg-gray-200 transition-all"
+                          title={`Edit ${typeLabel}`}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteForecast(cf.customerId);
+                          }}
+                          className="p-1 hover:bg-red-100 text-red-600 transition-all"
+                          title={`Delete ${typeLabel}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {mergedForecasts.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                    No customers found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Product Forecast Table ────────────────────────────────────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3">
+          <h2 className="text-xs font-bold uppercase tracking-widest">
+            Product {typeLabel}
+          </h2>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Product Name
+                </th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Location
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  Annual {typeLabel} (MT)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {productForecastRows.map((row) => (
+                <tr
+                  key={`${row.productName}|${row.location}`}
+                  className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                  onClick={() => {
+                    setViewingProduct({ productName: row.productName, location: row.location });
+                    setProductViewMode('Monthly');
+                    setProductViewModalOpen(true);
+                  }}
+                >
+                  <td className="px-4 py-2 font-medium">{row.productName}</td>
+                  <td className="px-4 py-2">{locationName(row.location)}</td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {row.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                  </td>
+                </tr>
+              ))}
+              {productForecastRows.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
+                    No product {typeLabel.toLowerCase()} data yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Customer Forecast Modal ───────────────────────────────────────── */}
+      <AnimatePresence>
+        {customerModalOpen && editingCf && selectedFY && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
+            onClick={() => {
+              setCustomerModalOpen(false);
+              setEditingCustomerId(null);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+                <h3 className="text-xs font-bold uppercase tracking-widest">
+                  {editingCf.lines.length > 0 ? 'Edit' : 'Add'} Customer {typeLabel} &mdash;{' '}
+                  {editingCf.customerName}
+                </h3>
+                <button
+                  onClick={() => {
+                    setCustomerModalOpen(false);
+                    setEditingCustomerId(null);
+                  }}
+                  className="p-1 hover:bg-white/20 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Modal Toolbar */}
+              <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-gray-200 shrink-0">
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">
+                    View
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={modalViewMode}
+                      onChange={(e) => setModalViewMode(e.target.value as 'Monthly' | 'Weekly')}
+                      className="appearance-none px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                    >
+                      <option value="Monthly">Monthly</option>
+                      <option value="Weekly">Weekly</option>
+                    </select>
+                    <ChevronDown
+                      size={12}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Budget lock indicator */}
+                {forecastType === 'Budget' && isBudgetLockedForYear(selectedFY) && (
+                  <div className="flex items-center gap-1 text-xs text-red-600">
+                    <Lock size={12} />
+                    <span className="uppercase tracking-widest font-bold text-[10px]">Locked</span>
+                  </div>
+                )}
+
+                {/* Add Product */}
+                <div className="relative ml-auto">
+                  <button
+                    onClick={() => setAddProductDropdownOpen(!addProductDropdownOpen)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors"
+                  >
+                    <Plus size={12} />
+                    Add Product
+                  </button>
+
+                  {addProductDropdownOpen && (
+                    <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] w-72">
+                      <div className="p-3 space-y-2">
+                        <input
+                          type="text"
+                          value={addProductSearch}
+                          onChange={(e) => setAddProductSearch(e.target.value)}
+                          placeholder="Search products..."
+                          className="w-full px-3 py-1.5 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                        />
+                        <div className="relative">
+                          <select
+                            value={addProductLocation}
+                            onChange={(e) => setAddProductLocation(e.target.value)}
+                            className="appearance-none w-full px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                          >
+                            <option value="">All Locations</option>
+                            {locations.map((loc) => (
+                              <option key={loc.id} value={loc.name}>
+                                {loc.name}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown
+                            size={12}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                          />
+                        </div>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto border-t border-gray-200">
+                        {filteredAvailableProducts.length === 0 && (
+                          <div className="px-3 py-4 text-center text-xs text-gray-400">
+                            No products found.
+                          </div>
+                        )}
+                        {filteredAvailableProducts.map((p) => (
+                          <button
+                            key={`${p.name}|${p.location}`}
+                            onClick={() => handleAddProductLine(p.name, p.location)}
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 border-b border-gray-100 transition-colors"
+                          >
+                            <span className="font-medium">{p.name}</span>
+                            <span className="ml-2 text-gray-400">{p.location}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Table */}
+              <div className="flex-1 overflow-auto p-4">
+                {modalLines.length === 0 ? (
+                  <div className="text-center py-12 text-sm text-gray-400">
+                    No products added yet. Click &quot;Add Product&quot; to begin.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[180px]">
+                            Product
+                          </th>
+                          {modalHeaders.map((h, i) => {
+                            const editable = isCellEditable(i, modalViewMode === 'Weekly');
+                            const locked =
+                              forecastType === 'Budget' &&
+                              (modalViewMode === 'Weekly'
+                                ? isBudgetLockedForWeek(i, selectedFY)
+                                : isBudgetLockedForPeriod(i, selectedFY));
+                            return (
+                              <th
+                                key={i}
+                                className={`text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold border border-gray-200 min-w-[72px] ${
+                                  !editable ? 'bg-gray-100 text-gray-500' : 'opacity-60'
+                                }`}
+                              >
+                                <div className="flex items-center justify-center gap-0.5">
+                                  {h}
+                                  {locked && <Lock size={8} className="text-red-500" />}
+                                </div>
+                              </th>
+                            );
+                          })}
+                          <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">
+                            Total
+                          </th>
+                          <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 w-10">
+                            {/* Delete column */}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {modalLines.map((line) => {
+                          const lineTotal = (() => {
+                            let sum = 0;
+                            for (let i = 0; i < modalColumnCount; i++) {
+                              const entry = line.entries.find((e) => e.periodIndex === i);
+                              const fv = entry?.value ?? 0;
+                              const { value } = getCellValue(
+                                editingCf.customerName,
+                                line.productName,
+                                i,
+                                modalViewMode === 'Weekly',
+                                fv
+                              );
+                              sum += value;
+                            }
+                            return sum;
+                          })();
+
+                          return (
+                            <tr key={line.id} className="border-b border-gray-200">
+                              <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium border border-gray-200">
+                                <div>{line.productName}</div>
+                                <div className="text-[10px] text-gray-400">{line.location}</div>
+                              </td>
+                              {Array.from({ length: modalColumnCount }, (_, i) => {
+                                const entry = line.entries.find((e) => e.periodIndex === i);
+                                const forecastVal = entry?.value ?? 0;
+                                const { value: cellVal, isActual } = getCellValue(
+                                  editingCf.customerName,
+                                  line.productName,
+                                  i,
+                                  modalViewMode === 'Weekly',
+                                  forecastVal
+                                );
+                                const editable = isCellEditable(i, modalViewMode === 'Weekly');
+
+                                return (
+                                  <td
+                                    key={i}
+                                    className={`px-1 py-1 border border-gray-200 text-center ${
+                                      isActual || !editable
+                                        ? 'bg-gray-100 text-gray-500'
+                                        : ''
+                                    }`}
+                                  >
+                                    {editable && !isActual ? (
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        value={forecastVal || ''}
+                                        onChange={(e) =>
+                                          handleCellChange(
+                                            line.id,
+                                            i,
+                                            parseFloat(e.target.value) || 0
+                                          )
+                                        }
+                                        className="w-full px-1 py-0.5 text-center text-xs border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-[#141414]"
+                                      />
+                                    ) : (
+                                      <span className="text-xs">
+                                        {cellVal > 0
+                                          ? cellVal.toLocaleString(undefined, {
+                                              minimumFractionDigits: 1,
+                                              maximumFractionDigits: 1,
+                                            })
+                                          : '—'}
+                                      </span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-3 py-1.5 text-center font-mono font-bold border border-gray-200">
+                                {lineTotal.toLocaleString(undefined, {
+                                  minimumFractionDigits: 1,
+                                  maximumFractionDigits: 1,
+                                })}
+                              </td>
+                              <td className="px-2 py-1.5 text-center border border-gray-200">
+                                <button
+                                  onClick={() => handleRemoveProductLine(line.id)}
+                                  className="p-0.5 hover:bg-red-100 text-red-500 transition-all"
+                                  title="Remove product"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50 shrink-0">
+                <div className="text-xs">
+                  <span className="text-[10px] uppercase tracking-widest font-bold opacity-60 mr-2">
+                    Annual {typeLabel}:
+                  </span>
+                  <span className="font-mono font-bold">
+                    {modalLines
+                      .reduce((sum, line) => {
+                        let lineSum = 0;
+                        for (let i = 0; i < modalColumnCount; i++) {
+                          const entry = line.entries.find((e) => e.periodIndex === i);
+                          const fv = entry?.value ?? 0;
+                          const { value } = getCellValue(
+                            editingCf.customerName,
+                            line.productName,
+                            i,
+                            modalViewMode === 'Weekly',
+                            fv
+                          );
+                          lineSum += value;
+                        }
+                        return sum + lineSum;
+                      }, 0)
+                      .toLocaleString(undefined, {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}{' '}
+                    MT
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setCustomerModalOpen(false);
+                      setEditingCustomerId(null);
+                    }}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-gray-100 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveCustomerForecast}
+                    className="flex items-center gap-1 px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors"
+                  >
+                    <Save size={12} />
+                    Save
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Product View Modal (read-only) ────────────────────────────────── */}
+      <AnimatePresence>
+        {productViewModalOpen && viewingProduct && selectedFY && (
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
+            onClick={() => {
+              setProductViewModalOpen(false);
+              setViewingProduct(null);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-[95vw] max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+                <h3 className="text-xs font-bold uppercase tracking-widest">
+                  <Eye size={14} className="inline mr-2" />
+                  Product {typeLabel} &mdash; {viewingProduct.productName} ({viewingProduct.location})
+                </h3>
+                <button
+                  onClick={() => {
+                    setProductViewModalOpen(false);
+                    setViewingProduct(null);
+                  }}
+                  className="p-1 hover:bg-white/20 transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Toolbar */}
+              <div className="flex items-center gap-4 px-4 py-3 border-b border-gray-200 shrink-0">
+                <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">
+                  View
+                </label>
+                <div className="relative">
+                  <select
+                    value={productViewMode}
+                    onChange={(e) => setProductViewMode(e.target.value as 'Monthly' | 'Weekly')}
+                    className="appearance-none px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                  >
+                    <option value="Monthly">Monthly</option>
+                    <option value="Weekly">Weekly</option>
+                  </select>
+                  <ChevronDown
+                    size={12}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                  />
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="flex-1 overflow-auto p-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[180px]">
+                          Customer
+                        </th>
+                        {(productViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS).map(
+                          (h, i) => {
+                            const isPast =
+                              productViewMode === 'Weekly'
+                                ? isWeekPast(i, selectedFY.startDate)
+                                : selectedFY.periods[i]
+                                ? isPeriodPast(selectedFY.periods[i])
+                                : false;
+                            return (
+                              <th
+                                key={i}
+                                className={`text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold border border-gray-200 min-w-[72px] ${
+                                  isPast ? 'bg-gray-100 text-gray-500' : 'opacity-60'
+                                }`}
+                              >
+                                {h}
+                              </th>
+                            );
+                          }
+                        )}
+                        <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">
+                          Total
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {productViewData.map((row, idx) => {
+                        const total = row.values.reduce((s, v) => s + v, 0);
+                        return (
+                          <tr key={idx} className="border-b border-gray-200">
+                            <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium border border-gray-200">
+                              {row.customerName}
+                            </td>
+                            {row.values.map((v, i) => {
+                              const isPast =
+                                productViewMode === 'Weekly'
+                                  ? isWeekPast(i, selectedFY.startDate)
+                                  : selectedFY.periods[i]
+                                  ? isPeriodPast(selectedFY.periods[i])
+                                  : false;
+                              return (
+                                <td
+                                  key={i}
+                                  className={`px-2 py-1.5 text-center border border-gray-200 ${
+                                    isPast ? 'bg-gray-100 text-gray-500' : ''
+                                  }`}
+                                >
+                                  {v > 0
+                                    ? v.toLocaleString(undefined, {
+                                        minimumFractionDigits: 1,
+                                        maximumFractionDigits: 1,
+                                      })
+                                    : '—'}
+                                </td>
+                              );
+                            })}
+                            <td className="px-3 py-1.5 text-center font-mono font-bold border border-gray-200">
+                              {total.toLocaleString(undefined, {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1,
+                              })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {productViewData.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={(productViewMode === 'Monthly' ? 12 : 52) + 2}
+                            className="px-4 py-8 text-center text-gray-400"
+                          >
+                            No {typeLabel.toLowerCase()} data for this product.
+                          </td>
+                        </tr>
+                      )}
+                      {/* Totals Row */}
+                      {productViewData.length > 0 && (
+                        <tr className="bg-gray-50 font-bold">
+                          <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 border border-gray-200 text-[10px] uppercase tracking-widest">
+                            Total
+                          </td>
+                          {Array.from(
+                            { length: productViewMode === 'Monthly' ? 12 : 52 },
+                            (_, i) => {
+                              const colTotal = productViewData.reduce(
+                                (s, row) => s + row.values[i],
+                                0
+                              );
+                              return (
+                                <td
+                                  key={i}
+                                  className="px-2 py-2 text-center border border-gray-200 font-mono"
+                                >
+                                  {colTotal > 0
+                                    ? colTotal.toLocaleString(undefined, {
+                                        minimumFractionDigits: 1,
+                                        maximumFractionDigits: 1,
+                                      })
+                                    : '—'}
+                                </td>
+                              );
+                            }
+                          )}
+                          <td className="px-3 py-2 text-center border border-gray-200 font-mono">
+                            {productViewData
+                              .reduce(
+                                (s, row) => s + row.values.reduce((a, v) => a + v, 0),
+                                0
+                              )
+                              .toLocaleString(undefined, {
+                                minimumFractionDigits: 1,
+                                maximumFractionDigits: 1,
+                              })}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
