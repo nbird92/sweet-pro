@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface LabPageProps {
@@ -165,6 +165,25 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     if (csvInputRef.current) csvInputRef.current.value = '';
   };
 
+  const handleDownloadTemplate = () => {
+    const headers = [
+      'LotNumber','Date','SugarType','Category','ProductGroup','Silo',
+      'CountryOfOrigin','TankNumber','Brix','PH','Color','Temperature',
+      'Invert','Ash','Moisture','FlavourOdourOk','TesterName',
+      'WeeklyVerification','Notes','BOLNumber','CustomerPO'
+    ];
+    const csvContent = headers.join(',') + '\n';
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'lot_code_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const updateForm = (patch: Partial<typeof EMPTY_FORM>) => {
     const next = { ...formData, ...patch };
     if ('date' in patch && patch.date) {
@@ -272,6 +291,12 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
               <option value="">All Sugar Types</option>
               {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
             </select>
+            <button
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2a2a2a] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-[#3a3a3a] transition-all border border-[#E4E3E0]/20"
+            >
+              <Download size={12} /> Download Template
+            </button>
             <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
             <button
               onClick={() => csvInputRef.current?.click()}
