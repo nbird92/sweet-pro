@@ -1132,7 +1132,7 @@ export default function App() {
             date,
             day,
             time,
-            bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))?.bays[0] || ''),
+            bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(scheduleLocation.toLowerCase()))?.bays[0] || ''),
             customer: entry.customer || matchedOrder?.customer || '',
             product: entry.product || matchedLi?.productName || matchedOrder?.product || '',
             contractNumber: entry.contractnumber || entry.contractNumber || matchedLi?.contractNumber || matchedOrder?.contractNumber || '',
@@ -1160,7 +1160,8 @@ export default function App() {
 
         if (newShipments.length > 0) {
           // Merge into existing: update missing fields on existing records, add truly new ones
-          let workingShipments = [...(activePage === 'Hamilton Shipments' ? hamiltonShipments : vancouverShipments)];
+          const isHamiltonImport = scheduleLocation.toLowerCase().includes('hamilton');
+          let workingShipments = [...(isHamiltonImport ? hamiltonShipments : vancouverShipments)];
           const importSlots = new Set<string>();
           let newCount = 0;
           let updatedCount = 0;
@@ -1204,14 +1205,14 @@ export default function App() {
             newCount++;
             workingShipments.push(s);
           }
-          if (activePage === 'Hamilton Shipments') {
+          if (isHamiltonImport) {
             setHamiltonShipments(workingShipments);
           } else {
             setVancouverShipments(workingShipments);
           }
           // Sync merged data to Firebase
           if (newCount > 0 || updatedCount > 0) {
-            const allShipments = activePage === 'Hamilton Shipments'
+            const allShipments = isHamiltonImport
               ? [...workingShipments, ...vancouverShipments]
               : [...hamiltonShipments, ...workingShipments];
             syncCollection(COLLECTIONS.shipments, allShipments).then(() => {
@@ -2201,6 +2202,89 @@ export default function App() {
     }
   };
 
+  const completeAndBillOrder = (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order || order.status === 'Completed') return;
+
+    // Set order status to Completed
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Completed' } : o));
+
+    // Find the contract for pricing
+    const ordContractNum = order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+    const contract = contracts.find(c => c.contractNumber === ordContractNum);
+    const totalWeight = order.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
+    const invoiceAmount = contract
+      ? totalWeight * contract.finalPrice  // totalWeight is in MT, finalPrice is $/MT
+      : totalWeight * config.refiningMarginCadMt; // fallback
+
+    const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const newInvoice: Invoice = {
+      id: invoiceId,
+      bolNumber: order.bolNumber,
+      customer: order.customer,
+      product: order.product || order.lineItems.map(li => li.productName).join(', '),
+      po: order.po,
+      qty: totalWeight,
+      carrier: order.carrier || '',
+      amount: invoiceAmount,
+      shipmentId: orderId,
+      date: new Date().toISOString().split('T')[0],
+      status: 'Pending',
+      lineItems: order.lineItems,
+      shippingTerms: order.shippingTerms || '',
+      location: order.location || '',
+      contractNumber: order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
+    };
+
+    setInvoices(prevInvoices => {
+      // Prevent duplicate invoices for the same order
+      if (prevInvoices.some(inv => inv.shipmentId === orderId)) return prevInvoices;
+      return [...prevInvoices, newInvoice];
+    });
+
+    // Track CHEP pallet outbound if applicable
+    if (order.palletType === 'CHEP') {
+      const orderLocation = order.location || '';
+      let totalPallets = 0;
+      for (const li of order.lineItems) {
+        const matchSku = skus.find(s => s.name === li.productName);
+        const qaP = matchSku ? qaProducts.find(q => q.skuId === matchSku.id) : null;
+        const upp = qaP?.unitsPerPallet;
+        if (upp && upp > 0) {
+          totalPallets += Math.ceil(li.qty / upp);
+        } else {
+          totalPallets += li.qty;
+        }
+      }
+      if (totalPallets > 0) {
+        const chepMovement: ChepPalletMovement = {
+          id: `CHEP-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          date: new Date().toISOString().split('T')[0],
+          location: orderLocation,
+          type: 'out',
+          quantity: totalPallets,
+          reference: order.bolNumber,
+        };
+        setChepPalletMovements(prev => [...prev, chepMovement]);
+      }
+    }
+
+    // Deduct volume from the contract
+    if (contract) {
+      setContracts(prevContracts => prevContracts.map(c => {
+        if (c.contractNumber === ordContractNum) {
+          const newVolumeTaken = c.volumeTaken + totalWeight;
+          return {
+            ...c,
+            volumeTaken: newVolumeTaken,
+            volumeOutstanding: c.contractVolume - newVolumeTaken
+          };
+        }
+        return c;
+      }));
+    }
+  };
+
   const updateInvoiceStatus = (id: string, status: string) => {
     setInvoices(prev => prev.map(i => i.id === id ? { ...i, status } : i));
   };
@@ -2664,8 +2748,6 @@ export default function App() {
     { name: 'Dashboard', icon: TrendingUp },
     { name: 'Customer Quote', icon: Calculator },
     { name: 'Shipment Schedule', icon: Calendar },
-    { name: 'Hamilton Shipments', icon: Calendar },
-    { name: 'Vancouver Shipments', icon: Calendar },
     { name: 'Customers', icon: Users },
     { name: 'Reports', icon: TrendingUp },
     { name: 'Supply Chain', icon: Truck },
@@ -2953,243 +3035,6 @@ export default function App() {
         const matchesSearch = !searchTerm ||
           (s.customer || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
           (s.product || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.bol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.carrier || '').toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch;
-      });
-
-      // Group by Week -> Bay -> Day -> Time
-      const groupedData: { [week: string]: { [bay: string]: { [day: string]: { [time: string]: Shipment[] } } } } = {};
-      weeksList.forEach(w => {
-        groupedData[w] = {};
-        locationBays.forEach(b => {
-          groupedData[w][b] = {};
-          daysList.forEach(d => { groupedData[w][b][d] = {}; });
-        });
-      });
-      filteredShipments.forEach(s => {
-        if (groupedData[s.week]?.[s.bay]?.[s.day]) {
-          // One shipment per time slot per day per bay — skip duplicates
-          if (!groupedData[s.week][s.bay][s.day][s.time]) groupedData[s.week][s.bay][s.day][s.time] = [s];
-        }
-      });
-
-      const visibleWeeks = showPreviousWeeks
-        ? weeksList
-        : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
-
-      const isCurrentWeekExpanded = (week: string) => {
-        if (week === currentWeek) return !expandedRows.has(`collapse-${week}`);
-        return expandedRows.has(week);
-      };
-
-      // For current week, auto-expand all days
-      const isDayExpandedSchedule = (dayKey: string, isCurrentWk: boolean) => {
-        if (isCurrentWk) return !expandedDays.has(`collapse-sched-${dayKey}`);
-        return expandedDays.has(dayKey);
-      };
-
-      // Status badge helper
-      const statusBadge = (status: string) => {
-        const sl = (status || '').toLowerCase();
-        const cls = sl.includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : sl.includes('pending') ? 'bg-amber-100 text-amber-700' : sl.includes('completed') ? 'bg-blue-100 text-blue-700' : sl.includes('cancelled') ? 'bg-red-100 text-red-700' : sl.includes('in progress') ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-700';
-        return <span className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] whitespace-nowrap ${cls}`}>{status}</span>;
-      };
-
-      return (
-        <div className="px-2 py-3 space-y-3">
-          <div className="flex justify-between items-center px-2">
-            <div className="space-y-0.5">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">Shipment Schedule</h2>
-              <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} />
-                Last Updated: {new Date().toLocaleString()}
-              </div>
-            </div>
-            <div className="flex gap-2 items-center">
-              <div className="flex items-center gap-2">
-                <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
-                <select
-                  value={scheduleLocation}
-                  onChange={(e) => setScheduleLocation(e.target.value)}
-                  className="bg-white border border-[#141414] px-3 py-1.5 text-sm font-bold focus:outline-none"
-                >
-                  {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
-                </select>
-              </div>
-              <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-all">
-                {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
-              </button>
-            </div>
-          </div>
-
-          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by customer, product, BOL, or carrier..." />
-
-          <div className="space-y-2">
-            {visibleWeeks.map(week => {
-              const isCurrentWk = week === currentWeek;
-              const isExpanded = isCurrentWeekExpanded(week);
-              const weekShipmentCount = locationBays.reduce((sum, bay) =>
-                sum + daysList.reduce((daySum, day) =>
-                  daySum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0), 0);
-
-              return (
-                <div key={week} className={`bg-white border-2 overflow-hidden ${isCurrentWk ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
-                  <button
-                    onClick={() => {
-                      const next = new Set(expandedRows);
-                      if (isCurrentWk) {
-                        const collapseKey = `collapse-${week}`;
-                        if (next.has(collapseKey)) next.delete(collapseKey); else next.add(collapseKey);
-                      } else {
-                        if (next.has(week)) next.delete(week); else next.add(week);
-                      }
-                      setExpandedRows(next);
-                    }}
-                    className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-all ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-bold uppercase tracking-widest">{week} {isCurrentWk ? '(CURRENT WEEK)' : ''}</span>
-                      {weekShipmentCount > 0 && <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-full">{weekShipmentCount} shipments</span>}
-                    </div>
-                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  </button>
-
-                  <AnimatePresence initial={false}>
-                    {isExpanded && (
-                      <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
-                        <div className="p-2 space-y-1">
-                          {daysList.map(day => {
-                            const dayKey = `sched-${week}-${day}`;
-                            const isDayExp = isDayExpandedSchedule(dayKey, isCurrentWk);
-                            const weekNum = parseInt(week.replace('Week ', ''));
-                            const dateObj = getDateForWeekDay(weekNum, day);
-                            const dateStr = toLocalDateString(dateObj);
-                            const displayDate = formatDateMMM_DD(dateStr);
-                            const isToday = isCurrentWk && day === currentDay;
-                            const shipmentCount = locationBays.reduce((sum, bay) =>
-                              sum + Object.values(groupedData[week]?.[bay]?.[day] || {}).reduce((tSum, arr) => tSum + arr.length, 0), 0);
-
-                            return (
-                              <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
-                                <button
-                                  onClick={() => {
-                                    const next = new Set(expandedDays);
-                                    if (isCurrentWk) {
-                                      const collapseKey = `collapse-sched-${dayKey}`;
-                                      if (next.has(collapseKey)) next.delete(collapseKey); else next.add(collapseKey);
-                                    } else {
-                                      if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
-                                    }
-                                    setExpandedDays(next);
-                                  }}
-                                  className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
-                                >
-                                  <div className="flex items-center gap-3">
-                                    <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
-                                    <span className="text-[10px] font-bold opacity-50">{displayDate}</span>
-                                    {shipmentCount > 0 && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{shipmentCount}</span>}
-                                  </div>
-                                  {isDayExp ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                                </button>
-
-                                {isDayExp && (
-                                  <div className="overflow-x-auto">
-                                    {(() => {
-                                      // Collect appointments per bay, only bays with data
-                                      const baysWithData = locationBays.filter(bay => {
-                                        const dayData = groupedData[week]?.[bay]?.[day] || {};
-                                        return Object.values(dayData).some(arr => arr.length > 0);
-                                      });
-                                      if (baysWithData.length === 0) {
-                                        return <div className="px-3 py-4 text-center text-[10px] opacity-40 italic">No appointments</div>;
-                                      }
-                                      return baysWithData.map(bay => {
-                                        const dayData = groupedData[week]?.[bay]?.[day] || {};
-                                        const appointments = Object.entries(dayData)
-                                          .filter(([_, arr]) => arr.length > 0)
-                                          .sort(([a], [b]) => a.localeCompare(b));
-                                        if (appointments.length === 0) return null;
-                                        return (
-                                          <div key={bay}>
-                                            <div className="bg-[#141414] text-[#E4E3E0] px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest">{bay}</div>
-                                            <table className="text-left border-collapse w-full">
-                                              <thead>
-                                                <tr className="bg-[#F5F5F5] text-[8px] uppercase font-bold border-b border-[#141414]/10">
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5" style={{ width: '50px' }}>Time</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Client</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Product</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">PO</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">BOL</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">QTY</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Carrier</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Arrives</th>
-                                                  <th className="px-2 py-1 border-r border-[#141414]/5">Start</th>
-                                                  <th className="px-2 py-1">Out</th>
-                                                </tr>
-                                              </thead>
-                                              <tbody>
-                                                {appointments.map(([slot, arr]) => {
-                                                  const s = arr[0];
-                                                  const isStd = locationTimeSlots.includes(slot);
-                                                  return (
-                                                    <tr key={slot} className={`border-b border-[#141414]/5 transition-colors ${!isStd ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-[#F5F5F5]'}`}>
-                                                      <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/10 whitespace-nowrap ${!isStd ? 'text-amber-700' : ''}`}>{slot}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black truncate" style={{ backgroundColor: s.color || undefined }}>{s.customer}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.product}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.po}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono truncate" style={{ backgroundColor: s.color || undefined }}>{s.bol}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.qty}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 truncate" style={{ backgroundColor: s.color || undefined }}>{s.carrier}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.arrive}</td>
-                                                      <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" style={{ backgroundColor: s.color || undefined }}>{s.start}</td>
-                                                      <td className="px-2 py-1 text-[10px]" style={{ backgroundColor: s.color || undefined }}>{s.out}</td>
-                                                    </tr>
-                                                  );
-                                                })}
-                                              </tbody>
-                                            </table>
-                                          </div>
-                                        );
-                                      });
-                                    })()}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      );
-    }
-
-    if (activePage === 'Hamilton Shipments' || activePage === 'Vancouver Shipments') {
-      const isHamiltonPage = activePage === 'Hamilton Shipments';
-      const locationName = isHamiltonPage ? 'Hamilton' : 'Vancouver';
-      const locationShipments = isHamiltonPage ? hamiltonShipments : vancouverShipments;
-      const currentWeekNum = getWeekNumber(new Date().toISOString().split('T')[0]);
-      const currentWeek = `Week ${currentWeekNum}`;
-      const currentDay = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date());
-
-      const locationObj = locations.find(l => l.name.toLowerCase().includes(locationName.toLowerCase()));
-      const locationBays = locationObj ? locationObj.bays : (isHamiltonPage ? ['BAY 1 (W) - FERGUSON AVE.', 'BAY 2 (E) - WELLINGTON ST.', 'BAY 3 - MOLASSES, DRY DOCKS'] : ['BAY 1', 'BAY 2']);
-      const locStartTime = locationObj?.appointmentStartTime || '06:00';
-      const locEndTime = locationObj?.appointmentEndTime || '18:00';
-      const locDuration = locationObj?.appointmentDuration || 30;
-      const locationTimeSlots = generateTimeSlots(locStartTime, locEndTime, locDuration);
-
-      const filteredShipments = locationShipments.filter(s => {
-        const matchesSearch = !searchTerm ||
-          (s.customer || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.product || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
           (s.po || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
           (s.bol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
           (s.carrier || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -3228,13 +3073,23 @@ export default function App() {
         <div className="p-4 space-y-3">
           <div className="flex justify-between items-center">
             <div className="space-y-0.5">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">{locationName} Shipment Schedule</h2>
+              <h2 className="text-xl font-bold uppercase tracking-tighter">Shipment Schedule</h2>
               <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} className="" />
+                <RefreshCw size={12} />
                 Last Updated: {new Date().toLocaleString()}
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
+                <select
+                  value={scheduleLocation}
+                  onChange={(e) => setScheduleLocation(e.target.value)}
+                  className="bg-white border border-[#141414] px-3 py-1.5 text-sm font-bold focus:outline-none"
+                >
+                  {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                </select>
+              </div>
               <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
                 className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-all">
                 {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
@@ -3409,7 +3264,7 @@ export default function App() {
                                                     }
                                                     const s = shipments[0];
                                                     return (
-                                                      <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${(s.status || '').toLowerCase() === 'completed' ? 'bg-green-50 hover:bg-green-100' : (s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-50 hover:bg-yellow-100' : !isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} onClick={() => setEditingShipment(s)}>
+                                                      <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${(s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-50 hover:bg-yellow-100' : !isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} onClick={() => setEditingShipment(s)}>
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
@@ -3426,7 +3281,7 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
-                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : (s.status || '').toLowerCase().includes('completed') ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                            className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
                                                             <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
@@ -3471,6 +3326,7 @@ export default function App() {
         </div>
       );
     }
+
 
     if (activePage === 'Customers') {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
@@ -4212,7 +4068,7 @@ export default function App() {
                   <SortableHeader label="Status" sortKey="status" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Location" sortKey="location" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Split No." sortKey="splitNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Appointment" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Complete & Bill" sortKey="status" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
@@ -4274,64 +4130,25 @@ export default function App() {
                           >
                             <option value="Open">Open</option>
                             <option value="Confirmed">Confirmed</option>
+                            <option value="Completed">Completed</option>
                             <option value="Cancelled">Cancelled</option>
-                            {ord.status === 'Completed' && <option value="Completed">Completed</option>}
                           </select>
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
-                          {(() => {
-                            const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                            const orderShipment = allShipments.find(s => s.bol === ord.bolNumber);
-                            if (orderShipment) {
-                              return (
-                                <div className="relative">
-                                  <select
-                                    value="scheduled"
-                                    onChange={(e) => {
-                                      if (e.target.value === 'edit') {
-                                        const editOrdContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
-                                        const editOrdContract = contracts.find(c => c.contractNumber === editOrdContractNum);
-                                        const editLocation = editOrdContract?.origin || ord.location || (orderShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver');
-                                        setShipmentCreationData({ location: editLocation, date: orderShipment.date, time: orderShipment.time, bay: orderShipment.bay, carrier: orderShipment.carrier, orderId: ord.id });
-                                        setIsCreatingTransferShipment(false);
-                                        setIsCreatingShipments(true);
-                                      } else if (e.target.value === 'delete') {
-                                        setHamiltonShipments(hamiltonShipments.filter(s => s.bol !== ord.bolNumber));
-                                        setVancouverShipments(vancouverShipments.filter(s => s.bol !== ord.bolNumber));
-                                        // Clear shipment date — order stays Confirmed so "Create Pick Up Appointment" shows
-                                        setOrders(orders.map(o => o.id === ord.id ? { ...o, shipmentDate: undefined } : o));
-                                      }
-                                    }}
-                                    className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer bg-blue-100 text-blue-700"
-                                  >
-                                    <option value="scheduled">Scheduled</option>
-                                    <option value="edit">Edit Pick Up Appointment</option>
-                                    <option value="delete">Delete Pick Up Appointment</option>
-                                  </select>
-                                </div>
-                              );
-                            } else if (ord.status === 'Confirmed') {
-                              return (
-                                <button
-                                  onClick={() => {
-                                    const ordContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
-                                    const ordContract = contracts.find(c => c.contractNumber === ordContractNum);
-                                    const location = ordContract?.origin || ord.location || 'Hamilton';
-                                    setShipmentCreationData({ location, date: ord.shipmentDate || '', time: '', bay: '', carrier: ord.carrier || '', orderId: ord.id });
-                                    setIsCreatingTransferShipment(false);
-                                    setIsCreatingShipments(true);
-                                  }}
-                                  className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
-                                >
-                                  Create Pick Up Appointment
-                                </button>
-                              );
-                            } else {
-                              return <span className="text-[8px] uppercase font-bold opacity-30">—</span>;
-                            }
-                          })()}
+                          {ord.status === 'Confirmed' ? (
+                            <button
+                              onClick={() => completeAndBillOrder(ord.id)}
+                              className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all cursor-pointer whitespace-nowrap"
+                            >
+                              Complete & Bill
+                            </button>
+                          ) : ord.status === 'Completed' ? (
+                            <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-green-100 text-green-700">Completed</span>
+                          ) : (
+                            <span className="text-[8px] uppercase font-bold opacity-30">—</span>
+                          )}
                         </td>
                         <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
@@ -7687,7 +7504,7 @@ export default function App() {
               <div className="p-6 space-y-4">
                 <p className="text-sm opacity-60">Select confirmed orders to schedule as shipments. Use the "Add Shipment" button for individual order scheduling.</p>
                 {(() => {
-                  const isHamilton = activePage === 'Hamilton Shipments';
+                  const isHamilton = scheduleLocation.toLowerCase().includes('hamilton');
                   const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                   const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
@@ -7778,7 +7595,7 @@ export default function App() {
                   <>
                     {/* Order Lookup Section */}
                     {(() => {
-                      const isHamilton = activePage === 'Hamilton Shipments';
+                      const isHamilton = scheduleLocation.toLowerCase().includes('hamilton');
                       const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                       const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                       const allShipments = [...hamiltonShipments, ...vancouverShipments];
@@ -7995,7 +7812,7 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, time: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          {getLocationAllTimeSlots(activePage === 'Hamilton Shipments' ? 'Hamilton' : 'Vancouver').map(t => <option key={t} value={t}>{t}</option>)}
+                          {getLocationAllTimeSlots(scheduleLocation.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver').map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -8006,7 +7823,7 @@ export default function App() {
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
                           {locations
-                            .find(l => l.name.toLowerCase().includes(activePage === 'Hamilton Shipments' ? 'hamilton' : 'vancouver'))
+                            .find(l => l.name.toLowerCase().includes(scheduleLocation.toLowerCase()))
                             ?.bays.map(b => <option key={b} value={b}>{b}</option>)
                           }
                         </select>
@@ -8230,34 +8047,15 @@ export default function App() {
                     <div className="flex gap-4">
                       <button
                         onClick={() => {
-                          const isHamilton = activePage === 'Hamilton Shipments';
-                          const list = isHamilton ? hamiltonShipments : vancouverShipments;
+                          const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
                           const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
-                          setList(list.map(s => s.id === editingShipment.id ? editingShipment : s));
+                          setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
                           setIsAddingShipment(false);
                           setEditingShipment(null);
                         }}
                         className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                       >
                         Save Changes
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!editingShipment) return;
-                          // Save current edits first
-                          const isHamilton = activePage === 'Hamilton Shipments';
-                          const list = isHamilton ? hamiltonShipments : vancouverShipments;
-                          const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
-                          const completedShipment = { ...editingShipment, status: 'Completed' };
-                          setList(list.map(s => s.id === editingShipment.id ? completedShipment : s));
-                          // Trigger invoice creation + order status update via updateShipmentStatus
-                          updateShipmentStatus(editingShipment.id, 'Completed');
-                          setIsAddingShipment(false);
-                          setEditingShipment(null);
-                        }}
-                        className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all"
-                      >
-                        <CheckCircle2 size={14} /> Complete & Bill
                       </button>
                       <button
                         onClick={() => editingShipment && handleGenerateBol(editingShipment)}
