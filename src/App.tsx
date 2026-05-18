@@ -58,7 +58,7 @@ import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './fi
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -227,6 +227,7 @@ export default function App() {
   const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
+  const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>(INITIAL_CUSTOMER_GROUPS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
@@ -1437,6 +1438,7 @@ export default function App() {
     cheppalletmovements: JSON.stringify([]),
     salesleads: JSON.stringify([]),
     qatemplates: JSON.stringify([]),
+    customergroups: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -1674,6 +1676,10 @@ export default function App() {
         setCustomerForecasts(data.customerForecasts);
         lastSyncedData.current.customerforecasts = JSON.stringify(data.customerForecasts);
       }
+      if (data.customerGroups?.length) {
+        setCustomerGroups(data.customerGroups);
+        lastSyncedData.current.customergroups = JSON.stringify(data.customerGroups);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1738,6 +1744,7 @@ export default function App() {
         { collection: COLLECTIONS.lotCodes, key: 'lotcodes', data: lotCodes },
         { collection: COLLECTIONS.fiscalYears, key: 'fiscalyears', data: fiscalYears },
         { collection: COLLECTIONS.customerForecasts, key: 'customerforecasts', data: customerForecasts },
+        { collection: COLLECTIONS.customerGroups, key: 'customergroups', data: customerGroups },
       ];
 
       try {
@@ -1763,7 +1770,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, lastSynced, user]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
@@ -2371,6 +2378,11 @@ export default function App() {
   }, [activePage]);
 
   const [customerDeleteConfirmId, setCustomerDeleteConfirmId] = useState<string | null>(null);
+  const [editingCustomerGroup, setEditingCustomerGroup] = useState<CustomerGroup | null>(null);
+  const [isAddingCustomerGroup, setIsAddingCustomerGroup] = useState(false);
+  const [newCustomerGroup, setNewCustomerGroup] = useState<CustomerGroup>({ id: '', groupCode: '', name: '', notes: '' });
+  const [customerGroupDeleteConfirmId, setCustomerGroupDeleteConfirmId] = useState<string | null>(null);
+  const [customerGroupSearch, setCustomerGroupSearch] = useState('');
   const deleteCustomer = (id: string) => {
     setCustomers(customers.filter(c => c.id !== id));
   };
@@ -3373,6 +3385,95 @@ export default function App() {
           </div>
 
           <div className="p-6 space-y-4">
+
+          {/* ── Customer Groups ── */}
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden mb-6">
+            <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Users size={16} />
+                <h3 className="text-[10px] font-bold uppercase tracking-widest">Customer Groups</h3>
+                <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{customerGroups.length}</span>
+              </div>
+              <button
+                onClick={() => {
+                  const maxNum = customerGroups.reduce((mx, g) => {
+                    const n = parseInt(g.groupCode || '0', 10);
+                    return n > mx ? n : mx;
+                  }, 0);
+                  const nextCode = String(maxNum + 1).padStart(3, '0');
+                  setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                  setIsAddingCustomerGroup(true);
+                }}
+                className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              >
+                <Plus size={12} /> Add Group
+              </button>
+            </div>
+            {customerGroups.length > 6 && (
+              <div className="px-4 pt-3">
+                <input
+                  type="text"
+                  value={customerGroupSearch}
+                  onChange={(e) => setCustomerGroupSearch(e.target.value)}
+                  placeholder="Search customer groups..."
+                  className="w-full bg-[#F5F5F5] border border-[#141414]/20 px-3 py-2 text-xs focus:bg-white transition-colors outline-none"
+                />
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest text-[#141414]/60 font-bold">
+                    <th className="p-3 border-b border-[#141414]/10">Group Code</th>
+                    <th className="p-3 border-b border-[#141414]/10">Group Name</th>
+                    <th className="p-3 border-b border-[#141414]/10">Customers</th>
+                    <th className="p-3 border-b border-[#141414]/10">Notes</th>
+                    <th className="p-3 border-b border-[#141414]/10 w-24">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#141414]/10">
+                  {customerGroups.length === 0 && (
+                    <tr><td colSpan={5} className="p-4 text-center text-xs opacity-40 italic">No customer groups yet. Click "Add Group" to create one.</td></tr>
+                  )}
+                  {customerGroups
+                    .filter(g => {
+                      if (!customerGroupSearch) return true;
+                      const s = customerGroupSearch.toLowerCase();
+                      return g.groupCode.toLowerCase().includes(s) || g.name.toLowerCase().includes(s);
+                    })
+                    .map(g => {
+                      const membersCount = customers.filter(c => c.customerGroupId === g.id).length;
+                      const memberNames = customers.filter(c => c.customerGroupId === g.id).map(c => c.name).join(', ');
+                      return (
+                        <tr key={g.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                          <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{g.groupCode}</td>
+                          <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{g.name}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">
+                            {membersCount > 0 ? (
+                              <span title={memberNames}>
+                                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-[8px] uppercase rounded-full">{membersCount} customer{membersCount > 1 ? 's' : ''}</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] opacity-40">None</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10 max-w-[200px] truncate">{g.notes || '—'}</td>
+                          <td className="p-3 text-xs flex items-center gap-1">
+                            <button onClick={() => setEditingCustomerGroup({ ...g })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Group">
+                              <Edit2 size={14} />
+                            </button>
+                            <button onClick={() => setCustomerGroupDeleteConfirmId(g.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Group">
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <SearchInput
             value={searchTerm}
             onChange={setSearchTerm}
@@ -3384,6 +3485,7 @@ export default function App() {
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
+                  <th className="p-4 border-r border-[#141414]/10">Group</th>
                   <SortableHeader label="Customer Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Location" sortKey="defaultLocation" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Default Margin" sortKey="defaultMargin" currentSort={sortConfig} onSort={handleSort} />
@@ -3398,6 +3500,12 @@ export default function App() {
                   <React.Fragment key={c.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingCustomer(c)}>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.customerNumber || '—'}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
+                        {(() => {
+                          const grp = customerGroups.find(g => g.id === c.customerGroupId);
+                          return grp ? <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase rounded-full">{grp.groupCode} — {grp.name}</span> : <span className="opacity-40">—</span>;
+                        })()}
+                      </td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
@@ -3419,7 +3527,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={8} className="p-0">
+                          <td colSpan={9} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -3428,6 +3536,21 @@ export default function App() {
                             >
                               <div className="p-6 grid grid-cols-2 gap-6">
                                 <div className="space-y-4">
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
+                                    <select
+                                      value={c.customerGroupId || ''}
+                                      onChange={(e) => updateCustomer(c.id, 'customerGroupId' as keyof Customer, e.target.value || undefined)}
+                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
+                                    >
+                                      <option value="">No Group</option>
+                                      {customerGroups.map(g => (
+                                        <option key={g.id} value={g.id}>
+                                          {g.groupCode} — {g.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
                                   <div className="space-y-1">
                                     <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
                                     <select
@@ -8784,10 +8907,25 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
+                    <select
+                      value={newCustomer.customerGroupId || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, customerGroupId: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">No Group</option>
+                      {customerGroups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.groupCode} — {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Address</label>
-                    <input 
-                      type="text" 
-                      value={newCustomer.address || ''} 
+                    <input
+                      type="text"
+                      value={newCustomer.address || ''}
                       onChange={(e) => setNewCustomer({ ...newCustomer, address: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -9422,6 +9560,21 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                       placeholder="ITAS customer name..."
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
+                    <select
+                      value={editingCustomer.customerGroupId || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, customerGroupId: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">No Group</option>
+                      {customerGroups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.groupCode} — {g.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
@@ -11116,6 +11269,153 @@ export default function App() {
                   <button
                     onClick={() => setCustomerDeleteConfirmId(null)}
                     className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Add Customer Group Modal */}
+        {isAddingCustomerGroup && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setIsAddingCustomerGroup(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Add Customer Group</h3>
+                <button onClick={() => setIsAddingCustomerGroup(false)} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Group Code</label>
+                    <input type="text" value={newCustomerGroup.groupCode} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, groupCode: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" placeholder="e.g. 001" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
+                    <input type="text" value={newCustomerGroup.name} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, name: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" placeholder="e.g. Costco Group" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
+                  <textarea value={newCustomerGroup.notes || ''} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" placeholder="Optional notes..." />
+                </div>
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => {
+                      if (!newCustomerGroup.name) return;
+                      setCustomerGroups([...customerGroups, newCustomerGroup]);
+                      setIsAddingCustomerGroup(false);
+                    }}
+                    disabled={!newCustomerGroup.name}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                  >
+                    Save Group
+                  </button>
+                  <button onClick={() => setIsAddingCustomerGroup(false)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Edit Customer Group Modal */}
+        {editingCustomerGroup && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setEditingCustomerGroup(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer Group: {editingCustomerGroup.groupCode}</h3>
+                <button onClick={() => setEditingCustomerGroup(null)} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Group Code</label>
+                    <input type="text" value={editingCustomerGroup.groupCode} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, groupCode: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
+                    <input type="text" value={editingCustomerGroup.name} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, name: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
+                  <textarea value={editingCustomerGroup.notes || ''} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" />
+                </div>
+                {/* Members list */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Group Members</label>
+                  <div className="border border-[#141414]/10 divide-y divide-[#141414]/10">
+                    {customers.filter(c => c.customerGroupId === editingCustomerGroup.id).length === 0 ? (
+                      <div className="p-3 text-xs opacity-40 italic">No customers assigned to this group yet.</div>
+                    ) : (
+                      customers.filter(c => c.customerGroupId === editingCustomerGroup.id).map(c => (
+                        <div key={c.id} className="p-2 px-3 text-xs flex items-center justify-between">
+                          <span><span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span></span>
+                          <button onClick={() => setCustomers(customers.map(cu => cu.id === c.id ? { ...cu, customerGroupId: undefined } : cu))} className="text-[8px] uppercase font-bold text-red-500 hover:text-red-700">Remove</button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-4 pt-2">
+                  <button
+                    onClick={() => {
+                      setCustomerGroups(customerGroups.map(g => g.id === editingCustomerGroup.id ? editingCustomerGroup : g));
+                      setEditingCustomerGroup(null);
+                    }}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                  >
+                    Save Changes
+                  </button>
+                  <button onClick={() => setEditingCustomerGroup(null)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Delete Customer Group Confirmation */}
+        {customerGroupDeleteConfirmId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setCustomerGroupDeleteConfirmId(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
+            >
+              <div className="bg-red-600 text-white p-4"><h3 className="text-xs font-bold uppercase tracking-widest">Delete Customer Group</h3></div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete <span className="font-bold">{customerGroups.find(g => g.id === customerGroupDeleteConfirmId)?.name || customerGroupDeleteConfirmId}</span>? Customers in this group will be unassigned.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => {
+                      // Unassign customers from this group
+                      setCustomers(customers.map(c => c.customerGroupId === customerGroupDeleteConfirmId ? { ...c, customerGroupId: undefined } : c));
+                      setCustomerGroups(customerGroups.filter(g => g.id !== customerGroupDeleteConfirmId));
+                      setCustomerGroupDeleteConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-red-600 text-white font-bold text-xs uppercase hover:bg-red-700 transition-all"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setCustomerGroupDeleteConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
                     Cancel
                   </button>
