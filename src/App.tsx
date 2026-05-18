@@ -3500,11 +3500,31 @@ export default function App() {
                   <React.Fragment key={c.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingCustomer(c)}>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.customerNumber || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        {(() => {
-                          const grp = customerGroups.find(g => g.id === c.customerGroupId);
-                          return grp ? <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase rounded-full">{grp.groupCode} — {grp.name}</span> : <span className="opacity-40">—</span>;
-                        })()}
+                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={c.customerGroupId || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '__new__') {
+                              const maxNum = customerGroups.reduce((mx, g) => {
+                                const n = parseInt(g.groupCode || '0', 10);
+                                return n > mx ? n : mx;
+                              }, 0);
+                              const nextCode = String(maxNum + 1).padStart(3, '0');
+                              setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                              setIsAddingCustomerGroup(true);
+                            } else {
+                              updateCustomer(c.id, 'customerGroupId' as keyof Customer, val || undefined);
+                            }
+                          }}
+                          className="w-full bg-transparent border border-[#141414]/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-[#141414]/30 cursor-pointer hover:border-[#141414]/30 transition-colors"
+                        >
+                          <option value="">No Group</option>
+                          {customerGroups.map(g => (
+                            <option key={g.id} value={g.id}>{g.groupCode} — {g.name}</option>
+                          ))}
+                          <option value="__new__">＋ New Group</option>
+                        </select>
                       </td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
@@ -5387,6 +5407,7 @@ export default function App() {
           customerForecasts={customerForecasts}
           fiscalYears={fiscalYears}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
+          customerGroups={customerGroups}
         />
       );
     }
@@ -11354,6 +11375,31 @@ export default function App() {
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
                   <textarea value={editingCustomerGroup.notes || ''} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" />
+                </div>
+                {/* Add customer to group */}
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Add Customer to Group</label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      if (selectedId) {
+                        setCustomers(customers.map(cu => cu.id === selectedId ? { ...cu, customerGroupId: editingCustomerGroup.id } : cu));
+                      }
+                    }}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                  >
+                    <option value="">— Select a customer to add —</option>
+                    {customers
+                      .filter(cu => cu.customerGroupId !== editingCustomerGroup.id)
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                      .map(cu => (
+                        <option key={cu.id} value={cu.id}>
+                          {cu.customerNumber ? `${cu.customerNumber} — ` : ''}{cu.name}{cu.defaultLocation ? ` (${cu.defaultLocation})` : ''}
+                        </option>
+                      ))
+                    }
+                  </select>
                 </div>
                 {/* Members list */}
                 <div className="space-y-1">

@@ -22,6 +22,7 @@ import type {
   FiscalYear,
   FiscalPeriod,
   Shipment,
+  CustomerGroup,
 } from '../types';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ interface ReportsPageProps {
   customerForecasts: CustomerForecast[];
   fiscalYears: FiscalYear[];
   shipments: Shipment[];
+  customerGroups: CustomerGroup[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -56,6 +58,7 @@ export default function ReportsPage({
   customerForecasts,
   fiscalYears,
   shipments,
+  customerGroups,
 }: ReportsPageProps) {
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [custSearch, setCustSearch] = useState('');
@@ -68,6 +71,8 @@ export default function ReportsPage({
   const [projFyId, setProjFyId] = useState<string>(fiscalYears.length > 0 ? fiscalYears[0].id : '');
   const [projSearch, setProjSearch] = useState('');
   const [projSort, setProjSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'projRevenue', dir: 'desc' });
+  const [grpSearch, setGrpSearch] = useState('');
+  const [grpSort, setGrpSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
 
   const toggleSort = (setter: React.Dispatch<React.SetStateAction<{ key: string; dir: 'asc' | 'desc' }>>) => (key: string) => {
     setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' });
@@ -521,6 +526,91 @@ export default function ReportsPage({
   const projCustGrandRev = useMemo(() => projectedCustomerData.reduce((s, r) => s + r.projRevenue, 0), [projectedCustomerData]);
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // REPORT 6: Sales Volume by Customer Group
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const groupSalesData = useMemo(() => {
+    // Build a map of customer name → customerGroupId
+    const custGroupMap = new Map<string, string | undefined>();
+    for (const c of customers) {
+      if (c.name) custGroupMap.set(c.name, c.customerGroupId);
+    }
+
+    // Aggregate invoices by group
+    const map = new Map<string, { groupId: string; groupCode: string; groupName: string; totalMt: number; totalRevenue: number; invoiceCount: number; customerNames: Set<string> }>();
+
+    for (const inv of invoices) {
+      if (!inv.customer || !inv.qty) continue;
+      const groupId = custGroupMap.get(inv.customer) || '__ungrouped__';
+      const grp = customerGroups.find(g => g.id === groupId);
+      const key = groupId;
+
+      const existing = map.get(key);
+      if (existing) {
+        existing.totalMt += inv.qty;
+        existing.totalRevenue += inv.amount || 0;
+        existing.invoiceCount += 1;
+        if (inv.customer) existing.customerNames.add(inv.customer);
+      } else {
+        map.set(key, {
+          groupId,
+          groupCode: grp ? grp.groupCode : '—',
+          groupName: grp ? grp.name : 'Ungrouped',
+          totalMt: inv.qty,
+          totalRevenue: inv.amount || 0,
+          invoiceCount: 1,
+          customerNames: new Set(inv.customer ? [inv.customer] : []),
+        });
+      }
+    }
+
+    const rows = Array.from(map.values());
+    const grandTotal = rows.reduce((s, r) => s + r.totalMt, 0);
+    return rows.map(r => ({
+      groupId: r.groupId,
+      groupCode: r.groupCode,
+      groupName: r.groupName,
+      totalMt: r.totalMt,
+      totalRevenue: r.totalRevenue,
+      invoiceCount: r.invoiceCount,
+      memberCount: r.customerNames.size,
+      avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
+      pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
+    }));
+  }, [invoices, customers, customerGroups]);
+
+  const sortedGroupSales = useMemo(() => {
+    let list = groupSalesData;
+    if (grpSearch.trim()) {
+      const q = grpSearch.toLowerCase();
+      list = list.filter(r => r.groupName.toLowerCase().includes(q) || r.groupCode.toLowerCase().includes(q));
+    }
+    if (grpSort.key) {
+      list = [...list].sort((a, b) => {
+        let va: string | number = '';
+        let vb: string | number = '';
+        switch (grpSort.key) {
+          case 'groupCode': va = a.groupCode; vb = b.groupCode; break;
+          case 'groupName': va = a.groupName; vb = b.groupName; break;
+          case 'memberCount': va = a.memberCount; vb = b.memberCount; break;
+          case 'totalMt': va = a.totalMt; vb = b.totalMt; break;
+          case 'totalRevenue': va = a.totalRevenue; vb = b.totalRevenue; break;
+          case 'invoiceCount': va = a.invoiceCount; vb = b.invoiceCount; break;
+          case 'avgPrice': va = a.avgPrice; vb = b.avgPrice; break;
+          case 'pctOfTotal': va = a.pctOfTotal; vb = b.pctOfTotal; break;
+        }
+        if (typeof va === 'number' && typeof vb === 'number') return grpSort.dir === 'asc' ? va - vb : vb - va;
+        const cmp = String(va).localeCompare(String(vb));
+        return grpSort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return list;
+  }, [groupSalesData, grpSearch, grpSort]);
+
+  const groupGrandTotalMt = useMemo(() => groupSalesData.reduce((s, r) => s + r.totalMt, 0), [groupSalesData]);
+  const groupGrandTotalRev = useMemo(() => groupSalesData.reduce((s, r) => s + r.totalRevenue, 0), [groupSalesData]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // EXCEL EXPORT
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -873,6 +963,56 @@ export default function ReportsPage({
     ws.views = [{ state: 'frozen', ySplit: hdr1, xSplit: 0 }];
   }, [projFy, projectedMonthlySummary, projActualMt, projActualRev, projForecastMt, projForecastRev, projGrandMt, projGrandRev, sortedProjectedCustomers, projectedCustomerData, projCustGrandMt, projCustGrandRev]);
 
+  const buildGroupSheet = useCallback((wb: ExcelJS.Workbook) => {
+    const ws = wb.addWorksheet('Sales by Customer Group');
+    const dateStr = new Date().toLocaleDateString();
+    addTitleRows(ws, 'Sales Volume by Customer Group', `Generated ${dateStr} | ${groupSalesData.length} groups | ${formatNum(groupGrandTotalMt)} MT total`);
+
+    const headerRowNum = ws.rowCount + 1;
+    ws.addRow(['#', 'Group Code', 'Group Name', 'Members', 'Total (MT)', 'Revenue', 'Invoices', 'Avg $/MT', '% of Total']);
+    applyHeaderRow(ws, headerRowNum);
+    for (let i = 4; i <= 9; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
+
+    sortedGroupSales.forEach((row, idx) => {
+      const r = ws.addRow([idx + 1, row.groupCode, row.groupName, row.memberCount, row.totalMt, row.totalRevenue, row.invoiceCount, row.avgPrice, row.pctOfTotal / 100]);
+      r.getCell(4).numFmt = INT_FMT;
+      r.getCell(5).numFmt = NUMBER_FMT;
+      r.getCell(6).numFmt = CURRENCY_FMT;
+      r.getCell(7).numFmt = INT_FMT;
+      r.getCell(8).numFmt = CURRENCY_FMT;
+      r.getCell(9).numFmt = PCT_FMT;
+      for (let i = 4; i <= 9; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      if (idx % 2 === 1) {
+        r.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
+      }
+    });
+
+    const totalRowNum = ws.rowCount + 1;
+    const totalInvoices = groupSalesData.reduce((s, r) => s + r.invoiceCount, 0);
+    const totalMembers = groupSalesData.reduce((s, r) => s + r.memberCount, 0);
+    const avgAll = groupGrandTotalMt > 0 ? groupGrandTotalRev / groupGrandTotalMt : 0;
+    const r = ws.addRow(['', '', `Total (${groupSalesData.length} groups)`, totalMembers, groupGrandTotalMt, groupGrandTotalRev, totalInvoices, avgAll, 1]);
+    r.getCell(4).numFmt = INT_FMT;
+    r.getCell(5).numFmt = NUMBER_FMT;
+    r.getCell(6).numFmt = CURRENCY_FMT;
+    r.getCell(7).numFmt = INT_FMT;
+    r.getCell(8).numFmt = CURRENCY_FMT;
+    r.getCell(9).numFmt = PCT_FMT;
+    for (let i = 4; i <= 9; i++) r.getCell(i).alignment = { horizontal: 'right' };
+    applyTotalRow(ws, totalRowNum);
+
+    ws.getColumn(1).width = 5;
+    ws.getColumn(2).width = 14;
+    ws.getColumn(3).width = 30;
+    ws.getColumn(4).width = 12;
+    ws.getColumn(5).width = 16;
+    ws.getColumn(6).width = 18;
+    ws.getColumn(7).width = 12;
+    ws.getColumn(8).width = 16;
+    ws.getColumn(9).width = 14;
+    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
+  }, [sortedGroupSales, groupSalesData, groupGrandTotalMt, groupGrandTotalRev]);
+
   const exportAllReports = useCallback(async () => {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Sweet Pro';
@@ -882,10 +1022,11 @@ export default function ReportsPage({
     buildMonthlySheet(wb);
     buildCombinationsSheet(wb);
     buildProjectedSheet(wb);
+    buildGroupSheet(wb);
     const buf = await wb.xlsx.writeBuffer();
     const dateStr = new Date().toISOString().slice(0, 10);
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_Sales_Reports_${dateStr}.xlsx`);
-  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet]);
+  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet, buildGroupSheet]);
 
   const exportSingleReport = useCallback(async (sheetName: string) => {
     const wb = new ExcelJS.Workbook();
@@ -897,12 +1038,13 @@ export default function ReportsPage({
       case 'monthly': buildMonthlySheet(wb); break;
       case 'combinations': buildCombinationsSheet(wb); break;
       case 'projected': buildProjectedSheet(wb); break;
+      case 'group': buildGroupSheet(wb); break;
     }
     const buf = await wb.xlsx.writeBuffer();
     const dateStr = new Date().toISOString().slice(0, 10);
-    const names: Record<string, string> = { customer: 'Sales_by_Customer', product: 'Sales_by_Product', monthly: 'Monthly_Trend', combinations: 'Customer_Product_Combos', projected: 'Projected_Annual_Sales' };
+    const names: Record<string, string> = { customer: 'Sales_by_Customer', product: 'Sales_by_Product', monthly: 'Monthly_Trend', combinations: 'Customer_Product_Combos', projected: 'Projected_Annual_Sales', group: 'Sales_by_Customer_Group' };
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_${names[sheetName] || 'Report'}_${dateStr}.xlsx`);
-  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet]);
+  }, [buildCustomerSheet, buildProductSheet, buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet, buildGroupSheet]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1482,6 +1624,107 @@ export default function ReportsPage({
             </div>
           </div>
         )}
+      </div>
+
+      {/* ═══════════════ REPORT 6: Sales by Customer Group ═══════════════ */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+            <Users size={14} />
+            Sales Volume by Customer Group
+          </h3>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
+              <Search size={12} className="opacity-50" />
+              <input
+                type="text"
+                value={grpSearch}
+                onChange={(e) => setGrpSearch(e.target.value)}
+                placeholder="Search groups..."
+                className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
+              />
+              {grpSearch && <button onClick={() => setGrpSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+            </div>
+            <button onClick={() => exportSingleReport('group')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
+              <Download size={11} /> Excel
+            </button>
+          </div>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 w-8">#</th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <SortHeader label="Group Code" sortKey="groupCode" current={grpSort} onToggle={toggleSort(setGrpSort)} />
+                </th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <SortHeader label="Group Name" sortKey="groupName" current={grpSort} onToggle={toggleSort(setGrpSort)} />
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="Members" sortKey="memberCount" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="Total (MT)" sortKey="totalMt" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="Revenue" sortKey="totalRevenue" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="Invoices" sortKey="invoiceCount" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="Avg $/MT" sortKey="avgPrice" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <div className="flex justify-end"><SortHeader label="% of Total" sortKey="pctOfTotal" current={grpSort} onToggle={toggleSort(setGrpSort)} /></div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedGroupSales.map((row, idx) => (
+                <tr key={row.groupId} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                  <td className="px-4 py-2 text-gray-400 font-mono">{idx + 1}</td>
+                  <td className="px-4 py-2 font-mono font-bold">{row.groupCode}</td>
+                  <td className="px-4 py-2 font-medium">{row.groupName}</td>
+                  <td className="px-4 py-2 text-right">
+                    <span className="inline-block px-2 py-0.5 bg-indigo-100 text-indigo-700 font-bold text-[10px] rounded-full">{row.memberCount}</span>
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNum(row.totalMt)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.totalRevenue)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{row.invoiceCount}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.avgPrice)}</td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="w-16 h-2 bg-gray-200 overflow-hidden">
+                        <div className="h-full bg-[#141414]" style={{ width: `${Math.min(100, row.pctOfTotal)}%` }} />
+                      </div>
+                      <span className="font-mono w-12 text-right">{row.pctOfTotal.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sortedGroupSales.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No invoice data available.</td></tr>
+              )}
+            </tbody>
+            {sortedGroupSales.length > 0 && (
+              <tfoot>
+                <tr className="bg-gray-50 font-bold border-t-2 border-[#141414]">
+                  <td className="px-4 py-2"></td>
+                  <td className="px-4 py-2"></td>
+                  <td className="px-4 py-2 text-[10px] uppercase tracking-widest">Total ({groupSalesData.length} groups)</td>
+                  <td className="px-4 py-2 text-right font-mono">{groupSalesData.reduce((s, r) => s + r.memberCount, 0)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNum(groupGrandTotalMt)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatCurrency(groupGrandTotalRev)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{groupSalesData.reduce((s, r) => s + r.invoiceCount, 0)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{groupGrandTotalMt > 0 ? formatCurrency(groupGrandTotalRev / groupGrandTotalMt) : '—'}</td>
+                  <td className="px-4 py-2 text-right font-mono">100.0%</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
     </div>
   );
