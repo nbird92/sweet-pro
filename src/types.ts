@@ -61,6 +61,7 @@ export interface Customer {
   defaultCarrierCode?: string;
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
+  customerGroupId?: string;
 }
 
 export interface Person {
@@ -729,3 +730,14 @@ export interface CustomerForecast {
 }
 
 export const INITIAL_CUSTOMER_FORECASTS: CustomerForecast[] = [];
+
+// ── Customer Groups ──
+
+export interface CustomerGroup {
+  id: string;
+  groupCode: string;
+  name: string;
+  notes?: string;
+}
+
+export const INITIAL_CUSTOMER_GROUPS: CustomerGroup[] = [];

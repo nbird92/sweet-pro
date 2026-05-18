@@ -38,6 +38,7 @@ export const COLLECTIONS = {
   lotCodes: 'lotCodes',
   fiscalYears: 'fiscalYears',
   customerForecasts: 'customerForecasts',
+  customerGroups: 'customerGroups',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
