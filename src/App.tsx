@@ -49,7 +49,8 @@ import {
   Upload,
   FlaskConical,
   BarChart3,
-  Landmark
+  Landmark,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -3394,20 +3395,47 @@ export default function App() {
                 <h3 className="text-[10px] font-bold uppercase tracking-widest">Customer Groups</h3>
                 <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{customerGroups.length}</span>
               </div>
-              <button
-                onClick={() => {
-                  const maxNum = customerGroups.reduce((mx, g) => {
-                    const n = parseInt(g.groupCode || '0', 10);
-                    return n > mx ? n : mx;
-                  }, 0);
-                  const nextCode = String(maxNum + 1).padStart(3, '0');
-                  setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
-                  setIsAddingCustomerGroup(true);
-                }}
-                className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
-              >
-                <Plus size={12} /> Add Group
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    // Auto-assign all groups: for each group, find customers whose name contains the group name
+                    let updated = [...customers];
+                    let totalAssigned = 0;
+                    for (const g of customerGroups) {
+                      const keyword = g.name.toLowerCase().trim();
+                      if (!keyword) continue;
+                      for (let i = 0; i < updated.length; i++) {
+                        const c = updated[i];
+                        if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
+                          updated[i] = { ...c, customerGroupId: g.id };
+                          totalAssigned++;
+                        }
+                      }
+                    }
+                    if (totalAssigned > 0) {
+                      setCustomers(updated);
+                    }
+                  }}
+                  className="px-3 py-1 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+                  title="Auto-assign ungrouped customers to groups by matching customer name to group name"
+                >
+                  <Zap size={12} /> Auto-Assign All
+                </button>
+                <button
+                  onClick={() => {
+                    const maxNum = customerGroups.reduce((mx, g) => {
+                      const n = parseInt(g.groupCode || '0', 10);
+                      return n > mx ? n : mx;
+                    }, 0);
+                    const nextCode = String(maxNum + 1).padStart(3, '0');
+                    setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                    setIsAddingCustomerGroup(true);
+                  }}
+                  className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+                >
+                  <Plus size={12} /> Add Group
+                </button>
+              </div>
             </div>
             {customerGroups.length > 6 && (
               <div className="px-4 pt-3">
@@ -11328,11 +11356,42 @@ export default function App() {
                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
                   <textarea value={newCustomerGroup.notes || ''} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" placeholder="Optional notes..." />
                 </div>
+                {/* Auto-detect preview */}
+                {newCustomerGroup.name.trim() && (() => {
+                  const keyword = newCustomerGroup.name.toLowerCase().trim();
+                  const matches = customers.filter(c => !c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword));
+                  return matches.length > 0 ? (
+                    <div className="border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-indigo-600 flex items-center gap-1"><Zap size={10} /> Auto-detect: {matches.length} matching customer{matches.length > 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="divide-y divide-indigo-100 max-h-32 overflow-y-auto">
+                        {matches.map(c => (
+                          <div key={c.id} className="py-1 text-xs">
+                            <span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-indigo-500 italic">These ungrouped customers will be auto-assigned on save.</p>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={() => {
                       if (!newCustomerGroup.name) return;
+                      // Save the group
                       setCustomerGroups([...customerGroups, newCustomerGroup]);
+                      // Auto-assign matching customers
+                      const keyword = newCustomerGroup.name.toLowerCase().trim();
+                      if (keyword) {
+                        setCustomers(customers.map(c => {
+                          if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
+                            return { ...c, customerGroupId: newCustomerGroup.id };
+                          }
+                          return c;
+                        }));
+                      }
                       setIsAddingCustomerGroup(false);
                     }}
                     disabled={!newCustomerGroup.name}
@@ -11379,27 +11438,60 @@ export default function App() {
                 {/* Add customer to group */}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Add Customer to Group</label>
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const selectedId = e.target.value;
-                      if (selectedId) {
-                        setCustomers(customers.map(cu => cu.id === selectedId ? { ...cu, customerGroupId: editingCustomerGroup.id } : cu));
+                  <div className="flex gap-2">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const selectedId = e.target.value;
+                        if (selectedId) {
+                          setCustomers(customers.map(cu => cu.id === selectedId ? { ...cu, customerGroupId: editingCustomerGroup.id } : cu));
+                        }
+                      }}
+                      className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">— Select a customer to add —</option>
+                      {customers
+                        .filter(cu => cu.customerGroupId !== editingCustomerGroup.id)
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                        .map(cu => (
+                          <option key={cu.id} value={cu.id}>
+                            {cu.customerNumber ? `${cu.customerNumber} — ` : ''}{cu.name}{cu.defaultLocation ? ` (${cu.defaultLocation})` : ''}
+                          </option>
+                        ))
                       }
-                    }}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                  >
-                    <option value="">— Select a customer to add —</option>
-                    {customers
-                      .filter(cu => cu.customerGroupId !== editingCustomerGroup.id)
-                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                      .map(cu => (
-                        <option key={cu.id} value={cu.id}>
-                          {cu.customerNumber ? `${cu.customerNumber} — ` : ''}{cu.name}{cu.defaultLocation ? ` (${cu.defaultLocation})` : ''}
-                        </option>
-                      ))
-                    }
-                  </select>
+                    </select>
+                    <button
+                      onClick={() => {
+                        const keyword = editingCustomerGroup.name.toLowerCase().trim();
+                        if (!keyword) return;
+                        const matches = customers.filter(c => c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword));
+                        if (matches.length > 0) {
+                          setCustomers(customers.map(c => {
+                            if (c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword)) {
+                              return { ...c, customerGroupId: editingCustomerGroup.id };
+                            }
+                            return c;
+                          }));
+                        }
+                      }}
+                      className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-opacity-80 transition-all whitespace-nowrap"
+                      title={`Auto-assign all customers whose name contains "${editingCustomerGroup.name}"`}
+                    >
+                      <Zap size={12} /> Auto-Detect
+                    </button>
+                  </div>
+                  {(() => {
+                    const keyword = editingCustomerGroup.name.toLowerCase().trim();
+                    if (!keyword) return null;
+                    const potentialMatches = customers.filter(c => c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword));
+                    if (potentialMatches.length === 0) return null;
+                    return (
+                      <div className="mt-1 text-[10px] text-indigo-600">
+                        <Zap size={10} className="inline mr-1" />
+                        Auto-detect would add {potentialMatches.length} customer{potentialMatches.length > 1 ? 's' : ''}: {potentialMatches.map(c => c.name).join(', ')}
+                      </div>
+                    );
+                  })()}
                 </div>
                 {/* Members list */}
                 <div className="space-y-1">
