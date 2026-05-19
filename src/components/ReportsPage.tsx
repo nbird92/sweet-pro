@@ -541,8 +541,10 @@ export default function ReportsPage({
 
     for (const inv of invoices) {
       if (!inv.customer || !inv.qty) continue;
-      const groupId = custGroupMap.get(inv.customer) || '__ungrouped__';
+      const groupId = custGroupMap.get(inv.customer);
+      if (!groupId) continue; // skip ungrouped customers
       const grp = customerGroups.find(g => g.id === groupId);
+      if (!grp) continue; // skip if group no longer exists
       const key = groupId;
 
       const existing = map.get(key);
@@ -554,8 +556,8 @@ export default function ReportsPage({
       } else {
         map.set(key, {
           groupId,
-          groupCode: grp ? grp.groupCode : '—',
-          groupName: grp ? grp.name : 'Ungrouped',
+          groupCode: grp.groupCode,
+          groupName: grp.name,
           totalMt: inv.qty,
           totalRevenue: inv.amount || 0,
           invoiceCount: 1,
