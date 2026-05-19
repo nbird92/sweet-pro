@@ -2855,11 +2855,52 @@ export default function App() {
         return bNum - aNum; // Newest first
       });
 
+      const dashboardExportSheets = (): SheetSpec[] => {
+        const weeklyRows = sortedWeeks.map(w => ({
+          week: w,
+          volume: weeklyTotals[w].volume,
+          tolling: weeklyTotals[w].tolling,
+        }));
+        const productRows: Record<string, any>[] = [];
+        Object.keys(productVolume).sort().forEach(w => {
+          Object.keys(productVolume[w]).forEach(p => {
+            productRows.push({ week: w, product: p, volume: productVolume[w][p] });
+          });
+        });
+        return [
+          {
+            sheetName: 'Weekly Totals',
+            title: 'Weekly Completed Totals',
+            subtitle: `Generated ${new Date().toLocaleDateString()}`,
+            columns: [
+              { header: 'Week', key: 'week' },
+              { header: 'Volume (MT)', key: 'volume', format: 'number' },
+              { header: 'Tolling (CAD)', key: 'tolling', format: 'currency' },
+            ],
+            rows: weeklyRows,
+          },
+          {
+            sheetName: 'Volume by Product',
+            title: 'Weekly Volume by Product',
+            subtitle: `${productRows.length} rows`,
+            columns: [
+              { header: 'Week', key: 'week' },
+              { header: 'Product', key: 'product' },
+              { header: 'Volume (MT)', key: 'volume', format: 'number' },
+            ],
+            rows: productRows,
+          },
+        ];
+      };
       return (
-        <div className="p-6 space-y-8">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Operational Dashboard</h2>
-          </div>
+        <div>
+          <PageBanner
+            icon={<TrendingUp size={18} />}
+            title="Operational Dashboard"
+            exportSheets={dashboardExportSheets}
+            exportFileName="Dashboard"
+          />
+          <div className="p-6 space-y-8">
 
           {/* Weekly Completed Totals Chart */}
           {sortedWeeks.length > 0 && (() => {
@@ -3026,6 +3067,7 @@ export default function App() {
               </table>
             </div>
           </div>
+          </div>
         </div>
       );
     }
@@ -3084,63 +3126,83 @@ export default function App() {
         return expandedRows.has(week);
       };
 
+      const shipmentCsvHeaders = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
+      const shipmentExportSheets = (): SheetSpec[] => [{
+        sheetName: `${locationName} Schedule`,
+        title: `${locationName} Shipment Schedule`,
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${locationShipments.length} shipments`,
+        columns: [
+          { header: 'Date', key: 'date' },
+          { header: 'Delivery Date', key: 'deliveryDate' },
+          { header: 'Week', key: 'week' },
+          { header: 'Day', key: 'day' },
+          { header: 'Time', key: 'time' },
+          { header: 'Bay', key: 'bay' },
+          { header: 'Customer', key: 'customer' },
+          { header: 'Product', key: 'product' },
+          { header: 'Contract #', key: 'contractNumber' },
+          { header: 'PO', key: 'po' },
+          { header: 'BOL', key: 'bol' },
+          { header: 'Qty (MT)', key: 'qty', format: 'number' },
+          { header: 'Scaled Qty', key: 'scaledQty', format: 'number' },
+          { header: 'Carrier', key: 'carrier' },
+          { header: 'Trailer No.', key: 'trailerNo' },
+          { header: 'Status', key: 'status' },
+          { header: 'Lot Number', key: 'lotNumber' },
+        ],
+        rows: locationShipments as any[],
+      }];
       return (
-        <div className="p-4 space-y-3">
-          <div className="flex justify-between items-center">
-            <div className="space-y-0.5">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">Shipment Schedule</h2>
-              <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} />
-                Last Updated: {new Date().toLocaleString()}
-              </div>
+        <div>
+          <PageBanner
+            icon={<Calendar size={18} />}
+            title="Shipment Schedule"
+            count={filteredShipments.length}
+            exportSheets={shipmentExportSheets}
+            exportFileName={`${locationName}_Shipments`}
+          >
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] uppercase font-bold text-[#E4E3E0]/60">Location</label>
+              <select
+                value={scheduleLocation}
+                onChange={(e) => setScheduleLocation(e.target.value)}
+                className="bg-[#E4E3E0] text-[#141414] border border-[#E4E3E0] px-3 py-1.5 text-xs font-bold focus:outline-none"
+              >
+                {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+              </select>
             </div>
-            <div className="flex gap-2 items-center">
-              <div className="flex items-center gap-2">
-                <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
-                <select
-                  value={scheduleLocation}
-                  onChange={(e) => setScheduleLocation(e.target.value)}
-                  className="bg-white border border-[#141414] px-3 py-1.5 text-sm font-bold focus:outline-none"
-                >
-                  {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
-                </select>
-              </div>
-              <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-all">
-                {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
-              </button>
-              <button onClick={() => {
-                  const headers = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
-                  const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodeURI(csvContent));
-                  link.setAttribute("download", "shipment_template.csv");
-                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-                }}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
-                <Download size={12} /> Template
-              </button>
-              <button onClick={() => {
-                  const headers = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
-                  exportCSV(headers, locationShipments, `${locationName.toLowerCase()}_shipments_export.csv`);
-                }}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
-                <Download size={12} /> Export
-              </button>
-              <button onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
-                <FileText size={12} /> Import CSV
-              </button>
-              <button onClick={() => setIsAddingBatchShipment(true)}
-                className="px-3 py-1.5 border border-[#141414] text-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                <Plus size={12} /> Batch
-              </button>
-              <button onClick={() => { setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer(''); setIsAddingShipment(true); }}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all">
-                <Plus size={12} /> Add Shipment
-              </button>
-            </div>
-          </div>
+            <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/10 transition-all">
+              {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
+            </button>
+            <button onClick={() => {
+                const csvContent = "data:text/csv;charset=utf-8," + shipmentCsvHeaders.join(",");
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", "shipment_template.csv");
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              <Download size={12} /> Template
+            </button>
+            <button onClick={() => exportCSV(shipmentCsvHeaders, locationShipments, `${locationName.toLowerCase()}_shipments_export.csv`)}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              <Download size={12} /> CSV
+            </button>
+            <button onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              <FileText size={12} /> Import CSV
+            </button>
+            <button onClick={() => setIsAddingBatchShipment(true)}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              <Plus size={12} /> Batch
+            </button>
+            <button onClick={() => { setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer(''); setIsAddingShipment(true); }}
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/20 transition-all">
+              <Plus size={12} /> Add Shipment
+            </button>
+          </PageBanner>
+          <div className="p-4 space-y-3">
 
           <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by customer, product, PO, BOL, carrier, contract or notes..." />
 
@@ -3337,6 +3399,7 @@ export default function App() {
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       );
@@ -5641,11 +5704,71 @@ export default function App() {
     if (activePage === 'Supply Chain') {
       const totalCostPerMt = supplyChain.reduce((sum, item) => sum + (item.totalCostCad / (item.weightPerLoadMt || 1)), 0);
 
+      const supplyChainExportSheets = (): SheetSpec[] => [
+        {
+          sheetName: 'Supply Chain',
+          title: 'Supply Chain Components',
+          subtitle: `Generated ${new Date().toLocaleDateString()} | ${supplyChain.length} components`,
+          columns: [
+            { header: 'Component', key: 'component' },
+            { header: 'Carrier', key: 'provider' },
+            { header: 'Total Cost (CAD)', key: 'totalCostCad', format: 'currency' },
+            { header: 'Weight / Load (MT)', key: 'weightPerLoadMt', format: 'number' },
+            { header: 'Cost / MT (CAD)', key: 'costPerMt', format: 'currency' },
+          ],
+          rows: supplyChain.map(item => ({
+            component: item.component,
+            provider: item.provider,
+            totalCostCad: item.totalCostCad,
+            weightPerLoadMt: item.weightPerLoadMt,
+            costPerMt: item.totalCostCad / (item.weightPerLoadMt || 1),
+          })),
+        },
+        {
+          sheetName: 'Locations',
+          title: 'Locations',
+          subtitle: `${locations.length} locations`,
+          columns: [
+            { header: 'Code', key: 'locationCode' },
+            { header: 'Name', key: 'name' },
+            { header: 'Address', key: 'address' },
+            { header: 'City', key: 'city' },
+            { header: 'Province', key: 'province' },
+            { header: 'Postal Code', key: 'postalCode' },
+          ],
+          rows: locations as any[],
+        },
+        {
+          sheetName: 'CHEP Pallet Movements',
+          title: 'CHEP Pallet Movements',
+          subtitle: `${chepPalletMovements.length} movements`,
+          columns: [
+            { header: 'Date', key: 'date' },
+            { header: 'Location', key: 'location' },
+            { header: 'Type', key: 'type' },
+            { header: 'Quantity', key: 'quantity', format: 'integer' },
+            { header: 'Reference', key: 'reference' },
+            { header: 'Notes', key: 'notes' },
+          ],
+          rows: [...chepPalletMovements].sort((a, b) => b.date.localeCompare(a.date)).map(m => ({
+            date: m.date,
+            location: m.location,
+            type: m.type === 'in' ? 'IN' : 'OUT',
+            quantity: m.quantity,
+            reference: m.reference,
+            notes: m.notes || '',
+          })),
+        },
+      ];
       return (
-        <div className="p-6 space-y-8">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Supply Chain Management</h2>
-          </div>
+        <div>
+          <PageBanner
+            icon={<Truck size={18} />}
+            title="Supply Chain Management"
+            exportSheets={supplyChainExportSheets}
+            exportFileName="Supply_Chain"
+          />
+          <div className="p-6 space-y-8">
 
           {/* Locations Table (read-only except bays & appointment schedule — edit locations in QA page) */}
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
@@ -6101,6 +6224,7 @@ export default function App() {
             </div>
           </div>
 
+          </div>
         </div>
       );
     }
