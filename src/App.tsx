@@ -67,6 +67,8 @@ import LabPage from './components/LabPage';
 import FinancePage from './components/FinancePage';
 import SalesForecastPage from './components/SalesForecastPage';
 import ReportsPage from './components/ReportsPage';
+import PageBanner from './components/PageBanner';
+import type { SheetSpec } from './utils/exportExcel';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -3344,46 +3346,87 @@ export default function App() {
     if (activePage === 'Customers') {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
 
+      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+      const customerExportSheets = (): SheetSpec[] => [
+        {
+          sheetName: 'Customers',
+          title: 'Customer Directory',
+          subtitle: `Generated ${new Date().toLocaleDateString()} | ${customers.length} customers`,
+          columns: [
+            { header: 'Cust No.', key: 'customerNumber' },
+            { header: 'Customer Name', key: 'name' },
+            { header: 'ITAS Name', key: 'itasCustomerName' },
+            { header: 'Group', key: 'groupName' },
+            { header: 'Default Location', key: 'defaultLocation' },
+            { header: 'Address', key: 'address' },
+            { header: 'City', key: 'city' },
+            { header: 'Province', key: 'province' },
+            { header: 'Postal Code', key: 'postalCode' },
+            { header: 'Default Margin', key: 'defaultMargin' },
+            { header: 'Payment Terms', key: 'defaultPaymentTerms' },
+            { header: 'Default Carrier', key: 'defaultCarrierCode' },
+            { header: 'Contact Email', key: 'contactEmail' },
+            { header: 'Contact Phone', key: 'contactPhone' },
+            { header: 'Notes', key: 'notes' },
+          ],
+          rows: customers.map(c => ({
+            ...c,
+            groupName: (() => { const g = customerGroups.find(gr => gr.id === c.customerGroupId); return g ? `${g.groupCode} — ${g.name}` : ''; })(),
+          })),
+        },
+        {
+          sheetName: 'Customer Groups',
+          title: 'Customer Groups',
+          subtitle: `${customerGroups.length} groups`,
+          columns: [
+            { header: 'Group Code', key: 'groupCode' },
+            { header: 'Group Name', key: 'name' },
+            { header: 'Members', key: 'members', format: 'integer' },
+            { header: 'Notes', key: 'notes' },
+          ],
+          rows: customerGroups.map(g => ({
+            groupCode: g.groupCode,
+            name: g.name,
+            members: customers.filter(c => c.customerGroupId === g.id).length,
+            notes: g.notes || '',
+          })),
+        },
+      ];
       return (
         <div>
-          {/* Dark Banner Header */}
-          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Users size={20} />
-              <h2 className="text-sm font-bold uppercase tracking-widest">Customer Directory</h2>
-              <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{filteredCustomers.length} records</span>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => {
-                  const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
-                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodeURI(csvContent));
-                  link.setAttribute("download", "customer_template.csv");
-                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Template
-              </button>
-              <button onClick={() => customerFileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Upload size={12} /> Import CSV
-              </button>
-              <button onClick={() => {
-                  const headers = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
-                  exportCSV(headers, customers, 'customers_export.csv');
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Export
-              </button>
-              <button
-                onClick={addCustomer}
-                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
-              >
-                <Plus size={12} /> Add Customer
-              </button>
-            </div>
-          </div>
+          <PageBanner
+            icon={<Users size={18} />}
+            title="Customer Directory"
+            count={filteredCustomers.length}
+            exportSheets={customerExportSheets}
+            exportFileName="Customers"
+          >
+            <button onClick={() => {
+                const csvContent = "data:text/csv;charset=utf-8," + customerTplHeaders.join(",");
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", "customer_template.csv");
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> Template
+            </button>
+            <button onClick={() => customerFileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Upload size={12} /> Import CSV
+            </button>
+            <button onClick={() => exportCSV(customerCsvHeaders, customers, 'customers_export.csv')}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> CSV
+            </button>
+            <button
+              onClick={addCustomer}
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+            >
+              <Plus size={12} /> Add Customer
+            </button>
+          </PageBanner>
 
           <div className="p-6 space-y-4">
 
@@ -3856,46 +3899,65 @@ export default function App() {
     if (activePage === 'Invoices') {
       const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['bolNumber', 'customer', 'product', 'po', 'status']);
 
+      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+      const invoiceExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Invoices',
+        title: 'Customer Invoices',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${invoices.length} invoices`,
+        columns: [
+          { header: 'Invoice No.', key: 'invoiceNumber' },
+          { header: 'BOL No.', key: 'bolNumber' },
+          { header: 'Customer', key: 'customer' },
+          { header: 'Product', key: 'product' },
+          { header: 'Contract #', key: 'contractNumber' },
+          { header: 'PO No.', key: 'po' },
+          { header: 'Date', key: 'date' },
+          { header: 'Due Date', key: 'dueDate' },
+          { header: 'Qty (MT)', key: 'qty', format: 'number' },
+          { header: 'Price/MT', key: 'pricePerMt', format: 'currency' },
+          { header: 'Carrier', key: 'carrier' },
+          { header: 'Status', key: 'status' },
+          { header: 'Split No.', key: 'splitNo' },
+          { header: 'Shipping Terms', key: 'shippingTerms' },
+          { header: 'Location', key: 'location' },
+        ],
+        rows: invoices as any[],
+      }];
       return (
         <div className="space-y-0">
-          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <DollarSign size={18} />
-              <h2 className="text-sm font-bold uppercase tracking-widest">Customer Invoices</h2>
-              <span className="text-[10px] opacity-50 font-mono">{filteredInvoices.length} records</span>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => {
-                  const tplHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
-                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodeURI(csvContent));
-                  link.setAttribute("download", "invoice_template.csv");
-                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Template
-              </button>
-              <button onClick={() => invoiceFileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Upload size={12} /> Import CSV
-              </button>
-              <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
-                <Upload size={12} /> Import &amp; Replace
-              </button>
-              <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Printer size={12} /> Batch Print
-              </button>
-              <button onClick={() => {
-                  const headers = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
-                  exportCSV(headers, invoices, 'invoices_export.csv');
-                }}
-                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
-                <Download size={12} /> Export
-              </button>
-            </div>
-          </div>
+          <PageBanner
+            icon={<DollarSign size={18} />}
+            title="Customer Invoices"
+            count={filteredInvoices.length}
+            exportSheets={invoiceExportSheets}
+            exportFileName="Invoices"
+          >
+            <button onClick={() => {
+                const csvContent = "data:text/csv;charset=utf-8," + invoiceCsvHeaders.join(",");
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", "invoice_template.csv");
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> Template
+            </button>
+            <button onClick={() => invoiceFileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Upload size={12} /> Import CSV
+            </button>
+            <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
+              <Upload size={12} /> Import &amp; Replace
+            </button>
+            <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Printer size={12} /> Batch Print
+            </button>
+            <button onClick={() => exportCSV(invoiceCsvHeaders, invoices, 'invoices_export.csv')}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> CSV
+            </button>
+          </PageBanner>
 
           <div className="px-6 pt-4">
             <SearchInput
@@ -4134,83 +4196,105 @@ export default function App() {
         return 0;
       });
 
+      const buildOrderRows = () => orders.map(o => {
+        const li = o.lineItems[0];
+        const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
+        const contract = contracts.find(c => c.contractNumber === o.contractNumber);
+        return {
+          bolNumber: o.bolNumber,
+          customer: o.customer,
+          product: o.product || li?.productName || '',
+          contractNumber: o.contractNumber || li?.contractNumber || '',
+          po: o.po,
+          date: o.date,
+          shipmentDate: o.shipmentDate || '',
+          deliveryDate: o.deliveryDate || '',
+          qty: totalWeight,
+          pricePerMt: contract?.finalPrice || (totalWeight > 0 ? o.amount / totalWeight : 0),
+          currency: contract?.currency || o.currency || '',
+          carrier: o.carrier,
+          status: o.status,
+          location: o.location || '',
+          shippingTerms: o.shippingTerms || '',
+          palletType: o.palletType || '',
+          paymentTerms: contract?.paymentTerms || '',
+          splitNumber: o.splitNumber || '',
+        };
+      });
+      const orderCsvHeaders = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'pricePerMt', 'currency', 'carrier', 'status', 'location', 'shippingTerms', 'palletType', 'paymentTerms', 'splitNumber'];
+      const orderExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Orders',
+        title: 'Orders',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${orders.length} orders`,
+        columns: [
+          { header: 'BOL Number', key: 'bolNumber' },
+          { header: 'Customer', key: 'customer' },
+          { header: 'Product', key: 'product' },
+          { header: 'Contract #', key: 'contractNumber' },
+          { header: 'PO', key: 'po' },
+          { header: 'Order Date', key: 'date' },
+          { header: 'Shipment Date', key: 'shipmentDate' },
+          { header: 'Delivery Date', key: 'deliveryDate' },
+          { header: 'Qty (MT)', key: 'qty', format: 'number' },
+          { header: 'Price/MT', key: 'pricePerMt', format: 'currency' },
+          { header: 'Currency', key: 'currency' },
+          { header: 'Carrier', key: 'carrier' },
+          { header: 'Status', key: 'status' },
+          { header: 'Location', key: 'location' },
+          { header: 'Shipping Terms', key: 'shippingTerms' },
+          { header: 'Pallet Type', key: 'palletType' },
+          { header: 'Payment Terms', key: 'paymentTerms' },
+          { header: 'Split #', key: 'splitNumber' },
+        ],
+        rows: buildOrderRows(),
+      }];
       return (
         <div className="space-y-0">
-          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <ShoppingCart size={18} />
-              <h2 className="text-sm font-bold uppercase tracking-widest">Orders</h2>
-              <span className="text-[10px] opacity-50 font-mono">{filteredOrders.length} records</span>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={() => {
-                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'pricePerMt', 'currency', 'carrier', 'status', 'location', 'shippingTerms', 'palletType', 'paymentTerms', 'splitNumber'];
-                  const csvContent = "data:text/csv;charset=utf-8," + headers.join(",");
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodeURI(csvContent));
-                  link.setAttribute("download", "order_template.csv");
-                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Template
-              </button>
-              <button onClick={() => {
-                  const headers = ['bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'shipmentDate', 'deliveryDate', 'qty', 'pricePerMt', 'currency', 'carrier', 'status', 'location', 'shippingTerms', 'palletType', 'paymentTerms', 'splitNumber'];
-                  const rows = orders.map(o => {
-                    const li = o.lineItems[0];
-                    const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
-                    const contract = contracts.find(c => c.contractNumber === o.contractNumber);
-                    return {
-                      bolNumber: o.bolNumber,
-                      customer: o.customer,
-                      product: o.product || li?.productName || '',
-                      contractNumber: o.contractNumber || li?.contractNumber || '',
-                      po: o.po,
-                      date: o.date,
-                      shipmentDate: o.shipmentDate || '',
-                      deliveryDate: o.deliveryDate || '',
-                      qty: totalWeight,
-                      pricePerMt: contract?.finalPrice || (totalWeight > 0 ? o.amount / totalWeight : 0),
-                      currency: contract?.currency || o.currency || '',
-                      carrier: o.carrier,
-                      status: o.status,
-                      location: o.location || '',
-                      shippingTerms: o.shippingTerms || '',
-                      palletType: o.palletType || '',
-                      paymentTerms: contract?.paymentTerms || '',
-                      splitNumber: o.splitNumber || '',
-                    };
-                  });
-                  exportCSV(headers, rows, 'orders_export.csv');
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Export
-              </button>
-              <button onClick={() => orderFileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <FileText size={12} /> Import CSV
-              </button>
-              <button
-                onClick={() => setIsAddingBatchOrder(true)}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
-              >
-                <Plus size={12} /> Batch Orders
-              </button>
-              <button
-                onClick={() => {
-                  setOrderCustomerId('');
-                  setOrderPO('');
-                  setOrderLineItems([]);
-                  setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
-                  setEditingOrder(null);
-                  setIsAddingOrder(true);
-                }}
-                className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
-              >
-                <Plus size={12} /> Add Order
-              </button>
-            </div>
-          </div>
+          <PageBanner
+            icon={<ShoppingCart size={18} />}
+            title="Orders"
+            count={filteredOrders.length}
+            exportSheets={orderExportSheets}
+            exportFileName="Orders"
+          >
+            <button onClick={() => {
+                const csvContent = "data:text/csv;charset=utf-8," + orderCsvHeaders.join(",");
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", "order_template.csv");
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> Template
+            </button>
+            <button onClick={() => exportCSV(orderCsvHeaders, buildOrderRows(), 'orders_export.csv')}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> CSV
+            </button>
+            <button onClick={() => orderFileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <FileText size={12} /> Import CSV
+            </button>
+            <button
+              onClick={() => setIsAddingBatchOrder(true)}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+            >
+              <Plus size={12} /> Batch Orders
+            </button>
+            <button
+              onClick={() => {
+                setOrderCustomerId('');
+                setOrderPO('');
+                setOrderLineItems([]);
+                setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
+                setEditingOrder(null);
+                setIsAddingOrder(true);
+              }}
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+            >
+              <Plus size={12} /> Add Order
+            </button>
+          </PageBanner>
 
           <div className="px-6 pt-4">
             <SearchInput
@@ -4469,28 +4553,69 @@ export default function App() {
       const filteredSkus = getSortedAndFilteredData<SKU>(skus, ['name', 'productGroup', 'id', 'location']);
       const filteredProductGroups = getSortedAndFilteredData<ProductGroup>(productGroups, ['name', 'id']);
 
+      const productExportSheets = (): SheetSpec[] => [
+        {
+          sheetName: 'Products',
+          title: 'Product Catalog',
+          subtitle: `Generated ${new Date().toLocaleDateString()} | ${skus.length} products`,
+          columns: [
+            { header: 'Prod No.', key: 'id' },
+            { header: 'Name', key: 'name' },
+            { header: 'Product Group', key: 'productGroup' },
+            { header: 'Conv./Organic', key: 'category' },
+            { header: 'Max Color', key: 'maxColor' },
+            { header: 'Location', key: 'location' },
+            { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
+            { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
+          ],
+          rows: skus.map(s => ({ ...s, netWeightKg: s.netWeightKg || s.netWeight, grossWeightKg: s.grossWeightKg || '' })),
+        },
+        {
+          sheetName: 'Product Groups',
+          title: 'Product Groups',
+          subtitle: `${productGroups.length} groups`,
+          columns: [
+            { header: 'Group Name', key: 'name' },
+            { header: 'BOL Code', key: 'bolCode' },
+            { header: 'Color', key: 'color' },
+          ],
+          rows: productGroups as any[],
+        },
+        {
+          sheetName: 'Sugar Types',
+          title: 'Sugar Types',
+          subtitle: `${sugarTypes.length} types`,
+          columns: [
+            { header: 'Name', key: 'name' },
+            { header: 'Abbreviation', key: 'abbreviation' },
+            { header: 'Products', key: 'productCount', format: 'integer' },
+          ],
+          rows: sugarTypes.map(st => ({ name: st.name, abbreviation: st.abbreviation, productCount: qaProducts.filter(q => q.sugarType === st.name).length })),
+        },
+      ];
       return (
-        <div className="p-6 space-y-8">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Product Catalog</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setIsAddingSugarType(true)}
-                className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-              >
-                <Plus size={14} /> Add Sugar Type
-              </button>
-              <button
-                onClick={addProductGroup}
-                className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-              >
-                <Plus size={14} /> Add Product Group
-              </button>
-              <div className="px-4 py-2 text-xs text-[#141414]/50 italic flex items-center">
-                Manage products in QA page
-              </div>
-            </div>
-          </div>
+        <div>
+          <PageBanner
+            icon={<Package size={18} />}
+            title="Product Catalog"
+            count={filteredSkus.length}
+            exportSheets={productExportSheets}
+            exportFileName="Products"
+          >
+            <button
+              onClick={() => setIsAddingSugarType(true)}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+            >
+              <Plus size={12} /> Add Sugar Type
+            </button>
+            <button
+              onClick={addProductGroup}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+            >
+              <Plus size={12} /> Add Product Group
+            </button>
+          </PageBanner>
+          <div className="p-6 space-y-8">
 
           {/* Product Groups Table */}
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
@@ -4832,6 +4957,7 @@ export default function App() {
                 })}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       );
