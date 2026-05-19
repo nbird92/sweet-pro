@@ -3751,21 +3751,45 @@ export default function App() {
     if (activePage === 'Transfers') {
       const filteredTransfers = getSortedAndFilteredData<Transfer>(transfers, ['transferNumber', 'from', 'to', 'carrier', 'product', 'status', 'lotCode']);
 
+      const transferExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Transfers',
+        title: 'Inventory Transfers',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${transfers.length} transfers`,
+        columns: [
+          { header: 'Transfer No.', key: 'transferNumber' },
+          { header: 'From', key: 'from' },
+          { header: 'To', key: 'to' },
+          { header: 'Product', key: 'product' },
+          { header: 'Lot Code', key: 'lotCode' },
+          { header: 'Amount (MT)', key: 'amount', format: 'number' },
+          { header: 'Carrier', key: 'carrier' },
+          { header: 'Ship Date', key: 'shipmentDate' },
+          { header: 'Arrival Date', key: 'arrivalDate' },
+          { header: 'Status', key: 'status' },
+        ],
+        rows: transfers as any[],
+      }];
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Inventory Transfers</h2>
+        <div>
+          <PageBanner
+            icon={<ArrowRightLeft size={18} />}
+            title="Inventory Transfers"
+            count={filteredTransfers.length}
+            exportSheets={transferExportSheets}
+            exportFileName="Transfers"
+          >
             <button
               onClick={() => {
                 setEditingTransfer(null);
                 setNewTransferLegs([]);
                 setIsAddingTransfer(true);
               }}
-              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
             >
-              <Plus size={14} /> New Transfer
+              <Plus size={12} /> New Transfer
             </button>
-          </div>
+          </PageBanner>
+          <div className="p-6 space-y-4">
 
           <SearchInput
             value={searchTerm}
@@ -3891,6 +3915,7 @@ export default function App() {
                 })}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       );
@@ -5066,44 +5091,60 @@ export default function App() {
 
     if (activePage === 'Vendors') {
       const departmentCategories = ['sales', 'operations', 'logistics', 'customer service', 'QA', 'trading'];
+      const vendorExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Vendors',
+        title: 'Vendor Management',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${vendors.length} vendors`,
+        columns: [
+          { header: 'Vendor No.', key: 'vendorNumber' },
+          { header: 'Name', key: 'name' },
+          { header: 'Category', key: 'category' },
+          { header: 'Contact Email', key: 'contactEmail' },
+          { header: 'Contact Phone', key: 'contactPhone' },
+        ],
+        rows: vendors as any[],
+      }];
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Vendor Management</h2>
-            <div className="flex gap-2">
-              {/* Auto-add carriers as vendors */}
-              <button
-                onClick={() => {
-                  const existingNames = new Set(vendors.map(v => v.name));
-                  const newVendors: Vendor[] = carriers
-                    .filter(c => !existingNames.has(c.name))
-                    .map(c => ({
-                      id: `VEND-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                      vendorNumber: c.carrierNumber,
-                      name: c.name,
-                      category: 'logistics',
-                      contactEmail: c.contactEmail || '',
-                      contactPhone: c.contactPhone || '',
-                    }));
-                  if (newVendors.length > 0) {
-                    setVendors(prev => [...prev, ...newVendors]);
-                  }
-                }}
-                className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-              >
-                <Truck size={12} /> Sync Carriers as Vendors
-              </button>
-              <button
-                onClick={() => {
-                  const id = `VEND-${Date.now()}`;
-                  setVendors(prev => [...prev, { id, vendorNumber: '', name: '', category: 'operations' }]);
-                }}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add Vendor
-              </button>
-            </div>
-          </div>
+        <div>
+          <PageBanner
+            icon={<Briefcase size={18} />}
+            title="Vendor Management"
+            count={vendors.length}
+            exportSheets={vendorExportSheets}
+            exportFileName="Vendors"
+          >
+            <button
+              onClick={() => {
+                const existingNames = new Set(vendors.map(v => v.name));
+                const newVendors: Vendor[] = carriers
+                  .filter(c => !existingNames.has(c.name))
+                  .map(c => ({
+                    id: `VEND-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    vendorNumber: c.carrierNumber,
+                    name: c.name,
+                    category: 'logistics',
+                    contactEmail: c.contactEmail || '',
+                    contactPhone: c.contactPhone || '',
+                  }));
+                if (newVendors.length > 0) {
+                  setVendors(prev => [...prev, ...newVendors]);
+                }
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+            >
+              <Truck size={12} /> Sync Carriers as Vendors
+            </button>
+            <button
+              onClick={() => {
+                const id = `VEND-${Date.now()}`;
+                setVendors(prev => [...prev, { id, vendorNumber: '', name: '', category: 'operations' }]);
+              }}
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+            >
+              <Plus size={12} /> Add Vendor
+            </button>
+          </PageBanner>
+          <div className="p-6 space-y-4">
 
           <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search vendors by number, name or category..." />
 
@@ -5163,6 +5204,7 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       );
     }
@@ -5171,18 +5213,47 @@ export default function App() {
       const salesPeople = people.filter(p => p.department === 'sales');
       const filteredLeads = getSortedAndFilteredData<SalesLead>(salesLeads, ['customerName', 'product', 'location', 'status']);
 
+      const leadExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Sales Leads',
+        title: 'Sales Leads',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${salesLeads.length} leads`,
+        columns: [
+          { header: 'Customer', key: 'customerName' },
+          { header: 'Product', key: 'product' },
+          { header: 'Volume (MT)', key: 'volume', format: 'number' },
+          { header: 'Location', key: 'location' },
+          { header: 'Sales Person', key: 'salesPersonName' },
+          { header: 'Contact Name', key: 'contactName' },
+          { header: 'Contact Email', key: 'contactEmail' },
+          { header: 'Contact Phone', key: 'contactPhone' },
+          { header: 'Status', key: 'status' },
+          { header: 'Follow-ups', key: 'followUpCount', format: 'integer' },
+          { header: 'Notes', key: 'notes' },
+        ],
+        rows: salesLeads.map(l => ({
+          ...l,
+          salesPersonName: people.find(p => p.id === l.salespersonId)?.name || '',
+          followUpCount: (l.followUps || []).length,
+        })),
+      }];
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-bold uppercase tracking-tighter">Sales Leads</h2>
+        <div>
+          <PageBanner
+            icon={<TrendingUp size={18} />}
+            title="Sales Leads"
+            count={filteredLeads.length}
+            exportSheets={leadExportSheets}
+            exportFileName="Sales_Leads"
+          >
             <button onClick={() => {
               setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
               setShowAddLeadModal(true);
             }}
-              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
-              <Plus size={14} /> Add Lead
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
+              <Plus size={12} /> Add Lead
             </button>
-          </div>
+          </PageBanner>
+          <div className="p-6 space-y-4">
 
           <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search leads by customer, product, location, status..." />
 
@@ -5548,6 +5619,7 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
         </div>
       );
     }
@@ -6036,46 +6108,69 @@ export default function App() {
     if (activePage === 'Contracts') {
       const filteredContracts = getSortedAndFilteredData<Contract>(contracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
 
+      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+      const contractExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Contracts',
+        title: 'Contract Management',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${contracts.length} contracts`,
+        columns: [
+          { header: 'Contract No.', key: 'contractNumber' },
+          { header: 'Cust No.', key: 'customerNumber' },
+          { header: 'Customer Name', key: 'customerName' },
+          { header: 'SKU', key: 'skuName' },
+          { header: 'Volume (MT)', key: 'contractVolume', format: 'number' },
+          { header: 'Volume Taken (MT)', key: 'volumeTaken', format: 'number' },
+          { header: 'Start Date', key: 'startDate' },
+          { header: 'End Date', key: 'endDate' },
+          { header: 'Origin', key: 'origin' },
+          { header: 'Destination', key: 'destination' },
+          { header: 'Final Price', key: 'finalPrice', format: 'currency' },
+          { header: 'Currency', key: 'currency' },
+          { header: 'FX Rate', key: 'fxRate', format: 'number' },
+          { header: '#11 Raw (USD)', key: 'rawPriceUsdMt', format: 'number' },
+          { header: 'Margin (CAD/MT)', key: 'margin', format: 'number' },
+          { header: 'Shipping Terms', key: 'shippingTerms' },
+          { header: 'Payment Terms', key: 'paymentTerms' },
+        ],
+        rows: contracts as any[],
+      }];
       return (
         <div className="space-y-0">
-          <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <FileText size={18} />
-              <h2 className="text-sm font-bold uppercase tracking-widest">Contract Management</h2>
-              <span className="text-[10px] opacity-50 font-mono">{filteredContracts.length} records</span>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => {
-                  const tplHeaders = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
-                  const csvContent = "data:text/csv;charset=utf-8," + tplHeaders.join(",");
-                  const link = document.createElement("a");
-                  link.setAttribute("href", encodeURI(csvContent));
-                  link.setAttribute("download", "contract_template.csv");
-                  document.body.appendChild(link); link.click(); document.body.removeChild(link);
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Template
-              </button>
-              <button onClick={() => {
-                  const headers = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
-                  const rows = contracts.map(c => ({
-                    ...c,
-                    volumeOutstanding: undefined,
-                    id: undefined,
-                    active: undefined,
-                    contractLines: undefined,
-                  }));
-                  exportCSV(headers, rows, 'contracts_export.csv');
-                }}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Download size={12} /> Export
-              </button>
-              <button onClick={() => contractFileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
-                <Upload size={12} /> Import CSV
-              </button>
-            </div>
-          </div>
+          <PageBanner
+            icon={<FileText size={18} />}
+            title="Contract Management"
+            count={filteredContracts.length}
+            exportSheets={contractExportSheets}
+            exportFileName="Contracts"
+          >
+            <button onClick={() => {
+                const csvContent = "data:text/csv;charset=utf-8," + contractCsvHeaders.join(",");
+                const link = document.createElement("a");
+                link.setAttribute("href", encodeURI(csvContent));
+                link.setAttribute("download", "contract_template.csv");
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> Template
+            </button>
+            <button onClick={() => {
+                const rows = contracts.map(c => ({
+                  ...c,
+                  volumeOutstanding: undefined,
+                  id: undefined,
+                  active: undefined,
+                  contractLines: undefined,
+                }));
+                exportCSV(contractCsvHeaders, rows, 'contracts_export.csv');
+              }}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Download size={12} /> CSV
+            </button>
+            <button onClick={() => contractFileInputRef.current?.click()}
+              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              <Upload size={12} /> Import CSV
+            </button>
+          </PageBanner>
 
           <div className="px-6 pt-4">
             <SearchInput
@@ -6276,25 +6371,43 @@ export default function App() {
         return parseMonth(aMonth) - parseMonth(bMonth);
       });
 
+      const marketExportSheets = (): SheetSpec[] => [{
+        sheetName: 'US #11 Market',
+        title: 'US #11 Market Data',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${marketData.length} rows`,
+        columns: [
+          { header: 'Month', key: 'month' },
+          { header: '#11 Raws (USD/cwt)', key: 'raws', format: 'number' },
+          { header: 'FX (USD/CAD)', key: 'fx', format: 'number' },
+        ],
+        rows: sortedMarketData.map(row => ({
+          month: monthKey ? row[monthKey] : '',
+          raws: rawsKey ? row[rawsKey] : '',
+          fx: fxKey ? row[fxKey] : '',
+        })),
+      }];
       return (
-        <div className="p-6 space-y-4">
-          <div className="flex justify-between items-center">
-            <div className="space-y-1">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">US #11 Market Data</h2>
-              <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
-                <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
-                Last Updated: {lastMarketUpdate ? new Date(lastMarketUpdate).toLocaleString() : 'Never'}
-                {marketData.length > 0 && <span className="ml-2">({marketData.length} rows)</span>}
-              </div>
-            </div>
+        <div>
+          <PageBanner
+            icon={<TrendingUp size={18} />}
+            title="US #11 Market Data"
+            count={marketData.length}
+            exportSheets={marketExportSheets}
+            exportFileName="US_11_Market"
+          >
             <button
               onClick={fetchMarketData}
               disabled={isFetchingMarket}
-              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all disabled:opacity-50"
             >
-              <RefreshCw size={14} className={isFetchingMarket ? 'animate-spin' : ''} />
+              <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
               Refresh Data
             </button>
+          </PageBanner>
+          <div className="p-6 space-y-4">
+          <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
+            <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
+            Last Updated: {lastMarketUpdate ? new Date(lastMarketUpdate).toLocaleString() : 'Never'}
           </div>
 
           {/* Data status indicator */}
@@ -6336,6 +6449,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
           </div>
         </div>
       );
