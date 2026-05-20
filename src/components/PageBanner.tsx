@@ -53,13 +53,13 @@ export default function PageBanner({
           <span className="text-[10px] opacity-50 font-mono">{count} records</span>
         )}
       </div>
-      <div className="flex gap-3 items-center">
+      <div className="flex items-stretch divide-x divide-[#E4E3E0]/20">
         {children}
         {exportSheets && (
           <button
             onClick={handleExport}
             disabled={busy}
-            className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all disabled:opacity-50"
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all disabled:opacity-50 whitespace-nowrap"
             title="Export this page's tables to a formatted Excel workbook"
           >
             <FileSpreadsheet size={12} /> {busy ? 'Exporting…' : 'Export Excel'}

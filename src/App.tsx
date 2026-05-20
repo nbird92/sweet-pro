@@ -3172,7 +3172,7 @@ export default function App() {
               </select>
             </div>
             <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
             </button>
             <button onClick={() => {
@@ -3182,23 +3182,23 @@ export default function App() {
                 link.setAttribute("download", "shipment_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => exportCSV(shipmentCsvHeaders, locationShipments, `${locationName.toLowerCase()}_shipments_export.csv`)}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Plus size={12} /> Batch
             </button>
             <button onClick={() => { setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer(''); setIsAddingShipment(true); }}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-white/20 transition-all">
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap">
               <Plus size={12} /> Add Shipment
             </button>
           </PageBanner>
@@ -3472,20 +3472,20 @@ export default function App() {
                 link.setAttribute("download", "customer_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => customerFileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
             <button onClick={() => exportCSV(customerCsvHeaders, customers, 'customers_export.csv')}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button
               onClick={addCustomer}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Customer
             </button>
@@ -3522,7 +3522,7 @@ export default function App() {
                       setCustomers(updated);
                     }
                   }}
-                  className="px-3 py-1 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+                  className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
                   title="Auto-assign ungrouped customers to groups by matching customer name to group name"
                 >
                   <Zap size={12} /> Auto-Assign All
@@ -3847,7 +3847,7 @@ export default function App() {
                 setNewTransferLegs([]);
                 setIsAddingTransfer(true);
               }}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> New Transfer
             </button>
@@ -4027,22 +4027,22 @@ export default function App() {
                 link.setAttribute("download", "invoice_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => invoiceFileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
             <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
               className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
               <Upload size={12} /> Import &amp; Replace
             </button>
-            <button className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+            <button className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Printer size={12} /> Batch Print
             </button>
             <button onClick={() => exportCSV(invoiceCsvHeaders, invoices, 'invoices_export.csv')}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
           </PageBanner>
@@ -4352,20 +4352,20 @@ export default function App() {
                 link.setAttribute("download", "order_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => exportCSV(orderCsvHeaders, buildOrderRows(), 'orders_export.csv')}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button onClick={() => orderFileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
             <button
               onClick={() => setIsAddingBatchOrder(true)}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Batch Orders
             </button>
@@ -4378,7 +4378,7 @@ export default function App() {
                 setEditingOrder(null);
                 setIsAddingOrder(true);
               }}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Order
             </button>
@@ -4692,13 +4692,13 @@ export default function App() {
           >
             <button
               onClick={() => setIsAddingSugarType(true)}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Sugar Type
             </button>
             <button
               onClick={addProductGroup}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Product Group
             </button>
@@ -5193,7 +5193,7 @@ export default function App() {
                   setVendors(prev => [...prev, ...newVendors]);
                 }
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
             >
               <Truck size={12} /> Sync Carriers as Vendors
             </button>
@@ -5202,7 +5202,7 @@ export default function App() {
                 const id = `VEND-${Date.now()}`;
                 setVendors(prev => [...prev, { id, vendorNumber: '', name: '', category: 'operations' }]);
               }}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Vendor
             </button>
@@ -5312,7 +5312,7 @@ export default function App() {
               setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
               setShowAddLeadModal(true);
             }}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all">
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap">
               <Plus size={12} /> Add Lead
             </button>
           </PageBanner>
@@ -6274,7 +6274,7 @@ export default function App() {
                 link.setAttribute("download", "contract_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => {
@@ -6287,11 +6287,11 @@ export default function App() {
                 }));
                 exportCSV(contractCsvHeaders, rows, 'contracts_export.csv');
               }}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button onClick={() => contractFileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-[#E4E3E0]/30 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
           </PageBanner>
@@ -6522,7 +6522,7 @@ export default function App() {
             <button
               onClick={fetchMarketData}
               disabled={isFetchingMarket}
-              className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all disabled:opacity-50"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap disabled:opacity-50"
             >
               <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
               Refresh Data
@@ -13171,3 +13171,4 @@ function DataRow({ label, value, highlight = false }: { label: string, value: st
     </div>
   );
 }
+
