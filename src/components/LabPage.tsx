@@ -190,15 +190,21 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         if (isHeaderRow(parseLine(lines[r]))) { headerRowIdx = r; break; }
       }
 
-      const headers = parseLine(lines[headerRowIdx]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+      // currentHeaders switches whenever a new header row appears mid-file
+      // (handles CSVs with multiple table sections that have different column layouts)
+      let currentHeaders = parseLine(lines[headerRowIdx]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
       const newLots: LotCode[] = [];
       let skipped = 0;
 
       for (let i = headerRowIdx + 1; i < lines.length; i++) {
         const vals = parseLine(lines[i]);
-        if (isHeaderRow(vals)) { skipped++; continue; } // skip repeated header rows
+        if (isHeaderRow(vals)) {
+          // New section with different columns — adopt its headers
+          currentHeaders = vals.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+          continue;
+        }
         const row: Record<string, string> = {};
-        headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+        currentHeaders.forEach((h, idx) => { row[h] = vals[idx] || ''; });
 
         const lotNumber = row['lotnumber'] || row['lotcode'] || row['lot'] || row['lotno'] || row['lotnum'] || '';
         const date      = row['date'] || '';
@@ -238,7 +244,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       const diagLines = [
         `Delimiter detected: ${delim === '\t' ? 'TAB' : delim === ';' ? 'SEMICOLON' : 'COMMA'}`,
         `Header row found at line ${headerRowIdx + 1}`,
-        `Columns mapped: ${headers.filter(Boolean).join(' | ')}`,
+        `Columns mapped (first section): ${currentHeaders.filter(Boolean).join(' | ')}`,
         '',
         newLots.length > 0
           ? `✓ ${newLots.length} lot code${newLots.length > 1 ? 's' : ''} imported${skipped ? `, ${skipped} rows skipped` : ''}`
