@@ -304,42 +304,44 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         count={filtered.length}
         exportSheets={labExportSheets}
         exportFileName="Hamilton_Lab"
-      />
+      >
+        <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
+        <div className="px-4 py-2 flex items-center gap-2">
+          <label className="text-[10px] uppercase font-bold text-[#E4E3E0]/60 whitespace-nowrap">Sugar Type</label>
+          <select
+            value={filterSugarType}
+            onChange={(e) => setFilterSugarType(e.target.value)}
+            className="bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 px-2 py-1 text-xs focus:outline-none"
+          >
+            <option value="">All</option>
+            {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+          </select>
+        </div>
+        <button
+          onClick={handleDownloadTemplate}
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+        >
+          <Download size={12} /> Template
+        </button>
+        <button
+          onClick={() => csvInputRef.current?.click()}
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+        >
+          <Upload size={12} /> Import CSV
+        </button>
+        <button
+          onClick={openAdd}
+          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+        >
+          <Plus size={12} /> + Add Lot Code
+        </button>
+      </PageBanner>
     <div className="p-6 space-y-4">
 
       {/* Lot Code Testing Log Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+        <div className="bg-[#141414] text-[#E4E3E0] p-4">
           <h3 className="text-xs font-bold uppercase tracking-widest">Lot Code Testing Log</h3>
-          <div className="flex items-center gap-3">
-            <select
-              value={filterSugarType}
-              onChange={(e) => setFilterSugarType(e.target.value)}
-              className="bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 px-3 py-1.5 text-xs focus:outline-none"
-            >
-              <option value="">All Sugar Types</option>
-              {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
-            </select>
-            <button
-              onClick={handleDownloadTemplate}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2a2a2a] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-[#3a3a3a] transition-all border border-[#E4E3E0]/20"
-            >
-              <Download size={12} /> Download Template
-            </button>
-            <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
-            <button
-              onClick={() => csvInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#2a2a2a] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-[#3a3a3a] transition-all border border-[#E4E3E0]/20"
-            >
-              <Upload size={12} /> Import CSV
-            </button>
-            <button
-              onClick={openAdd}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#E4E3E0] text-[#141414] text-xs font-bold uppercase hover:bg-white transition-all"
-            >
-              <Plus size={12} /> Add New Lot Code
-            </button>
-          </div>
         </div>
 
         <table className="w-full text-left border-collapse">
