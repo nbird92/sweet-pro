@@ -121,14 +121,45 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target?.result as string;
+      // Normalise line endings and strip BOM
+      const text = (ev.target?.result as string || '')
+        .replace(/^﻿/, '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
       if (!text) return;
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+      // RFC 4180–compliant parser: handles quoted fields with embedded commas and escaped quotes ("")
+      const parseCSVLine = (line: string): string[] => {
+        const fields: string[] = [];
+        let i = 0;
+        while (i <= line.length) {
+          if (i === line.length) { fields.push(''); break; }
+          if (line[i] === '"') {
+            let value = '';
+            i++; // skip opening quote
+            while (i < line.length) {
+              if (line[i] === '"' && line[i + 1] === '"') { value += '"'; i += 2; }
+              else if (line[i] === '"') { i++; break; }
+              else { value += line[i++]; }
+            }
+            fields.push(value.trim());
+            if (i < line.length && line[i] === ',') i++;
+          } else {
+            const end = line.indexOf(',', i);
+            if (end === -1) { fields.push(line.slice(i).trim()); break; }
+            fields.push(line.slice(i, end).trim());
+            i = end + 1;
+          }
+        }
+        return fields;
+      };
+
+      const lines = text.split('\n').filter(l => l.trim());
       if (lines.length < 2) return;
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+      const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
       const newLots: LotCode[] = [];
       for (let i = 1; i < lines.length; i++) {
-        const vals = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+        const vals = parseCSVLine(lines[i]);
         const row: Record<string, string> = {};
         headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
         const lc: LotCode = {
@@ -143,7 +174,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           brix: row['brix'] || '',
           ph: row['ph'] || '',
           color: row['color'] || row['colour'] || '',
-          temperature: row['temperature'] || row['temp'] || '',
+          temperature: row['temperature'] || row['temp'] || row['tempc'] || '',
           invert: row['invert'] || '',
           ash: row['ash'] || '',
           moisture: row['moisture'] || '',
