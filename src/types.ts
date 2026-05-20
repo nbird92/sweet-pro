@@ -203,6 +203,7 @@ export interface Shipment {
   deliveryDate?: string;
   sealNumbers?: string[];
   originOfGoods?: string;
+  location?: string;
 }
 
 export interface Location {

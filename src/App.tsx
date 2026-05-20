@@ -1136,7 +1136,7 @@ export default function App() {
             date,
             day,
             time,
-            bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes(scheduleLocation.toLowerCase()))?.bays[0] || ''),
+            bay: entry.bay || (locations.find(l => l.name.toLowerCase().includes((entry.location || scheduleLocation).toLowerCase()))?.bays[0] || ''),
             customer: entry.customer || matchedOrder?.customer || '',
             product: entry.product || matchedLi?.productName || matchedOrder?.product || '',
             contractNumber: entry.contractnumber || entry.contractNumber || matchedLi?.contractNumber || matchedOrder?.contractNumber || '',
@@ -1154,6 +1154,7 @@ export default function App() {
             trailerNo: entry.trailerno || entry.trailerNo || '',
             colour: entry.colour || '',
             lotNumber: entry.lotnumber || entry.lotNumber || '',
+            location: entry.location || '',
             deliveryDate: (() => {
               const dd = entry.deliverydate || entry.deliveryDate || '';
               const ddMatch = dd.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -1163,62 +1164,86 @@ export default function App() {
         }
 
         if (newShipments.length > 0) {
-          // Merge into existing: update missing fields on existing records, add truly new ones
-          const isHamiltonImport = scheduleLocation.toLowerCase().includes('hamilton');
-          let workingShipments = [...(isHamiltonImport ? hamiltonShipments : vancouverShipments)];
-          const importSlots = new Set<string>();
-          let newCount = 0;
-          let updatedCount = 0;
+          // Partition rows by location — CSV 'location' column wins; falls back to the
+          // currently selected schedule location when the field is blank.
+          const byLoc: { hamilton: Shipment[]; vancouver: Shipment[] } = { hamilton: [], vancouver: [] };
           for (const s of newShipments) {
-            const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
-            // Check if this slot already exists in working array
-            const existingIdx = workingShipments.findIndex(ex => `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === key);
-            if (existingIdx >= 0) {
-              // Merge missing info into existing record, also look up order by BOL
-              const ex = workingShipments[existingIdx];
-              const mergedBol = s.bol || ex.bol;
-              const ord = mergedBol ? orders.find(o => o.bolNumber === mergedBol) : undefined;
-              const ordLi = ord?.lineItems[0];
-              workingShipments[existingIdx] = {
-                ...ex,
-                customer: s.customer || ex.customer || ord?.customer || '',
-                product: s.product || ex.product || ordLi?.productName || ord?.product || '',
-                contractNumber: s.contractNumber || ex.contractNumber || ordLi?.contractNumber || ord?.contractNumber || '',
-                po: s.po || ex.po || ord?.po || '',
-                bol: mergedBol || ex.bol,
-                qty: s.qty || ex.qty || ordLi?.totalWeight || 0,
-                carrier: s.carrier || ex.carrier || ord?.carrier || '',
-                arrive: s.arrive || ex.arrive,
-                start: s.start || ex.start,
-                out: s.out || ex.out,
-                status: s.status !== 'Confirmed' ? s.status : ex.status || s.status,
-                notes: s.notes || ex.notes,
-                color: s.color || ex.color,
-                scaledQty: s.scaledQty || ex.scaledQty,
-                trailerNo: s.trailerNo || ex.trailerNo,
-                lotNumber: s.lotNumber || ex.lotNumber,
-                lotNumbers: (s.lotNumbers && s.lotNumbers.length > 0) ? s.lotNumbers : ex.lotNumbers,
-                deliveryDate: s.deliveryDate || ex.deliveryDate || ord?.deliveryDate || '',
-              };
-              updatedCount++;
-              continue;
+            const loc = (s.location || scheduleLocation).toLowerCase();
+            if (loc.includes('hamilton')) byLoc.hamilton.push(s);
+            else byLoc.vancouver.push(s);
+          }
+
+          // Merge a batch of incoming shipments into an existing array.
+          const mergeInto = (existing: Shipment[], incoming: Shipment[]): { result: Shipment[]; newCount: number; updatedCount: number } => {
+            const working = [...existing];
+            const importSlots = new Set<string>();
+            let newCount = 0;
+            let updatedCount = 0;
+            for (const s of incoming) {
+              const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
+              const existingIdx = working.findIndex(ex => `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === key);
+              if (existingIdx >= 0) {
+                const ex = working[existingIdx];
+                const mergedBol = s.bol || ex.bol;
+                const ord = mergedBol ? orders.find(o => o.bolNumber === mergedBol) : undefined;
+                const ordLi = ord?.lineItems[0];
+                working[existingIdx] = {
+                  ...ex,
+                  customer: s.customer || ex.customer || ord?.customer || '',
+                  product: s.product || ex.product || ordLi?.productName || ord?.product || '',
+                  contractNumber: s.contractNumber || ex.contractNumber || ordLi?.contractNumber || ord?.contractNumber || '',
+                  po: s.po || ex.po || ord?.po || '',
+                  bol: mergedBol || ex.bol,
+                  qty: s.qty || ex.qty || ordLi?.totalWeight || 0,
+                  carrier: s.carrier || ex.carrier || ord?.carrier || '',
+                  arrive: s.arrive || ex.arrive,
+                  start: s.start || ex.start,
+                  out: s.out || ex.out,
+                  status: s.status !== 'Confirmed' ? s.status : ex.status || s.status,
+                  notes: s.notes || ex.notes,
+                  color: s.color || ex.color,
+                  scaledQty: s.scaledQty || ex.scaledQty,
+                  trailerNo: s.trailerNo || ex.trailerNo,
+                  lotNumber: s.lotNumber || ex.lotNumber,
+                  lotNumbers: (s.lotNumbers && s.lotNumbers.length > 0) ? s.lotNumbers : ex.lotNumbers,
+                  deliveryDate: s.deliveryDate || ex.deliveryDate || ord?.deliveryDate || '',
+                  location: s.location || ex.location,
+                };
+                updatedCount++;
+                continue;
+              }
+              if (importSlots.has(key)) continue;
+              importSlots.add(key);
+              newCount++;
+              working.push(s);
             }
-            // Skip duplicates within the same import batch
-            if (importSlots.has(key)) continue;
-            importSlots.add(key);
-            newCount++;
-            workingShipments.push(s);
+            return { result: working, newCount, updatedCount };
+          };
+
+          let finalHamilton = hamiltonShipments;
+          let finalVancouver = vancouverShipments;
+          let totalNew = 0;
+          let totalUpdated = 0;
+
+          if (byLoc.hamilton.length > 0) {
+            const { result, newCount, updatedCount } = mergeInto(hamiltonShipments, byLoc.hamilton);
+            finalHamilton = result;
+            totalNew += newCount;
+            totalUpdated += updatedCount;
           }
-          if (isHamiltonImport) {
-            setHamiltonShipments(workingShipments);
-          } else {
-            setVancouverShipments(workingShipments);
+          if (byLoc.vancouver.length > 0) {
+            const { result, newCount, updatedCount } = mergeInto(vancouverShipments, byLoc.vancouver);
+            finalVancouver = result;
+            totalNew += newCount;
+            totalUpdated += updatedCount;
           }
+
+          setHamiltonShipments(finalHamilton);
+          setVancouverShipments(finalVancouver);
+
           // Sync merged data to Firebase
-          if (newCount > 0 || updatedCount > 0) {
-            const allShipments = isHamiltonImport
-              ? [...workingShipments, ...vancouverShipments]
-              : [...hamiltonShipments, ...workingShipments];
+          if (totalNew > 0 || totalUpdated > 0) {
+            const allShipments = [...finalHamilton, ...finalVancouver];
             syncCollection(COLLECTIONS.shipments, allShipments).then(() => {
               lastSyncedData.current.shipments = JSON.stringify(allShipments);
               setSyncStatus('synced');
@@ -1226,8 +1251,8 @@ export default function App() {
             }).catch(e => console.error('Shipment sync failed:', e));
           }
           const parts: string[] = [];
-          if (newCount > 0) parts.push(`${newCount} new shipment${newCount > 1 ? 's' : ''} imported`);
-          if (updatedCount > 0) parts.push(`${updatedCount} existing shipment${updatedCount > 1 ? 's' : ''} updated`);
+          if (totalNew > 0) parts.push(`${totalNew} new shipment${totalNew > 1 ? 's' : ''} imported`);
+          if (totalUpdated > 0) parts.push(`${totalUpdated} existing shipment${totalUpdated > 1 ? 's' : ''} updated`);
           if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped (missing/invalid date)`);
           alert(parts.join(', ') + '.');
         } else {
@@ -3126,7 +3151,7 @@ export default function App() {
         return expandedRows.has(week);
       };
 
-      const shipmentCsvHeaders = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber'];
+      const shipmentCsvHeaders = ['id', 'date', 'deliveryDate', 'time', 'bay', 'customer', 'product', 'contractNumber', 'po', 'bol', 'qty', 'scaledQty', 'carrier', 'trailerNo', 'colour', 'status', 'lotNumber', 'location'];
       const shipmentExportSheets = (): SheetSpec[] => [{
         sheetName: `${locationName} Schedule`,
         title: `${locationName} Shipment Schedule`,
