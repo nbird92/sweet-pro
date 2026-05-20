@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download, FlaskConical } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download, FlaskConical, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import type { SheetSpec } from '../utils/exportExcel';
@@ -66,6 +66,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [clearAllConfirm, setClearAllConfirm] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
   const [showShipmentPicker, setShowShipmentPicker] = useState(false);
   const [shipmentSearch, setShipmentSearch] = useState('');
@@ -334,6 +335,12 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
         >
           <Plus size={12} /> + Add Lot Code
+        </button>
+        <button
+          onClick={() => setClearAllConfirm(true)}
+          className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap"
+        >
+          <ShieldAlert size={12} /> Clear All
         </button>
       </PageBanner>
     <div className="p-6 space-y-4">
@@ -768,6 +775,42 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                   </tbody>
                 </table>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Clear All Confirmation */}
+      <AnimatePresence>
+        {clearAllConfirm && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
+            >
+              <div className="bg-red-600 text-white p-4 flex items-center gap-3">
+                <ShieldAlert size={20} />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Clear All Lot Codes</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">This will permanently delete all <span className="font-bold">{lotCodes.length}</span> lot code records. This cannot be undone.</p>
+                <div className="flex gap-4">
+                  <button
+                    onClick={() => { onUpdateLotCodes([]); setClearAllConfirm(false); }}
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                  >
+                    Yes, Delete All
+                  </button>
+                  <button
+                    onClick={() => setClearAllConfirm(false)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
