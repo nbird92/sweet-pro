@@ -11,8 +11,11 @@ import {
   BarChart3,
   Search,
   ArrowUpDown,
+  TrendingUp,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 import type {
   FiscalYear,
   FiscalPeriod,
@@ -708,8 +711,46 @@ export default function SalesForecastPage({
   const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
   const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
 
+  const forecastExportSheets = (): SheetSpec[] => [
+    {
+      sheetName: 'Customer Forecasts',
+      title: `Customer Forecasts — ${selectedFY?.name || ''} (${forecastType})`,
+      subtitle: `Generated ${new Date().toLocaleDateString()} | ${mergedForecasts.length} customers`,
+      columns: [
+        { header: 'Customer', key: 'customerName' },
+        { header: 'View Mode', key: 'viewMode' },
+        { header: '# Product Lines', key: 'lineCount', format: 'integer' },
+        { header: 'Annual Total (MT)', key: 'annual', format: 'number' },
+      ],
+      rows: mergedForecasts.map(cf => ({
+        customerName: cf.customerName,
+        viewMode: cf.viewMode || 'Monthly',
+        lineCount: cf.lines.length,
+        annual: cf.lines.reduce((s, l) => s + l.entries.reduce((s2, e) => s2 + e.value, 0), 0),
+      })),
+    },
+    {
+      sheetName: 'Product Forecasts',
+      title: `Product Forecasts — ${selectedFY?.name || ''} (${forecastType})`,
+      subtitle: `${productForecastRows.length} product/location combinations`,
+      columns: [
+        { header: 'Product', key: 'productName' },
+        { header: 'Location', key: 'location' },
+        { header: 'Annual Total (MT)', key: 'annual', format: 'number' },
+      ],
+      rows: productForecastRows,
+    },
+  ];
   return (
-    <div className="space-y-6">
+    <div>
+      <PageBanner
+        icon={<TrendingUp size={18} />}
+        title="Sales Forecast & Budget"
+        count={mergedForecasts.length}
+        exportSheets={forecastExportSheets}
+        exportFileName="Sales_Forecast"
+      />
+    <div className="p-6 space-y-6">
       {/* ── Top Controls ──────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-4">
         {/* Fiscal Year */}
@@ -1437,6 +1478,7 @@ export default function SalesForecastPage({
           </div>
         )}
       </AnimatePresence>
+    </div>
     </div>
   );
 }

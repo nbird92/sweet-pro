@@ -1,7 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download, FlaskConical } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 
 interface LabPageProps {
   lotCodes: LotCode[];
@@ -272,11 +274,38 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const isOpen = isAdding || !!editingLot;
   const modalTitle = editingLot ? 'Edit Lot Code' : 'Add New Lot Code';
 
+  const labExportSheets = (): SheetSpec[] => [{
+    sheetName: 'Lot Code Testing Log',
+    title: 'Hamilton Lab — Lot Code Testing Log',
+    subtitle: `Generated ${new Date().toLocaleDateString()} | ${lotCodes.length} lot codes`,
+    columns: [
+      { header: 'Lot #', key: 'lotNumber' },
+      { header: 'Date', key: 'date' },
+      { header: 'BOL #', key: 'bolNumber' },
+      { header: 'Tank #', key: 'tankNumber' },
+      { header: 'Sugar Type', key: 'sugarType' },
+      { header: 'Brix', key: 'brix', format: 'number' },
+      { header: 'PH', key: 'ph', format: 'number' },
+      { header: 'Color', key: 'color' },
+      { header: 'Temp °C', key: 'temperature', format: 'number' },
+      { header: 'Invert', key: 'invert' },
+      { header: 'Flavour/Odour OK', key: 'flavourOdourOk' },
+      { header: 'Tester', key: 'testerName' },
+      { header: 'Notes', key: 'notes' },
+      { header: 'Weekly Verification', key: 'weeklyVerification' },
+    ],
+    rows: filtered as any[],
+  }];
   return (
+    <div>
+      <PageBanner
+        icon={<FlaskConical size={18} />}
+        title="Hamilton Lab"
+        count={filtered.length}
+        exportSheets={labExportSheets}
+        exportFileName="Hamilton_Lab"
+      />
     <div className="p-6 space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold uppercase tracking-tighter">Hamilton Lab</h2>
-      </div>
 
       {/* Lot Code Testing Log Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
@@ -774,6 +803,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           </div>
         )}
       </AnimatePresence>
+    </div>
     </div>
   );
 }

@@ -3,6 +3,8 @@ import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, 
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 
 interface QualityAssurancePageProps {
   qaProducts: QAProduct[];
@@ -557,23 +559,41 @@ export default function QualityAssurancePage({
   // Current data to display in detail card (editing or viewing)
   const displayData = isEditing ? editData : selectedProduct;
 
+  const qaExportSheets = (): SheetSpec[] => [{
+    sheetName: 'QA Products',
+    title: 'Quality Assurance',
+    subtitle: `Generated ${new Date().toLocaleDateString()} | ${qaProducts.length} products`,
+    columns: [
+      { header: 'Prod No.', key: 'id' },
+      { header: 'Name', key: 'skuName' },
+      { header: 'Product Group', key: 'productGroup' },
+      { header: 'Sugar Type', key: 'sugarType' },
+      { header: 'Shortform', key: 'shortform' },
+      { header: 'Conv./Organic', key: 'category' },
+      { header: 'Max Color', key: 'maxColor' },
+      { header: 'Location', key: 'location' },
+      { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
+      { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
+    ],
+    rows: qaProducts as any[],
+  }];
   return (
-    <div className="p-6 space-y-4">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold uppercase tracking-tighter">Quality Assurance</h2>
-          <p className="text-[10px] uppercase font-bold opacity-50">
-            {qaProducts.length} product{qaProducts.length !== 1 ? 's' : ''} tracked
-          </p>
-        </div>
+    <div>
+      <PageBanner
+        icon={<CheckCircle2 size={18} />}
+        title="Quality Assurance"
+        count={qaProducts.length}
+        exportSheets={qaExportSheets}
+        exportFileName="Quality_Assurance"
+      >
         <button
           onClick={openAddModal}
-          className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
         >
-          <Plus size={14} /> Add Product
+          <Plus size={12} /> Add Product
         </button>
-      </div>
+      </PageBanner>
+    <div className="p-6 space-y-4">
 
       {/* Search */}
       <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by name, product group, ID, or location..." />
@@ -2190,6 +2210,7 @@ export default function QualityAssurancePage({
         )}
       </AnimatePresence>
 
+    </div>
     </div>
   );
 }

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { FiscalYear, FiscalQuarter, FiscalPeriod } from '../types';
-import { X, Edit2, Trash2, Plus, ChevronDown, ChevronUp, Save, Calendar } from 'lucide-react';
+import { X, Edit2, Trash2, Plus, ChevronDown, ChevronUp, Save, Calendar, Landmark } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 
 interface FinancePageProps {
   fiscalYears: FiscalYear[];
@@ -167,21 +169,44 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
   // ============================
   // RENDER
   // ============================
+  const financeExportSheets = (): SheetSpec[] => [{
+    sheetName: 'Fiscal Years',
+    title: 'Fiscal Years',
+    subtitle: `Generated ${new Date().toLocaleDateString()} | ${fiscalYears.length} fiscal years`,
+    columns: [
+      { header: 'Name', key: 'name' },
+      { header: 'Start Date', key: 'startDate' },
+      { header: 'End Date', key: 'endDate' },
+      { header: 'Budget Lock Date', key: 'budgetLockDate' },
+      { header: '# Quarters', key: 'numQuarters', format: 'integer' },
+      { header: '# Periods', key: 'numPeriods', format: 'integer' },
+    ],
+    rows: fiscalYears.map(fy => ({
+      name: fy.name,
+      startDate: fy.startDate,
+      endDate: fy.endDate,
+      budgetLockDate: fy.budgetLockDate || '',
+      numQuarters: (fy.quarters || []).length,
+      numPeriods: (fy.periods || []).length,
+    })),
+  }];
   return (
-    <main className="flex-1 p-6 overflow-auto">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Calendar size={24} />
-          <h1 className="text-2xl font-bold">Fiscal Years</h1>
-        </div>
+    <div>
+      <PageBanner
+        icon={<Landmark size={18} />}
+        title="Finance — Fiscal Years"
+        count={fiscalYears.length}
+        exportSheets={financeExportSheets}
+        exportFileName="Finance"
+      >
         <button
           onClick={handleAdd}
-          className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2"
         >
-          <Plus size={16} /> Add Fiscal Year
+          <Plus size={12} /> Add Fiscal Year
         </button>
-      </div>
+      </PageBanner>
+    <main className="flex-1 p-6 overflow-auto">
 
       {/* Fiscal Years Table */}
       {fiscalYears.length === 0 ? (
@@ -497,5 +522,6 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
         )}
       </AnimatePresence>
     </main>
+    </div>
   );
 }

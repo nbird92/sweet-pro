@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDetail, MeetingFollowUp, Customer, Person, SalesLead, SalesLeadFollowUp } from '../types';
 import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 
 interface ConferencesPageProps {
   conferences: Conference[];
@@ -741,15 +743,44 @@ export default function ConferencesPage({
   // ============================
   // CONFERENCES LIST VIEW
   // ============================
+  const conferenceExportSheets = (): SheetSpec[] => [{
+    sheetName: 'Conferences',
+    title: 'Conferences',
+    subtitle: `Generated ${new Date().toLocaleDateString()} | ${conferences.length} conferences`,
+    columns: [
+      { header: 'Conference', key: 'name' },
+      { header: 'Start Date', key: 'startDate' },
+      { header: 'End Date', key: 'endDate' },
+      { header: 'Location', key: 'location' },
+      { header: 'Attendees', key: 'attendeeCount', format: 'integer' },
+      { header: 'Meetings', key: 'meetingCount', format: 'integer' },
+      { header: 'Status', key: 'status' },
+    ],
+    rows: conferences.map(c => ({
+      name: c.name,
+      startDate: c.startDate || '',
+      endDate: c.endDate || '',
+      location: c.location || '',
+      attendeeCount: (c.attendees || []).length,
+      meetingCount: (c.meetings || []).length,
+      status: c.status || '',
+    })),
+  }];
   return (
-    <main className="flex-1 p-6 overflow-auto">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Conferences</h1>
+    <div>
+      <PageBanner
+        icon={<MapPin size={18} />}
+        title="Conferences"
+        count={filteredConferences.length}
+        exportSheets={conferenceExportSheets}
+        exportFileName="Conferences"
+      >
         <button onClick={() => { resetConferenceForm(); setShowAddConferenceModal(true); }}
-          className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center gap-2">
-          <Plus size={16} /> Add Conference
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2">
+          <Plus size={12} /> Add Conference
         </button>
-      </div>
+      </PageBanner>
+    <main className="flex-1 p-6 overflow-auto">
       <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search conferences by name or location..." />
 
       <div className="mt-6">
@@ -815,6 +846,7 @@ export default function ConferencesPage({
         )}
       </AnimatePresence>
     </main>
+    </div>
   );
 }
 

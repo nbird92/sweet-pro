@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Person } from '../types';
-import { Plus, X, Edit2, Trash2 } from 'lucide-react';
+import { Plus, X, Edit2, Trash2, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PageBanner from './PageBanner';
+import type { SheetSpec } from '../utils/exportExcel';
 
 interface PeoplePageProps {
   people: Person[];
@@ -100,10 +102,29 @@ export default function PeoplePage({
     p.department.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const peopleExportSheets = (): SheetSpec[] => [{
+    sheetName: 'People',
+    title: 'People Management',
+    subtitle: `Generated ${new Date().toLocaleDateString()} | ${people.length} people`,
+    columns: [
+      { header: 'Name', key: 'name' },
+      { header: 'Email', key: 'email' },
+      { header: 'Phone', key: 'phone' },
+      { header: 'Department', key: 'department' },
+      { header: 'Sales #', key: 'salespersonNumber' },
+      { header: 'Notes', key: 'notes' },
+    ],
+    rows: people as any[],
+  }];
   return (
-    <main className="flex-1 p-6 overflow-auto">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">People Management</h1>
+    <div>
+      <PageBanner
+        icon={<Users size={18} />}
+        title="People Management"
+        count={filteredPeople.length}
+        exportSheets={peopleExportSheets}
+        exportFileName="People"
+      >
         <button
           onClick={() => {
             setNewPerson({
@@ -116,11 +137,12 @@ export default function PeoplePage({
             });
             setShowAddPersonModal(true);
           }}
-          className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2"
         >
-          <Plus size={16} /> Add Person
+          <Plus size={12} /> Add Person
         </button>
-      </div>
+      </PageBanner>
+    <main className="flex-1 p-6 overflow-auto">
 
       <SearchInput
         value={searchTerm}
@@ -399,5 +421,6 @@ export default function PeoplePage({
         )}
       </AnimatePresence>
     </main>
+    </div>
   );
 }
