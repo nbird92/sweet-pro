@@ -121,14 +121,14 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      // Normalise line endings and strip BOM
+      // Normalise: strip UTF-8 BOM, normalise line endings
       const text = (ev.target?.result as string || '')
         .replace(/^﻿/, '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n');
       if (!text) return;
 
-      // RFC 4180–compliant parser: handles quoted fields with embedded commas and escaped quotes ("")
+      // RFC 4180-compliant parser — handles quoted fields with embedded commas / escaped quotes
       const parseCSVLine = (line: string): string[] => {
         const fields: string[] = [];
         let i = 0;
@@ -136,7 +136,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           if (i === line.length) { fields.push(''); break; }
           if (line[i] === '"') {
             let value = '';
-            i++; // skip opening quote
+            i++;
             while (i < line.length) {
               if (line[i] === '"' && line[i + 1] === '"') { value += '"'; i += 2; }
               else if (line[i] === '"') { i++; break; }
@@ -154,20 +154,52 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         return fields;
       };
 
+      // Column keywords used to auto-detect the header row
+      const HEADER_KEYS = new Set([
+        'lot','lotnumber','lotcode','lotno','lotnum',
+        'date','brix','ph','color','colour',
+        'tanknumber','tank','tankno',
+        'sugartype','sugar',
+        'temperature','temp','tempc',
+        'invert','tester','testername',
+        'notes','weeklyverification',
+        'category','productgroup','silo',
+        'bolnumber','bol','customerpo','countryoforigin',
+      ]);
+      const isHeaderRow = (cells: string[]) =>
+        cells.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, '')).filter(h => HEADER_KEYS.has(h)).length >= 3;
+
       const lines = text.split('\n').filter(l => l.trim());
       if (lines.length < 2) return;
-      const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+      // Find the first row (within the first 8 rows) that looks like a column header row
+      let headerRowIdx = 0;
+      for (let r = 0; r < Math.min(lines.length, 8); r++) {
+        if (isHeaderRow(parseCSVLine(lines[r]))) { headerRowIdx = r; break; }
+      }
+
+      const headers = parseCSVLine(lines[headerRowIdx]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
       const newLots: LotCode[] = [];
-      for (let i = 1; i < lines.length; i++) {
+      let skipped = 0;
+
+      for (let i = headerRowIdx + 1; i < lines.length; i++) {
         const vals = parseCSVLine(lines[i]);
+        // Skip rows that look like a repeated header row
+        if (isHeaderRow(vals)) { skipped++; continue; }
         const row: Record<string, string> = {};
         headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+
+        const lotNumber = row['lotnumber'] || row['lotcode'] || row['lot'] || row['lotno'] || row['lotnum'] || '';
+        const date = row['date'] || '';
+        // Skip rows with no lot number and no date — they're blank or filler rows
+        if (!lotNumber && !date) { skipped++; continue; }
+
         const lc: LotCode = {
           id: `LOT-${Date.now()}-${Math.random().toString(36).substr(2, 6)}-${i}`,
-          lotNumber: row['lotnumber'] || row['lotcode'] || row['lot'] || '',
-          tankNumber: row['tanknumber'] || row['tank'] || '',
-          date: row['date'] || '',
-          julianDate: row['juliandate'] || (row['date'] ? getJulianDay(row['date']) : ''),
+          lotNumber,
+          tankNumber: row['tanknumber'] || row['tank'] || row['tankno'] || '',
+          date,
+          julianDate: row['juliandate'] || (date ? getJulianDay(date) : ''),
           category: (row['category'] === 'Organic' ? 'Organic' : row['category'] === 'Conventional' ? 'Conventional' : '') as LotCode['category'],
           productGroup: row['productgroup'] || '',
           silo: (row['silo'] === 'North' ? 'North' : row['silo'] === 'South' ? 'South' : '') as LotCode['silo'],
@@ -193,6 +225,11 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       }
       if (newLots.length > 0) {
         onUpdateLotCodes([...lotCodes, ...newLots]);
+        const msg = [`${newLots.length} lot code${newLots.length > 1 ? 's' : ''} imported`];
+        if (skipped > 0) msg.push(`${skipped} row${skipped > 1 ? 's' : ''} skipped`);
+        alert(msg.join(', ') + `.\n\nDetected columns: ${headers.filter(Boolean).join(', ')}`);
+      } else {
+        alert(`No lot codes could be imported.\n\nDetected columns: ${headers.filter(Boolean).join(', ')}\n\nIf these look wrong, check that your file has a header row matching the Template format.`);
       }
     };
     reader.readAsText(file);
