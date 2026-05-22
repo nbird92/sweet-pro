@@ -447,7 +447,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-3 border-r border-[#141414]/10">Lot #</th>
+              <th className="p-3 border-r border-[#141414]/10 min-w-[120px]">Lot #</th>
               <th className="p-3 border-r border-[#141414]/10">Date</th>
               <th className="p-3 border-r border-[#141414]/10">BOL #</th>
               <th className="p-3 border-r border-[#141414]/10">Tank #</th>
@@ -469,7 +469,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
               <tr><td colSpan={15} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
             ) : filtered.map(lc => (
               <tr key={lc.id} className="hover:bg-[#F9F9F9] transition-colors">
-                <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{lc.lotNumber}</td>
+                <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10 min-w-[120px]">{lc.lotNumber}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.date || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{lc.bolNumber || '—'}</td>
                 <td className="p-3 text-xs border-r border-[#141414]/10">{lc.tankNumber || '—'}</td>

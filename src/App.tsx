@@ -3890,7 +3890,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Transfer No." sortKey="transferNumber" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Transfer No." sortKey="transferNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[150px]" />
                   <SortableHeader label="From" sortKey="from" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="To" sortKey="to" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
@@ -3918,7 +3918,7 @@ export default function App() {
                   const transferShipment = allShipments.find(s => s.notes === `TRANSFER:${t.id}`);
                   return (
                   <tr key={t.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                    <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{t.transferNumber}</td>
+                    <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[150px]">{t.transferNumber}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.from}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10">{t.to}</td>
                     <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{t.product}</td>
@@ -6347,7 +6347,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[160px]" />
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
@@ -6370,7 +6370,7 @@ export default function App() {
                 {filteredContracts.map(c => (
                   <React.Fragment key={c.id}>
                     <tr className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{c.contractNumber}</td>
+                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
@@ -13157,11 +13157,11 @@ function SearchInput({ value, onChange, placeholder }: { value: string, onChange
   );
 }
 
-function SortableHeader({ label, sortKey, currentSort, onSort }: { label: string, sortKey: string, currentSort: { key: string, direction: 'asc' | 'desc' } | null, onSort: (key: string) => void }) {
+function SortableHeader({ label, sortKey, currentSort, onSort, className = '' }: { label: string, sortKey: string, currentSort: { key: string, direction: 'asc' | 'desc' } | null, onSort: (key: string) => void, className?: string }) {
   const isActive = currentSort?.key === sortKey;
   return (
-    <th 
-      className="p-4 border-r border-[#E4E3E0]/20 cursor-pointer hover:bg-white/10 transition-colors"
+    <th
+      className={`p-4 border-r border-[#E4E3E0]/20 cursor-pointer hover:bg-white/10 transition-colors ${className}`}
       onClick={() => onSort(sortKey)}
     >
       <div className="flex items-center gap-2">

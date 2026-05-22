@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--port", "3007"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "3007"],
       "port": 3007,
       "env": {
         "NODE_OPTIONS": ""
