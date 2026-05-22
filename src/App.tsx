@@ -1433,6 +1433,7 @@ export default function App() {
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
+  const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
   const [editingCarrier, setEditingCarrier] = useState<Carrier | null>(null);
   const [isAddingShipment, setIsAddingShipment] = useState(false);
   const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
@@ -4507,7 +4508,19 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           {ord.status === 'Confirmed' ? (
                             <button
-                              onClick={() => completeAndBillOrder(ord.id)}
+                              onClick={() => {
+                                // Find the shipment matching this order's BOL and open the edit modal
+                                const matchingShipment =
+                                  [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === ord.bolNumber) ||
+                                  null;
+                                if (matchingShipment) {
+                                  setEditingShipment(matchingShipment);
+                                  setPendingCompleteOrderId(ord.id);
+                                } else {
+                                  // No linked shipment found — complete & bill directly
+                                  completeAndBillOrder(ord.id);
+                                }
+                              }}
                               className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all cursor-pointer whitespace-nowrap"
                             >
                               Complete & Bill
@@ -8541,7 +8554,15 @@ export default function App() {
                                 const updated = [...current, val];
                                 const origins = updated.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
                                 const uniqueOrigins = [...new Set(origins)].join(', ');
-                                setEditingShipment({...editingShipment, lotNumbers: updated, lotNumber: updated[0] || '', originOfGoods: uniqueOrigins});
+                                // Auto-populate colour from the first lot code that has a color value
+                                const firstColorLot = updated.map(ln => lotCodes.find(lc => lc.lotNumber === ln)).find(lc => lc?.color);
+                                setEditingShipment({
+                                  ...editingShipment,
+                                  lotNumbers: updated,
+                                  lotNumber: updated[0] || '',
+                                  originOfGoods: uniqueOrigins,
+                                  colour: firstColorLot?.color ?? editingShipment.colour ?? '',
+                                });
                                 select.value = '';
                               }
                             }}
@@ -8613,6 +8634,7 @@ export default function App() {
                           setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
                           setIsAddingShipment(false);
                           setEditingShipment(null);
+                          setPendingCompleteOrderId(null);
                         }}
                         className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                       >
@@ -8624,6 +8646,24 @@ export default function App() {
                       >
                         <FileText size={14} /> Preview BOL
                       </button>
+                      {pendingCompleteOrderId && (
+                        <button
+                          onClick={() => {
+                            // Save shipment changes first
+                            const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
+                            const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
+                            setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
+                            // Then complete & bill the order
+                            completeAndBillOrder(pendingCompleteOrderId);
+                            setIsAddingShipment(false);
+                            setEditingShipment(null);
+                            setPendingCompleteOrderId(null);
+                          }}
+                          className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all"
+                        >
+                          <FileText size={14} /> Complete &amp; Bill
+                        </button>
+                      )}
                       <button
                         onClick={() => editingShipment && handleGenerateCoa(editingShipment)}
                         className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
@@ -8631,7 +8671,7 @@ export default function App() {
                         <FileText size={14} /> Preview COA
                       </button>
                       <button
-                        onClick={() => { setIsAddingShipment(false); setEditingShipment(null); }}
+                        onClick={() => { setIsAddingShipment(false); setEditingShipment(null); setPendingCompleteOrderId(null); }}
                         className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                       >
                         Cancel
