@@ -280,6 +280,7 @@ export default function App() {
     qty: number;
     contractNumber: string;
   }>({ productName: '', qty: 0, contractNumber: '' });
+  const [editingLineItemIdx, setEditingLineItemIdx] = useState<number | null>(null);
   const [filteredOrderContracts, setFilteredOrderContracts] = useState<Contract[]>([]);
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ orderId: string; newStatus: Order['status'] } | null>(null);
@@ -10878,7 +10879,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -11045,7 +11046,7 @@ export default function App() {
                         {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                       </select>
                     </div>
-                    <div className="flex items-end">
+                    <div className="flex items-end gap-2">
                       <button
                         onClick={() => {
                           if (!newLineItem.productName || !newLineItem.contractNumber || newLineItem.qty <= 0) {
@@ -11068,9 +11069,9 @@ export default function App() {
                               return;
                             }
                           }
-                          // Calculate existing usage on this contract from current line items
+                          // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
                           const existingWeightOnContract = orderLineItems
-                            .filter(li => li.contractNumber === newLineItem.contractNumber)
+                            .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
                             .reduce((sum, li) => sum + li.totalWeight, 0);
                           const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
                           if (totalWeight > outstanding) {
@@ -11082,24 +11083,56 @@ export default function App() {
                           const mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
                           const unitAmount = mtAmount * netWeightKg / 1000; // Price per unit = $/MT × MT/unit
                           const lineAmount = totalWeight * mtAmount;
-                          const lineItem: OrderLineItem = {
-                            id: `LINEITEM-${Date.now()}-${Math.random()}`,
-                            productName: newLineItem.productName,
-                            qty: newLineItem.qty,
-                            contractNumber: newLineItem.contractNumber,
-                            netWeightPerUnit: netWeightKg / 1000, // Store in MT for compatibility
-                            totalWeight,
-                            unitAmount,
-                            mtAmount,
-                            lineAmount
-                          };
-                          setOrderLineItems([...orderLineItems, lineItem]);
+
+                          if (editingLineItemIdx !== null) {
+                            // Update existing line item
+                            const updatedLineItem: OrderLineItem = {
+                              ...orderLineItems[editingLineItemIdx],
+                              productName: newLineItem.productName,
+                              qty: newLineItem.qty,
+                              contractNumber: newLineItem.contractNumber,
+                              netWeightPerUnit: netWeightKg / 1000,
+                              totalWeight,
+                              unitAmount,
+                              mtAmount,
+                              lineAmount
+                            };
+                            const updatedItems = [...orderLineItems];
+                            updatedItems[editingLineItemIdx] = updatedLineItem;
+                            setOrderLineItems(updatedItems);
+                            setEditingLineItemIdx(null);
+                          } else {
+                            // Add new line item
+                            const lineItem: OrderLineItem = {
+                              id: `LINEITEM-${Date.now()}-${Math.random()}`,
+                              productName: newLineItem.productName,
+                              qty: newLineItem.qty,
+                              contractNumber: newLineItem.contractNumber,
+                              netWeightPerUnit: netWeightKg / 1000,
+                              totalWeight,
+                              unitAmount,
+                              mtAmount,
+                              lineAmount
+                            };
+                            setOrderLineItems([...orderLineItems, lineItem]);
+                          }
                           setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
                         }}
-                        className="w-full py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
                       >
-                        Add Item
+                        {editingLineItemIdx !== null ? 'Update Item' : 'Add Item'}
                       </button>
+                      {editingLineItemIdx !== null && (
+                        <button
+                          onClick={() => {
+                            setEditingLineItemIdx(null);
+                            setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
+                          }}
+                          className="py-2 px-4 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                        >
+                          Cancel
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -11120,7 +11153,7 @@ export default function App() {
                           <th className="p-2 font-bold">$/Unit</th>
                           <th className="p-2 font-bold">$/MT</th>
                           <th className="p-2 font-bold">Amount ($)</th>
-                          <th className="p-2 font-bold text-center">X</th>
+                          <th className="p-2 font-bold text-center">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
@@ -11133,10 +11166,25 @@ export default function App() {
                             <td className="p-2">${(item.unitAmount || 0).toFixed(2)}</td>
                             <td className="p-2">${(item.mtAmount || 0).toFixed(2)}</td>
                             <td className="p-2 font-bold">${(item.lineAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                            <td className="p-2 text-center">
+                            <td className="p-2 text-center flex gap-1 justify-center">
+                              <button
+                                onClick={() => {
+                                  setEditingLineItemIdx(idx);
+                                  setNewLineItem({
+                                    productName: item.productName,
+                                    qty: item.qty,
+                                    contractNumber: item.contractNumber,
+                                  });
+                                }}
+                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-all"
+                                title="Edit line item"
+                              >
+                                <Edit2 size={12} />
+                              </button>
                               <button
                                 onClick={() => setOrderLineItems(orderLineItems.filter((_, i) => i !== idx))}
                                 className="text-red-500 hover:bg-red-50 p-1 rounded transition-all"
+                                title="Delete line item"
                               >
                                 <Trash2 size={12} />
                               </button>
