@@ -172,6 +172,10 @@ export default function SalesForecastPage({
   const [addProductSearch, setAddProductSearch] = useState('');
   const [addProductLocation, setAddProductLocation] = useState('');
 
+  // ── Period aggregation view state ────────────────────────────────────────
+  const [periodAggregateMode, setPeriodAggregateMode] = useState<'Customer' | 'Product'>('Customer');
+  const [periodViewMode, setPeriodViewMode] = useState<'Monthly' | 'Weekly'>('Monthly');
+
   const selectedFY = useMemo(
     () => fiscalYears.find((fy) => fy.id === selectedFiscalYearId) ?? null,
     [fiscalYears, selectedFiscalYearId]
@@ -241,9 +245,12 @@ export default function SalesForecastPage({
 
   // ── Product Forecast Table data ─────────────────────────────────────────
   const productForecastRows = useMemo(() => {
+    const skuNames = new Set(skus.map(s => s.name));
     const map = new Map<string, { productName: string; location: string; annual: number }>();
     for (const cf of mergedForecasts) {
       for (const line of cf.lines) {
+        // Only include products that exist in the SKU catalog
+        if (!skuNames.has(line.productName)) continue;
         const key = `${line.productName}|${line.location}`;
         const existing = map.get(key);
         const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
@@ -255,7 +262,7 @@ export default function SalesForecastPage({
       }
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [mergedForecasts]);
+  }, [mergedForecasts, skus]);
 
   // ── Product view modal data ─────────────────────────────────────────────
   const productViewData = useMemo(() => {
@@ -277,6 +284,59 @@ export default function SalesForecastPage({
     }
     return rows;
   }, [viewingProduct, mergedForecasts, selectedFY, productViewMode]);
+
+  // ── Period aggregation view data ────────────────────────────────────────
+  const periodAggregateData = useMemo(() => {
+    if (!selectedFY) return [];
+    const count = periodViewMode === 'Monthly' ? 12 : 52;
+
+    if (periodAggregateMode === 'Customer') {
+      // Aggregate by customer: sum all their product lines per period
+      return mergedForecasts.map(cf => {
+        const values = new Array(count).fill(0) as number[];
+        for (const line of cf.lines) {
+          for (const entry of line.entries) {
+            if (entry.periodIndex >= 0 && entry.periodIndex < count) {
+              values[entry.periodIndex] += entry.value;
+            }
+          }
+        }
+        const total = values.reduce((s, v) => s + v, 0);
+        return { name: cf.customerName, values, total };
+      });
+    } else {
+      // Aggregate by product: sum across all customers for each product
+      const skuNames = new Set(skus.map(s => s.name));
+      const productMap = new Map<string, number[]>();
+
+      for (const sku of skus) {
+        if (!productMap.has(sku.name)) {
+          productMap.set(sku.name, new Array(count).fill(0) as number[]);
+        }
+      }
+
+      for (const cf of mergedForecasts) {
+        for (const line of cf.lines) {
+          if (!skuNames.has(line.productName)) continue;
+          const values = productMap.get(line.productName);
+          if (!values) continue;
+          for (const entry of line.entries) {
+            if (entry.periodIndex >= 0 && entry.periodIndex < count) {
+              values[entry.periodIndex] += entry.value;
+            }
+          }
+        }
+      }
+
+      return Array.from(productMap.entries())
+        .map(([name, values]) => ({
+          name,
+          values,
+          total: values.reduce((s, v) => s + v, 0)
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+  }, [mergedForecasts, periodAggregateMode, periodViewMode, selectedFY, skus]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -960,6 +1020,139 @@ export default function SalesForecastPage({
                 <tr>
                   <td colSpan={3} className="px-4 py-8 text-center text-gray-400">
                     No product {typeLabel.toLowerCase()} data yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Forecast by Period View ───────────────────────────────────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-widest">
+            {typeLabel} by Period
+          </h2>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] uppercase font-bold opacity-60">Aggregate by:</label>
+              <select
+                value={periodAggregateMode}
+                onChange={(e) => setPeriodAggregateMode(e.target.value as 'Customer' | 'Product')}
+                className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-2 py-1 focus:outline-none"
+              >
+                <option value="Customer">Customer</option>
+                <option value="Product">Product</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] uppercase font-bold opacity-60">View:</label>
+              <select
+                value={periodViewMode}
+                onChange={(e) => setPeriodViewMode(e.target.value as 'Monthly' | 'Weekly')}
+                className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-2 py-1 focus:outline-none"
+              >
+                <option value="Monthly">Monthly</option>
+                <option value="Weekly">Weekly</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 min-w-[150px]">
+                  {periodAggregateMode}
+                </th>
+                {(periodViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS).map((label, idx) => {
+                  const isPast = periodViewMode === 'Monthly'
+                    ? selectedFY && idx < selectedFY.periods.length && isPeriodPast(selectedFY.periods[idx])
+                    : selectedFY && isWeekPast(idx, selectedFY.startDate);
+                  return (
+                    <th
+                      key={idx}
+                      className={`text-right px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 min-w-[70px] ${
+                        isPast ? 'bg-gray-100' : ''
+                      }`}
+                    >
+                      {label}
+                    </th>
+                  );
+                })}
+                <th className="text-right px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 min-w-[80px]">
+                  Total
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {periodAggregateData.map((row) => {
+                const periodTotals = new Array(periodViewMode === 'Monthly' ? 12 : 52).fill(0) as number[];
+                return (
+                  <tr key={row.name} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2 font-medium">{row.name}</td>
+                    {row.values.map((value, idx) => {
+                      const isPast = periodViewMode === 'Monthly'
+                        ? selectedFY && idx < selectedFY.periods.length && isPeriodPast(selectedFY.periods[idx])
+                        : selectedFY && isWeekPast(idx, selectedFY.startDate);
+                      periodTotals[idx] += value;
+                      return (
+                        <td
+                          key={idx}
+                          className={`text-right px-3 py-2 font-mono text-[11px] ${
+                            isPast ? 'bg-gray-100 text-gray-500' : ''
+                          }`}
+                        >
+                          {value > 0 ? value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—'}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2 text-right font-mono font-bold text-[11px]">
+                      {row.total.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                    </td>
+                  </tr>
+                );
+              })}
+              {periodAggregateData.length === 0 && (
+                <tr>
+                  <td colSpan={periodViewMode === 'Monthly' ? 13 : 53} className="px-4 py-8 text-center text-gray-400">
+                    No {periodAggregateMode.toLowerCase()} {typeLabel.toLowerCase()} data yet.
+                  </td>
+                </tr>
+              )}
+              {/* Totals row */}
+              {periodAggregateData.length > 0 && (
+                <tr className="bg-gray-50 border-t-2 border-[#141414] font-bold">
+                  <td className="px-4 py-2">Totals</td>
+                  {(() => {
+                    const totals = new Array(periodViewMode === 'Monthly' ? 12 : 52).fill(0) as number[];
+                    for (const row of periodAggregateData) {
+                      row.values.forEach((v, i) => {
+                        totals[i] += v;
+                      });
+                    }
+                    return totals.map((total, idx) => {
+                      const isPast = periodViewMode === 'Monthly'
+                        ? selectedFY && idx < selectedFY.periods.length && isPeriodPast(selectedFY.periods[idx])
+                        : selectedFY && isWeekPast(idx, selectedFY.startDate);
+                      return (
+                        <td
+                          key={idx}
+                          className={`text-right px-3 py-2 font-mono text-[11px] ${
+                            isPast ? 'bg-gray-100 text-gray-500' : ''
+                          }`}
+                        >
+                          {total > 0 ? total.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—'}
+                        </td>
+                      );
+                    });
+                  })()}
+                  <td className="px-3 py-2 text-right font-mono text-[11px]">
+                    {periodAggregateData.reduce((s, r) => s + r.total, 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1
+                    })}
                   </td>
                 </tr>
               )}
