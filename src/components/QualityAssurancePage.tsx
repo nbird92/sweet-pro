@@ -295,12 +295,14 @@ export default function QualityAssurancePage({
   };
 
   const handleAddProduct = () => {
-    if (!newProductData.skuName.trim()) return;
+    if (!newProductData.productFormat?.trim()) return;
     // If no skuId (scratch product), generate one
     const product: QAProduct = {
       ...newProductData,
       id: `QA-${Date.now()}`,
       skuId: newProductData.skuId || `SKU-NEW-${Date.now()}`,
+      // Auto-set skuName from productFormat if empty
+      skuName: newProductData.skuName?.trim() || newProductData.productFormat || '',
     };
     onAddQAProduct(product);
     setShowAddModal(false);
@@ -569,9 +571,8 @@ export default function QualityAssurancePage({
     subtitle: `Generated ${new Date().toLocaleDateString()} | ${qaProducts.length} products`,
     columns: [
       { header: 'Prod No.', key: 'id' },
-      { header: 'Product Description', key: 'skuName' },
-      { header: 'Product Group', key: 'productGroup' },
       { header: 'Product Format', key: 'productFormat' },
+      { header: 'Product Group', key: 'productGroup' },
       { header: 'Sugar Type', key: 'sugarType' },
       { header: 'Shortform', key: 'shortform' },
       { header: 'Conv./Organic', key: 'category' },
@@ -610,9 +611,8 @@ export default function QualityAssurancePage({
             <thead>
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <SortHeader label="Prod No." sortKey="id" />
-                <SortHeader label="Product Description" sortKey="skuName" />
-                <SortHeader label="Product Group" sortKey="productGroup" />
                 <SortHeader label="Product Format" sortKey="productFormat" />
+                <SortHeader label="Product Group" sortKey="productGroup" />
                 <SortHeader label="Sugar Type" sortKey="sugarType" />
                 <SortHeader label="Shortform" sortKey="shortform" />
                 <SortHeader label="Conv./Organic" sortKey="category" />
@@ -639,7 +639,7 @@ export default function QualityAssurancePage({
                     onClick={() => openDetail(p)}
                   >
                     <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.id}</td>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{p.skuName}</td>
+                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{p.productFormat || '—'}</td>
                     <td className="p-4 border-r border-[#141414]/10">
                       <span
                         className="px-2 py-1 text-[10px] font-bold uppercase border border-[#141414]/20"
@@ -648,13 +648,11 @@ export default function QualityAssurancePage({
                         {p.productGroup}
                       </span>
                     </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.productFormat || '—'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
                       const st = sugarTypes.find(s => s.name === p.sugarType);
-                      const pgFound = productGroups.find(g => g.name === p.productGroup);
                       const co = p.category === 'Conventional' ? 'C' : 'O';
-                      return st && pgFound ? `${pgFound.bolCode}${co}${st.abbreviation}${p.maxColor}` : '—';
+                      return st ? `${st.abbreviation}${co}${p.maxColor}` : '—';
                     })()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
@@ -673,7 +671,7 @@ export default function QualityAssurancePage({
                 );
               }) : (
                 <tr>
-                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={12}>
+                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={11}>
                     No products added yet. Click "Add Product" to get started.
                   </td>
                 </tr>
@@ -1262,8 +1260,8 @@ export default function QualityAssurancePage({
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Description <span className="text-red-500">*</span></label>
-                      <input value={newProductData.skuName} onChange={(e) => setNewProductData(prev => ({ ...prev, skuName: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Enter product description" />
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format <span className="text-red-500">*</span></label>
+                      <input value={newProductData.productFormat || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
@@ -1284,10 +1282,6 @@ export default function QualityAssurancePage({
                         <option value="">Select Sugar Type</option>
                         {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
                       </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</label>
-                      <input value={newProductData.productFormat || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, productFormat: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
@@ -1311,24 +1305,33 @@ export default function QualityAssurancePage({
                   </div>
 
                   {/* Locked calculated fields */}
-                  <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
+                  <div className="grid grid-cols-3 gap-4 pt-3 border-t border-[#141414]/10">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
+                      <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">
+                        {(() => {
+                          const st = sugarTypes.find(s => s.name === newProductData.sugarType);
+                          const co = newProductData.category === 'Conventional' ? 'C' : 'O';
+                          return st ? `${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
+                        })()}
+                      </div>
+                    </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                        {newProductData.productFormat && newProductData.sugarType && (() => {
-                          const pgFound = productGroups.find(g => g.name === newProductData.productGroup);
+                        {newProductData.productFormat && newProductData.sugarType ? (() => {
                           const st = sugarTypes.find(s => s.name === newProductData.sugarType);
                           const co = newProductData.category === 'Conventional' ? 'C' : 'O';
-                          return pgFound && st ? `${newProductData.productFormat} ${pgFound.bolCode}${co}${st.abbreviation}` : '—';
-                        })()}
+                          return st ? `${newProductData.productFormat} ${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
+                        })() : '—'}
                       </div>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                        {newProductData.productFormat && newProductData.sugarType && newProductData.category && (
-                          `${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || ''}`
-                        )}
+                        {newProductData.productFormat && newProductData.sugarType && newProductData.category
+                          ? `${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || ''}`
+                          : '—'}
                       </div>
                     </div>
                   </div>
@@ -1392,7 +1395,7 @@ export default function QualityAssurancePage({
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={handleAddProduct}
-                    disabled={!newProductData.skuName.trim()}
+                    disabled={!newProductData.productFormat?.trim()}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
                   >
                     <CheckCircle2 size={16} /> Add Product
@@ -1424,7 +1427,7 @@ export default function QualityAssurancePage({
               {/* Header */}
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
-                  Product QA: {displayData.skuName}
+                  Product QA: {displayData.productFormat || displayData.skuName}
                 </h3>
                 <div className="flex items-center gap-1">
                   <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
@@ -1441,8 +1444,8 @@ export default function QualityAssurancePage({
                     <>
                     <div className="grid grid-cols-3 gap-4">
                       <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Description</label>
-                        <input value={editData?.skuName || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, skuName: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</label>
+                        <input value={editData?.productFormat || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
@@ -1465,10 +1468,6 @@ export default function QualityAssurancePage({
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</label>
-                        <input value={editData?.productFormat || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, productFormat: e.target.value || undefined } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
-                      </div>
-                      <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
                         <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                           <option value="">Select Location</option>
@@ -1488,12 +1487,11 @@ export default function QualityAssurancePage({
                         <input type="number" value={editData?.maxColor || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, maxColor: parseFloat(e.target.value) || 0 } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</label>
-                        <div className="bg-white border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
+                        <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
-                          const pgFound = productGroups.find(g => g.name === editData?.productGroup);
                           const co = editData?.category === 'Conventional' ? 'C' : 'O';
-                          return st && pgFound ? `${pgFound.bolCode}${co}${st.abbreviation}${editData?.maxColor || 0}` : '—';
+                          return st ? `${st.abbreviation}${co}${editData?.maxColor || 0}` : '—';
                         })()}</div>
                       </div>
                     </div>
@@ -1502,10 +1500,9 @@ export default function QualityAssurancePage({
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">{(() => {
-                          const pgFound = productGroups.find(g => g.name === editData?.productGroup);
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
                           const co = editData?.category === 'Conventional' ? 'C' : 'O';
-                          return editData?.productFormat && pgFound && st ? `${editData.productFormat} ${pgFound.bolCode}${co}${st.abbreviation}` : '—';
+                          return editData?.productFormat && st ? `${editData.productFormat} ${st.abbreviation}${co}${editData.maxColor || 0}` : '—';
                         })()}</div>
                       </div>
                       <div>
@@ -1519,28 +1516,25 @@ export default function QualityAssurancePage({
                   ) : (
                     <>
                     <div className="grid grid-cols-5 gap-4">
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Description</div><div className="text-xs font-bold">{displayData.skuName}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</div><div className="text-xs font-bold">{displayData.productFormat || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Group</div><div className="text-xs font-bold">{displayData.productGroup}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Conv./Organic</div><div className="text-xs font-bold">{displayData.category}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</div><div className="text-xs font-bold">{displayData.sugarType || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</div><div className="text-xs font-bold">{displayData.productFormat || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div><div className="text-xs font-bold">{displayData.location}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
-                        const pgFound = productGroups.find(g => g.name === displayData.productGroup);
                         const co = displayData.category === 'Conventional' ? 'C' : 'O';
-                        return st && pgFound ? `${pgFound.bolCode}${co}${st.abbreviation}${displayData.maxColor}` : '—';
+                        return st ? `${st.abbreviation}${co}${displayData.maxColor}` : '—';
                       })()}</div></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</div><div className="text-xs font-bold">{(() => {
-                        const pgFound = productGroups.find(g => g.name === displayData.productGroup);
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
                         const co = displayData.category === 'Conventional' ? 'C' : 'O';
-                        return displayData.productFormat && pgFound && st ? `${displayData.productFormat} ${pgFound.bolCode}${co}${st.abbreviation}` : '—';
+                        return displayData.productFormat && st ? `${displayData.productFormat} ${st.abbreviation}${co}${displayData.maxColor || 0}` : '—';
                       })()}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</div><div className="text-xs font-bold">
                         {displayData.productFormat && displayData.sugarType && displayData.category ? `${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || ''}` : '—'}
@@ -2194,7 +2188,7 @@ export default function QualityAssurancePage({
               onClick={() => setProductModalMinimized(false)}
               className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]"
             >
-              <Maximize2 size={12} /> Product QA: {selectedProduct.skuName}
+              <Maximize2 size={12} /> Product QA: {selectedProduct.productFormat || selectedProduct.skuName}
             </button>
           </div>
         )}

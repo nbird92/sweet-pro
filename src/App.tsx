@@ -4687,15 +4687,32 @@ export default function App() {
           subtitle: `Generated ${new Date().toLocaleDateString()} | ${skus.length} products`,
           columns: [
             { header: 'Prod No.', key: 'id' },
-            { header: 'Name', key: 'name' },
+            { header: 'Product Format', key: 'productFormat' },
             { header: 'Product Group', key: 'productGroup' },
+            { header: 'Sugar Type', key: 'sugarType' },
+            { header: 'Shortform', key: 'shortform' },
             { header: 'Conv./Organic', key: 'category' },
             { header: 'Max Color', key: 'maxColor' },
             { header: 'Location', key: 'location' },
             { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
             { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
           ],
-          rows: skus.map(s => ({ ...s, netWeightKg: s.netWeightKg || s.netWeight, grossWeightKg: s.grossWeightKg || '' })),
+          rows: skus.map(s => {
+            const qaMatch = qaProducts.find(q => q.skuId === s.id);
+            const productFormat = qaMatch?.productFormat || s.productFormat || '';
+            const sugarType = qaMatch?.sugarType || s.sugarType || '';
+            const st = sugarTypes.find(t => t.name === sugarType);
+            const co = s.category === 'Conventional' ? 'C' : 'O';
+            const shortform = st ? `${st.abbreviation}${co}${s.maxColor}` : '';
+            return {
+              ...s,
+              productFormat,
+              sugarType,
+              shortform,
+              netWeightKg: s.netWeightKg || s.netWeight,
+              grossWeightKg: s.grossWeightKg || ''
+            };
+          }),
         },
         {
           sheetName: 'Product Groups',
@@ -4861,34 +4878,48 @@ export default function App() {
             placeholder="Search products by name, group, location or ID..." 
           />
           
+          <div className="bg-[#FFF9E6] border border-[#141414]/20 p-3 text-xs text-[#141414]/70 italic">
+            This table is read-only. Product changes can only be made on the <span className="font-bold">Quality Assurance</span> page.
+          </div>
+
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Prod No." sortKey="id" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Product Format" sortKey="productFormat" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product Group" sortKey="productGroup" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Sugar Type" sortKey="sugarType" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Shortform" sortKey="shortform" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Conv./Organic" sortKey="category" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Max Color" sortKey="maxColor" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Net Weight (KG)" sortKey="netWeightKg" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Gross Weight (KG)" sortKey="grossWeightKg" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-4">Actions</th>
+                  <th className="p-4">View</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]">
                 {filteredSkus.map(s => {
                   const pg = productGroups.find(g => g.name === s.productGroup);
+                  const qaMatch = qaProducts.find(q => q.skuId === s.id);
+                  const productFormat = qaMatch?.productFormat || s.productFormat || '—';
+                  const sugarType = qaMatch?.sugarType || s.sugarType || '—';
+                  const st = sugarTypes.find(t => t.name === sugarType);
+                  const co = s.category === 'Conventional' ? 'C' : 'O';
+                  const shortform = st ? `${st.abbreviation}${co}${s.maxColor}` : '—';
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.id}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.name}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{productFormat}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">
                           <span className="px-2 py-0.5 border border-[#141414]/10 text-[10px] font-bold" style={{ backgroundColor: pg?.color }}>
                             {s.productGroup}
                           </span>
                         </td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{sugarType}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{shortform}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.category}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.maxColor}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">{s.location}</td>
@@ -4898,15 +4929,12 @@ export default function App() {
                           <button onClick={() => toggleRow(s.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
                             {expandedRows.has(s.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
-                          <button onClick={() => setEditingSku(s)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Differential">
-                            <Edit2 size={14} />
-                          </button>
                         </td>
                       </tr>
                       <AnimatePresence>
                         {expandedRows.has(s.id) && (
                           <tr>
-                            <td colSpan={9} className="p-0">
+                            <td colSpan={11} className="p-0">
                               <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -5136,8 +5164,45 @@ export default function App() {
           qaTemplates={qaTemplates}
           sugarTypes={sugarTypes}
           onUpdateLocations={setLocations}
-          onAddQAProduct={(product) => setQaProducts(prev => [...prev, product])}
-          onUpdateQAProduct={(updated) => setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p))}
+          onAddQAProduct={(product) => {
+            setQaProducts(prev => [...prev, product]);
+            // Also create a corresponding SKU so the Products page mirrors it
+            const existingSku = skus.find(s => s.id === product.skuId);
+            if (!existingSku) {
+              const newSkuFromQA: SKU = {
+                id: product.skuId,
+                name: product.skuName || product.productFormat || '',
+                productGroup: product.productGroup,
+                category: product.category,
+                netWeight: product.netWeightKg || 0,
+                brix: 99.9,
+                premiumCadMt: 0,
+                netWeightKg: product.netWeightKg,
+                grossWeightKg: product.grossWeightKg,
+                maxColor: product.maxColor,
+                location: product.location,
+                sugarType: product.sugarType,
+                productFormat: product.productFormat,
+              };
+              setSkus(prev => [...prev, newSkuFromQA]);
+            }
+          }}
+          onUpdateQAProduct={(updated) => {
+            setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+            // Mirror QA changes to the corresponding SKU so the Products page stays in sync
+            setSkus(prev => prev.map(s => s.id === updated.skuId ? {
+              ...s,
+              name: updated.skuName || s.name,
+              productGroup: updated.productGroup,
+              category: updated.category,
+              location: updated.location,
+              netWeightKg: updated.netWeightKg,
+              grossWeightKg: updated.grossWeightKg,
+              maxColor: updated.maxColor,
+              sugarType: updated.sugarType,
+              productFormat: updated.productFormat,
+            } : s));
+          }}
           onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
           onUpdateTemplates={setQaTemplates}
         />
@@ -9996,7 +10061,11 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
-                      {newSku.productFormat && (newSku.productFormat + " " + (newSku.productFormat && newSku.category && newSku.sugarType ? (productGroups.find(pg => pg.name === newSku.productGroup)?.bolCode || "") + (newSku.category === 'Conventional' ? 'C' : 'O') + (sugarTypes.find(st => st.name === newSku.sugarType)?.abbreviation || "") : ""))}
+                      {newSku.productFormat && newSku.sugarType ? (() => {
+                        const st = sugarTypes.find(s => s.name === newSku.sugarType);
+                        const co = newSku.category === 'Conventional' ? 'C' : 'O';
+                        return st ? `${newSku.productFormat} ${st.abbreviation}${co}${newSku.maxColor || 0}` : '—';
+                      })() : '—'}
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -10353,7 +10422,11 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
-                      {editingSku.productFormat && (editingSku.productFormat + " " + (editingSku.productFormat && editingSku.category && editingSku.sugarType ? (productGroups.find(pg => pg.name === editingSku.productGroup)?.bolCode || "") + (editingSku.category === 'Conventional' ? 'C' : 'O') + (sugarTypes.find(st => st.name === editingSku.sugarType)?.abbreviation || "") : ""))}
+                      {editingSku.productFormat && editingSku.sugarType ? (() => {
+                        const st = sugarTypes.find(s => s.name === editingSku.sugarType);
+                        const co = editingSku.category === 'Conventional' ? 'C' : 'O';
+                        return st ? `${editingSku.productFormat} ${st.abbreviation}${co}${editingSku.maxColor || 0}` : '—';
+                      })() : '—'}
                     </div>
                   </div>
                   <div className="space-y-1">
