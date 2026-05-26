@@ -541,6 +541,7 @@ export interface QAProduct {
   pol?: string; // Port of Loading
   billOfMaterials?: BOMItem[];
   sugarType?: string; // e.g. Granulated, Liquid, Icing, Brown, Yellow
+  productFormat?: string; // Format field (e.g. Bulk, Bagged, Tote, Liquid)
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];
