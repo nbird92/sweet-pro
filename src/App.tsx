@@ -4704,13 +4704,15 @@ export default function App() {
             const sugarType = qaMatch?.sugarType || s.sugarType || '';
             const st = sugarTypes.find(t => t.name === sugarType);
             const co = s.category === 'Conventional' ? 'C' : 'O';
-            const shortform = st ? `${st.abbreviation}${co}${s.maxColor}` : '';
+            const netWt = s.netWeightKg || s.netWeight;
+            const wt = netWt ? `${netWt}kg` : '';
+            const shortform = st ? `${wt}${st.abbreviation}${co}${s.maxColor}` : '';
             return {
               ...s,
               productFormat,
               sugarType,
               shortform,
-              netWeightKg: s.netWeightKg || s.netWeight,
+              netWeightKg: netWt,
               grossWeightKg: s.grossWeightKg || ''
             };
           }),
@@ -4908,7 +4910,9 @@ export default function App() {
                   const sugarType = qaMatch?.sugarType || s.sugarType || '—';
                   const st = sugarTypes.find(t => t.name === sugarType);
                   const co = s.category === 'Conventional' ? 'C' : 'O';
-                  const shortform = st ? `${st.abbreviation}${co}${s.maxColor}` : '—';
+                  const netWt = s.netWeightKg || s.netWeight;
+                  const wt = netWt ? `${netWt}kg` : '';
+                  const shortform = st ? `${wt}${st.abbreviation}${co}${s.maxColor}` : '—';
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
@@ -10064,11 +10068,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
-                      {newSku.productFormat && newSku.sugarType ? (() => {
-                        const st = sugarTypes.find(s => s.name === newSku.sugarType);
-                        const co = newSku.category === 'Conventional' ? 'C' : 'O';
-                        return st ? `${newSku.productFormat} ${st.abbreviation}${co}${newSku.maxColor || 0}` : '—';
-                      })() : '—'}
+                      {newSku.productFormat && newSku.sugarType
+                        ? `${newSku.netWeightKg ? `${newSku.netWeightKg}kg ` : ''}${newSku.productFormat} ${newSku.sugarType} ${newSku.category} ${newSku.maxColor || 0}`
+                        : '—'}
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -10425,11 +10427,9 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
-                      {editingSku.productFormat && editingSku.sugarType ? (() => {
-                        const st = sugarTypes.find(s => s.name === editingSku.sugarType);
-                        const co = editingSku.category === 'Conventional' ? 'C' : 'O';
-                        return st ? `${editingSku.productFormat} ${st.abbreviation}${co}${editingSku.maxColor || 0}` : '—';
-                      })() : '—'}
+                      {editingSku.productFormat && editingSku.sugarType
+                        ? `${editingSku.netWeightKg ? `${editingSku.netWeightKg}kg ` : ''}${editingSku.productFormat} ${editingSku.sugarType} ${editingSku.category} ${editingSku.maxColor || 0}`
+                        : '—'}
                     </div>
                   </div>
                   <div className="space-y-1">

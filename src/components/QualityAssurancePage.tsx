@@ -591,7 +591,13 @@ export default function QualityAssurancePage({
       { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
       { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
     ],
-    rows: qaProducts as any[],
+    rows: qaProducts.map(p => {
+      const st = sugarTypes.find(s => s.name === p.sugarType);
+      const co = p.category === 'Conventional' ? 'C' : 'O';
+      const wt = p.netWeightKg ? `${p.netWeightKg}kg` : '';
+      const shortform = st ? `${wt}${st.abbreviation}${co}${p.maxColor}` : '';
+      return { ...p, shortform } as any;
+    }),
   }];
   return (
     <div>
@@ -662,7 +668,8 @@ export default function QualityAssurancePage({
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
                       const st = sugarTypes.find(s => s.name === p.sugarType);
                       const co = p.category === 'Conventional' ? 'C' : 'O';
-                      return st ? `${st.abbreviation}${co}${p.maxColor}` : '—';
+                      const wt = p.netWeightKg ? `${p.netWeightKg}kg` : '';
+                      return st ? `${wt}${st.abbreviation}${co}${p.maxColor}` : '—';
                     })()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
@@ -1540,18 +1547,17 @@ export default function QualityAssurancePage({
                         {(() => {
                           const st = sugarTypes.find(s => s.name === newProductData.sugarType);
                           const co = newProductData.category === 'Conventional' ? 'C' : 'O';
-                          return st ? `${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
+                          const wt = newProductData.netWeightKg ? `${newProductData.netWeightKg}kg` : '';
+                          return st ? `${wt}${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
                         })()}
                       </div>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                        {newProductData.productFormat && newProductData.sugarType ? (() => {
-                          const st = sugarTypes.find(s => s.name === newProductData.sugarType);
-                          const co = newProductData.category === 'Conventional' ? 'C' : 'O';
-                          return st ? `${newProductData.productFormat} ${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
-                        })() : '—'}
+                        {newProductData.productFormat && newProductData.sugarType
+                          ? `${newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : ''}${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || 0}`
+                          : '—'}
                       </div>
                     </div>
                     <div>
@@ -1728,7 +1734,8 @@ export default function QualityAssurancePage({
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
                           const co = editData?.category === 'Conventional' ? 'C' : 'O';
-                          return st ? `${st.abbreviation}${co}${editData?.maxColor || 0}` : '—';
+                          const wt = editData?.netWeightKg ? `${editData.netWeightKg}kg` : '';
+                          return st ? `${wt}${st.abbreviation}${co}${editData?.maxColor || 0}` : '—';
                         })()}</div>
                       </div>
                     </div>
@@ -1736,11 +1743,11 @@ export default function QualityAssurancePage({
                     <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
-                        <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">{(() => {
-                          const st = sugarTypes.find(s => s.name === editData?.sugarType);
-                          const co = editData?.category === 'Conventional' ? 'C' : 'O';
-                          return editData?.productFormat && st ? `${editData.productFormat} ${st.abbreviation}${co}${editData.maxColor || 0}` : '—';
-                        })()}</div>
+                        <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
+                          {editData?.productFormat && editData?.sugarType
+                            ? `${editData?.netWeightKg ? `${editData.netWeightKg}kg ` : ''}${editData.productFormat} ${editData.sugarType} ${editData.category} ${editData.maxColor || 0}`
+                            : '—'}
+                        </div>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</label>
@@ -1764,15 +1771,16 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
                         const co = displayData.category === 'Conventional' ? 'C' : 'O';
-                        return st ? `${st.abbreviation}${co}${displayData.maxColor}` : '—';
+                        const wt = displayData.netWeightKg ? `${displayData.netWeightKg}kg` : '';
+                        return st ? `${wt}${st.abbreviation}${co}${displayData.maxColor}` : '—';
                       })()}</div></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</div><div className="text-xs font-bold">{(() => {
-                        const st = sugarTypes.find(s => s.name === displayData.sugarType);
-                        const co = displayData.category === 'Conventional' ? 'C' : 'O';
-                        return displayData.productFormat && st ? `${displayData.productFormat} ${st.abbreviation}${co}${displayData.maxColor || 0}` : '—';
-                      })()}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</div><div className="text-xs font-bold">
+                        {displayData.productFormat && displayData.sugarType
+                          ? `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`
+                          : '—'}
+                      </div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</div><div className="text-xs font-bold">
                         {displayData.productFormat && displayData.sugarType && displayData.category ? `${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || ''}` : '—'}
                       </div></div>
