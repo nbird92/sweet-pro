@@ -1712,6 +1712,20 @@ export default function App() {
         setCustomerGroups(data.customerGroups);
         lastSyncedData.current.customergroups = JSON.stringify(data.customerGroups);
       }
+      if (data.packagingFormats?.length) {
+        setPackagingFormats(data.packagingFormats);
+        lastSyncedData.current.packagingformats = JSON.stringify(data.packagingFormats);
+      }
+      if (data.namingFormulas?.length) {
+        // Normalize: ensure tokens array exists (may be undefined for legacy rows)
+        const mapped = data.namingFormulas.map((nf: any) => ({
+          ...nf,
+          priority: typeof nf.priority === 'number' ? nf.priority : parseInt(nf.priority) || 50,
+          tokens: Array.isArray(nf.tokens) ? nf.tokens : undefined,
+        }));
+        setNamingFormulas(mapped);
+        lastSyncedData.current.namingformulas = JSON.stringify(mapped);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1777,6 +1791,8 @@ export default function App() {
         { collection: COLLECTIONS.fiscalYears, key: 'fiscalyears', data: fiscalYears },
         { collection: COLLECTIONS.customerForecasts, key: 'customerforecasts', data: customerForecasts },
         { collection: COLLECTIONS.customerGroups, key: 'customergroups', data: customerGroups },
+        { collection: COLLECTIONS.packagingFormats, key: 'packagingformats', data: packagingFormats },
+        { collection: COLLECTIONS.namingFormulas, key: 'namingformulas', data: namingFormulas },
       ];
 
       try {
@@ -1802,7 +1818,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, lastSynced, user]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);

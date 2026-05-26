@@ -39,6 +39,8 @@ export const COLLECTIONS = {
   fiscalYears: 'fiscalYears',
   customerForecasts: 'customerForecasts',
   customerGroups: 'customerGroups',
+  packagingFormats: 'packagingFormats',
+  namingFormulas: 'namingFormulas',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
