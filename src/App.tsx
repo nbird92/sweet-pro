@@ -9867,26 +9867,26 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product ID</label>
-                    <input 
-                      type="text" 
-                      value={newSku.id} 
+                    <input
+                      type="text"
+                      value={newSku.id}
                       onChange={(e) => setNewSku({ ...newSku, id: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" 
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
-                    <input 
-                      type="text" 
-                      value={newSku.name} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
+                    <input
+                      type="text"
+                      value={newSku.name}
                       onChange={(e) => setNewSku({ ...newSku, name: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
-                    <select 
-                      value={newSku.productGroup} 
+                    <select
+                      value={newSku.productGroup}
                       onChange={(e) => setNewSku({ ...newSku, productGroup: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
@@ -9896,9 +9896,22 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Sugar Type</label>
+                    <select
+                      value={newSku.sugarType || ""}
+                      onChange={(e) => setNewSku({ ...newSku, sugarType: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select Sugar Type</option>
+                      {sugarTypes.map(st => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Conv./Organic</label>
-                    <select 
-                      value={newSku.category} 
+                    <select
+                      value={newSku.category}
                       onChange={(e) => setNewSku({ ...newSku, category: e.target.value as any })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
@@ -9908,8 +9921,8 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
-                    <select 
-                      value={newSku.location} 
+                    <select
+                      value={newSku.location}
                       onChange={(e) => setNewSku({ ...newSku, location: e.target.value as 'Hamilton' | 'Vancouver' })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
@@ -9918,8 +9931,17 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Format</label>
+                    <input
+                      type="text"
+                      value={newSku.productFormat || ""}
+                      onChange={(e) => setNewSku({ ...newSku, productFormat: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSku.netWeightKg || ""}
                         onFocus={(e) => e.target.select()}
@@ -9929,7 +9951,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSku.grossWeightKg || ""}
                         onFocus={(e) => e.target.select()}
@@ -9939,7 +9961,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSku.brix || ""}
                         onFocus={(e) => e.target.select()}
@@ -9949,7 +9971,7 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSku.maxColor || ""}
                         onFocus={(e) => e.target.select()}
@@ -9959,13 +9981,31 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSku.premiumCadMt || ""}
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => setNewSku({ ...newSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
+                  </div>
+                </div>
+
+                {/* Locked calculated fields */}
+                <div className="grid grid-cols-2 gap-6 pt-2 border-t border-[#E4E3E0]">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
+                    <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
+                      {newSku.productFormat && (newSku.productFormat + " " + (newSku.productFormat && newSku.category && newSku.sugarType ? (productGroups.find(pg => pg.name === newSku.productGroup)?.bolCode || "") + (newSku.category === 'Conventional' ? 'C' : 'O') + (sugarTypes.find(st => st.name === newSku.sugarType)?.abbreviation || "") : ""))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Long Form</label>
+                    <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
+                      {newSku.productFormat && newSku.sugarType && newSku.category && (
+                        `${newSku.productFormat} ${newSku.sugarType} ${newSku.category} ${newSku.maxColor || ''}`
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="space-y-1">
@@ -10257,12 +10297,16 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
                     <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.name}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
                     <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.productGroup}</div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Sugar Type</label>
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.sugarType || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Conv./Organic</label>
@@ -10271,6 +10315,10 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
                     <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.location}</div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Format</label>
+                    <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.productFormat || '-'}</div>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
@@ -10299,9 +10347,28 @@ export default function App() {
                     />
                   </div>
                 </div>
+
+                {/* Locked calculated fields */}
+                <div className="grid grid-cols-2 gap-6 pt-2 border-t border-[#E4E3E0]">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
+                    <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
+                      {editingSku.productFormat && (editingSku.productFormat + " " + (editingSku.productFormat && editingSku.category && editingSku.sugarType ? (productGroups.find(pg => pg.name === editingSku.productGroup)?.bolCode || "") + (editingSku.category === 'Conventional' ? 'C' : 'O') + (sugarTypes.find(st => st.name === editingSku.sugarType)?.abbreviation || "") : ""))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Product Long Form</label>
+                    <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
+                      {editingSku.productFormat && editingSku.sugarType && editingSku.category && (
+                        `${editingSku.productFormat} ${editingSku.sugarType} ${editingSku.category} ${editingSku.maxColor || ''}`
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
-                  <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70 min-h-[80px] whitespace-pre-wrap">{editingSku.description || 'No description provided.'}</div>
+                  <label className="text-[10px] uppercase font-bold opacity-50">Additional Notes</label>
+                  <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70 min-h-[80px] whitespace-pre-wrap">{editingSku.description || 'No additional notes.'}</div>
                 </div>
                 <div className="flex gap-4 pt-4">
                   <button

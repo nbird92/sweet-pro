@@ -28,7 +28,7 @@ export interface CommodityConfig {
 
 export interface SKU {
   id: string;
-  name: string;
+  name: string; // Product Description (editable)
   productGroup: string;
   category: 'Conventional' | 'Organic';
   netWeight: number;
@@ -39,6 +39,10 @@ export interface SKU {
   maxColor: number;
   location: string;
   description?: string;
+  sugarType?: string; // e.g., Granulated, Liquid, Icing, Brown, Yellow, Molasses
+  productFormat?: string; // Format field (e.g., Bulk, Bagged, Tote, Liquid)
+  shortForm?: string; // Auto-calculated: ProductGroupCode + C/O + SugarTypeAbbr
+  productLongForm?: string; // Auto-calculated: ProductFormat + SugarType + Conv./Organic + Color
 }
 
 export interface Customer {
