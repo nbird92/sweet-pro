@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType } from '../types';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat } from '../types';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
@@ -15,6 +15,8 @@ interface QualityAssurancePageProps {
   vendors: Vendor[];
   qaTemplates: QATemplate[];
   sugarTypes: SugarType[];
+  packagingFormats: PackagingFormat[];
+  onUpdatePackagingFormats: (formats: PackagingFormat[]) => void;
   onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
@@ -45,6 +47,8 @@ export default function QualityAssurancePage({
   vendors,
   qaTemplates,
   sugarTypes,
+  packagingFormats,
+  onUpdatePackagingFormats,
   onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
@@ -166,6 +170,12 @@ export default function QualityAssurancePage({
   const [editingTemplate, setEditingTemplate] = useState<QATemplate | null>(null);
   const [templateForm, setTemplateForm] = useState<{ name: string; type: QATemplate['type']; googleSheetUrl: string; description: string }>({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
   const [deleteTemplateConfirmId, setDeleteTemplateConfirmId] = useState<string | null>(null);
+
+  // Packaging Format state
+  const [showPackagingFormatModal, setShowPackagingFormatModal] = useState(false);
+  const [editingPackagingFormat, setEditingPackagingFormat] = useState<PackagingFormat | null>(null);
+  const [packagingFormatForm, setPackagingFormatForm] = useState<{ name: string; description: string; packagingLine: string; location: string }>({ name: '', description: '', packagingLine: '', location: '' });
+  const [deletePackagingFormatConfirmId, setDeletePackagingFormatConfirmId] = useState<string | null>(null);
 
   const openLocationDetail = (loc: Location) => {
     setSelectedLocation(loc);
@@ -736,6 +746,215 @@ export default function QualityAssurancePage({
         </table>
       </div>
 
+      {/* Packaging Formats Table */}
+      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest">Packaging Formats</h3>
+            <span className="text-[10px] opacity-60">{packagingFormats.length} formats</span>
+          </div>
+          <button
+            onClick={() => {
+              setEditingPackagingFormat(null);
+              setPackagingFormatForm({ name: '', description: '', packagingLine: '', location: locations[0]?.name || '' });
+              setShowPackagingFormatModal(true);
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+          >
+            <Plus size={12} /> Add Packaging Format
+          </button>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+              <th className="p-4 border-r border-[#141414]/10">Name</th>
+              <th className="p-4 border-r border-[#141414]/10">Description</th>
+              <th className="p-4 border-r border-[#141414]/10">Packaging Line</th>
+              <th className="p-4 border-r border-[#141414]/10">Location</th>
+              <th className="p-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#141414]/10">
+            {packagingFormats.map(pf => (
+              <tr key={pf.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pf.name}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{pf.description || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{pf.packagingLine || '—'}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">{pf.location || '—'}</td>
+                <td className="p-4 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingPackagingFormat(pf);
+                        setPackagingFormatForm({
+                          name: pf.name,
+                          description: pf.description,
+                          packagingLine: pf.packagingLine,
+                          location: pf.location,
+                        });
+                        setShowPackagingFormatModal(true);
+                      }}
+                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
+                      title="Edit packaging format"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => setDeletePackagingFormatConfirmId(pf.id)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete packaging format"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {packagingFormats.length === 0 && (
+              <tr><td colSpan={5} className="p-12 text-center text-xs opacity-50 italic">No packaging formats added yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add/Edit Packaging Format Modal */}
+      <AnimatePresence>
+        {showPackagingFormatModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowPackagingFormatModal(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">{editingPackagingFormat ? 'Edit Packaging Format' : 'Add Packaging Format'}</h3>
+                <button onClick={() => setShowPackagingFormatModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
+                  <input
+                    value={packagingFormatForm.name}
+                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, name: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                    placeholder="e.g. Bulk Bag, 25kg Bag, Tote"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
+                  <textarea
+                    value={packagingFormatForm.description}
+                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, description: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white transition-colors"
+                    placeholder="Describe this packaging format"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Packaging Line</label>
+                  <input
+                    value={packagingFormatForm.packagingLine}
+                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, packagingLine: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                    placeholder="e.g. Line 1, Line 2"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
+                  <select
+                    value={packagingFormatForm.location}
+                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, location: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                  >
+                    <option value="">Select Location</option>
+                    {locations.map(loc => (
+                      <option key={loc.id} value={loc.name}>{loc.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      if (!packagingFormatForm.name.trim()) return;
+                      if (editingPackagingFormat) {
+                        onUpdatePackagingFormats(packagingFormats.map(pf => pf.id === editingPackagingFormat.id ? {
+                          ...editingPackagingFormat,
+                          name: packagingFormatForm.name,
+                          description: packagingFormatForm.description,
+                          packagingLine: packagingFormatForm.packagingLine,
+                          location: packagingFormatForm.location,
+                        } : pf));
+                      } else {
+                        const newFormat: PackagingFormat = {
+                          id: `PF-${Date.now()}`,
+                          name: packagingFormatForm.name,
+                          description: packagingFormatForm.description,
+                          packagingLine: packagingFormatForm.packagingLine,
+                          location: packagingFormatForm.location,
+                        };
+                        onUpdatePackagingFormats([...packagingFormats, newFormat]);
+                      }
+                      setShowPackagingFormatModal(false);
+                      setEditingPackagingFormat(null);
+                    }}
+                    disabled={!packagingFormatForm.name.trim()}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
+                  >
+                    {editingPackagingFormat ? 'Save Changes' : 'Add Format'}
+                  </button>
+                  <button
+                    onClick={() => setShowPackagingFormatModal(false)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Packaging Format Confirmation Modal */}
+      <AnimatePresence>
+        {deletePackagingFormatConfirmId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeletePackagingFormatConfirmId(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Delete Packaging Format</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete this packaging format? This cannot be undone.</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      onUpdatePackagingFormats(packagingFormats.filter(pf => pf.id !== deletePackagingFormatConfirmId));
+                      setDeletePackagingFormatConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setDeletePackagingFormatConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Templates Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -1261,7 +1480,16 @@ export default function QualityAssurancePage({
                   <div className="grid grid-cols-3 gap-4">
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format <span className="text-red-500">*</span></label>
-                      <input value={newProductData.productFormat || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
+                      <select
+                        value={newProductData.productFormat || ''}
+                        onChange={(e) => setNewProductData(prev => ({ ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName }))}
+                        className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                      >
+                        <option value="">Select Packaging Format</option>
+                        {packagingFormats.map(pf => (
+                          <option key={pf.id} value={pf.name}>{pf.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
@@ -1445,7 +1673,16 @@ export default function QualityAssurancePage({
                     <div className="grid grid-cols-3 gap-4">
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</label>
-                        <input value={editData?.productFormat || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Bulk, Bagged, Tote" />
+                        <select
+                          value={editData?.productFormat || ''}
+                          onChange={(e) => setEditData(prev => prev ? { ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName } : prev)}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                        >
+                          <option value="">Select Packaging Format</option>
+                          {packagingFormats.map(pf => (
+                            <option key={pf.id} value={pf.name}>{pf.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>

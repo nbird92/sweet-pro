@@ -561,6 +561,16 @@ export const INITIAL_SUGAR_TYPES: SugarType[] = [
   { id: 'ST-006', name: 'Molasses', abbreviation: 'ML' },
 ];
 
+export interface PackagingFormat {
+  id: string;
+  name: string;
+  description: string;
+  packagingLine: string;
+  location: string;
+}
+
+export const INITIAL_PACKAGING_FORMATS: PackagingFormat[] = [];
+
 export interface LotCode {
   id: string;
   lotNumber: string;
