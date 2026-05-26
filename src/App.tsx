@@ -4729,28 +4729,6 @@ export default function App() {
             };
           }),
         },
-        {
-          sheetName: 'Product Groups',
-          title: 'Product Groups',
-          subtitle: `${productGroups.length} groups`,
-          columns: [
-            { header: 'Group Name', key: 'name' },
-            { header: 'BOL Code', key: 'bolCode' },
-            { header: 'Color', key: 'color' },
-          ],
-          rows: productGroups as any[],
-        },
-        {
-          sheetName: 'Sugar Types',
-          title: 'Sugar Types',
-          subtitle: `${sugarTypes.length} types`,
-          columns: [
-            { header: 'Name', key: 'name' },
-            { header: 'Abbreviation', key: 'abbreviation' },
-            { header: 'Products', key: 'productCount', format: 'integer' },
-          ],
-          rows: sugarTypes.map(st => ({ name: st.name, abbreviation: st.abbreviation, productCount: qaProducts.filter(q => q.sugarType === st.name).length })),
-        },
       ];
       return (
         <div>
@@ -4760,132 +4738,8 @@ export default function App() {
             count={filteredSkus.length}
             exportSheets={productExportSheets}
             exportFileName="Products"
-          >
-            <button
-              onClick={() => setIsAddingSugarType(true)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
-            >
-              <Plus size={12} /> Add Sugar Type
-            </button>
-            <button
-              onClick={addProductGroup}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
-            >
-              <Plus size={12} /> Add Product Group
-            </button>
-          </PageBanner>
+          />
           <div className="p-6 space-y-8">
-
-          {/* Product Groups Table */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Product Groups</h3>
-              <button onClick={() => toggleRow('pg-table')} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
-                {expandedRows.has('pg-table') ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-            <AnimatePresence>
-              {expandedRows.has('pg-table') && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                        <th className="p-4 border-r border-[#141414]/10">Group Name</th>
-                        <th className="p-4 border-r border-[#141414]/10">BOL Code</th>
-                        <th className="p-4 border-r border-[#141414]/10">Color Coding</th>
-                        <th className="p-4">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#141414]/10">
-                      {filteredProductGroups.map(pg => (
-                        <tr key={pg.id} className="hover:bg-[#F9F9F9] transition-colors">
-                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pg.name}</td>
-                          <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{pg.bolCode || '—'}</td>
-                          <td className="p-4 text-xs border-r border-[#141414]/10">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 border border-[#141414]/20" style={{ backgroundColor: pg.color }} />
-                              <span className="text-[10px] opacity-50">{pg.color}</span>
-                            </div>
-                          </td>
-                          <td className="p-4 text-xs flex gap-2">
-                            <button onClick={() => setEditingProductGroup(pg)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                              <Edit2 size={14} />
-                            </button>
-                            <button onClick={() => setProductGroups(productGroups.filter(item => item.id !== pg.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* Sugar Types Table */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Sugar Types</h3>
-              <button onClick={() => toggleRow('st-table')} className="p-1 hover:bg-white hover:text-[#141414] transition-all">
-                {expandedRows.has('st-table') ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-            </div>
-            <AnimatePresence>
-              {expandedRows.has('st-table') && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                        <th className="p-4 border-r border-[#141414]/10">Sugar Type</th>
-                        <th className="p-4 border-r border-[#141414]/10">Abbreviation</th>
-                        <th className="p-4 border-r border-[#141414]/10">Products</th>
-                        <th className="p-4">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#141414]/10">
-                      {sugarTypes.map(st => {
-                        const productCount = qaProducts.filter(q => q.sugarType === st.name).length;
-                        return (
-                          <tr key={st.id} className="hover:bg-[#F9F9F9] transition-colors">
-                            <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{st.name}</td>
-                            <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{st.abbreviation}</td>
-                            <td className="p-4 text-xs border-r border-[#141414]/10">{productCount}</td>
-                            <td className="p-4 text-xs flex gap-2">
-                              <button onClick={() => setEditingSugarType({ ...st })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                                <Edit2 size={14} />
-                              </button>
-                              <button onClick={() => {
-                                const oldName = st.name;
-                                setSugarTypes(sugarTypes.filter(item => item.id !== st.id));
-                                // Clear sugarType from any products that used this type
-                                qaProducts.filter(q => q.sugarType === oldName).forEach(q => {
-                                  setQaProducts(prev => prev.map(p => p.id === q.id ? { ...p, sugarType: undefined } : p));
-                                });
-                              }} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                                <Trash2 size={14} />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
 
           <SearchInput
             value={searchTerm}
@@ -5195,6 +5049,8 @@ export default function App() {
           onUpdatePackagingFormats={setPackagingFormats}
           namingFormulas={namingFormulas}
           onUpdateNamingFormulas={setNamingFormulas}
+          onUpdateProductGroups={setProductGroups}
+          onUpdateSugarTypes={setSugarTypes}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => {
             setQaProducts(prev => [...prev, product]);

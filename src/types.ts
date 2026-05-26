@@ -571,12 +571,20 @@ export interface PackagingFormat {
 
 export const INITIAL_PACKAGING_FORMATS: PackagingFormat[] = [];
 
+export interface FormulaToken {
+  id: string;
+  type: 'field' | 'literal' | 'productGroup' | 'productGroupCode' | 'sugarType' | 'sugarTypeAbbr';
+  value: string;   // Field key (e.g., 'productFormat'), literal text, or specific value (e.g., 'Bulk')
+  label: string;   // Display label in the builder
+}
+
 export interface NamingFormula {
   id: string;
   type: 'Long Form' | 'Short Form';
   name: string;
   condition: string; // e.g., "Default", "Product Group = Bulk", "Sugar Type = Molasses"
-  formula: string;   // Template description e.g., "{NetWeight}kg {SugarAbbr}{C/O}{MaxColor}"
+  formula: string;   // Display string e.g., "{NetWeight}kg {SugarAbbr}{C/O}{MaxColor}"
+  tokens?: FormulaToken[]; // Structured tokens (preferred over formula string when present)
   description?: string;
   priority: number;  // Lower = applied first
 }
@@ -587,7 +595,18 @@ export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
     type: 'Long Form',
     name: 'Default Long Form',
     condition: 'Default',
-    formula: '{NetWeight}kg {PackagingFormat} {SugarType} {Conv./Organic} {MaxColor}',
+    formula: '{Net Weight (KG)}kg {Product Format} {Sugar Type} {Conv./Organic} {Max Color}',
+    tokens: [
+      { id: 't1', type: 'field', value: 'netWeightKg', label: 'Net Weight (KG)' },
+      { id: 't2', type: 'literal', value: 'kg ', label: '"kg "' },
+      { id: 't3', type: 'field', value: 'productFormat', label: 'Product Format' },
+      { id: 't4', type: 'literal', value: ' ', label: '" "' },
+      { id: 't5', type: 'field', value: 'sugarType', label: 'Sugar Type' },
+      { id: 't6', type: 'literal', value: ' ', label: '" "' },
+      { id: 't7', type: 'field', value: 'category', label: 'Conv./Organic' },
+      { id: 't8', type: 'literal', value: ' ', label: '" "' },
+      { id: 't9', type: 'field', value: 'maxColor', label: 'Max Color' },
+    ],
     description: 'Standard long form name with weight, packaging, sugar type, category and color',
     priority: 10,
   },
@@ -596,7 +615,14 @@ export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
     type: 'Short Form',
     name: 'Default Short Form',
     condition: 'Default',
-    formula: '{NetWeight}kg {SugarTypeAbbr}{C/O}{MaxColor}',
+    formula: '{Net Weight (KG)}kg {Sugar Type Abbr}{C/O}{Max Color}',
+    tokens: [
+      { id: 't1', type: 'field', value: 'netWeightKg', label: 'Net Weight (KG)' },
+      { id: 't2', type: 'literal', value: 'kg ', label: '"kg "' },
+      { id: 't3', type: 'field', value: 'sugarTypeAbbreviation', label: 'Sugar Type Abbreviation' },
+      { id: 't4', type: 'field', value: 'coChar', label: 'C/O Character' },
+      { id: 't5', type: 'field', value: 'maxColor', label: 'Max Color' },
+    ],
     description: 'Standard short form with weight prefix',
     priority: 30,
   },
@@ -605,7 +631,12 @@ export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
     type: 'Short Form',
     name: 'Bulk Short Form',
     condition: 'Product Group = Bulk',
-    formula: '{SugarTypeAbbr}{C/O}{MaxColor}',
+    formula: '{Sugar Type Abbr}{C/O}{Max Color}',
+    tokens: [
+      { id: 't1', type: 'field', value: 'sugarTypeAbbreviation', label: 'Sugar Type Abbreviation' },
+      { id: 't2', type: 'field', value: 'coChar', label: 'C/O Character' },
+      { id: 't3', type: 'field', value: 'maxColor', label: 'Max Color' },
+    ],
     description: 'Bulk products omit the weight prefix',
     priority: 20,
   },
@@ -615,6 +646,9 @@ export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
     name: 'Molasses Short Form',
     condition: 'Sugar Type = Molasses',
     formula: 'MOL',
+    tokens: [
+      { id: 't1', type: 'literal', value: 'MOL', label: '"MOL"' },
+    ],
     description: 'Molasses products use the fixed short form "MOL"',
     priority: 10,
   },
