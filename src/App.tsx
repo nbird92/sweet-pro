@@ -59,7 +59,7 @@ import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './fi
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -228,6 +228,7 @@ export default function App() {
   const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
   const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
   const [packagingFormats, setPackagingFormats] = useState<PackagingFormat[]>(INITIAL_PACKAGING_FORMATS);
+  const [namingFormulas, setNamingFormulas] = useState<NamingFormula[]>(INITIAL_NAMING_FORMULAS);
   const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
@@ -4702,11 +4703,22 @@ export default function App() {
             const qaMatch = qaProducts.find(q => q.skuId === s.id);
             const productFormat = qaMatch?.productFormat || s.productFormat || '';
             const sugarType = qaMatch?.sugarType || s.sugarType || '';
-            const st = sugarTypes.find(t => t.name === sugarType);
-            const co = s.category === 'Conventional' ? 'C' : 'O';
             const netWt = s.netWeightKg || s.netWeight;
-            const wt = netWt ? `${netWt}kg` : '';
-            const shortform = st ? `${wt}${st.abbreviation}${co}${s.maxColor}` : '';
+            let shortform = '';
+            if (sugarType === 'Molasses') {
+              shortform = 'MOL';
+            } else {
+              const st = sugarTypes.find(t => t.name === sugarType);
+              if (st) {
+                const co = s.category === 'Conventional' ? 'C' : 'O';
+                if (s.productGroup === 'Bulk') {
+                  shortform = `${st.abbreviation}${co}${s.maxColor}`;
+                } else {
+                  const wt = netWt ? `${netWt}kg ` : '';
+                  shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
+                }
+              }
+            }
             return {
               ...s,
               productFormat,
@@ -4908,11 +4920,22 @@ export default function App() {
                   const qaMatch = qaProducts.find(q => q.skuId === s.id);
                   const productFormat = qaMatch?.productFormat || s.productFormat || '—';
                   const sugarType = qaMatch?.sugarType || s.sugarType || '—';
-                  const st = sugarTypes.find(t => t.name === sugarType);
-                  const co = s.category === 'Conventional' ? 'C' : 'O';
                   const netWt = s.netWeightKg || s.netWeight;
-                  const wt = netWt ? `${netWt}kg` : '';
-                  const shortform = st ? `${wt}${st.abbreviation}${co}${s.maxColor}` : '—';
+                  let shortform = '—';
+                  if (sugarType === 'Molasses') {
+                    shortform = 'MOL';
+                  } else {
+                    const st = sugarTypes.find(t => t.name === sugarType);
+                    if (st) {
+                      const co = s.category === 'Conventional' ? 'C' : 'O';
+                      if (s.productGroup === 'Bulk') {
+                        shortform = `${st.abbreviation}${co}${s.maxColor}`;
+                      } else {
+                        const wt = netWt ? `${netWt}kg ` : '';
+                        shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
+                      }
+                    }
+                  }
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
@@ -5170,6 +5193,8 @@ export default function App() {
           sugarTypes={sugarTypes}
           packagingFormats={packagingFormats}
           onUpdatePackagingFormats={setPackagingFormats}
+          namingFormulas={namingFormulas}
+          onUpdateNamingFormulas={setNamingFormulas}
           onUpdateLocations={setLocations}
           onAddQAProduct={(product) => {
             setQaProducts(prev => [...prev, product]);

@@ -571,6 +571,55 @@ export interface PackagingFormat {
 
 export const INITIAL_PACKAGING_FORMATS: PackagingFormat[] = [];
 
+export interface NamingFormula {
+  id: string;
+  type: 'Long Form' | 'Short Form';
+  name: string;
+  condition: string; // e.g., "Default", "Product Group = Bulk", "Sugar Type = Molasses"
+  formula: string;   // Template description e.g., "{NetWeight}kg {SugarAbbr}{C/O}{MaxColor}"
+  description?: string;
+  priority: number;  // Lower = applied first
+}
+
+export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
+  {
+    id: 'NF-001',
+    type: 'Long Form',
+    name: 'Default Long Form',
+    condition: 'Default',
+    formula: '{NetWeight}kg {PackagingFormat} {SugarType} {Conv./Organic} {MaxColor}',
+    description: 'Standard long form name with weight, packaging, sugar type, category and color',
+    priority: 10,
+  },
+  {
+    id: 'NF-002',
+    type: 'Short Form',
+    name: 'Default Short Form',
+    condition: 'Default',
+    formula: '{NetWeight}kg {SugarTypeAbbr}{C/O}{MaxColor}',
+    description: 'Standard short form with weight prefix',
+    priority: 30,
+  },
+  {
+    id: 'NF-003',
+    type: 'Short Form',
+    name: 'Bulk Short Form',
+    condition: 'Product Group = Bulk',
+    formula: '{SugarTypeAbbr}{C/O}{MaxColor}',
+    description: 'Bulk products omit the weight prefix',
+    priority: 20,
+  },
+  {
+    id: 'NF-004',
+    type: 'Short Form',
+    name: 'Molasses Short Form',
+    condition: 'Sugar Type = Molasses',
+    formula: 'MOL',
+    description: 'Molasses products use the fixed short form "MOL"',
+    priority: 10,
+  },
+];
+
 export interface LotCode {
   id: string;
   lotNumber: string;

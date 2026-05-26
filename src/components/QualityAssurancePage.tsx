@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat } from '../types';
+import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat, NamingFormula } from '../types';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
@@ -17,6 +17,8 @@ interface QualityAssurancePageProps {
   sugarTypes: SugarType[];
   packagingFormats: PackagingFormat[];
   onUpdatePackagingFormats: (formats: PackagingFormat[]) => void;
+  namingFormulas: NamingFormula[];
+  onUpdateNamingFormulas: (formulas: NamingFormula[]) => void;
   onUpdateLocations: (locations: Location[]) => void;
   onAddQAProduct: (product: QAProduct) => void;
   onUpdateQAProduct: (product: QAProduct) => void;
@@ -49,6 +51,8 @@ export default function QualityAssurancePage({
   sugarTypes,
   packagingFormats,
   onUpdatePackagingFormats,
+  namingFormulas,
+  onUpdateNamingFormulas,
   onUpdateLocations,
   onAddQAProduct,
   onUpdateQAProduct,
@@ -176,6 +180,12 @@ export default function QualityAssurancePage({
   const [editingPackagingFormat, setEditingPackagingFormat] = useState<PackagingFormat | null>(null);
   const [packagingFormatForm, setPackagingFormatForm] = useState<{ name: string; description: string; packagingLine: string; location: string }>({ name: '', description: '', packagingLine: '', location: '' });
   const [deletePackagingFormatConfirmId, setDeletePackagingFormatConfirmId] = useState<string | null>(null);
+
+  // Naming Formula state
+  const [showNamingFormulaModal, setShowNamingFormulaModal] = useState(false);
+  const [editingNamingFormula, setEditingNamingFormula] = useState<NamingFormula | null>(null);
+  const [namingFormulaForm, setNamingFormulaForm] = useState<{ type: 'Long Form' | 'Short Form'; name: string; condition: string; formula: string; description: string; priority: number }>({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50 });
+  const [deleteNamingFormulaConfirmId, setDeleteNamingFormulaConfirmId] = useState<string | null>(null);
 
   const openLocationDetail = (loc: Location) => {
     setSelectedLocation(loc);
@@ -592,10 +602,21 @@ export default function QualityAssurancePage({
       { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
     ],
     rows: qaProducts.map(p => {
-      const st = sugarTypes.find(s => s.name === p.sugarType);
-      const co = p.category === 'Conventional' ? 'C' : 'O';
-      const wt = p.netWeightKg ? `${p.netWeightKg}kg` : '';
-      const shortform = st ? `${wt}${st.abbreviation}${co}${p.maxColor}` : '';
+      let shortform = '';
+      if (p.sugarType === 'Molasses') {
+        shortform = 'MOL';
+      } else {
+        const st = sugarTypes.find(s => s.name === p.sugarType);
+        if (st) {
+          const co = p.category === 'Conventional' ? 'C' : 'O';
+          if (p.productGroup === 'Bulk') {
+            shortform = `${st.abbreviation}${co}${p.maxColor}`;
+          } else {
+            const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
+            shortform = `${wt}${st.abbreviation}${co}${p.maxColor}`;
+          }
+        }
+      }
       return { ...p, shortform } as any;
     }),
   }];
@@ -666,10 +687,16 @@ export default function QualityAssurancePage({
                     </td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
+                      // Molasses rule: shortform is just "MOL"
+                      if (p.sugarType === 'Molasses') return 'MOL';
                       const st = sugarTypes.find(s => s.name === p.sugarType);
+                      if (!st) return '—';
                       const co = p.category === 'Conventional' ? 'C' : 'O';
-                      const wt = p.netWeightKg ? `${p.netWeightKg}kg` : '';
-                      return st ? `${wt}${st.abbreviation}${co}${p.maxColor}` : '—';
+                      // Bulk rule: no weight prefix
+                      if (p.productGroup === 'Bulk') return `${st.abbreviation}${co}${p.maxColor}`;
+                      // Default rule: weight + space + abbr + co + color
+                      const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
+                      return `${wt}${st.abbreviation}${co}${p.maxColor}`;
                     })()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
@@ -951,6 +978,249 @@ export default function QualityAssurancePage({
                   </button>
                   <button
                     onClick={() => setDeletePackagingFormatConfirmId(null)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Naming Formulas Table */}
+      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest">Naming Formulas</h3>
+            <span className="text-[10px] opacity-60">{namingFormulas.length} rules</span>
+          </div>
+          <button
+            onClick={() => {
+              setEditingNamingFormula(null);
+              setNamingFormulaForm({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50 });
+              setShowNamingFormulaModal(true);
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+          >
+            <Plus size={12} /> Add Naming Formula
+          </button>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+              <th className="p-4 border-r border-[#141414]/10">Type</th>
+              <th className="p-4 border-r border-[#141414]/10">Name</th>
+              <th className="p-4 border-r border-[#141414]/10">Condition</th>
+              <th className="p-4 border-r border-[#141414]/10">Formula</th>
+              <th className="p-4 border-r border-[#141414]/10">Priority</th>
+              <th className="p-4 border-r border-[#141414]/10">Description</th>
+              <th className="p-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#141414]/10">
+            {[...namingFormulas].sort((a, b) => a.type.localeCompare(b.type) || a.priority - b.priority).map(nf => (
+              <tr key={nf.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                <td className="p-4 text-xs border-r border-[#141414]/10">
+                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                    nf.type === 'Long Form' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                  }`}>{nf.type}</span>
+                </td>
+                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{nf.name}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{nf.condition}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{nf.formula}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 text-center font-bold">{nf.priority}</td>
+                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{nf.description || '—'}</td>
+                <td className="p-4 text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingNamingFormula(nf);
+                        setNamingFormulaForm({
+                          type: nf.type,
+                          name: nf.name,
+                          condition: nf.condition,
+                          formula: nf.formula,
+                          description: nf.description || '',
+                          priority: nf.priority,
+                        });
+                        setShowNamingFormulaModal(true);
+                      }}
+                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
+                      title="Edit naming formula"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      onClick={() => setDeleteNamingFormulaConfirmId(nf.id)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete naming formula"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {namingFormulas.length === 0 && (
+              <tr><td colSpan={7} className="p-12 text-center text-xs opacity-50 italic">No naming formulas added yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add/Edit Naming Formula Modal */}
+      <AnimatePresence>
+        {showNamingFormulaModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowNamingFormulaModal(false)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">{editingNamingFormula ? 'Edit Naming Formula' : 'Add Naming Formula'}</h3>
+                <button onClick={() => setShowNamingFormulaModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Type *</label>
+                    <select
+                      value={namingFormulaForm.type}
+                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, type: e.target.value as 'Long Form' | 'Short Form' })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                    >
+                      <option value="Short Form">Short Form</option>
+                      <option value="Long Form">Long Form</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Priority</label>
+                    <input
+                      type="number"
+                      value={namingFormulaForm.priority}
+                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, priority: parseInt(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                      placeholder="Lower = applied first"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
+                  <input
+                    value={namingFormulaForm.name}
+                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, name: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                    placeholder="e.g. Default Short Form, Bulk Short Form"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Condition</label>
+                  <input
+                    value={namingFormulaForm.condition}
+                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, condition: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors font-mono"
+                    placeholder="e.g. Default, Product Group = Bulk, Sugar Type = Molasses"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Formula *</label>
+                  <input
+                    value={namingFormulaForm.formula}
+                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, formula: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors font-mono"
+                    placeholder="e.g. {NetWeight}kg {SugarTypeAbbr}{C/O}{MaxColor}"
+                  />
+                  <p className="text-[10px] opacity-50 mt-1">Tokens: {'{NetWeight}'}, {'{PackagingFormat}'}, {'{SugarType}'}, {'{SugarTypeAbbr}'}, {'{Conv./Organic}'}, {'{C/O}'}, {'{MaxColor}'}</p>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
+                  <textarea
+                    value={namingFormulaForm.description}
+                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, description: e.target.value })}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white transition-colors"
+                    placeholder="Explain when this rule applies"
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      if (!namingFormulaForm.name.trim() || !namingFormulaForm.formula.trim()) return;
+                      if (editingNamingFormula) {
+                        onUpdateNamingFormulas(namingFormulas.map(nf => nf.id === editingNamingFormula.id ? {
+                          ...editingNamingFormula,
+                          type: namingFormulaForm.type,
+                          name: namingFormulaForm.name,
+                          condition: namingFormulaForm.condition,
+                          formula: namingFormulaForm.formula,
+                          description: namingFormulaForm.description,
+                          priority: namingFormulaForm.priority,
+                        } : nf));
+                      } else {
+                        const newFormula: NamingFormula = {
+                          id: `NF-${Date.now()}`,
+                          type: namingFormulaForm.type,
+                          name: namingFormulaForm.name,
+                          condition: namingFormulaForm.condition,
+                          formula: namingFormulaForm.formula,
+                          description: namingFormulaForm.description,
+                          priority: namingFormulaForm.priority,
+                        };
+                        onUpdateNamingFormulas([...namingFormulas, newFormula]);
+                      }
+                      setShowNamingFormulaModal(false);
+                      setEditingNamingFormula(null);
+                    }}
+                    disabled={!namingFormulaForm.name.trim() || !namingFormulaForm.formula.trim()}
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
+                  >
+                    {editingNamingFormula ? 'Save Changes' : 'Add Formula'}
+                  </button>
+                  <button
+                    onClick={() => setShowNamingFormulaModal(false)}
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Naming Formula Confirmation Modal */}
+      <AnimatePresence>
+        {deleteNamingFormulaConfirmId && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteNamingFormulaConfirmId(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Delete Naming Formula</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm">Are you sure you want to delete this naming formula rule? This cannot be undone.</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      onUpdateNamingFormulas(namingFormulas.filter(nf => nf.id !== deleteNamingFormulaConfirmId));
+                      setDeleteNamingFormulaConfirmId(null);
+                    }}
+                    className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={() => setDeleteNamingFormulaConfirmId(null)}
                     className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
                   >
                     Cancel
@@ -1545,10 +1815,13 @@ export default function QualityAssurancePage({
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">
                         {(() => {
+                          if (newProductData.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === newProductData.sugarType);
+                          if (!st) return '—';
                           const co = newProductData.category === 'Conventional' ? 'C' : 'O';
-                          const wt = newProductData.netWeightKg ? `${newProductData.netWeightKg}kg` : '';
-                          return st ? `${wt}${st.abbreviation}${co}${newProductData.maxColor || 0}` : '—';
+                          if (newProductData.productGroup === 'Bulk') return `${st.abbreviation}${co}${newProductData.maxColor || 0}`;
+                          const wt = newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : '';
+                          return `${wt}${st.abbreviation}${co}${newProductData.maxColor || 0}`;
                         })()}
                       </div>
                     </div>
@@ -1732,10 +2005,13 @@ export default function QualityAssurancePage({
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
+                          if (editData?.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
+                          if (!st) return '—';
                           const co = editData?.category === 'Conventional' ? 'C' : 'O';
-                          const wt = editData?.netWeightKg ? `${editData.netWeightKg}kg` : '';
-                          return st ? `${wt}${st.abbreviation}${co}${editData?.maxColor || 0}` : '—';
+                          if (editData?.productGroup === 'Bulk') return `${st.abbreviation}${co}${editData?.maxColor || 0}`;
+                          const wt = editData?.netWeightKg ? `${editData.netWeightKg}kg ` : '';
+                          return `${wt}${st.abbreviation}${co}${editData?.maxColor || 0}`;
                         })()}</div>
                       </div>
                     </div>
@@ -1769,10 +2045,13 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
+                        if (displayData.sugarType === 'Molasses') return 'MOL';
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
+                        if (!st) return '—';
                         const co = displayData.category === 'Conventional' ? 'C' : 'O';
-                        const wt = displayData.netWeightKg ? `${displayData.netWeightKg}kg` : '';
-                        return st ? `${wt}${st.abbreviation}${co}${displayData.maxColor}` : '—';
+                        if (displayData.productGroup === 'Bulk') return `${st.abbreviation}${co}${displayData.maxColor}`;
+                        const wt = displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : '';
+                        return `${wt}${st.abbreviation}${co}${displayData.maxColor}`;
                       })()}</div></div>
                     </div>
                     <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
