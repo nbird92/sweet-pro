@@ -2439,6 +2439,34 @@ export default function App() {
     setSkus(skus.filter(s => s.id !== id));
   };
 
+  // Compute the shortform code for a product, using the latest QA data + sugar type rules.
+  // Falls back to the original product name if the lookup fails so legacy values remain readable.
+  const productToShortform = (productName: string | undefined): string => {
+    if (!productName) return '';
+    // If it's already a shortform-shaped value (e.g. "MOL", "GCC45", "20kg GCC45"), return as-is.
+    const looksLikeShortform = productName === 'MOL'
+      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CO]\d+$/.test(productName)
+      || /^[A-Z]{2,4}[CO]\d+$/.test(productName);
+    if (looksLikeShortform) return productName;
+    // Look up by SKU name first, then fall back to QA product skuName.
+    const sku = skus.find(s => s.name === productName);
+    const qa = sku
+      ? qaProducts.find(q => q.skuId === sku.id)
+      : qaProducts.find(q => q.skuName === productName);
+    const sugarType = qa?.sugarType || sku?.sugarType;
+    const productGroup = qa?.productGroup || sku?.productGroup;
+    const category = qa?.category || sku?.category;
+    const maxColor = qa?.maxColor ?? sku?.maxColor;
+    const netWeightKg = qa?.netWeightKg ?? sku?.netWeightKg ?? sku?.netWeight;
+    if (sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(t => t.name === sugarType);
+    if (!st || !category || maxColor === undefined) return productName;
+    const co = category === 'Conventional' ? 'C' : 'O';
+    if (productGroup === 'Bulk') return `${st.abbreviation}${co}${maxColor}`;
+    const wt = netWeightKg ? `${netWeightKg}kg ` : '';
+    return `${wt}${st.abbreviation}${co}${maxColor}`;
+  };
+
   const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
     let maxNum = 0;
     existingCustomers.forEach(c => {
@@ -4054,7 +4082,7 @@ export default function App() {
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Location', key: 'location' },
         ],
-        rows: invoices as any[],
+        rows: invoices.map(inv => ({ ...inv, product: productToShortform(inv.product) })) as any[],
       }];
       return (
         <div className="space-y-0">
@@ -4153,7 +4181,7 @@ export default function App() {
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.product}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{productToShortform(i.product)}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
@@ -4251,7 +4279,7 @@ export default function App() {
                                       <tbody className="divide-y divide-[#141414]/10">
                                         {invoiceLineItems.map(item => (
                                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{item.productName}</td>
+                                            <td className="p-3">{productToShortform(item.productName)}</td>
                                             <td className="p-3">{item.qty}</td>
                                             <td className="p-3">{item.netWeightPerUnit}</td>
                                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -4333,10 +4361,11 @@ export default function App() {
         const li = o.lineItems[0];
         const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
         const contract = contracts.find(c => c.contractNumber === o.contractNumber);
+        const rawProduct = o.product || li?.productName || '';
         return {
           bolNumber: o.bolNumber,
           customer: o.customer,
-          product: o.product || li?.productName || '',
+          product: productToShortform(rawProduct),
           contractNumber: o.contractNumber || li?.contractNumber || '',
           po: o.po,
           date: o.date,
@@ -4470,7 +4499,9 @@ export default function App() {
                 )}
                 {filteredOrders.map(ord => {
                   const totalWeight = ord.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
-                  const productDisplay = ord.product || ord.lineItems.map(li => li.productName).join(', ');
+                  const productDisplay = ord.product
+                    ? productToShortform(ord.product)
+                    : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
                   return (
                     <React.Fragment key={ord.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
@@ -4667,7 +4698,7 @@ export default function App() {
                                       <tbody className="divide-y divide-[#141414]/10">
                                         {ord.lineItems.map(item => (
                                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{item.productName}</td>
+                                            <td className="p-3">{productToShortform(item.productName)}</td>
                                             <td className="p-3">{item.qty}</td>
                                             <td className="p-3">{item.netWeightPerUnit}</td>
                                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -7352,7 +7383,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {(editingInvoiceCard.lineItems || []).map(item => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                            <td className="p-3">{item.productName}</td>
+                            <td className="p-3">{productToShortform(item.productName)}</td>
                             <td className="p-3">{item.qty}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -7492,7 +7523,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {viewingOrderCard.lineItems.map(item => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                            <td className="p-3">{item.productName}</td>
+                            <td className="p-3">{productToShortform(item.productName)}</td>
                             <td className="p-3">{item.qty}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -8088,7 +8119,7 @@ export default function App() {
                               <tr key={o.id} className="hover:bg-[#F9F9F9] transition-colors">
                                 <td className="p-2 font-bold font-mono">{o.bolNumber}</td>
                                 <td className="p-2">{o.customer}</td>
-                                <td className="p-2 truncate max-w-[150px]">{o.product}</td>
+                                <td className="p-2 truncate max-w-[150px]">{productToShortform(o.product)}</td>
                                 <td className="p-2">{o.po}</td>
                                 <td className="p-2 text-right font-bold">{(o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000).toFixed(0)}</td>
                                 <td className="p-2 text-center">
@@ -8253,7 +8284,7 @@ export default function App() {
                                     <tr key={o.id} className="hover:bg-[#F9F9F9] transition-colors">
                                       <td className="p-2 font-bold font-mono">{o.bolNumber}</td>
                                       <td className="p-2">{o.customer}</td>
-                                      <td className="p-2 truncate max-w-[150px]">{o.product}</td>
+                                      <td className="p-2 truncate max-w-[150px]">{productToShortform(o.product)}</td>
                                       <td className="p-2">{o.po}</td>
                                       <td className="p-2 text-right font-bold">{(o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000).toFixed(0)}</td>
                                       <td className="p-2 text-center">
@@ -10874,7 +10905,7 @@ export default function App() {
                         <tr key={inv.id} className="hover:bg-[#F9F9F9]">
                           <td className="p-2 font-mono">{inv.id.substring(0, 12)}</td>
                           <td className="p-2">{inv.bolNumber}</td>
-                          <td className="p-2">{inv.product}</td>
+                          <td className="p-2">{productToShortform(inv.product)}</td>
                           <td className="p-2 text-right font-bold">{inv.qty.toFixed(2)}</td>
                           <td className="p-2 text-right font-bold">${inv.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                           <td className="p-2">
@@ -11056,7 +11087,7 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
-                        {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        {skus.map(s => <option key={s.id} value={s.name}>{productToShortform(s.name)}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
@@ -11193,7 +11224,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {orderLineItems.map((item, idx) => (
                           <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
-                            <td className="p-2">{item.productName}</td>
+                            <td className="p-2">{productToShortform(item.productName)}</td>
                             <td className="p-2">{item.qty}</td>
                             <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
                             <td className="p-2">{item.contractNumber}</td>
@@ -11484,7 +11515,7 @@ export default function App() {
                             className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                           >
                             <option value="">Select Product</option>
-                            {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                            {skus.map(s => <option key={s.id} value={s.name}>{productToShortform(s.name)}</option>)}
                           </select>
                         </div>
                         <div className="space-y-0.5">
@@ -12560,7 +12591,7 @@ export default function App() {
                             <tbody className="divide-y divide-[#141414]/10">
                               {order.lineItems.map(item => (
                                 <tr key={item.id} className="hover:bg-[#F9F9F9]">
-                                  <td className="p-2">{item.productName}</td>
+                                  <td className="p-2">{productToShortform(item.productName)}</td>
                                   <td className="p-2">{item.qty}</td>
                                   <td className="p-2">{(item.netWeightPerUnit * 1000).toFixed(0)}</td>
                                   <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
