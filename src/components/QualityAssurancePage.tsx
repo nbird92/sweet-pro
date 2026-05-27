@@ -650,7 +650,8 @@ export default function QualityAssurancePage({
     subtitle: `Generated ${new Date().toLocaleDateString()} | ${qaProducts.length} products`,
     columns: [
       { header: 'Prod No.', key: 'id' },
-      { header: 'Product Format', key: 'productFormat' },
+      { header: 'Product Name', key: 'productName' },
+      { header: 'Packaging Format', key: 'productFormat' },
       { header: 'Product Group', key: 'productGroup' },
       { header: 'Sugar Type', key: 'sugarType' },
       { header: 'Shortform', key: 'shortform' },
@@ -676,7 +677,10 @@ export default function QualityAssurancePage({
           }
         }
       }
-      return { ...p, shortform } as any;
+      const productName = (p.productFormat && p.sugarType)
+        ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
+        : '';
+      return { ...p, shortform, productName } as any;
     }),
   }];
   return (
@@ -707,7 +711,8 @@ export default function QualityAssurancePage({
             <thead>
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <SortHeader label="Prod No." sortKey="id" />
-                <SortHeader label="Product Format" sortKey="productFormat" />
+                <SortHeader label="Product Name" sortKey="productName" />
+                <SortHeader label="Packaging Format" sortKey="productFormat" />
                 <SortHeader label="Product Group" sortKey="productGroup" />
                 <SortHeader label="Sugar Type" sortKey="sugarType" />
                 <SortHeader label="Shortform" sortKey="shortform" />
@@ -735,7 +740,10 @@ export default function QualityAssurancePage({
                     onClick={() => openDetail(p)}
                   >
                     <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.id}</td>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{p.productFormat || '—'}</td>
+                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{(p.productFormat && p.sugarType)
+                      ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
+                      : '—'}</td>
+                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.productFormat || '—'}</td>
                     <td className="p-4 border-r border-[#141414]/10">
                       <span
                         className="px-2 py-1 text-[10px] font-bold uppercase border border-[#141414]/20"
@@ -774,7 +782,7 @@ export default function QualityAssurancePage({
                 );
               }) : (
                 <tr>
-                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={11}>
+                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={12}>
                     No products added yet. Click "Add Product" to get started.
                   </td>
                 </tr>
@@ -2351,7 +2359,7 @@ export default function QualityAssurancePage({
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format <span className="text-red-500">*</span></label>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format <span className="text-red-500">*</span></label>
                       <select
                         value={newProductData.productFormat || ''}
                         onChange={(e) => setNewProductData(prev => ({ ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName }))}
@@ -2405,7 +2413,7 @@ export default function QualityAssurancePage({
                   </div>
 
                   {/* Locked calculated fields */}
-                  <div className="grid grid-cols-3 gap-4 pt-3 border-t border-[#141414]/10">
+                  <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">
@@ -2425,14 +2433,6 @@ export default function QualityAssurancePage({
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
                         {newProductData.productFormat && newProductData.sugarType
                           ? `${newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : ''}${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || 0}`
-                          : '—'}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</label>
-                      <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                        {newProductData.productFormat && newProductData.sugarType && newProductData.category
-                          ? `${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || ''}`
                           : '—'}
                       </div>
                     </div>
@@ -2546,7 +2546,7 @@ export default function QualityAssurancePage({
                     <>
                     <div className="grid grid-cols-3 gap-4">
                       <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</label>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format</label>
                         <select
                           value={editData?.productFormat || ''}
                           onChange={(e) => setEditData(prev => prev ? { ...prev, productFormat: e.target.value || undefined, skuName: e.target.value || prev.skuName } : prev)}
@@ -2611,7 +2611,7 @@ export default function QualityAssurancePage({
                       </div>
                     </div>
                     {/* Locked calculated fields */}
-                    <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
+                    <div className="pt-3 border-t border-[#141414]/10">
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
@@ -2620,18 +2620,12 @@ export default function QualityAssurancePage({
                             : '—'}
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</label>
-                        <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                          {editData?.productFormat && editData?.sugarType && editData?.category ? `${editData.productFormat} ${editData.sugarType} ${editData.category} ${editData.maxColor || ''}` : '—'}
-                        </div>
-                      </div>
                     </div>
                     </>
                   ) : (
                     <>
                     <div className="grid grid-cols-5 gap-4">
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Format</div><div className="text-xs font-bold">{displayData.productFormat || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format</div><div className="text-xs font-bold">{displayData.productFormat || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Group</div><div className="text-xs font-bold">{displayData.productGroup}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Conv./Organic</div><div className="text-xs font-bold">{displayData.category}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</div><div className="text-xs font-bold">{displayData.sugarType || '—'}</div></div>
@@ -2649,14 +2643,11 @@ export default function QualityAssurancePage({
                         return `${wt}${st.abbreviation}${co}${displayData.maxColor}`;
                       })()}</div></div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
+                    <div className="pt-3 border-t border-[#141414]/10">
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</div><div className="text-xs font-bold">
                         {displayData.productFormat && displayData.sugarType
                           ? `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`
                           : '—'}
-                      </div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Long Form (Auto)</div><div className="text-xs font-bold">
-                        {displayData.productFormat && displayData.sugarType && displayData.category ? `${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || ''}` : '—'}
                       </div></div>
                     </div>
                     </>

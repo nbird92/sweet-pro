@@ -4705,7 +4705,8 @@ export default function App() {
           subtitle: `Generated ${new Date().toLocaleDateString()} | ${skus.length} products`,
           columns: [
             { header: 'Prod No.', key: 'id' },
-            { header: 'Product Format', key: 'productFormat' },
+            { header: 'Product Name', key: 'productName' },
+            { header: 'Packaging Format', key: 'productFormat' },
             { header: 'Product Group', key: 'productGroup' },
             { header: 'Sugar Type', key: 'sugarType' },
             { header: 'Shortform', key: 'shortform' },
@@ -4735,8 +4736,12 @@ export default function App() {
                 }
               }
             }
+            const productName = (productFormat && sugarType)
+              ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
+              : '';
             return {
               ...s,
+              productName,
               productFormat,
               sugarType,
               shortform,
@@ -4772,7 +4777,8 @@ export default function App() {
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Prod No." sortKey="id" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product Format" sortKey="productFormat" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Product Name" sortKey="productName" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Packaging Format" sortKey="productFormat" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product Group" sortKey="productGroup" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Sugar Type" sortKey="sugarType" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Shortform" sortKey="shortform" currentSort={sortConfig} onSort={handleSort} />
@@ -4806,11 +4812,15 @@ export default function App() {
                       }
                     }
                   }
+                  const productName = (productFormat !== '—' && sugarType !== '—')
+                    ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
+                    : '—';
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.id}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{productFormat}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{productName}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">{productFormat}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">
                           <span className="px-2 py-0.5 border border-[#141414]/10 text-[10px] font-bold" style={{ backgroundColor: pg?.color }}>
                             {s.productGroup}
@@ -4832,7 +4842,7 @@ export default function App() {
                       <AnimatePresence>
                         {expandedRows.has(s.id) && (
                           <tr>
-                            <td colSpan={11} className="p-0">
+                            <td colSpan={12} className="p-0">
                               <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -9900,7 +9910,7 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Format</label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Packaging Format</label>
                     <input
                       type="text"
                       value={newSku.productFormat || ""}
@@ -9961,21 +9971,13 @@ export default function App() {
                 </div>
 
                 {/* Locked calculated fields */}
-                <div className="grid grid-cols-2 gap-6 pt-2 border-t border-[#E4E3E0]">
+                <div className="pt-2 border-t border-[#E4E3E0]">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
                       {newSku.productFormat && newSku.sugarType
                         ? `${newSku.netWeightKg ? `${newSku.netWeightKg}kg ` : ''}${newSku.productFormat} ${newSku.sugarType} ${newSku.category} ${newSku.maxColor || 0}`
                         : '—'}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Long Form</label>
-                    <div className="w-full bg-[#EFEFEF] border border-[#141414] p-3 text-sm text-[#141414]">
-                      {newSku.productFormat && newSku.sugarType && newSku.category && (
-                        `${newSku.productFormat} ${newSku.sugarType} ${newSku.category} ${newSku.maxColor || ''}`
-                      )}
                     </div>
                   </div>
                 </div>
@@ -10288,7 +10290,7 @@ export default function App() {
                     <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.location}</div>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Format</label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Packaging Format</label>
                     <div className="w-full bg-[#E4E3E0] border border-[#141414]/20 p-3 text-sm opacity-70">{editingSku.productFormat || '-'}</div>
                   </div>
                   <div className="space-y-1">
@@ -10320,21 +10322,13 @@ export default function App() {
                 </div>
 
                 {/* Locked calculated fields */}
-                <div className="grid grid-cols-2 gap-6 pt-2 border-t border-[#E4E3E0]">
+                <div className="pt-2 border-t border-[#E4E3E0]">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Product Name</label>
                     <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
                       {editingSku.productFormat && editingSku.sugarType
                         ? `${editingSku.netWeightKg ? `${editingSku.netWeightKg}kg ` : ''}${editingSku.productFormat} ${editingSku.sugarType} ${editingSku.category} ${editingSku.maxColor || 0}`
                         : '—'}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Product Long Form</label>
-                    <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-3 text-sm opacity-70">
-                      {editingSku.productFormat && editingSku.sugarType && editingSku.category && (
-                        `${editingSku.productFormat} ${editingSku.sugarType} ${editingSku.category} ${editingSku.maxColor || ''}`
-                      )}
                     </div>
                   </div>
                 </div>
