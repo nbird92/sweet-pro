@@ -84,7 +84,7 @@ export function resolveToken(token: FormulaToken, product: NameableProduct, ctx:
       case 'maxColor':
         return product.maxColor !== undefined && product.maxColor !== null ? String(product.maxColor) : '';
       case 'coChar':
-        return product.category === 'Conventional' ? 'C' : product.category === 'Organic' ? 'O' : '';
+        return product.category === 'Conventional' ? 'C' : product.category === 'Organic' ? 'B' : '';
       case 'sugarTypeAbbreviation': {
         const st = ctx.sugarTypes.find(s => s.name === product.sugarType);
         return st?.abbreviation || '';

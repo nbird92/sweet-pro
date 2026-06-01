@@ -679,7 +679,7 @@ export default function QualityAssurancePage({
         } else {
           const st = sugarTypes.find(s => s.name === p.sugarType);
           if (st) {
-            const co = p.category === 'Conventional' ? 'C' : 'O';
+            const co = p.category === 'Conventional' ? 'C' : 'B';
             if (p.productGroup === 'Bulk') {
               shortform = `${st.abbreviation}${co}${p.maxColor}`;
             } else {
@@ -773,7 +773,7 @@ export default function QualityAssurancePage({
                       if (p.sugarType === 'Molasses') return 'MOL';
                       const st = sugarTypes.find(s => s.name === p.sugarType);
                       if (!st) return '—';
-                      const co = p.category === 'Conventional' ? 'C' : 'O';
+                      const co = p.category === 'Conventional' ? 'C' : 'B';
                       if (p.productGroup === 'Bulk') return `${st.abbreviation}${co}${p.maxColor}`;
                       const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
                       return `${wt}${st.abbreviation}${co}${p.maxColor}`;
@@ -1242,7 +1242,7 @@ export default function QualityAssurancePage({
                           <option value="productFormat">Product Format</option>
                           <option value="productGroup">Product Group</option>
                           <option value="category">Conv./Organic</option>
-                          <option value="coChar">C/O Character</option>
+                          <option value="coChar">C/B Character</option>
                           <option value="sugarType">Sugar Type</option>
                           <option value="sugarTypeAbbreviation">Sugar Type Abbreviation</option>
                           <option value="productGroupBolCode">Product Group BOL Code</option>
@@ -1310,7 +1310,7 @@ export default function QualityAssurancePage({
                               productFormat: 'Product Format',
                               productGroup: 'Product Group',
                               category: 'Conv./Organic',
-                              coChar: 'C/O Character',
+                              coChar: 'C/B Character',
                               sugarType: 'Sugar Type',
                               sugarTypeAbbreviation: 'Sugar Type Abbreviation',
                               productGroupBolCode: 'Product Group BOL Code',
@@ -2436,7 +2436,7 @@ export default function QualityAssurancePage({
                           if (newProductData.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === newProductData.sugarType);
                           if (!st) return '—';
-                          const co = newProductData.category === 'Conventional' ? 'C' : 'O';
+                          const co = newProductData.category === 'Conventional' ? 'C' : 'B';
                           if (newProductData.productGroup === 'Bulk') return `${st.abbreviation}${co}${newProductData.maxColor || 0}`;
                           const wt = newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : '';
                           return `${wt}${st.abbreviation}${co}${newProductData.maxColor || 0}`;
@@ -2624,7 +2624,7 @@ export default function QualityAssurancePage({
                           if (editData?.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
                           if (!st) return '—';
-                          const co = editData?.category === 'Conventional' ? 'C' : 'O';
+                          const co = editData?.category === 'Conventional' ? 'C' : 'B';
                           if (editData?.productGroup === 'Bulk') return `${st.abbreviation}${co}${editData?.maxColor || 0}`;
                           const wt = editData?.netWeightKg ? `${editData.netWeightKg}kg ` : '';
                           return `${wt}${st.abbreviation}${co}${editData?.maxColor || 0}`;
@@ -2664,7 +2664,7 @@ export default function QualityAssurancePage({
                         if (displayData.sugarType === 'Molasses') return 'MOL';
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
                         if (!st) return '—';
-                        const co = displayData.category === 'Conventional' ? 'C' : 'O';
+                        const co = displayData.category === 'Conventional' ? 'C' : 'B';
                         if (displayData.productGroup === 'Bulk') return `${st.abbreviation}${co}${displayData.maxColor}`;
                         const wt = displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : '';
                         return `${wt}${st.abbreviation}${co}${displayData.maxColor}`;

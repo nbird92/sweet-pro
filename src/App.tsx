@@ -2499,7 +2499,7 @@ export default function App() {
       if (product.sugarType === 'Molasses') return 'MOL';
       const st = sugarTypes.find(t => t.name === product.sugarType);
       if (!st || !product.category || product.maxColor === undefined) return '';
-      const co = product.category === 'Conventional' ? 'C' : 'O';
+      const co = product.category === 'Conventional' ? 'C' : 'B';
       if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
       const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
       return `${wt}${st.abbreviation}${co}${product.maxColor}`;
@@ -2627,8 +2627,8 @@ export default function App() {
     if (!productName) return true; // empty cells aren't outliers
     // Already a shortform shape — treat as matched to avoid false warnings
     const looksLikeShortform = productName === 'MOL'
-      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CO]\d+$/.test(productName)
-      || /^[A-Z]{2,4}[CO]\d+$/.test(productName);
+      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CB]\d+$/.test(productName)
+      || /^[A-Z]{2,4}[CB]\d+$/.test(productName);
     if (looksLikeShortform) return true;
     return resolveProduct(productName).sku !== null;
   };
@@ -2651,8 +2651,8 @@ export default function App() {
     if (!productName) return '';
     // If it's already a shortform-shaped value (e.g. "MOL", "GCC45", "20kg GCC45"), return as-is.
     const looksLikeShortform = productName === 'MOL'
-      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CO]\d+$/.test(productName)
-      || /^[A-Z]{2,4}[CO]\d+$/.test(productName);
+      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CB]\d+$/.test(productName)
+      || /^[A-Z]{2,4}[CB]\d+$/.test(productName);
     if (looksLikeShortform) return productName;
 
     const { sku, qa } = resolveProduct(productName);
@@ -2668,7 +2668,7 @@ export default function App() {
     if (product.sugarType === 'Molasses') return 'MOL';
     const st = sugarTypes.find(t => t.name === product.sugarType);
     if (!st || !product.category || product.maxColor === undefined) return productName;
-    const co = product.category === 'Conventional' ? 'C' : 'O';
+    const co = product.category === 'Conventional' ? 'C' : 'B';
     if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
@@ -2703,7 +2703,7 @@ export default function App() {
     // 2) Legacy hardcoded fallback
     if (product.sugarType === 'Molasses') return 'MOL';
     const st = sugarTypes.find(t => t.name === product.sugarType);
-    const co = product.category === 'Conventional' ? 'C' : product.category === 'Organic' ? 'O' : '';
+    const co = product.category === 'Conventional' ? 'C' : product.category === 'Organic' ? 'B' : '';
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     const colorStr = product.maxColor !== undefined && product.maxColor !== null ? String(product.maxColor) : '';
 
@@ -5076,7 +5076,7 @@ export default function App() {
             } else {
               const st = sugarTypes.find(t => t.name === sugarType);
               if (st) {
-                const co = s.category === 'Conventional' ? 'C' : 'O';
+                const co = s.category === 'Conventional' ? 'C' : 'B';
                 if (s.productGroup === 'Bulk') {
                   shortform = `${st.abbreviation}${co}${s.maxColor}`;
                 } else {
@@ -5156,7 +5156,7 @@ export default function App() {
                     } else {
                       const st = sugarTypes.find(t => t.name === sugarType);
                       if (st) {
-                        const co = s.category === 'Conventional' ? 'C' : 'O';
+                        const co = s.category === 'Conventional' ? 'C' : 'B';
                         if (s.productGroup === 'Bulk') {
                           shortform = `${st.abbreviation}${co}${s.maxColor}`;
                         } else {
