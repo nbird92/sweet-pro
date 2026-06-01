@@ -2439,6 +2439,98 @@ export default function App() {
     setSkus(skus.filter(s => s.id !== id));
   };
 
+  // Look up the SKU + QA product that best matches a free-text product name.
+  // Tries an exact match first, then fuzzy keyword parsing (e.g. "Fine Granulated" → Granulated).
+  // Returns { sku, qa } or { sku: null, qa: null } if no match.
+  const resolveProduct = (productName: string | undefined): { sku: SKU | null; qa: QAProduct | null } => {
+    if (!productName) return { sku: null, qa: null };
+
+    // 1. Direct SKU name match
+    let sku = skus.find(s => s.name === productName) || null;
+    let qa: QAProduct | null = sku
+      ? (qaProducts.find(q => q.skuId === sku!.id) || null)
+      : (qaProducts.find(q => q.skuName === productName) || null);
+    if (qa && !sku) sku = skus.find(s => s.id === qa!.skuId) || null;
+    if (sku) return { sku, qa };
+
+    // 2. Fuzzy match by parsing keywords from the name
+    const lower = productName.toLowerCase();
+
+    // Sugar type detection (longest match first; "fine granulated" → Granulated)
+    let detectedSugar: string | undefined;
+    if (lower.includes('molasses')) detectedSugar = 'Molasses';
+    else if (lower.includes('granulated') || lower.includes('fine granulated')) detectedSugar = 'Granulated';
+    else if (lower.includes('icing') || lower.includes('powdered')) detectedSugar = 'Icing';
+    else if (lower.includes('brown')) detectedSugar = 'Brown';
+    else if (lower.includes('yellow')) detectedSugar = 'Yellow';
+    else if (lower.includes('liquid')) detectedSugar = 'Liquid';
+
+    // Product group detection
+    let detectedGroup: string | undefined;
+    if (lower.includes('bulk')) detectedGroup = 'Bulk';
+    else if (lower.includes('tote')) detectedGroup = 'Tote';
+    else if (lower.includes('bag')) detectedGroup = 'Bagged';
+    else if (lower.includes('liquid')) detectedGroup = 'Liquid';
+
+    // Category detection
+    const detectedCategory: 'Conventional' | 'Organic' = lower.includes('organic') ? 'Organic' : 'Conventional';
+
+    // Max color detection — try trailing number first, then any 2-3 digit number
+    const trailingColor = productName.match(/(\d{2,3})\s*$/);
+    const anyColor = productName.match(/\b(\d{2,3})\b/);
+    const detectedColor: number | undefined = trailingColor
+      ? parseInt(trailingColor[1])
+      : (anyColor ? parseInt(anyColor[1]) : undefined);
+
+    // Weight detection (e.g. "20kg", "1000 kg")
+    const weightMatch = productName.match(/(\d+(?:\.\d+)?)\s*kg\b/i);
+    const detectedWeight: number | undefined = weightMatch ? parseFloat(weightMatch[1]) : undefined;
+
+    // Score each candidate SKU by attribute matches
+    const scoreCandidate = (s: SKU): number => {
+      const q = qaProducts.find(p => p.skuId === s.id);
+      const sugarT = q?.sugarType || s.sugarType;
+      const groupT = q?.productGroup || s.productGroup;
+      const catT = q?.category || s.category;
+      const colorT = q?.maxColor ?? s.maxColor;
+      const weightT = q?.netWeightKg ?? s.netWeightKg ?? s.netWeight;
+      let score = 0;
+      if (detectedSugar && sugarT === detectedSugar) score += 5;
+      if (detectedGroup && groupT === detectedGroup) score += 4;
+      if (catT === detectedCategory) score += 1;
+      if (detectedColor !== undefined && colorT === detectedColor) score += 3;
+      if (detectedWeight !== undefined && weightT === detectedWeight) score += 3;
+      return score;
+    };
+
+    let best: SKU | null = null;
+    let bestScore = 0;
+    for (const candidate of skus) {
+      const score = scoreCandidate(candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+    // Require at least a sugar-type match (score 5+) to consider it a real match
+    if (best && bestScore >= 5) {
+      const matchedQA = qaProducts.find(p => p.skuId === best!.id) || null;
+      return { sku: best, qa: matchedQA };
+    }
+    return { sku: null, qa: null };
+  };
+
+  // True if the product name can be resolved to a current SKU. Used to highlight outliers.
+  const productMatchesCurrentSku = (productName: string | undefined): boolean => {
+    if (!productName) return true; // empty cells aren't outliers
+    // Already a shortform shape — treat as matched to avoid false warnings
+    const looksLikeShortform = productName === 'MOL'
+      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CO]\d+$/.test(productName)
+      || /^[A-Z]{2,4}[CO]\d+$/.test(productName);
+    if (looksLikeShortform) return true;
+    return resolveProduct(productName).sku !== null;
+  };
+
   // Compute the shortform code for a product, using the latest QA data + sugar type rules.
   // Falls back to the original product name if the lookup fails so legacy values remain readable.
   const productToShortform = (productName: string | undefined): string => {
@@ -2448,16 +2540,15 @@ export default function App() {
       || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CO]\d+$/.test(productName)
       || /^[A-Z]{2,4}[CO]\d+$/.test(productName);
     if (looksLikeShortform) return productName;
-    // Look up by SKU name first, then fall back to QA product skuName.
-    const sku = skus.find(s => s.name === productName);
-    const qa = sku
-      ? qaProducts.find(q => q.skuId === sku.id)
-      : qaProducts.find(q => q.skuName === productName);
-    const sugarType = qa?.sugarType || sku?.sugarType;
-    const productGroup = qa?.productGroup || sku?.productGroup;
-    const category = qa?.category || sku?.category;
-    const maxColor = qa?.maxColor ?? sku?.maxColor;
-    const netWeightKg = qa?.netWeightKg ?? sku?.netWeightKg ?? sku?.netWeight;
+
+    const { sku, qa } = resolveProduct(productName);
+    if (!sku) return productName; // unmatched — caller can highlight via productMatchesCurrentSku
+
+    const sugarType = qa?.sugarType || sku.sugarType;
+    const productGroup = qa?.productGroup || sku.productGroup;
+    const category = qa?.category || sku.category;
+    const maxColor = qa?.maxColor ?? sku.maxColor;
+    const netWeightKg = qa?.netWeightKg ?? sku.netWeightKg ?? sku.netWeight;
     if (sugarType === 'Molasses') return 'MOL';
     const st = sugarTypes.find(t => t.name === sugarType);
     if (!st || !category || maxColor === undefined) return productName;
@@ -3223,7 +3314,7 @@ export default function App() {
           { header: 'Status', key: 'status' },
           { header: 'Lot Number', key: 'lotNumber' },
         ],
-        rows: locationShipments as any[],
+        rows: locationShipments.map(sh => ({ ...sh, product: productToShortform(sh.product) })) as any[],
       }];
       return (
         <div>
@@ -3418,7 +3509,7 @@ export default function App() {
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.product}</td>
+                                                        <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
@@ -4181,7 +4272,7 @@ export default function App() {
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{productToShortform(i.product)}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productMatchesCurrentSku(i.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(i.product) ? `No matching product in catalog: ${i.product}` : ''}>{productToShortform(i.product)}{!productMatchesCurrentSku(i.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
@@ -4502,12 +4593,16 @@ export default function App() {
                   const productDisplay = ord.product
                     ? productToShortform(ord.product)
                     : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
+                  // Outlier check: product (or any line item) does not match a current SKU
+                  const productUnmatched = ord.product
+                    ? !productMatchesCurrentSku(ord.product)
+                    : ord.lineItems.some(li => !productMatchesCurrentSku(li.productName));
                   return (
                     <React.Fragment key={ord.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px]" title={productDisplay}>{productDisplay}</td>
+                        <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(totalWeight * 1000).toFixed(0)}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po}</td>
@@ -8633,7 +8728,7 @@ export default function App() {
                     {/* Summary info */}
                     <div className="bg-[#F5F5F5] p-3 border border-[#141414]/10 grid grid-cols-4 gap-3 text-xs">
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Customer</span><span className="font-bold">{editingShipment.customer}</span></div>
-                      <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Product</span><span className="font-bold">{editingShipment.product}</span></div>
+                      <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Product</span><span className={`font-bold ${!productMatchesCurrentSku(editingShipment.product) ? 'text-red-700' : ''}`}>{productToShortform(editingShipment.product)}{!productMatchesCurrentSku(editingShipment.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</span></div>
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">BOL #</span><span className="font-bold font-mono">{editingShipment.bol}</span></div>
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">QTY</span><span className="font-bold">{editingShipment.qty}</span></div>
                     </div>
