@@ -2688,6 +2688,36 @@ export default function App() {
     return '';
   };
 
+  // Compute the shortform directly from a SKU object (vs. a free-text name).
+  // Always returns a shortform-shaped string when possible, with graceful
+  // partial output if some attributes are missing. Used for dropdown labels
+  // where every product MUST appear with a shortform.
+  const skuToShortform = (sku: SKU): string => {
+    const qa = qaProducts.find(q => q.skuId === sku.id) || null;
+    const product = buildProductAttrs(sku, qa);
+
+    // 1) User-defined naming formula
+    const resolved = resolveShortFormRule(namingFormulas, product, { sugarTypes, productGroups });
+    if (resolved && resolved.trim()) return resolved.trim();
+
+    // 2) Legacy hardcoded fallback
+    if (product.sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(t => t.name === product.sugarType);
+    const co = product.category === 'Conventional' ? 'C' : product.category === 'Organic' ? 'O' : '';
+    const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+    const colorStr = product.maxColor !== undefined && product.maxColor !== null ? String(product.maxColor) : '';
+
+    // Build a best-effort shortform even with partial data
+    if (st || co || colorStr) {
+      const abbr = st?.abbreviation || '';
+      const base = `${abbr}${co}${colorStr}`;
+      if (product.productGroup === 'Bulk') return base || sku.name || sku.id;
+      return `${wt}${base}`.trim() || sku.name || sku.id;
+    }
+    // Ultimate fallback — at least the SKU's name so the option is still selectable
+    return sku.name || sku.id;
+  };
+
   const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
     let maxNum = 0;
     existingCustomers.forEach(c => {
@@ -11326,7 +11356,7 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
-                        {skus.map(s => <option key={s.id} value={s.name}>{productToShortform(s.name)}</option>)}
+                        {skus.map(s => <option key={s.id} value={s.name}>{skuToShortform(s)}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
@@ -11763,7 +11793,7 @@ export default function App() {
                             className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                           >
                             <option value="">Select Product</option>
-                            {skus.map(s => <option key={s.id} value={s.name}>{productToShortform(s.name)}</option>)}
+                            {skus.map(s => <option key={s.id} value={s.name}>{skuToShortform(s)}</option>)}
                           </select>
                         </div>
                         <div className="space-y-0.5">
