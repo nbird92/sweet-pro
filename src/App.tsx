@@ -277,6 +277,7 @@ export default function App() {
   const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
   const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
+  const [orderLocation, setOrderLocation] = useState('');
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -4828,6 +4829,7 @@ export default function App() {
                               setOrderDeliveryDate(ord.deliveryDate || '');
                               setOrderCarrier(ord.carrier || '');
                               setOrderShippingTerms(ord.shippingTerms || '');
+                              setOrderLocation(ord.location || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
                                 setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
@@ -7799,6 +7801,7 @@ export default function App() {
                         setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
                         setOrderCarrier(viewingOrderCard.carrier || '');
                         setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
+                        setOrderLocation(viewingOrderCard.location || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
                         if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
                         setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
@@ -11173,7 +11176,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -11286,14 +11289,21 @@ export default function App() {
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Location (Origin)</label>
-                      <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/70">
-                        {(() => {
+                      <select
+                        value={orderLocation}
+                        onChange={(e) => setOrderLocation(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                      >
+                        <option value="">{(() => {
                           const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
-                          if (contractNums.length === 0) return 'Auto-fills from contract';
+                          if (contractNums.length === 0) return 'Select Location (optional)';
                           const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
-                          return c?.origin || '—';
-                        })()}
-                      </div>
+                          return c?.origin ? `Auto: ${c.origin}` : 'Select Location';
+                        })()}</option>
+                        {locations.map(loc => (
+                          <option key={loc.id} value={loc.name}>{loc.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
@@ -11330,21 +11340,21 @@ export default function App() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Contract #</label>
+                      <label className="text-[10px] uppercase font-bold opacity-60">Contract # (optional)</label>
                       <select
                         value={newLineItem.contractNumber}
                         onChange={(e) => setNewLineItem({...newLineItem, contractNumber: e.target.value})}
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
-                        <option value="">Select Contract</option>
+                        <option value="">No Contract</option>
                         {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                       </select>
                     </div>
                     <div className="flex items-end gap-2">
                       <button
                         onClick={() => {
-                          if (!newLineItem.productName || !newLineItem.contractNumber || newLineItem.qty <= 0) {
-                            setErrorBox('Please fill in all line item fields');
+                          if (!newLineItem.productName || newLineItem.qty <= 0) {
+                            setErrorBox('Please select a product and enter a quantity');
                             return;
                           }
                           const product = skus.find(s => s.name === newLineItem.productName);
@@ -11352,31 +11362,37 @@ export default function App() {
                           const netWeightKg = product.netWeightKg || product.netWeight;
                           const totalWeightKg = newLineItem.qty * netWeightKg;
                           const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
-                          // Get contract for pricing and volume validation
-                          const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
-                          if (!contract) { setErrorBox('Contract not found'); return; }
-                          // Validate product against contract lines if contract has lines
-                          if (contract.contractLines && contract.contractLines.length > 0) {
-                            const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
-                            if (!matchingLine) {
-                              setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
+                          // Contract is optional. When provided, validate product fit and volume.
+                          let mtAmount = 0;
+                          let unitAmount = 0;
+                          let lineAmount = 0;
+                          if (newLineItem.contractNumber) {
+                            const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
+                            if (!contract) { setErrorBox('Contract not found'); return; }
+                            // Validate product against contract lines if contract has lines
+                            if (contract.contractLines && contract.contractLines.length > 0) {
+                              const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
+                              if (!matchingLine) {
+                                setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
+                                return;
+                              }
+                            }
+                            // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
+                            const existingWeightOnContract = orderLineItems
+                              .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
+                              .reduce((sum, li) => sum + li.totalWeight, 0);
+                            const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
+                            if (totalWeight > outstanding) {
+                              setErrorBox(`Insufficient contract volume. Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, this item requires ${totalWeight.toFixed(2)} MT`);
                               return;
                             }
+                            // Use contract line price if available, otherwise use contract finalPrice
+                            const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
+                            mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
+                            unitAmount = mtAmount * netWeightKg / 1000;
+                            lineAmount = totalWeight * mtAmount;
                           }
-                          // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
-                          const existingWeightOnContract = orderLineItems
-                            .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
-                            .reduce((sum, li) => sum + li.totalWeight, 0);
-                          const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
-                          if (totalWeight > outstanding) {
-                            setErrorBox(`Insufficient contract volume. Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, this item requires ${totalWeight.toFixed(2)} MT`);
-                            return;
-                          }
-                          // Use contract line price if available, otherwise use contract finalPrice
-                          const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
-                          const mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
-                          const unitAmount = mtAmount * netWeightKg / 1000; // Price per unit = $/MT × MT/unit
-                          const lineAmount = totalWeight * mtAmount;
+                          // If no contract, pricing fields remain 0 (caller may fill them later)
 
                           if (editingLineItemIdx !== null) {
                             // Update existing line item
@@ -11549,9 +11565,9 @@ export default function App() {
                       const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                       const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
 
-                      // Derive location from first contract's origin
+                      // Location: user-entered takes priority; fall back to first contract's origin
                       const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
-                      const orderLocation = firstContract?.origin || '';
+                      const resolvedLocation = orderLocation || firstContract?.origin || (editingOrder?.location || '');
 
                       if (editingOrder) {
                         // Update existing order
@@ -11567,7 +11583,7 @@ export default function App() {
                           amount: totalAmount,
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
-                          location: orderLocation || editingOrder.location,
+                          location: resolvedLocation,
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
                         };
@@ -11589,7 +11605,7 @@ export default function App() {
                           amount: totalAmount,
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
-                          location: orderLocation,
+                          location: resolvedLocation,
                           palletType: firstContract?.palletType || '',
                         };
                         setOrders([...orders, newOrder]);
@@ -11603,6 +11619,7 @@ export default function App() {
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
+                      setOrderLocation('');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -11618,7 +11635,7 @@ export default function App() {
                         const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                         const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
                         const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
-                        const orderLocation = firstContract?.origin || '';
+                        const resolvedLocation = orderLocation || firstContract?.origin || '';
                         const newOrder: Order = {
                           id: `ORD-${Date.now()}`,
                           bolNumber: generateBOLNumber(orderLineItems),
@@ -11634,7 +11651,7 @@ export default function App() {
                           amount: totalAmount,
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
-                          location: orderLocation,
+                          location: resolvedLocation,
                           palletType: firstContract?.palletType || '',
                         };
                         setOrders([...orders, newOrder]);
@@ -11647,6 +11664,7 @@ export default function App() {
                         setOrderDeliveryDate('');
                         setOrderCarrier('Customer Pick Up');
                         setOrderShippingTerms('');
+                        setOrderLocation('');
                       }}
                       className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
                     >
@@ -11664,6 +11682,7 @@ export default function App() {
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
+                      setOrderLocation('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
