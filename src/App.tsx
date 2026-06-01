@@ -2443,12 +2443,23 @@ export default function App() {
   };
 
   // Look up the SKU + QA product that best matches a free-text product name.
-  // Tries an exact match first, then fuzzy keyword parsing (e.g. "Fine Granulated" → Granulated).
+  // Order of attempts:
+  //   1. Exact direct match on SKU.name / QA.skuName
+  //   2. Case-insensitive / trimmed direct match
+  //   3. Match against the SKU's computed Shortform or Product Name (the
+  //      table may be storing rendered values from naming-formula rules)
+  //   4. Match against the SKU's Packaging Format
+  //   5. Fuzzy keyword match (sugar type, group, color, weight, category)
   // Returns { sku, qa } or { sku: null, qa: null } if no match.
   const resolveProduct = (productName: string | undefined): { sku: SKU | null; qa: QAProduct | null } => {
     if (!productName) return { sku: null, qa: null };
 
-    // 1. Direct SKU name match
+    const findPairBySku = (s: SKU): { sku: SKU; qa: QAProduct | null } => ({
+      sku: s,
+      qa: qaProducts.find(q => q.skuId === s.id) || null,
+    });
+
+    // 1. Direct exact match on SKU.name or QA.skuName
     let sku = skus.find(s => s.name === productName) || null;
     let qa: QAProduct | null = sku
       ? (qaProducts.find(q => q.skuId === sku!.id) || null)
@@ -2456,10 +2467,83 @@ export default function App() {
     if (qa && !sku) sku = skus.find(s => s.id === qa!.skuId) || null;
     if (sku) return { sku, qa };
 
-    // 2. Fuzzy match by parsing keywords from the name
-    const lower = productName.toLowerCase();
+    const normalized = productName.trim().toLowerCase();
+    if (!normalized) return { sku: null, qa: null };
 
-    // Sugar type detection (longest match first; "fine granulated" → Granulated)
+    // 2. Case-insensitive / trimmed direct match
+    const ciSku = skus.find(s => s.name?.trim().toLowerCase() === normalized);
+    if (ciSku) return findPairBySku(ciSku);
+    const ciQa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === normalized);
+    if (ciQa) {
+      const ciQaSku = skus.find(s => s.id === ciQa.skuId);
+      if (ciQaSku) return findPairBySku(ciQaSku);
+    }
+
+    // Helper: render the Shortform / Product Name a SKU would produce, for matching
+    const renderShortform = (s: SKU): string => {
+      const q = qaProducts.find(p => p.skuId === s.id);
+      const product = {
+        productFormat: q?.productFormat || s.productFormat,
+        productGroup: q?.productGroup || s.productGroup,
+        category: q?.category || s.category,
+        sugarType: q?.sugarType || s.sugarType,
+        location: q?.location || s.location,
+        netWeightKg: q?.netWeightKg ?? s.netWeightKg ?? s.netWeight,
+        grossWeightKg: q?.grossWeightKg ?? s.grossWeightKg,
+        maxColor: q?.maxColor ?? s.maxColor,
+      };
+      const fromRule = resolveShortFormRule(namingFormulas, product, { sugarTypes, productGroups });
+      if (fromRule && fromRule.trim()) return fromRule.trim();
+      // Legacy fallback
+      if (product.sugarType === 'Molasses') return 'MOL';
+      const st = sugarTypes.find(t => t.name === product.sugarType);
+      if (!st || !product.category || product.maxColor === undefined) return '';
+      const co = product.category === 'Conventional' ? 'C' : 'O';
+      if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
+      const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+      return `${wt}${st.abbreviation}${co}${product.maxColor}`;
+    };
+    const renderProductName = (s: SKU): string => {
+      const q = qaProducts.find(p => p.skuId === s.id);
+      const product = {
+        productFormat: q?.productFormat || s.productFormat,
+        productGroup: q?.productGroup || s.productGroup,
+        category: q?.category || s.category,
+        sugarType: q?.sugarType || s.sugarType,
+        location: q?.location || s.location,
+        netWeightKg: q?.netWeightKg ?? s.netWeightKg ?? s.netWeight,
+        grossWeightKg: q?.grossWeightKg ?? s.grossWeightKg,
+        maxColor: q?.maxColor ?? s.maxColor,
+      };
+      const fromRule = resolveProductNameRule(namingFormulas, product, { sugarTypes, productGroups });
+      if (fromRule && fromRule.trim()) return fromRule.trim();
+      if (product.productFormat && product.sugarType) {
+        const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+        return `${wt}${product.productFormat} ${product.sugarType} ${product.category} ${product.maxColor || 0}`;
+      }
+      return '';
+    };
+
+    // 3. Match against rendered Shortform or Product Name (case/whitespace tolerant)
+    for (const s of skus) {
+      const sf = renderShortform(s).trim().toLowerCase();
+      if (sf && sf === normalized) return findPairBySku(s);
+      const pn = renderProductName(s).trim().toLowerCase();
+      if (pn && pn === normalized) return findPairBySku(s);
+    }
+
+    // 4. Match by Packaging Format on its own (e.g. order saved with just the format)
+    const fmtMatch = skus.find(s => {
+      const q = qaProducts.find(p => p.skuId === s.id);
+      const fmt = (q?.productFormat || s.productFormat || '').trim().toLowerCase();
+      return fmt && fmt === normalized;
+    });
+    if (fmtMatch) return findPairBySku(fmtMatch);
+
+    // 5. Fuzzy keyword match
+    const lower = normalized;
+
+    // Sugar type detection
     let detectedSugar: string | undefined;
     if (lower.includes('molasses')) detectedSugar = 'Molasses';
     else if (lower.includes('granulated') || lower.includes('fine granulated')) detectedSugar = 'Granulated';
@@ -2467,6 +2551,16 @@ export default function App() {
     else if (lower.includes('brown')) detectedSugar = 'Brown';
     else if (lower.includes('yellow')) detectedSugar = 'Yellow';
     else if (lower.includes('liquid')) detectedSugar = 'Liquid';
+
+    // Sugar type abbreviation in the string (e.g. "GC", "LC", "BR") — counts as a sugar hit
+    if (!detectedSugar) {
+      for (const st of sugarTypes) {
+        if (st.abbreviation && new RegExp(`\\b${st.abbreviation}\\b`).test(productName)) {
+          detectedSugar = st.name;
+          break;
+        }
+      }
+    }
 
     // Product group detection
     let detectedGroup: string | undefined;
@@ -2478,7 +2572,7 @@ export default function App() {
     // Category detection
     const detectedCategory: 'Conventional' | 'Organic' = lower.includes('organic') ? 'Organic' : 'Conventional';
 
-    // Max color detection — try trailing number first, then any 2-3 digit number
+    // Max color — trailing number first, else any 2-3 digit number
     const trailingColor = productName.match(/(\d{2,3})\s*$/);
     const anyColor = productName.match(/\b(\d{2,3})\b/);
     const detectedColor: number | undefined = trailingColor
@@ -2489,7 +2583,7 @@ export default function App() {
     const weightMatch = productName.match(/(\d+(?:\.\d+)?)\s*kg\b/i);
     const detectedWeight: number | undefined = weightMatch ? parseFloat(weightMatch[1]) : undefined;
 
-    // Score each candidate SKU by attribute matches
+    // Score each candidate SKU
     const scoreCandidate = (s: SKU): number => {
       const q = qaProducts.find(p => p.skuId === s.id);
       const sugarT = q?.sugarType || s.sugarType;
@@ -2497,12 +2591,17 @@ export default function App() {
       const catT = q?.category || s.category;
       const colorT = q?.maxColor ?? s.maxColor;
       const weightT = q?.netWeightKg ?? s.netWeightKg ?? s.netWeight;
+      const formatT = (q?.productFormat || s.productFormat || '').toLowerCase();
       let score = 0;
       if (detectedSugar && sugarT === detectedSugar) score += 5;
       if (detectedGroup && groupT === detectedGroup) score += 4;
       if (catT === detectedCategory) score += 1;
       if (detectedColor !== undefined && colorT === detectedColor) score += 3;
       if (detectedWeight !== undefined && weightT === detectedWeight) score += 3;
+      if (formatT && lower.includes(formatT)) score += 2;
+      // Substring overlap with the SKU's own name as a fallback
+      const skuLower = (s.name || '').trim().toLowerCase();
+      if (skuLower && (lower.includes(skuLower) || skuLower.includes(lower))) score += 4;
       return score;
     };
 
@@ -2515,10 +2614,9 @@ export default function App() {
         best = candidate;
       }
     }
-    // Require at least a sugar-type match (score 5+) to consider it a real match
-    if (best && bestScore >= 5) {
-      const matchedQA = qaProducts.find(p => p.skuId === best!.id) || null;
-      return { sku: best, qa: matchedQA };
+    // Accept matches with any meaningful signal (color + weight, or group, or sugar, or substring)
+    if (best && bestScore >= 3) {
+      return findPairBySku(best);
     }
     return { sku: null, qa: null };
   };
