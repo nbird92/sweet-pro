@@ -2347,7 +2347,7 @@ export default function App() {
   const updateInvoiceStatus = (id: string, status: string) => {
     setInvoices(prev => prev.map(i => i.id === id ? { ...i, status } : i));
   };
-  const [contractInvoicePopup, setContractInvoicePopup] = useState<string | null>(null); // contract number for invoice popup
+  const [contractOrdersPopup, setContractOrdersPopup] = useState<string | null>(null); // contract number for orders popup
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingFreightRate, setEditingFreightRate] = useState<FreightRate | null>(null);
@@ -6859,8 +6859,9 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                         <button
-                          onClick={(e) => { e.stopPropagation(); setContractInvoicePopup(contractInvoicePopup === c.contractNumber ? null : c.contractNumber); }}
+                          onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber ? null : c.contractNumber); }}
                           className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
+                          title="View orders on this contract"
                         >
                           {(c.volumeTaken || 0).toFixed(2)}
                         </button>
@@ -6870,7 +6871,15 @@ export default function App() {
                           const volumeOnOrder = orders
                             .filter(o => o.status !== 'Cancelled' && (o.contractNumber === c.contractNumber || o.lineItems.some(li => li.contractNumber === c.contractNumber)))
                             .reduce((sum, o) => sum + (o.lineItems.reduce((s, li) => s + (li.contractNumber === c.contractNumber ? li.qty : 0), 0) || o.amount / (c.finalPrice || 1)), 0);
-                          return volumeOnOrder.toFixed(2);
+                          return (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber ? null : c.contractNumber); }}
+                              className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
+                              title="View orders on this contract"
+                            >
+                              {volumeOnOrder.toFixed(2)}
+                            </button>
+                          );
                         })()}
                       </td>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
@@ -11384,65 +11393,120 @@ export default function App() {
           </div>
         )}
 
-        {/* Contract Invoice Popup - Free Standing */}
-        {contractInvoicePopup && (
-          <div className="fixed inset-0 z-[700] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractInvoicePopup(null)}>
+        {/* Contract Orders Popup - shows every order using this contract */}
+        {contractOrdersPopup && (
+          <div className="fixed inset-0 z-[700] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractOrdersPopup(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] min-w-[520px] max-w-2xl w-full overflow-hidden"
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] min-w-[700px] max-w-4xl w-full overflow-hidden max-h-[85vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center">
-                <span className="text-[10px] font-bold uppercase tracking-widest">Invoices — {contractInvoicePopup}</span>
-                <button onClick={() => setContractInvoicePopup(null)} className="hover:rotate-90 transition-transform"><X size={14} /></button>
+              <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                  <FileText size={16} className="opacity-70" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">Orders on Contract</span>
+                  <span className="text-sm font-bold font-mono">{contractOrdersPopup}</span>
+                </div>
+                <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
               </div>
               {(() => {
-                const contractInvoices = invoices.filter(inv => {
-                  const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                  const shipment = allShipments.find(s => s.id === inv.shipmentId);
-                  return shipment?.contractNumber === contractInvoicePopup;
-                });
-                return contractInvoices.length > 0 ? (
+                const contractOrders = orders.filter(o =>
+                  o.status !== 'Cancelled' && (
+                    o.contractNumber === contractOrdersPopup ||
+                    o.lineItems.some(li => li.contractNumber === contractOrdersPopup)
+                  )
+                );
+
+                const openOrderForEdit = (ord: Order) => {
+                  const cust = customers.find(c => c.name === ord.customer);
+                  setOrderCustomerId(cust?.id || '');
+                  setOrderPO(ord.po);
+                  setOrderShipmentDate(ord.shipmentDate || '');
+                  setOrderDeliveryDate(ord.deliveryDate || '');
+                  setOrderCarrier(ord.carrier || '');
+                  setOrderShippingTerms((ord.shippingTerms as any) || '');
+                  setOrderLocation(ord.location || '');
+                  setOrderLineItems(ord.lineItems);
+                  if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
+                  setEditingOrder(ord);
+                  setIsAddingOrder(false);
+                  setContractOrdersPopup(null);
+                };
+
+                if (contractOrders.length === 0) {
+                  return <div className="p-8 text-center text-xs opacity-50 italic">No active orders on this contract yet.</div>;
+                }
+
+                const totalQty = contractOrders.reduce((sum, o) =>
+                  sum + o.lineItems.reduce((s, li) => s + (li.contractNumber === contractOrdersPopup ? li.totalWeight : 0), 0),
+                0);
+                const totalAmount = contractOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+
+                return (
                   <table className="w-full text-xs">
-                    <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
+                    <thead className="bg-[#F5F5F5] border-b border-[#141414] text-[10px] uppercase tracking-widest">
                       <tr>
-                        <th className="p-2 text-left font-bold text-[10px] uppercase">Invoice #</th>
-                        <th className="p-2 text-left font-bold text-[10px] uppercase">BOL</th>
-                        <th className="p-2 text-left font-bold text-[10px] uppercase">Product</th>
-                        <th className="p-2 text-right font-bold text-[10px] uppercase">Qty (MT)</th>
-                        <th className="p-2 text-right font-bold text-[10px] uppercase">Amount</th>
-                        <th className="p-2 text-left font-bold text-[10px] uppercase">Status</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">BOL</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Customer</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Product</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">PO</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Ship Date</th>
+                        <th className="px-3 py-2 text-right font-bold opacity-70">Qty (MT)</th>
+                        <th className="px-3 py-2 text-right font-bold opacity-70">Amount</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Status</th>
+                        <th className="px-3 py-2 text-center font-bold opacity-70">Edit</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#141414]/5">
-                      {contractInvoices.map(inv => (
-                        <tr key={inv.id} className="hover:bg-[#F9F9F9]">
-                          <td className="p-2 font-mono">{inv.id.substring(0, 12)}</td>
-                          <td className="p-2">{inv.bolNumber}</td>
-                          <td className="p-2">{productToShortform(inv.product)}</td>
-                          <td className="p-2 text-right font-bold">{inv.qty.toFixed(2)}</td>
-                          <td className="p-2 text-right font-bold">${inv.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                          <td className="p-2">
-                            <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase ${inv.status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{inv.status}</span>
-                          </td>
-                        </tr>
-                      ))}
+                    <tbody className="divide-y divide-[#141414]/10">
+                      {contractOrders.map(ord => {
+                        const productLabel = ord.product
+                          ? productToShortform(ord.product)
+                          : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
+                        const lineQty = ord.lineItems.reduce((s, li) => s + (li.contractNumber === contractOrdersPopup ? li.totalWeight : 0), 0);
+                        return (
+                          <tr
+                            key={ord.id}
+                            className="hover:bg-blue-50 cursor-pointer transition-colors"
+                            onClick={() => openOrderForEdit(ord)}
+                          >
+                            <td className="px-3 py-2 font-mono font-bold text-blue-600">{ord.bolNumber}</td>
+                            <td className="px-3 py-2 font-bold">{ord.customer}</td>
+                            <td className="px-3 py-2 truncate max-w-[180px]" title={productLabel}>{productLabel}</td>
+                            <td className="px-3 py-2 font-mono">{ord.po}</td>
+                            <td className="px-3 py-2">{ord.shipmentDate || '—'}</td>
+                            <td className="px-3 py-2 text-right font-bold">{lineQty.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-bold">${(ord.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                                ord.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                                ord.status === 'Confirmed' ? 'bg-blue-100 text-blue-700' :
+                                ord.status === 'Open' ? 'bg-amber-100 text-amber-700' :
+                                'bg-slate-100 text-slate-700'
+                              }`}>{ord.status}</span>
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <Edit2 size={14} className="inline opacity-50" />
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
-                    <tfoot className="bg-[#F5F5F5] border-t border-[#141414]/10">
-                      <tr className="font-bold">
-                        <td className="p-2 text-[10px] uppercase" colSpan={3}>Total</td>
-                        <td className="p-2 text-right">{contractInvoices.reduce((s, i) => s + i.qty, 0).toFixed(2)}</td>
-                        <td className="p-2 text-right">${contractInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td className="p-2"></td>
+                    <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
+                      <tr className="font-bold text-[10px] uppercase tracking-widest">
+                        <td className="px-3 py-2 opacity-70" colSpan={5}>Total ({contractOrders.length} order{contractOrders.length === 1 ? '' : 's'})</td>
+                        <td className="px-3 py-2 text-right">{totalQty.toFixed(2)} MT</td>
+                        <td className="px-3 py-2 text-right">${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="px-3 py-2" colSpan={2}></td>
                       </tr>
                     </tfoot>
                   </table>
-                ) : (
-                  <div className="p-4 text-center text-xs opacity-40 italic">No invoices yet for this contract</div>
                 );
               })()}
+              <div className="bg-[#F5F5F5] border-t border-[#141414]/10 px-4 py-2 text-[10px] italic opacity-60">
+                Tip: click any order row to open the Edit Order menu.
+              </div>
             </motion.div>
           </div>
         )}
