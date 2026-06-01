@@ -4627,18 +4627,8 @@ export default function App() {
 
     if (activePage === 'Orders') {
       const filteredOrders = orders.filter(ord => {
-        // Hide hidden orders unless search matches
+        // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
-        // Hide orders that have been shipped and invoiced (matching invoice by BOL, not cancelled)
-        if (ord.status !== 'Cancelled') {
-          const hasInvoice = invoices.some(inv => inv.bolNumber === ord.bolNumber && inv.status !== 'Cancelled');
-          if (hasInvoice) return false;
-        }
-        // Hide cancelled orders with shipment dates in the past
-        if (ord.status === 'Cancelled') {
-          const shipDate = ord.shipmentDate || ord.deliveryDate || '';
-          if (!shipDate || shipDate < new Date().toISOString().split('T')[0]) return false;
-        }
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
