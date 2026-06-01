@@ -4626,7 +4626,19 @@ export default function App() {
     }
 
     if (activePage === 'Orders') {
+      // Pre-compute the set of BOL numbers that already have an invoice.
+      // Any order whose BOL appears in the invoices table is treated as
+      // 'completed and billed' and is filtered out of the Orders page.
+      const invoicedBols = new Set(
+        invoices
+          .filter(inv => inv.bolNumber)
+          .map(inv => inv.bolNumber)
+      );
+
       const filteredOrders = orders.filter(ord => {
+        // Hide orders that have already been completed + billed (matching
+        // invoice by BOL number, regardless of order status).
+        if (ord.bolNumber && invoicedBols.has(ord.bolNumber)) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
         const matchesSearch = !searchTerm ||
