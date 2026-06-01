@@ -580,7 +580,7 @@ export interface FormulaToken {
 
 export interface NamingFormula {
   id: string;
-  type: 'Long Form' | 'Short Form';
+  type: 'Product Name' | 'Short Form';
   name: string;
   condition: string; // e.g., "Default", "Product Group = Bulk", "Sugar Type = Molasses"
   formula: string;   // Display string e.g., "{NetWeight}kg {SugarAbbr}{C/O}{MaxColor}"
@@ -592,8 +592,8 @@ export interface NamingFormula {
 export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
   {
     id: 'NF-001',
-    type: 'Long Form',
-    name: 'Default Long Form',
+    type: 'Product Name',
+    name: 'Default Product Name',
     condition: 'Default',
     formula: '{Net Weight (KG)}kg {Product Format} {Sugar Type} {Conv./Organic} {Max Color}',
     tokens: [
@@ -607,7 +607,7 @@ export const INITIAL_NAMING_FORMULAS: NamingFormula[] = [
       { id: 't8', type: 'literal', value: ' ', label: '" "' },
       { id: 't9', type: 'field', value: 'maxColor', label: 'Max Color' },
     ],
-    description: 'Standard long form name with weight, packaging, sugar type, category and color',
+    description: 'Standard product name with weight, packaging, sugar type, category and color',
     priority: 10,
   },
   {

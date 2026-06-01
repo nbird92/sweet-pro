@@ -227,7 +227,7 @@ export default function QualityAssurancePage({
   // Naming Formula state
   const [showNamingFormulaModal, setShowNamingFormulaModal] = useState(false);
   const [editingNamingFormula, setEditingNamingFormula] = useState<NamingFormula | null>(null);
-  const [namingFormulaForm, setNamingFormulaForm] = useState<{ type: 'Long Form' | 'Short Form'; name: string; condition: string; formula: string; description: string; priority: number; tokens: FormulaToken[] }>({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50, tokens: [] });
+  const [namingFormulaForm, setNamingFormulaForm] = useState<{ type: 'Product Name' | 'Short Form'; name: string; condition: string; formula: string; description: string; priority: number; tokens: FormulaToken[] }>({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50, tokens: [] });
   const [deleteNamingFormulaConfirmId, setDeleteNamingFormulaConfirmId] = useState<string | null>(null);
   const [draggedTokenIdx, setDraggedTokenIdx] = useState<number | null>(null);
   const [tokenPickerCategory, setTokenPickerCategory] = useState<string>('field');
@@ -1094,7 +1094,7 @@ export default function QualityAssurancePage({
               <tr key={nf.id} className="hover:bg-[#F9F9F9] transition-colors group">
                 <td className="p-4 text-xs border-r border-[#141414]/10">
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                    nf.type === 'Long Form' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                    nf.type === 'Product Name' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
                   }`}>{nf.type}</span>
                 </td>
                 <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{nf.name}</td>
@@ -1165,11 +1165,11 @@ export default function QualityAssurancePage({
                     <label className="text-[10px] uppercase font-bold opacity-60">Type *</label>
                     <select
                       value={namingFormulaForm.type}
-                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, type: e.target.value as 'Long Form' | 'Short Form' })}
+                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, type: e.target.value as 'Product Name' | 'Short Form' })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
                     >
                       <option value="Short Form">Short Form</option>
-                      <option value="Long Form">Long Form</option>
+                      <option value="Product Name">Product Name</option>
                     </select>
                   </div>
                   <div className="space-y-1">

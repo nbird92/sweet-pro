@@ -1718,8 +1718,10 @@ export default function App() {
       }
       if (data.namingFormulas?.length) {
         // Normalize: ensure tokens array exists (may be undefined for legacy rows)
+        // Also migrate legacy 'Long Form' type to 'Product Name'
         const mapped = data.namingFormulas.map((nf: any) => ({
           ...nf,
+          type: nf.type === 'Long Form' ? 'Product Name' : nf.type,
           priority: typeof nf.priority === 'number' ? nf.priority : parseInt(nf.priority) || 50,
           tokens: Array.isArray(nf.tokens) ? nf.tokens : undefined,
         }));
