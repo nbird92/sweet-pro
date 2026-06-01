@@ -56,6 +56,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
+import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
@@ -2533,8 +2534,20 @@ export default function App() {
     return resolveProduct(productName).sku !== null;
   };
 
-  // Compute the shortform code for a product, using the latest QA data + sugar type rules.
-  // Falls back to the original product name if the lookup fails so legacy values remain readable.
+  // Build the merged product attribute object used to evaluate naming-formula rules.
+  const buildProductAttrs = (sku: SKU | null, qa: QAProduct | null) => ({
+    productFormat: qa?.productFormat || sku?.productFormat,
+    productGroup: qa?.productGroup || sku?.productGroup,
+    category: qa?.category || sku?.category,
+    sugarType: qa?.sugarType || sku?.sugarType,
+    location: qa?.location || sku?.location,
+    netWeightKg: qa?.netWeightKg ?? sku?.netWeightKg ?? sku?.netWeight,
+    grossWeightKg: qa?.grossWeightKg ?? sku?.grossWeightKg,
+    maxColor: qa?.maxColor ?? sku?.maxColor,
+  });
+
+  // Compute the shortform code for a product. Uses user-defined naming-formula rules
+  // first, then falls back to the legacy hardcoded formula if no rule resolves.
   const productToShortform = (productName: string | undefined): string => {
     if (!productName) return '';
     // If it's already a shortform-shaped value (e.g. "MOL", "GCC45", "20kg GCC45"), return as-is.
@@ -2546,18 +2559,34 @@ export default function App() {
     const { sku, qa } = resolveProduct(productName);
     if (!sku) return productName; // unmatched — caller can highlight via productMatchesCurrentSku
 
-    const sugarType = qa?.sugarType || sku.sugarType;
-    const productGroup = qa?.productGroup || sku.productGroup;
-    const category = qa?.category || sku.category;
-    const maxColor = qa?.maxColor ?? sku.maxColor;
-    const netWeightKg = qa?.netWeightKg ?? sku.netWeightKg ?? sku.netWeight;
-    if (sugarType === 'Molasses') return 'MOL';
-    const st = sugarTypes.find(t => t.name === sugarType);
-    if (!st || !category || maxColor === undefined) return productName;
-    const co = category === 'Conventional' ? 'C' : 'O';
-    if (productGroup === 'Bulk') return `${st.abbreviation}${co}${maxColor}`;
-    const wt = netWeightKg ? `${netWeightKg}kg ` : '';
-    return `${wt}${st.abbreviation}${co}${maxColor}`;
+    const product = buildProductAttrs(sku, qa);
+
+    // 1) User-defined naming formula
+    const resolved = resolveShortFormRule(namingFormulas, product, { sugarTypes, productGroups });
+    if (resolved && resolved.trim()) return resolved;
+
+    // 2) Legacy hardcoded fallback
+    if (product.sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(t => t.name === product.sugarType);
+    if (!st || !product.category || product.maxColor === undefined) return productName;
+    const co = product.category === 'Conventional' ? 'C' : 'O';
+    if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
+    const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+    return `${wt}${st.abbreviation}${co}${product.maxColor}`;
+  };
+
+  // Compute the user-facing Product Name for a SKU + its QA pairing.
+  // Uses user-defined naming-formula rules first; falls back to legacy concatenation.
+  const productToName = (sku: SKU): string => {
+    const qa = qaProducts.find(q => q.skuId === sku.id) || null;
+    const product = buildProductAttrs(sku, qa);
+    const resolved = resolveProductNameRule(namingFormulas, product, { sugarTypes, productGroups });
+    if (resolved && resolved.trim()) return resolved;
+    if (product.productFormat && product.sugarType) {
+      const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+      return `${wt}${product.productFormat} ${product.sugarType} ${product.category} ${product.maxColor || 0}`;
+    }
+    return '';
   };
 
   const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
@@ -4864,9 +4893,9 @@ export default function App() {
                 }
               }
             }
-            const productName = (productFormat && sugarType)
+            const productName = productToName(s) || ((productFormat && sugarType)
               ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
-              : '';
+              : '');
             return {
               ...s,
               productName,
@@ -4925,24 +4954,29 @@ export default function App() {
                   const productFormat = qaMatch?.productFormat || s.productFormat || '—';
                   const sugarType = qaMatch?.sugarType || s.sugarType || '—';
                   const netWt = s.netWeightKg || s.netWeight;
-                  let shortform = '—';
-                  if (sugarType === 'Molasses') {
-                    shortform = 'MOL';
-                  } else {
-                    const st = sugarTypes.find(t => t.name === sugarType);
-                    if (st) {
-                      const co = s.category === 'Conventional' ? 'C' : 'O';
-                      if (s.productGroup === 'Bulk') {
-                        shortform = `${st.abbreviation}${co}${s.maxColor}`;
-                      } else {
-                        const wt = netWt ? `${netWt}kg ` : '';
-                        shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
+                  // Try user-defined naming-formula rules first; fall back to hardcoded logic
+                  const productAttrs = buildProductAttrs(s, qaMatch || null);
+                  let shortform = resolveShortFormRule(namingFormulas, productAttrs, { sugarTypes, productGroups }) || '';
+                  if (!shortform.trim()) {
+                    shortform = '—';
+                    if (sugarType === 'Molasses') {
+                      shortform = 'MOL';
+                    } else {
+                      const st = sugarTypes.find(t => t.name === sugarType);
+                      if (st) {
+                        const co = s.category === 'Conventional' ? 'C' : 'O';
+                        if (s.productGroup === 'Bulk') {
+                          shortform = `${st.abbreviation}${co}${s.maxColor}`;
+                        } else {
+                          const wt = netWt ? `${netWt}kg ` : '';
+                          shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
+                        }
                       }
                     }
                   }
-                  const productName = (productFormat !== '—' && sugarType !== '—')
+                  const productName = productToName(s) || ((productFormat !== '—' && sugarType !== '—')
                     ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
-                    : '—';
+                    : '—');
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>

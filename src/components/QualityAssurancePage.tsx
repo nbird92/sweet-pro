@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat, NamingFormula, FormulaToken } from '../types';
+import { resolveProductName, resolveShortForm } from '../utils/namingFormulaResolver';
 import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
@@ -662,24 +663,32 @@ export default function QualityAssurancePage({
       { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
     ],
     rows: qaProducts.map(p => {
-      let shortform = '';
-      if (p.sugarType === 'Molasses') {
-        shortform = 'MOL';
-      } else {
-        const st = sugarTypes.find(s => s.name === p.sugarType);
-        if (st) {
-          const co = p.category === 'Conventional' ? 'C' : 'O';
-          if (p.productGroup === 'Bulk') {
-            shortform = `${st.abbreviation}${co}${p.maxColor}`;
-          } else {
-            const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
-            shortform = `${wt}${st.abbreviation}${co}${p.maxColor}`;
+      const ctx = { sugarTypes, productGroups };
+      const resolvedName = resolveProductName(namingFormulas, p, ctx);
+      const productName = resolvedName && resolvedName.trim()
+        ? resolvedName
+        : ((p.productFormat && p.sugarType)
+            ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
+            : '');
+
+      const resolvedShort = resolveShortForm(namingFormulas, p, ctx);
+      let shortform = resolvedShort && resolvedShort.trim() ? resolvedShort : '';
+      if (!shortform) {
+        if (p.sugarType === 'Molasses') {
+          shortform = 'MOL';
+        } else {
+          const st = sugarTypes.find(s => s.name === p.sugarType);
+          if (st) {
+            const co = p.category === 'Conventional' ? 'C' : 'O';
+            if (p.productGroup === 'Bulk') {
+              shortform = `${st.abbreviation}${co}${p.maxColor}`;
+            } else {
+              const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
+              shortform = `${wt}${st.abbreviation}${co}${p.maxColor}`;
+            }
           }
         }
       }
-      const productName = (p.productFormat && p.sugarType)
-        ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
-        : '';
       return { ...p, shortform, productName } as any;
     }),
   }];
@@ -740,9 +749,13 @@ export default function QualityAssurancePage({
                     onClick={() => openDetail(p)}
                   >
                     <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.id}</td>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{(p.productFormat && p.sugarType)
-                      ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
-                      : '—'}</td>
+                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{(() => {
+                      const resolved = resolveProductName(namingFormulas, p, { sugarTypes, productGroups });
+                      if (resolved && resolved.trim()) return resolved;
+                      return (p.productFormat && p.sugarType)
+                        ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
+                        : '—';
+                    })()}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.productFormat || '—'}</td>
                     <td className="p-4 border-r border-[#141414]/10">
                       <span
@@ -754,14 +767,14 @@ export default function QualityAssurancePage({
                     </td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
-                      // Molasses rule: shortform is just "MOL"
+                      const resolved = resolveShortForm(namingFormulas, p, { sugarTypes, productGroups });
+                      if (resolved && resolved.trim()) return resolved;
+                      // Legacy fallback
                       if (p.sugarType === 'Molasses') return 'MOL';
                       const st = sugarTypes.find(s => s.name === p.sugarType);
                       if (!st) return '—';
                       const co = p.category === 'Conventional' ? 'C' : 'O';
-                      // Bulk rule: no weight prefix
                       if (p.productGroup === 'Bulk') return `${st.abbreviation}${co}${p.maxColor}`;
-                      // Default rule: weight + space + abbr + co + color
                       const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
                       return `${wt}${st.abbreviation}${co}${p.maxColor}`;
                     })()}</td>
@@ -2418,6 +2431,8 @@ export default function QualityAssurancePage({
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">
                         {(() => {
+                          const resolved = resolveShortForm(namingFormulas, newProductData, { sugarTypes, productGroups });
+                          if (resolved && resolved.trim()) return resolved;
                           if (newProductData.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === newProductData.sugarType);
                           if (!st) return '—';
@@ -2431,9 +2446,13 @@ export default function QualityAssurancePage({
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                       <div className="w-full bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                        {newProductData.productFormat && newProductData.sugarType
-                          ? `${newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : ''}${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || 0}`
-                          : '—'}
+                        {(() => {
+                          const resolved = resolveProductName(namingFormulas, newProductData, { sugarTypes, productGroups });
+                          if (resolved && resolved.trim()) return resolved;
+                          return newProductData.productFormat && newProductData.sugarType
+                            ? `${newProductData.netWeightKg ? `${newProductData.netWeightKg}kg ` : ''}${newProductData.productFormat} ${newProductData.sugarType} ${newProductData.category} ${newProductData.maxColor || 0}`
+                            : '—';
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -2600,6 +2619,8 @@ export default function QualityAssurancePage({
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shortform (Auto)</label>
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs font-mono font-bold">{(() => {
+                          const resolved = editData ? resolveShortForm(namingFormulas, editData, { sugarTypes, productGroups }) : null;
+                          if (resolved && resolved.trim()) return resolved;
                           if (editData?.sugarType === 'Molasses') return 'MOL';
                           const st = sugarTypes.find(s => s.name === editData?.sugarType);
                           if (!st) return '—';
@@ -2615,9 +2636,13 @@ export default function QualityAssurancePage({
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</label>
                         <div className="bg-[#EFEFEF] border border-[#141414]/20 p-2 text-xs">
-                          {editData?.productFormat && editData?.sugarType
-                            ? `${editData?.netWeightKg ? `${editData.netWeightKg}kg ` : ''}${editData.productFormat} ${editData.sugarType} ${editData.category} ${editData.maxColor || 0}`
-                            : '—'}
+                          {(() => {
+                            const resolved = editData ? resolveProductName(namingFormulas, editData, { sugarTypes, productGroups }) : null;
+                            if (resolved && resolved.trim()) return resolved;
+                            return editData?.productFormat && editData?.sugarType
+                              ? `${editData?.netWeightKg ? `${editData.netWeightKg}kg ` : ''}${editData.productFormat} ${editData.sugarType} ${editData.category} ${editData.maxColor || 0}`
+                              : '—';
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -2634,6 +2659,8 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shortform</div><div className="text-xs font-mono font-bold">{(() => {
+                        const resolved = resolveShortForm(namingFormulas, displayData, { sugarTypes, productGroups });
+                        if (resolved && resolved.trim()) return resolved;
                         if (displayData.sugarType === 'Molasses') return 'MOL';
                         const st = sugarTypes.find(s => s.name === displayData.sugarType);
                         if (!st) return '—';
@@ -2645,9 +2672,13 @@ export default function QualityAssurancePage({
                     </div>
                     <div className="pt-3 border-t border-[#141414]/10">
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Product Name (Auto)</div><div className="text-xs font-bold">
-                        {displayData.productFormat && displayData.sugarType
-                          ? `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`
-                          : '—'}
+                        {(() => {
+                          const resolved = resolveProductName(namingFormulas, displayData, { sugarTypes, productGroups });
+                          if (resolved && resolved.trim()) return resolved;
+                          return displayData.productFormat && displayData.sugarType
+                            ? `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`
+                            : '—';
+                        })()}
                       </div></div>
                     </div>
                     </>
