@@ -6657,6 +6657,151 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
+            <button onClick={() => {
+                // Backfill contracts: scan orders, invoices, shipments for contract numbers
+                // not yet in the contracts table and create stub entries from any available data.
+                const existingNumbers = new Set(
+                  contracts.map(c => (c.contractNumber || '').trim()).filter(Boolean)
+                );
+
+                // Collect contract-number → list of source records that mention it
+                type SourceMatch = {
+                  customer?: string;
+                  product?: string;
+                  pricePerMt?: number;
+                  currency?: string;
+                  shippingTerms?: string;
+                  palletType?: string;
+                  paymentTerms?: string;
+                  location?: string;
+                  origin?: string;
+                  destination?: string;
+                };
+                const collected = new Map<string, SourceMatch[]>();
+
+                const addMatch = (num: string | undefined, m: SourceMatch) => {
+                  const cleanNum = (num || '').trim();
+                  if (!cleanNum) return;
+                  if (existingNumbers.has(cleanNum)) return;
+                  if (!collected.has(cleanNum)) collected.set(cleanNum, []);
+                  collected.get(cleanNum)!.push(m);
+                };
+
+                // Orders (top-level + line items)
+                for (const o of orders) {
+                  addMatch(o.contractNumber, {
+                    customer: o.customer,
+                    product: o.product,
+                    currency: o.currency,
+                    shippingTerms: o.shippingTerms,
+                    palletType: o.palletType,
+                    location: o.location,
+                    origin: o.location,
+                  });
+                  for (const li of (o.lineItems || [])) {
+                    addMatch(li.contractNumber, {
+                      customer: o.customer,
+                      product: li.productName,
+                      pricePerMt: li.mtAmount,
+                      currency: o.currency,
+                      shippingTerms: o.shippingTerms,
+                      palletType: o.palletType,
+                      location: o.location,
+                      origin: o.location,
+                    });
+                  }
+                }
+
+                // Invoices (top-level + nested line items)
+                for (const inv of invoices) {
+                  addMatch(inv.contractNumber, {
+                    customer: inv.customer,
+                    product: inv.product,
+                    pricePerMt: inv.pricePerMt,
+                    shippingTerms: inv.shippingTerms,
+                    location: inv.location,
+                    origin: inv.location,
+                  });
+                  for (const li of (inv.lineItems || [])) {
+                    addMatch(li.contractNumber, {
+                      customer: inv.customer,
+                      product: li.productName,
+                      pricePerMt: li.mtAmount ?? inv.pricePerMt,
+                      shippingTerms: inv.shippingTerms,
+                      location: inv.location,
+                      origin: inv.location,
+                    });
+                  }
+                }
+
+                // Shipments (both warehouses)
+                const allShipments = [...hamiltonShipments, ...vancouverShipments];
+                for (const s of allShipments) {
+                  addMatch(s.contractNumber, {
+                    customer: s.customer,
+                    product: s.product,
+                    location: s.location,
+                    origin: s.location,
+                  });
+                }
+
+                if (collected.size === 0) {
+                  setErrorBox('No new contract numbers found in Orders, Invoices, or Shipments.');
+                  return;
+                }
+
+                // Build a Contract object per unique contract number, merging info across matches.
+                const pickFirst = <T,>(values: (T | undefined | null | '')[]): T | undefined => {
+                  for (const v of values) {
+                    if (v !== undefined && v !== null && v !== '') return v as T;
+                  }
+                  return undefined;
+                };
+
+                const newContracts: Contract[] = [];
+                let idx = contracts.length + 1;
+                for (const [contractNumber, matches] of collected.entries()) {
+                  const customerName = pickFirst(matches.map(m => m.customer)) || '';
+                  const matchedCustomer = customers.find(c => c.name === customerName);
+                  const customerNumber = matchedCustomer?.customerNumber || matchedCustomer?.id || '';
+                  const skuName = pickFirst(matches.map(m => m.product)) || '';
+                  const finalPrice = pickFirst(matches.map(m => m.pricePerMt)) ?? 0;
+                  const currency = pickFirst(matches.map(m => m.currency)) || '';
+                  const shippingTerms = pickFirst(matches.map(m => m.shippingTerms)) || '';
+                  const palletType = (pickFirst(matches.map(m => m.palletType)) || '') as Contract['palletType'];
+                  const paymentTerms = pickFirst(matches.map(m => m.paymentTerms)) || matchedCustomer?.defaultPaymentTerms || '';
+                  const origin = pickFirst(matches.map(m => m.origin)) || '';
+                  const destination = pickFirst(matches.map(m => m.destination)) || '';
+
+                  newContracts.push({
+                    id: `CON-AUTO-${Date.now()}-${idx++}`,
+                    contractNumber,
+                    customerNumber,
+                    customerName,
+                    contractVolume: 0,
+                    volumeTaken: 0,
+                    volumeOutstanding: 0,
+                    startDate: '',
+                    endDate: '',
+                    skuName,
+                    origin,
+                    destination,
+                    finalPrice,
+                    currency,
+                    shippingTerms,
+                    palletType,
+                    paymentTerms,
+                    active: true,
+                    notes: 'Auto-imported from Orders/Invoices/Shipments',
+                  });
+                }
+
+                setContracts([...contracts, ...newContracts]);
+                setErrorBox(`Imported ${newContracts.length} contract${newContracts.length === 1 ? '' : 's'} from Orders/Invoices/Shipments.`);
+              }}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              <Plus size={12} /> Backfill from Orders/Invoices
+            </button>
           </PageBanner>
 
           <div className="px-6 pt-4">
