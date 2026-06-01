@@ -2718,6 +2718,59 @@ export default function App() {
     return sku.name || sku.id;
   };
 
+  // Build a unified product list for dropdowns covering BOTH skus and any
+  // qaProducts that don't have a matching SKU. Each entry has a stable
+  // value (used by <select>) and a shortform label.
+  const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string }> => {
+    const seen = new Set<string>();
+    const entries: Array<{ value: string; label: string; key: string }> = [];
+
+    // 1) Every SKU
+    for (const s of skus) {
+      const value = (s.name && s.name.trim()) || s.id;
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      entries.push({ value, label: skuToShortform(s), key: s.id });
+    }
+
+    // 2) Every QA product that lacks a matching SKU (legacy / orphan rows)
+    const skuIds = new Set(skus.map(s => s.id));
+    for (const qa of qaProducts) {
+      if (skuIds.has(qa.skuId)) continue; // already represented via its SKU
+      const value = (qa.skuName && qa.skuName.trim()) || qa.productFormat || qa.id;
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      // Synthesize a SKU-shaped object so skuToShortform can be reused
+      const synthetic: SKU = {
+        id: qa.skuId,
+        name: value,
+        productGroup: qa.productGroup,
+        category: qa.category,
+        netWeight: qa.netWeightKg || 0,
+        brix: 99.9,
+        premiumCadMt: 0,
+        netWeightKg: qa.netWeightKg,
+        grossWeightKg: qa.grossWeightKg,
+        maxColor: qa.maxColor,
+        location: qa.location,
+        sugarType: qa.sugarType,
+        productFormat: qa.productFormat,
+      };
+      entries.push({ value, label: skuToShortform(synthetic), key: qa.id });
+    }
+
+    // 3) If a current value is set but isn't already in the list (e.g. a legacy
+    // order line item references a product that no longer exists), include it
+    // so the <select> can still display the selection.
+    if (currentValue && !seen.has(currentValue)) {
+      entries.push({ value: currentValue, label: productToShortform(currentValue) || currentValue, key: `_ghost-${currentValue}` });
+    }
+
+    // Sort alphabetically by label for predictable browsing
+    entries.sort((a, b) => a.label.localeCompare(b.label));
+    return entries;
+  };
+
   const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
     let maxNum = 0;
     existingCustomers.forEach(c => {
@@ -11356,7 +11409,9 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
-                        {skus.map(s => <option key={s.id} value={s.name}>{skuToShortform(s)}</option>)}
+                        {buildOrderProductOptions(newLineItem.productName).map(opt => (
+                          <option key={opt.key} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div className="space-y-1">
@@ -11387,8 +11442,32 @@ export default function App() {
                             setErrorBox('Please select a product and enter a quantity');
                             return;
                           }
-                          const product = skus.find(s => s.name === newLineItem.productName);
-                          if (!product) return;
+                          // Look up the product in skus, then fall back to qaProducts (orphan QA rows)
+                          let product = skus.find(s => s.name === newLineItem.productName);
+                          if (!product) {
+                            const orphan = qaProducts.find(q => q.skuName === newLineItem.productName);
+                            if (orphan) {
+                              product = {
+                                id: orphan.skuId,
+                                name: orphan.skuName,
+                                productGroup: orphan.productGroup,
+                                category: orphan.category,
+                                netWeight: orphan.netWeightKg || 0,
+                                brix: 99.9,
+                                premiumCadMt: 0,
+                                netWeightKg: orphan.netWeightKg,
+                                grossWeightKg: orphan.grossWeightKg,
+                                maxColor: orphan.maxColor,
+                                location: orphan.location,
+                                sugarType: orphan.sugarType,
+                                productFormat: orphan.productFormat,
+                              };
+                            }
+                          }
+                          if (!product) {
+                            setErrorBox(`Product "${newLineItem.productName}" not found in catalog`);
+                            return;
+                          }
                           const netWeightKg = product.netWeightKg || product.netWeight;
                           const totalWeightKg = newLineItem.qty * netWeightKg;
                           const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
@@ -11793,7 +11872,9 @@ export default function App() {
                             className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                           >
                             <option value="">Select Product</option>
-                            {skus.map(s => <option key={s.id} value={s.name}>{skuToShortform(s)}</option>)}
+                            {buildOrderProductOptions(batchOrder.product).map(opt => (
+                              <option key={opt.key} value={opt.value}>{opt.label}</option>
+                            ))}
                           </select>
                         </div>
                         <div className="space-y-0.5">
