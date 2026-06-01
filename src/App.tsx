@@ -11693,8 +11693,14 @@ export default function App() {
                               .reduce((sum, li) => sum + li.totalWeight, 0);
                             const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
                             if (totalWeight > outstanding) {
-                              setErrorBox(`Insufficient contract volume. Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, this item requires ${totalWeight.toFixed(2)} MT`);
-                              return;
+                              const overage = totalWeight - outstanding;
+                              const proceed = window.confirm(
+                                `⚠ Contract volume warning\n\n`
+                                + `Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, but this item requires ${totalWeight.toFixed(2)} MT.\n\n`
+                                + `Adding this line item will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
+                                + `Are you sure you want to proceed?`
+                              );
+                              if (!proceed) return;
                             }
                             // Use contract line price if available, otherwise use contract finalPrice
                             const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
@@ -12308,10 +12314,16 @@ export default function App() {
                               setErrorBox('Product not found');
                               return;
                             }
-                            // Volume validation against contract
+                            // Volume validation against contract — warn but allow override
                             if (selectedContract && totalWeightMT > selectedContract.volumeOutstanding) {
-                              setErrorBox(`Insufficient contract volume. Contract has ${selectedContract.volumeOutstanding.toFixed(1)} MT outstanding, batch requires ${totalWeightMT.toFixed(2)} MT`);
-                              return;
+                              const overage = totalWeightMT - selectedContract.volumeOutstanding;
+                              const proceed = window.confirm(
+                                `⚠ Contract volume warning\n\n`
+                                + `Contract ${selectedContract.contractNumber} has ${selectedContract.volumeOutstanding.toFixed(2)} MT outstanding, but this batch requires ${totalWeightMT.toFixed(2)} MT.\n\n`
+                                + `Creating this batch will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
+                                + `Are you sure you want to proceed?`
+                              );
+                              if (!proceed) return;
                             }
                             // Generate unique BOL numbers for each entry in the batch
                             const generatedBOLs: string[] = [];
