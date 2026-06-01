@@ -2718,52 +2718,61 @@ export default function App() {
     return sku.name || sku.id;
   };
 
-  // Build a unified product list for dropdowns covering BOTH skus and any
-  // qaProducts that don't have a matching SKU. Each entry has a stable
-  // value (used by <select>) and a shortform label.
+  // Build the product picker list for order line items. Shows EVERY entry
+  // from BOTH skus and qaProducts so the user can choose any product
+  // variant they've configured (even when several QA products are linked
+  // to the same SKU via the QA "Pre-fill from Existing Product" flow).
+  // Returns { value, label, key } per option.
   const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string }> => {
-    const seen = new Set<string>();
     const entries: Array<{ value: string; label: string; key: string }> = [];
+    const seenValues = new Set<string>();
 
-    // 1) Every SKU
-    for (const s of skus) {
-      const value = (s.name && s.name.trim()) || s.id;
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      entries.push({ value, label: skuToShortform(s), key: s.id });
-    }
-
-    // 2) Every QA product that lacks a matching SKU (legacy / orphan rows)
-    const skuIds = new Set(skus.map(s => s.id));
+    // 1) One entry per QA product (each QA is a distinct product variant)
     for (const qa of qaProducts) {
-      if (skuIds.has(qa.skuId)) continue; // already represented via its SKU
-      const value = (qa.skuName && qa.skuName.trim()) || qa.productFormat || qa.id;
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      // Synthesize a SKU-shaped object so skuToShortform can be reused
+      // Merge QA + matching SKU so the shortform helper sees all attrs
+      const matchingSku = skus.find(s => s.id === qa.skuId);
       const synthetic: SKU = {
-        id: qa.skuId,
-        name: value,
-        productGroup: qa.productGroup,
-        category: qa.category,
-        netWeight: qa.netWeightKg || 0,
-        brix: 99.9,
-        premiumCadMt: 0,
-        netWeightKg: qa.netWeightKg,
-        grossWeightKg: qa.grossWeightKg,
-        maxColor: qa.maxColor,
-        location: qa.location,
-        sugarType: qa.sugarType,
-        productFormat: qa.productFormat,
+        id: matchingSku?.id || qa.skuId,
+        name: (qa.skuName && qa.skuName.trim()) || matchingSku?.name || qa.productFormat || qa.id,
+        productGroup: qa.productGroup || matchingSku?.productGroup || '',
+        category: (qa.category || matchingSku?.category || 'Conventional') as 'Conventional' | 'Organic',
+        netWeight: qa.netWeightKg || matchingSku?.netWeight || 0,
+        brix: matchingSku?.brix ?? 99.9,
+        premiumCadMt: matchingSku?.premiumCadMt ?? 0,
+        netWeightKg: qa.netWeightKg ?? matchingSku?.netWeightKg,
+        grossWeightKg: qa.grossWeightKg ?? matchingSku?.grossWeightKg,
+        maxColor: qa.maxColor ?? matchingSku?.maxColor ?? 0,
+        location: qa.location || matchingSku?.location || '',
+        sugarType: qa.sugarType || matchingSku?.sugarType,
+        productFormat: qa.productFormat || matchingSku?.productFormat,
+        description: matchingSku?.description,
       };
-      entries.push({ value, label: skuToShortform(synthetic), key: qa.id });
+      const value = synthetic.name;
+      const label = skuToShortform(synthetic) || value;
+      entries.push({ value, label, key: qa.id });
+      if (value) seenValues.add(value);
     }
 
-    // 3) If a current value is set but isn't already in the list (e.g. a legacy
-    // order line item references a product that no longer exists), include it
-    // so the <select> can still display the selection.
-    if (currentValue && !seen.has(currentValue)) {
-      entries.push({ value: currentValue, label: productToShortform(currentValue) || currentValue, key: `_ghost-${currentValue}` });
+    // 2) Any SKU that doesn't yet have a QA pairing (covers legacy SKUs
+    //    or SKUs added directly without going through the QA page)
+    const qaSkuIds = new Set(qaProducts.map(q => q.skuId));
+    for (const s of skus) {
+      if (qaSkuIds.has(s.id)) continue;
+      const value = (s.name && s.name.trim()) || s.id;
+      const label = skuToShortform(s) || value;
+      entries.push({ value, label, key: s.id });
+      if (value) seenValues.add(value);
+    }
+
+    // 3) Ghost option for the currently-selected value when it isn't in
+    //    the catalog anymore (e.g. legacy order line item referencing a
+    //    deleted product) so the <select> always shows the saved choice.
+    if (currentValue && !seenValues.has(currentValue)) {
+      entries.push({
+        value: currentValue,
+        label: productToShortform(currentValue) || currentValue,
+        key: `_ghost-${currentValue}`,
+      });
     }
 
     // Sort alphabetically by label for predictable browsing
