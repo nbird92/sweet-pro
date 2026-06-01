@@ -9540,128 +9540,173 @@ export default function App() {
         )}
 
         {selectedContractDetail && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
+              exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('contract').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('contract').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-6xl w-full max-h-[92vh]'}`}
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Contract Detail: {selectedContractDetail.contractNumber}</h3>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMaximized('contract', !getModalState('contract').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('contract').maximized ? 'Restore' : 'Maximize'}>{getModalState('contract').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+              {/* Banner header */}
+              <div className="bg-[#141414] text-[#E4E3E0] sticky top-0 z-10">
+                {/* Top strip: title + window controls */}
+                <div className="px-6 py-3 flex justify-between items-center border-b border-white/10">
+                  <div className="flex items-center gap-3">
+                    <FileText size={16} className="opacity-70" />
+                    <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-70">Contract Detail</h3>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setModalMaximized('contract', !getModalState('contract').maximized)} className="p-1.5 hover:bg-white/20 transition-all" title={getModalState('contract').maximized ? 'Restore' : 'Maximize'}>{getModalState('contract').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                    <button onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }} className="p-1.5 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  </div>
+                </div>
+
+                {/* Banner body: big contract number + key facts */}
+                <div className="px-6 py-5 grid grid-cols-12 gap-6 items-center">
+                  <div className="col-span-5">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Contract Number</div>
+                    <div className="text-3xl font-black font-mono break-all">{selectedContractDetail.contractNumber}</div>
+                    <div className="mt-2 text-sm font-bold opacity-90">{selectedContractDetail.customerName || '—'}</div>
+                    <div className="text-[10px] opacity-50 font-mono">{selectedContractDetail.customerNumber || ''}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Status</div>
+                    <span className={`inline-block px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${selectedContractDetail.active !== false ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' : 'bg-red-500/20 text-red-300 border border-red-400/40'}`}>
+                      {selectedContractDetail.active !== false ? 'Active' : 'Inactive'}
+                    </span>
+                    <div className="mt-2 text-[10px] uppercase tracking-widest opacity-50">Currency</div>
+                    <div className="text-sm font-bold">{selectedContractDetail.currency || '—'}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Final Price</div>
+                    <div className="text-2xl font-black">${(selectedContractDetail.finalPrice || 0).toFixed(2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
+                    <div className="text-[10px] opacity-50 mt-1">{selectedContractDetail.currency || ''}</div>
+                  </div>
+                  <div className="col-span-3">
+                    {(() => {
+                      const total = selectedContractDetail.contractVolume || 0;
+                      const taken = selectedContractDetail.volumeTaken || 0;
+                      const outstanding = selectedContractDetail.volumeOutstanding ?? (total - taken);
+                      const pct = total > 0 ? Math.min(100, Math.max(0, (taken / total) * 100)) : 0;
+                      return (
+                        <>
+                          <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Volume Used</div>
+                          <div className="text-2xl font-black">{taken}<span className="text-xs opacity-50 font-bold mx-1">/</span><span className="text-sm font-bold">{total}<span className="opacity-50 text-[10px] ml-1">MT</span></span></div>
+                          <div className="mt-2 h-2 w-full bg-white/10 overflow-hidden">
+                            <div className="h-full bg-emerald-400" style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="mt-1 text-[10px] opacity-50">{outstanding} MT outstanding</div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
-              <div className="p-6 space-y-4">
-                {/* Contract Information */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Information</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Contract Number</div>
-                    <div className="font-bold text-right">{selectedContractDetail.contractNumber}</div>
-                    <div className="opacity-60">Customer</div>
-                    <div className="font-bold text-right">{selectedContractDetail.customerName}</div>
-                    <div className="opacity-60">Customer #</div>
-                    <div className="font-bold text-right">{selectedContractDetail.customerNumber}</div>
-                    <div className="opacity-60">Start Date</div>
-                    <div className="font-bold text-right">{selectedContractDetail.startDate}</div>
-                    <div className="opacity-60">End Date</div>
-                    <div className="font-bold text-right">{selectedContractDetail.endDate}</div>
-                    <div className="opacity-60">Shipping Terms</div>
-                    <div className="font-bold text-right">{selectedContractDetail.shippingTerms || '—'}</div>
-                    <div className="opacity-60">Payment Terms</div>
-                    <div className="font-bold text-right">{selectedContractDetail.paymentTerms || '—'}</div>
-                    <div className="opacity-60">Pallet Type</div>
-                    <div className="font-bold text-right">{selectedContractDetail.palletType || '—'}</div>
-                    <div className="opacity-60">Currency</div>
-                    <div className="font-bold text-right">{selectedContractDetail.currency}</div>
-                    <div className="opacity-60">Status</div>
-                    <div className="font-bold text-right">
-                      <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${selectedContractDetail.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {selectedContractDetail.active !== false ? 'Active' : 'Inactive'}
-                      </span>
+
+              {/* Body: data presented in compact, label-on-left tables */}
+              <div className="p-6 space-y-6">
+                {/* Contract details + Product side by side */}
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Contract Terms</h4>
                     </div>
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">Customer</td><td className="px-4 py-2 font-bold">{selectedContractDetail.customerName || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Customer #</td><td className="px-4 py-2 font-mono font-bold">{selectedContractDetail.customerNumber || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Start Date</td><td className="px-4 py-2 font-bold">{selectedContractDetail.startDate || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">End Date</td><td className="px-4 py-2 font-bold">{selectedContractDetail.endDate || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Shipping Terms</td><td className="px-4 py-2 font-bold">{selectedContractDetail.shippingTerms || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Payment Terms</td><td className="px-4 py-2 font-bold">{selectedContractDetail.paymentTerms || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Pallet Type</td><td className="px-4 py-2 font-bold">{selectedContractDetail.palletType || '—'}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Product & Logistics</h4>
+                    </div>
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">SKU</td><td className="px-4 py-2 font-bold">{selectedContractDetail.skuName || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.origin || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Taken</td><td className="px-4 py-2 font-bold">{selectedContractDetail.volumeTaken || 0} MT</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Outstanding</td><td className="px-4 py-2 font-bold">{selectedContractDetail.volumeOutstanding ?? ((selectedContractDetail.contractVolume || 0) - (selectedContractDetail.volumeTaken || 0))} MT</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Margin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}/MT` : '—'}</td></tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
-                {/* Product */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">SKU</div>
-                    <div className="font-bold text-right">{selectedContractDetail.skuName}</div>
-                    <div className="opacity-60">Origin</div>
-                    <div className="font-bold text-right">{selectedContractDetail.origin}</div>
-                    <div className="opacity-60">Destination</div>
-                    <div className="font-bold text-right">{selectedContractDetail.destination || '—'}</div>
-                  </div>
-                </div>
-
-                {/* Volume */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Volume</div>
-                  <div className="grid grid-cols-3 gap-4 text-xs text-center">
-                    <div>
-                      <div className="opacity-60 mb-1">Total</div>
-                      <div className="font-black text-lg">{selectedContractDetail.contractVolume} <span className="text-[10px] font-bold opacity-50">MT</span></div>
-                    </div>
-                    <div>
-                      <div className="opacity-60 mb-1">Taken</div>
-                      <div className="font-black text-lg">{selectedContractDetail.volumeTaken || 0} <span className="text-[10px] font-bold opacity-50">MT</span></div>
-                    </div>
-                    <div>
-                      <div className="opacity-60 mb-1">Outstanding</div>
-                      <div className="font-black text-lg">{selectedContractDetail.volumeOutstanding || selectedContractDetail.contractVolume} <span className="text-[10px] font-bold opacity-50">MT</span></div>
+                {/* Pricing breakdown as a table */}
+                <div className="border border-[#141414] overflow-hidden">
+                  <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 flex justify-between items-center">
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest">Pricing Breakdown</h4>
+                    <div className="text-[10px] uppercase tracking-widest opacity-70">
+                      Total Contract Value: <span className="font-bold opacity-100">{selectedContractDetail.currency} ${((selectedContractDetail.finalPrice || 0) * (selectedContractDetail.contractVolume || 0)).toFixed(2)}</span>
                     </div>
                   </div>
-                </div>
-
-                {/* Pricing Breakdown */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pricing Breakdown</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">FX Rate (USD/CAD)</div>
-                    <div className="font-bold text-right">{selectedContractDetail.fxRate?.toFixed(2) || '—'}</div>
-                    <div className="opacity-60">Raw #11 (USD/cwt)</div>
-                    <div className="font-bold text-right">{selectedContractDetail.rawPriceUsdMt ? `$${(selectedContractDetail.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</div>
-                    <div className="opacity-60">Margin (CAD/MT)</div>
-                    <div className="font-bold text-right">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}` : '—'}</div>
-                    <div className="opacity-60">Delivered Freight</div>
-                    <div className="font-bold text-right">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</div>
-                    <div className="opacity-60">Export Duty</div>
-                    <div className="font-bold text-right">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</div>
-                    <div className="opacity-60">Pallet Charge</div>
-                    <div className="font-bold text-right">{selectedContractDetail.palletCharge ? `$${selectedContractDetail.palletCharge.toFixed(2)}/MT` : '—'}</div>
-                  </div>
-                  <div className="border-t border-[#141414]/10 pt-3 grid grid-cols-2 gap-x-6 text-xs">
-                    <div className="opacity-60">Final Price</div>
-                    <div className="font-black text-right text-base text-indigo-600">{selectedContractDetail.currency} ${selectedContractDetail.finalPrice.toFixed(2)}/MT</div>
-                    <div className="opacity-60">Total Contract Value</div>
-                    <div className="font-bold text-right">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice * selectedContractDetail.contractVolume).toFixed(2)}</div>
-                  </div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest">
+                      <tr>
+                        <th className="px-4 py-2 text-left opacity-60 font-bold">Component</th>
+                        <th className="px-4 py-2 text-right opacity-60 font-bold">Value</th>
+                        <th className="px-4 py-2 text-left opacity-60 font-bold">Component</th>
+                        <th className="px-4 py-2 text-right opacity-60 font-bold">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#141414]/10">
+                      <tr>
+                        <td className="px-4 py-2 opacity-70">FX Rate (USD/CAD)</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.fxRate?.toFixed(4) || '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Delivered Freight</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr className="bg-[#F9F9F9]">
+                        <td className="px-4 py-2 opacity-70">Raw #11 (USD/cwt)</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.rawPriceUsdMt ? `$${(selectedContractDetail.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Export Duty</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-2 opacity-70">Margin (CAD/MT)</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Pallet Charge</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.palletCharge ? `$${selectedContractDetail.palletCharge.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr className="bg-[#141414] text-[#E4E3E0]">
+                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>Final Price</td>
+                        <td className="px-4 py-3 text-right font-black text-base">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice || 0).toFixed(2)}/MT</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
 
                 {/* Contract Lines */}
                 {selectedContractDetail.contractLines && selectedContractDetail.contractLines.length > 0 && (
-                  <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                    <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Contract Lines</div>
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Contract Lines — Product Specific Pricing</h4>
+                    </div>
                     <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-[#141414]/20 text-[10px] uppercase opacity-60">
-                          <th className="pb-2 text-left">Product</th>
-                          <th className="pb-2 text-right">Differential</th>
-                          <th className="pb-2 text-right">Final Price/MT</th>
+                      <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest">
+                        <tr>
+                          <th className="px-4 py-2 text-left opacity-60 font-bold">Product</th>
+                          <th className="px-4 py-2 text-right opacity-60 font-bold">Differential</th>
+                          <th className="px-4 py-2 text-right opacity-60 font-bold">Final Price / MT</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {selectedContractDetail.contractLines.map(cl => (
-                          <tr key={cl.id} className="border-b border-[#141414]/10">
-                            <td className="py-2 font-bold">{cl.productName}</td>
-                            <td className="py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
-                            <td className="py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
+                      <tbody className="divide-y divide-[#141414]/10">
+                        {selectedContractDetail.contractLines.map((cl, idx) => (
+                          <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
+                            <td className="px-4 py-2 font-bold">{cl.productName}</td>
+                            <td className="px-4 py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -9671,9 +9716,11 @@ export default function App() {
 
                 {/* Notes */}
                 {selectedContractDetail.notes && (
-                  <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-2">
-                    <div className="text-[10px] uppercase font-bold opacity-50">Notes</div>
-                    <div className="text-xs italic">{selectedContractDetail.notes}</div>
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Notes</h4>
+                    </div>
+                    <div className="px-4 py-3 text-xs italic whitespace-pre-wrap">{selectedContractDetail.notes}</div>
                   </div>
                 )}
 
