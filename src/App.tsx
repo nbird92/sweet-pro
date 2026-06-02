@@ -12133,7 +12133,7 @@ export default function App() {
               <div className="p-6 space-y-4">
                 {/* Customer, PO, Carrier & Dates Section */}
                 <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
-                  <div className="grid grid-cols-4 gap-6">
+                  <div className="grid grid-cols-3 gap-6">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
                       <select
@@ -12143,6 +12143,8 @@ export default function App() {
                           setOrderCustomerId(customerId);
                           const customer = customers.find(c => c.id === customerId);
                           setOrderCustomerNumberInput(customer?.customerNumber || '');
+                          // Reset ship-to whenever customer changes — old ship-to belongs to the previous customer
+                          setOrderShipToId('');
                           if (customer) {
                             const filtered = contractsForCustomer(customer);
                             setFilteredOrderContracts(filtered);
@@ -12173,6 +12175,7 @@ export default function App() {
                           const match = customers.find(c => (c.customerNumber || '').trim() === num.trim());
                           if (match) {
                             setOrderCustomerId(match.id);
+                            setOrderShipToId(''); // reset on customer change
                             setFilteredOrderContracts(contractsForCustomer(match));
                             if (match.defaultCarrierCode) {
                               const defaultCarrier = carriers.find(c => c.carrierNumber === match.defaultCarrierCode || c.name === match.defaultCarrierCode);
@@ -12184,6 +12187,33 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
                       />
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Ship To (Destination)</label>
+                      {(() => {
+                        const cust = customers.find(c => c.id === orderCustomerId);
+                        if (!cust) {
+                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-sm text-[#141414]/50">Select a customer first</div>;
+                        }
+                        const shipTos = cust.shipToLocations || [];
+                        if (shipTos.length === 0) {
+                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-sm text-[#141414]/50">No ship-to locations on file for {cust.name}</div>;
+                        }
+                        return (
+                          <select
+                            value={orderShipToId}
+                            onChange={(e) => setOrderShipToId(e.target.value)}
+                            className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                          >
+                            <option value="">Select Ship-To (optional)</option>
+                            {shipTos.map(loc => (
+                              <option key={loc.id} value={loc.id}>{loc.locationCode ? `${loc.locationCode} — ` : ''}{loc.name}{loc.city ? `, ${loc.city}` : ''}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">PO #</label>
                       <input
@@ -12278,31 +12308,6 @@ export default function App() {
                           <option key={loc.id} value={loc.name}>{loc.name}</option>
                         ))}
                       </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Ship To (Destination)</label>
-                      {(() => {
-                        const cust = customers.find(c => c.id === orderCustomerId);
-                        const shipTos = cust?.shipToLocations || [];
-                        if (!cust) {
-                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/50">Select a customer first</div>;
-                        }
-                        if (shipTos.length === 0) {
-                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/50">No ship-to locations on file</div>;
-                        }
-                        return (
-                          <select
-                            value={orderShipToId}
-                            onChange={(e) => setOrderShipToId(e.target.value)}
-                            className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
-                          >
-                            <option value="">Select Ship-To (optional)</option>
-                            {shipTos.map(loc => (
-                              <option key={loc.id} value={loc.id}>{loc.locationCode ? `${loc.locationCode} — ` : ''}{loc.name}{loc.city ? `, ${loc.city}` : ''}</option>
-                            ))}
-                          </select>
-                        );
-                      })()}
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
