@@ -283,9 +283,11 @@ export default function App() {
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
+    productKey: string; // unique option key (qa.id / sku.id) — fixes dropdown value collisions when several products share a name
+    productDisplayName: string; // rendered Product Name shown in the line-items table
     qty: number;
     contractNumber: string;
-  }>({ productName: '', qty: 0, contractNumber: '' });
+  }>({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
   const [editingLineItemIdx, setEditingLineItemIdx] = useState<number | null>(null);
   const [filteredOrderContracts, setFilteredOrderContracts] = useState<Contract[]>([]);
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
@@ -5021,7 +5023,7 @@ export default function App() {
                 setOrderCustomerId('');
                 setOrderPO('');
                 setOrderLineItems([]);
-                setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
+                setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                 setEditingOrder(null);
                 setIsAddingOrder(true);
               }}
@@ -12163,7 +12165,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -12362,13 +12364,23 @@ export default function App() {
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
                       <select
-                        value={newLineItem.productName}
-                        onChange={(e) => setNewLineItem({...newLineItem, productName: e.target.value})}
+                        value={newLineItem.productKey}
+                        onChange={(e) => {
+                          const pickedKey = e.target.value;
+                          const opts = buildOrderProductOptions(newLineItem.productName);
+                          const picked = opts.find(o => o.key === pickedKey);
+                          setNewLineItem({
+                            ...newLineItem,
+                            productKey: pickedKey,
+                            productName: picked?.value || '',
+                            productDisplayName: picked?.label || '',
+                          });
+                        }}
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
                         {buildOrderProductOptions(newLineItem.productName).map(opt => (
-                          <option key={opt.key} value={opt.value}>{opt.label}</option>
+                          <option key={opt.key} value={opt.key}>{opt.label}</option>
                         ))}
                       </select>
                     </div>
@@ -12472,6 +12484,7 @@ export default function App() {
                             const updatedLineItem: OrderLineItem = {
                               ...orderLineItems[editingLineItemIdx],
                               productName: newLineItem.productName,
+                              productDisplayName: newLineItem.productDisplayName || undefined,
                               qty: newLineItem.qty,
                               contractNumber: newLineItem.contractNumber,
                               netWeightPerUnit: netWeightKg / 1000,
@@ -12489,6 +12502,7 @@ export default function App() {
                             const lineItem: OrderLineItem = {
                               id: `LINEITEM-${Date.now()}-${Math.random()}`,
                               productName: newLineItem.productName,
+                              productDisplayName: newLineItem.productDisplayName || undefined,
                               qty: newLineItem.qty,
                               contractNumber: newLineItem.contractNumber,
                               netWeightPerUnit: netWeightKg / 1000,
@@ -12499,7 +12513,7 @@ export default function App() {
                             };
                             setOrderLineItems([...orderLineItems, lineItem]);
                           }
-                          setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
+                          setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                         }}
                         className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
                       >
@@ -12509,7 +12523,7 @@ export default function App() {
                         <button
                           onClick={() => {
                             setEditingLineItemIdx(null);
-                            setNewLineItem({ productName: '', qty: 0, contractNumber: '' });
+                            setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                           }}
                           className="py-2 px-4 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                         >
@@ -12542,7 +12556,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {orderLineItems.map((item, idx) => (
                           <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
-                            <td className="p-2">{productNameToDisplay(item.productName)}</td>
+                            <td className="p-2">{item.productDisplayName || productNameToDisplay(item.productName)}</td>
                             <td className="p-2">{item.qty}</td>
                             <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
                             <td className="p-2">{item.contractNumber}</td>
@@ -12553,8 +12567,18 @@ export default function App() {
                               <button
                                 onClick={() => {
                                   setEditingLineItemIdx(idx);
+                                  // Find the dropdown option whose value/label best matches the saved line item so
+                                  // the dropdown displays the right selection when editing.
+                                  const opts = buildOrderProductOptions(item.productName);
+                                  const byDisplay = item.productDisplayName
+                                    ? opts.find(o => o.label === item.productDisplayName)
+                                    : undefined;
+                                  const byValue = opts.find(o => o.value === item.productName);
+                                  const matchingOpt = byDisplay || byValue;
                                   setNewLineItem({
                                     productName: item.productName,
+                                    productKey: matchingOpt?.key || '',
+                                    productDisplayName: item.productDisplayName || matchingOpt?.label || '',
                                     qty: item.qty,
                                     contractNumber: item.contractNumber,
                                   });

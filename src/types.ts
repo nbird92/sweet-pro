@@ -346,6 +346,7 @@ export interface Invoice {
 export interface OrderLineItem {
   id: string;
   productName: string;
+  productDisplayName?: string; // Rendered Product Name captured at selection time so the line shows what the user picked even when several QA products share a SKU name
   qty: number;
   contractNumber: string;
   netWeightPerUnit: number;
