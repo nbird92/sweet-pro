@@ -8318,6 +8318,50 @@ export default function App() {
                     >
                       <FileText size={14} /> Preview BOL
                     </button>
+                    {/* Edit Shipment — always available. Creates a draft shipment on the fly when none exists yet. */}
+                    <button
+                      onClick={() => {
+                        const all = [...hamiltonShipments, ...vancouverShipments];
+                        let target = all.find(s => s.bol === viewingOrderCard.bolNumber) || null;
+                        if (!target) {
+                          // No scheduled shipment yet — create a draft and add it to the right warehouse list
+                          const orderLocation = (viewingOrderCard.location || '').toLowerCase();
+                          const isVancouver = orderLocation.includes('vancouver');
+                          const totalQty = viewingOrderCard.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+                          target = {
+                            id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                            week: '',
+                            date: viewingOrderCard.shipmentDate || '',
+                            day: '',
+                            time: '',
+                            bay: '',
+                            customer: viewingOrderCard.customer,
+                            product: viewingOrderCard.product || viewingOrderCard.lineItems.map(li => li.productName).join(', '),
+                            contractNumber: viewingOrderCard.contractNumber || (viewingOrderCard.lineItems[0]?.contractNumber ?? ''),
+                            po: viewingOrderCard.po,
+                            bol: viewingOrderCard.bolNumber,
+                            qty: totalQty,
+                            carrier: viewingOrderCard.carrier || '',
+                            arrive: '',
+                            start: '',
+                            out: '',
+                            status: 'Pending',
+                            deliveryDate: viewingOrderCard.deliveryDate || '',
+                            location: viewingOrderCard.location || '',
+                          } as Shipment;
+                          if (isVancouver) {
+                            setVancouverShipments(prev => [...prev, target as Shipment]);
+                          } else {
+                            setHamiltonShipments(prev => [...prev, target as Shipment]);
+                          }
+                        }
+                        setEditingShipment(target);
+                        setViewingOrderCard(null);
+                      }}
+                      className="px-4 py-2 border border-indigo-600 text-indigo-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all"
+                    >
+                      <Edit2 size={14} /> Edit Shipment
+                    </button>
                     {viewingOrderCard.status === 'Confirmed' && (
                       <button
                         onClick={() => {
