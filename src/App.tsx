@@ -10874,7 +10874,7 @@ export default function App() {
                               className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                               title="Edit ship-to"
                             >
-                              <Pencil size={14} />
+                              <Edit2 size={14} />
                             </button>
                             <button
                               type="button"
