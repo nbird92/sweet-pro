@@ -161,6 +161,43 @@ export default function ReportsPage({
     return null;
   }, [skus, qaProducts, sugarTypes]);
 
+  // Resolve any free-text invoice customer string to the CURRENT customer
+  // record's name. Tolerant of case / whitespace / ITAS variants. Falls back
+  // to the original string when no catalog customer can be matched.
+  const resolveCustomerName = useCallback((rawCustomer: string | undefined): string => {
+    if (!rawCustomer) return '';
+    const normalize = (s: string | undefined | null) =>
+      (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const target = normalize(rawCustomer);
+    if (!target) return rawCustomer;
+    // 1. Exact match
+    let match = customers.find(c => c.name === rawCustomer);
+    if (match) return match.name;
+    // 2. Normalized name / itasCustomerName / customerNumber / id match
+    match = customers.find(c =>
+      normalize(c.name) === target
+      || normalize(c.itasCustomerName) === target
+      || normalize(c.customerNumber) === target
+      || normalize(c.id) === target
+    );
+    if (match) return match.name;
+    // 3. Substring overlap with a current customer name
+    match = customers.find(c => {
+      const n = normalize(c.name);
+      return n && (target.includes(n) || n.includes(target));
+    });
+    if (match) return match.name;
+    return rawCustomer;
+  }, [customers]);
+
+  // Resolve any free-text invoice product string to the CURRENT SKU's name.
+  // Returns null when the product no longer exists in the catalog.
+  const resolveProductName = useCallback((rawProduct: string | undefined): string | null => {
+    const match = resolveToCatalog(rawProduct);
+    if (!match || (!match.sku && !match.qa)) return null;
+    return match.sku?.name || match.qa?.skuName || null;
+  }, [resolveToCatalog]);
+
   // Resolve any free-text product name to the SKU's shortform. Returns null
   // when the product is no longer in the catalog so the report can skip it.
   const toShortform = useCallback((rawProduct: string | undefined): string | null => {
@@ -222,18 +259,22 @@ export default function ReportsPage({
   // ═══════════════════════════════════════════════════════════════════════════
   // First aggregate invoices by customer (amalgamating ship-to and other variants)
   const customerSalesData = useMemo(() => {
+    // Bucket by the CURRENT customer name resolved from the catalog so the
+    // report reflects renames / ITAS name variants instead of the original
+    // string stored at invoice time.
     const map = new Map<string, { customer: string; totalMt: number; totalRevenue: number; orderCount: number; avgPrice: number }>();
 
     for (const inv of invoices) {
       if (!inv.customer || !inv.qty) continue;
-      const existing = map.get(inv.customer);
+      const key = resolveCustomerName(inv.customer);
+      const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
         existing.totalRevenue += inv.amount || 0;
         existing.orderCount += 1;
       } else {
-        map.set(inv.customer, {
-          customer: inv.customer,
+        map.set(key, {
+          customer: key,
           totalMt: inv.qty,
           totalRevenue: inv.amount || 0,
           orderCount: 1,
@@ -249,7 +290,7 @@ export default function ReportsPage({
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices]);
+  }, [invoices, resolveCustomerName]);
 
   // Now roll customer totals up into customer groups
   interface CustomerGroupRow {
@@ -391,19 +432,17 @@ export default function ReportsPage({
   // REPORT 2: Sales by Product (ranked by volume)
   // ═══════════════════════════════════════════════════════════════════════════
   const productSalesData = useMemo(() => {
-    // Bucket by SHORTFORM resolved from the Products catalog. Invoices whose
-    // product name doesn't map to any SKU are skipped so the report shows
-    // only currently-cataloged products.
+    // Bucket by the CURRENT product NAME from the Products catalog. Invoices
+    // whose product no longer resolves to any SKU are skipped so the report
+    // shows only currently-cataloged products. Customer keys are also
+    // resolved to current names so renamed customers count once.
     const map = new Map<string, { product: string; totalMt: number; totalRevenue: number; customerCount: number; avgPrice: number }>();
     const productCustomers = new Map<string, Set<string>>();
 
     for (const inv of invoices) {
       if (!inv.product || !inv.qty) continue;
-      // Only include invoices whose product still resolves to a current
-      // SKU in the catalog. Anything else is treated as 'no longer exists'
-      // and is dropped from the report.
-      const key = toShortform(inv.product);
-      if (!key) continue;
+      const key = resolveProductName(inv.product);
+      if (!key) continue; // not in catalog any more — drop
       const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
@@ -418,7 +457,7 @@ export default function ReportsPage({
         });
       }
       if (!productCustomers.has(key)) productCustomers.set(key, new Set());
-      if (inv.customer) productCustomers.get(key)!.add(inv.customer);
+      if (inv.customer) productCustomers.get(key)!.add(resolveCustomerName(inv.customer));
     }
 
     const rows = Array.from(map.values());
@@ -429,7 +468,7 @@ export default function ReportsPage({
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices, toShortform]);
+  }, [invoices, resolveProductName, resolveCustomerName]);
 
   const sortedProductSales = useMemo(() => {
     let list = productSalesData;
@@ -507,11 +546,17 @@ export default function ReportsPage({
   // REPORT 4: Top Customer-Product Combinations
   // ═══════════════════════════════════════════════════════════════════════════
   const topCombinations = useMemo(() => {
+    // Bucket by CURRENT customer name + CURRENT product name. Invoices
+    // whose product no longer matches the catalog are skipped so historical
+    // / discontinued products don't appear in this ranking.
     const map = new Map<string, { customer: string; product: string; totalMt: number; totalRevenue: number; invoiceCount: number }>();
 
     for (const inv of invoices) {
       if (!inv.customer || !inv.product || !inv.qty) continue;
-      const key = `${inv.customer}|||${inv.product}`;
+      const cust = resolveCustomerName(inv.customer);
+      const prod = resolveProductName(inv.product);
+      if (!prod) continue; // product no longer in catalog
+      const key = `${cust}|||${prod}`;
       const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
@@ -519,8 +564,8 @@ export default function ReportsPage({
         existing.invoiceCount += 1;
       } else {
         map.set(key, {
-          customer: inv.customer,
-          product: inv.product,
+          customer: cust,
+          product: prod,
           totalMt: inv.qty,
           totalRevenue: inv.amount || 0,
           invoiceCount: 1,
@@ -535,7 +580,7 @@ export default function ReportsPage({
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices]);
+  }, [invoices, resolveCustomerName, resolveProductName]);
 
   const sortedTopCombinations = useMemo(() => {
     let list = topCombinations;
@@ -586,21 +631,22 @@ export default function ReportsPage({
     return -1;
   }, []);
 
-  // Compute avg $/MT per customer from all historical invoices (not FY-bounded)
+  // Compute avg $/MT per customer (CURRENT name) from all historical invoices
   const customerAvgPrice = useMemo(() => {
     const map = new Map<string, { totalRev: number; totalMt: number }>();
     for (const inv of invoices) {
       if (!inv.customer || !inv.qty) continue;
-      const e = map.get(inv.customer);
+      const key = resolveCustomerName(inv.customer);
+      const e = map.get(key);
       if (e) { e.totalRev += inv.amount || 0; e.totalMt += inv.qty; }
-      else map.set(inv.customer, { totalRev: inv.amount || 0, totalMt: inv.qty });
+      else map.set(key, { totalRev: inv.amount || 0, totalMt: inv.qty });
     }
     const result = new Map<string, number>();
     for (const [name, v] of map) {
       result.set(name, v.totalMt > 0 ? v.totalRev / v.totalMt : 0);
     }
     return result;
-  }, [invoices]);
+  }, [invoices, resolveCustomerName]);
 
   // Global avg $/MT fallback
   const globalAvgPrice = useMemo(() => {
@@ -680,7 +726,7 @@ export default function ReportsPage({
   const projectedCustomerData = useMemo(() => {
     if (!projFy || projFy.periods.length === 0) return [];
 
-    // Actuals per customer: { mt, rev }
+    // Actuals per CURRENT customer name: { mt, rev }
     const custActuals = new Map<string, { mt: number; rev: number }>();
     for (const inv of invoices) {
       if (!inv.date || !inv.qty || !inv.customer) continue;
@@ -688,12 +734,13 @@ export default function ReportsPage({
       const pIdx = periodIndexForDate(inv.date, projFy.periods);
       if (pIdx < 0 || pIdx >= 12) continue;
       if (!isPeriodPast(projFy.periods[pIdx])) continue; // only count completed periods
-      const e = custActuals.get(inv.customer);
+      const key = resolveCustomerName(inv.customer);
+      const e = custActuals.get(key);
       if (e) { e.mt += inv.qty; e.rev += inv.amount || 0; }
-      else custActuals.set(inv.customer, { mt: inv.qty, rev: inv.amount || 0 });
+      else custActuals.set(key, { mt: inv.qty, rev: inv.amount || 0 });
     }
 
-    // Forecast per customer (future periods only)
+    // Forecast per CURRENT customer name (future periods only)
     const custForecast = new Map<string, number>();
     const forecasts = customerForecasts.filter(
       cf => cf.fiscalYearId === projFy.id && cf.type === 'Forecast'
@@ -710,7 +757,8 @@ export default function ReportsPage({
         }
       }
       if (futureMt > 0) {
-        custForecast.set(cf.customerName, (custForecast.get(cf.customerName) ?? 0) + futureMt);
+        const key = resolveCustomerName(cf.customerName);
+        custForecast.set(key, (custForecast.get(key) ?? 0) + futureMt);
       }
     }
 
@@ -738,7 +786,7 @@ export default function ReportsPage({
         projRevenue: totalRev,
       };
     });
-  }, [projFy, invoices, customerForecasts, periodIndexForDate, isPeriodPast, customerAvgPrice, globalAvgPrice]);
+  }, [projFy, invoices, customerForecasts, periodIndexForDate, isPeriodPast, customerAvgPrice, globalAvgPrice, resolveCustomerName]);
 
   const sortedProjectedCustomers = useMemo(() => {
     let list = projectedCustomerData;
@@ -776,10 +824,12 @@ export default function ReportsPage({
   // ═══════════════════════════════════════════════════════════════════════════
 
   const groupSalesData = useMemo(() => {
-    // Build a map of customer name → customerGroupId
-    const custGroupMap = new Map<string, string | undefined>();
+    // Build a CURRENT-name -> customerGroupId lookup. We also support
+    // resolving the invoice customer string via the same tolerant lookup
+    // used elsewhere.
+    const currentNameToGroupId = new Map<string, string | undefined>();
     for (const c of customers) {
-      if (c.name) custGroupMap.set(c.name, c.customerGroupId);
+      if (c.name) currentNameToGroupId.set(c.name, c.customerGroupId);
     }
 
     // Aggregate invoices by group
@@ -787,7 +837,8 @@ export default function ReportsPage({
 
     for (const inv of invoices) {
       if (!inv.customer || !inv.qty) continue;
-      const groupId = custGroupMap.get(inv.customer);
+      const currentCustomerName = resolveCustomerName(inv.customer);
+      const groupId = currentNameToGroupId.get(currentCustomerName);
       if (!groupId) continue; // skip ungrouped customers
       const grp = customerGroups.find(g => g.id === groupId);
       if (!grp) continue; // skip if group no longer exists
@@ -798,7 +849,7 @@ export default function ReportsPage({
         existing.totalMt += inv.qty;
         existing.totalRevenue += inv.amount || 0;
         existing.invoiceCount += 1;
-        if (inv.customer) existing.customerNames.add(inv.customer);
+        existing.customerNames.add(currentCustomerName);
       } else {
         map.set(key, {
           groupId,
@@ -807,7 +858,7 @@ export default function ReportsPage({
           totalMt: inv.qty,
           totalRevenue: inv.amount || 0,
           invoiceCount: 1,
-          customerNames: new Set(inv.customer ? [inv.customer] : []),
+          customerNames: new Set([currentCustomerName]),
         });
       }
     }
@@ -825,7 +876,7 @@ export default function ReportsPage({
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices, customers, customerGroups]);
+  }, [invoices, customers, customerGroups, resolveCustomerName]);
 
   const sortedGroupSales = useMemo(() => {
     let list = groupSalesData;
