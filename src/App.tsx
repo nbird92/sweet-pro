@@ -5081,7 +5081,6 @@ export default function App() {
                           >
                             <option value="Open">Open</option>
                             <option value="Confirmed">Confirmed</option>
-                            <option value="Completed">Completed</option>
                             <option value="Cancelled">Cancelled</option>
                           </select>
                         </td>
@@ -8287,6 +8286,57 @@ export default function App() {
                   <div className="flex gap-2">
                     <button onClick={() => setViewingOrderCard(null)}
                       className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
+                    {/* Preview BOL — always available so users can review the BOL before completing */}
+                    <button
+                      onClick={() => {
+                        const matchingShipment =
+                          [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === viewingOrderCard.bolNumber) ||
+                          ({
+                            id: `TMP-${viewingOrderCard.id}`,
+                            week: '',
+                            date: viewingOrderCard.shipmentDate || '',
+                            day: '',
+                            time: '',
+                            bay: '',
+                            customer: viewingOrderCard.customer,
+                            product: viewingOrderCard.product || viewingOrderCard.lineItems.map(li => li.productName).join(', '),
+                            contractNumber: viewingOrderCard.contractNumber || (viewingOrderCard.lineItems[0]?.contractNumber ?? ''),
+                            po: viewingOrderCard.po,
+                            bol: viewingOrderCard.bolNumber,
+                            qty: viewingOrderCard.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
+                            carrier: viewingOrderCard.carrier || '',
+                            arrive: '',
+                            start: '',
+                            out: '',
+                            status: 'Pending',
+                            deliveryDate: viewingOrderCard.deliveryDate || '',
+                            location: viewingOrderCard.location || '',
+                          } as Shipment);
+                        handleGenerateBol(matchingShipment);
+                      }}
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                    >
+                      <FileText size={14} /> Preview BOL
+                    </button>
+                    {viewingOrderCard.status === 'Confirmed' && (
+                      <button
+                        onClick={() => {
+                          const matchingShipment =
+                            [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === viewingOrderCard.bolNumber) ||
+                            null;
+                          if (matchingShipment) {
+                            setEditingShipment(matchingShipment);
+                            setPendingCompleteOrderId(viewingOrderCard.id);
+                          } else {
+                            completeAndBillOrder(viewingOrderCard.id);
+                          }
+                          setViewingOrderCard(null);
+                        }}
+                        className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all"
+                      >
+                        <CheckCircle2 size={14} /> Complete &amp; Bill
+                      </button>
+                    )}
                     {viewingOrderCard.status === 'Open' && (
                       <button onClick={() => {
                         const cust = customers.find(c => c.name === viewingOrderCard.customer);
