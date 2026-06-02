@@ -222,7 +222,7 @@ export default function QualityAssurancePage({
   // Packaging Format state
   const [showPackagingFormatModal, setShowPackagingFormatModal] = useState(false);
   const [editingPackagingFormat, setEditingPackagingFormat] = useState<PackagingFormat | null>(null);
-  const [packagingFormatForm, setPackagingFormatForm] = useState<{ name: string; description: string; packagingLine: string; location: string }>({ name: '', description: '', packagingLine: '', location: '' });
+  const [packagingFormatForm, setPackagingFormatForm] = useState<{ name: string; code: string; description: string; packagingLine: string; location: string }>({ name: '', code: '', description: '', packagingLine: '', location: '' });
   const [deletePackagingFormatConfirmId, setDeletePackagingFormatConfirmId] = useState<string | null>(null);
 
   // Naming Formula state
@@ -870,7 +870,7 @@ export default function QualityAssurancePage({
           <button
             onClick={() => {
               setEditingPackagingFormat(null);
-              setPackagingFormatForm({ name: '', description: '', packagingLine: '', location: locations[0]?.name || '' });
+              setPackagingFormatForm({ name: '', code: '', description: '', packagingLine: '', location: locations[0]?.name || '' });
               setShowPackagingFormatModal(true);
             }}
             className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
@@ -881,6 +881,7 @@ export default function QualityAssurancePage({
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+              <th className="p-4 border-r border-[#141414]/10">Code</th>
               <th className="p-4 border-r border-[#141414]/10">Name</th>
               <th className="p-4 border-r border-[#141414]/10">Description</th>
               <th className="p-4 border-r border-[#141414]/10">Packaging Line</th>
@@ -891,6 +892,7 @@ export default function QualityAssurancePage({
           <tbody className="divide-y divide-[#141414]/10">
             {packagingFormats.map(pf => (
               <tr key={pf.id} className="hover:bg-[#F9F9F9] transition-colors group">
+                <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{pf.code || '—'}</td>
                 <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pf.name}</td>
                 <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{pf.description || '—'}</td>
                 <td className="p-4 text-xs border-r border-[#141414]/10">{pf.packagingLine || '—'}</td>
@@ -902,6 +904,7 @@ export default function QualityAssurancePage({
                         setEditingPackagingFormat(pf);
                         setPackagingFormatForm({
                           name: pf.name,
+                          code: pf.code || '',
                           description: pf.description,
                           packagingLine: pf.packagingLine,
                           location: pf.location,
@@ -925,7 +928,7 @@ export default function QualityAssurancePage({
               </tr>
             ))}
             {packagingFormats.length === 0 && (
-              <tr><td colSpan={5} className="p-12 text-center text-xs opacity-50 italic">No packaging formats added yet.</td></tr>
+              <tr><td colSpan={6} className="p-12 text-center text-xs opacity-50 italic">No packaging formats added yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -947,14 +950,25 @@ export default function QualityAssurancePage({
                 <button onClick={() => setShowPackagingFormatModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
               </div>
               <div className="p-6 space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
-                  <input
-                    value={packagingFormatForm.name}
-                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, name: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="e.g. Bulk Bag, 25kg Bag, Tote"
-                  />
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Code</label>
+                    <input
+                      value={packagingFormatForm.code}
+                      onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, code: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white transition-colors"
+                      placeholder="e.g. BAG, TOT"
+                    />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
+                    <input
+                      value={packagingFormatForm.name}
+                      onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, name: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                      placeholder="e.g. Bulk Bag, 25kg Bag, Tote"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
@@ -995,6 +1009,7 @@ export default function QualityAssurancePage({
                         onUpdatePackagingFormats(packagingFormats.map(pf => pf.id === editingPackagingFormat.id ? {
                           ...editingPackagingFormat,
                           name: packagingFormatForm.name,
+                          code: packagingFormatForm.code,
                           description: packagingFormatForm.description,
                           packagingLine: packagingFormatForm.packagingLine,
                           location: packagingFormatForm.location,
@@ -1003,6 +1018,7 @@ export default function QualityAssurancePage({
                         const newFormat: PackagingFormat = {
                           id: `PF-${Date.now()}`,
                           name: packagingFormatForm.name,
+                          code: packagingFormatForm.code,
                           description: packagingFormatForm.description,
                           packagingLine: packagingFormatForm.packagingLine,
                           location: packagingFormatForm.location,

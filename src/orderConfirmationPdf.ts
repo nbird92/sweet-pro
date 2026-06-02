@@ -1,12 +1,13 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Order, Customer, Carrier, Location, QAProduct, SKU } from './types';
+import type { Order, Customer, Carrier, Location, QAProduct, SKU, ShipToLocation } from './types';
 
 interface GenerateOrderConfirmationParams {
   order: Order;
   customer?: Customer;
   carrier?: Carrier;
   shipperLocation?: Location;
+  shipToLocation?: ShipToLocation;
   qaProducts: QAProduct[];
   skus: SKU[];
 }
@@ -57,6 +58,7 @@ export function generateOrderConfirmationPdf({
   customer,
   carrier,
   shipperLocation,
+  shipToLocation,
   qaProducts,
   skus,
 }: GenerateOrderConfirmationParams): { blobUrl: string; filename: string } {
@@ -161,9 +163,15 @@ export function generateOrderConfirmationPdf({
   doc.text('SHIPPER', rightCol + 2, y - 2);
   doc.setTextColor(BLACK);
 
-  const deliverToName = customer?.name || order.customer || '';
-  const deliverToAddr = customer?.address || '';
-  const deliverToCityProv = customer ? [customer.city, customer.province, customer.postalCode].filter(Boolean).join(', ') : '';
+  const deliverToName = shipToLocation
+    ? `${customer?.name || order.customer || ''} — ${shipToLocation.name}`
+    : (customer?.name || order.customer || '');
+  const deliverToAddr = shipToLocation
+    ? [shipToLocation.addressLine1, shipToLocation.addressLine2].filter(Boolean).join(', ')
+    : (customer?.address || '');
+  const deliverToCityProv = shipToLocation
+    ? [shipToLocation.city, shipToLocation.province, shipToLocation.postalCode, shipToLocation.country].filter(Boolean).join(', ')
+    : (customer ? [customer.city, customer.province, customer.postalCode].filter(Boolean).join(', ') : '');
 
   let dy = y;
   dy = drawFieldRow(doc, 'Name:', deliverToName, leftCol, dy, halfWidth);

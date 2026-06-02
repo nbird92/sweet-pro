@@ -23,7 +23,13 @@ import type {
   FiscalPeriod,
   Shipment,
   CustomerGroup,
+  SKU,
+  QAProduct,
+  SugarType,
+  ProductGroup,
+  NamingFormula,
 } from '../types';
+import { resolveShortForm } from '../utils/namingFormulaResolver';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
@@ -35,6 +41,11 @@ interface ReportsPageProps {
   fiscalYears: FiscalYear[];
   shipments: Shipment[];
   customerGroups: CustomerGroup[];
+  skus: SKU[];
+  qaProducts: QAProduct[];
+  sugarTypes: SugarType[];
+  productGroups: ProductGroup[];
+  namingFormulas: NamingFormula[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -59,7 +70,57 @@ export default function ReportsPage({
   fiscalYears,
   shipments,
   customerGroups,
+  skus,
+  qaProducts,
+  sugarTypes,
+  productGroups,
+  namingFormulas,
 }: ReportsPageProps) {
+  // Resolve any free-text product name to the SKU's shortform from the Products catalog.
+  // If no SKU matches, returns null (caller decides whether to skip or display raw).
+  const toShortform = useCallback((rawProduct: string | undefined): string | null => {
+    if (!rawProduct) return null;
+    const trimmed = rawProduct.trim();
+    if (!trimmed) return null;
+    // Try exact SKU name match first
+    let sku = skus.find(s => s.name === trimmed) || null;
+    let qa = sku
+      ? qaProducts.find(q => q.skuId === sku!.id)
+      : qaProducts.find(q => q.skuName === trimmed) || null;
+    if (qa && !sku) sku = skus.find(s => s.id === qa!.skuId) || null;
+    if (!sku && !qa) {
+      // Case-insensitive fallback
+      const lower = trimmed.toLowerCase();
+      sku = skus.find(s => s.name?.trim().toLowerCase() === lower) || null;
+      if (!sku) {
+        qa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === lower) || null;
+        if (qa) sku = skus.find(s => s.id === qa!.skuId) || null;
+      } else {
+        qa = qaProducts.find(q => q.skuId === sku!.id) || null;
+      }
+    }
+    if (!sku && !qa) return null;
+    const product = {
+      productFormat: qa?.productFormat || sku?.productFormat,
+      productGroup: qa?.productGroup || sku?.productGroup,
+      category: qa?.category || sku?.category,
+      sugarType: qa?.sugarType || sku?.sugarType,
+      location: qa?.location || sku?.location,
+      netWeightKg: qa?.netWeightKg ?? sku?.netWeightKg ?? sku?.netWeight,
+      grossWeightKg: qa?.grossWeightKg ?? sku?.grossWeightKg,
+      maxColor: qa?.maxColor ?? sku?.maxColor,
+    };
+    const ruleResult = resolveShortForm(namingFormulas, product, { sugarTypes, productGroups });
+    if (ruleResult && ruleResult.trim()) return ruleResult.trim();
+    // Legacy fallback
+    if (product.sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(t => t.name === product.sugarType);
+    if (!st || !product.category || product.maxColor === undefined) return null;
+    const co = product.category === 'Conventional' ? 'C' : 'B';
+    if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
+    const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+    return `${wt}${st.abbreviation}${co}${product.maxColor}`;
+  }, [skus, qaProducts, sugarTypes, productGroups, namingFormulas]);
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [custSearch, setCustSearch] = useState('');
   const [custSort, setCustSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
@@ -153,26 +214,31 @@ export default function ReportsPage({
   // REPORT 2: Sales by Product (ranked by volume)
   // ═══════════════════════════════════════════════════════════════════════════
   const productSalesData = useMemo(() => {
+    // Bucket by SHORTFORM resolved from the Products catalog. Invoices whose
+    // product name doesn't map to any SKU are skipped so the report shows
+    // only currently-cataloged products.
     const map = new Map<string, { product: string; totalMt: number; totalRevenue: number; customerCount: number; avgPrice: number }>();
     const productCustomers = new Map<string, Set<string>>();
 
     for (const inv of invoices) {
       if (!inv.product || !inv.qty) continue;
-      const existing = map.get(inv.product);
+      const key = toShortform(inv.product);
+      if (!key) continue; // skip products that aren't in the catalog
+      const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
         existing.totalRevenue += inv.amount || 0;
       } else {
-        map.set(inv.product, {
-          product: inv.product,
+        map.set(key, {
+          product: key,
           totalMt: inv.qty,
           totalRevenue: inv.amount || 0,
           customerCount: 0,
           avgPrice: 0,
         });
       }
-      if (!productCustomers.has(inv.product)) productCustomers.set(inv.product, new Set());
-      if (inv.customer) productCustomers.get(inv.product)!.add(inv.customer);
+      if (!productCustomers.has(key)) productCustomers.set(key, new Set());
+      if (inv.customer) productCustomers.get(key)!.add(inv.customer);
     }
 
     const rows = Array.from(map.values());
@@ -183,7 +249,7 @@ export default function ReportsPage({
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices]);
+  }, [invoices, toShortform]);
 
   const sortedProductSales = useMemo(() => {
     let list = productSalesData;

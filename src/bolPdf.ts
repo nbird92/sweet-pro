@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Shipment, Order, Customer, Carrier, Location, QAProduct } from './types';
+import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation } from './types';
 
 interface GenerateBolParams {
   shipment: Shipment;
@@ -9,6 +9,7 @@ interface GenerateBolParams {
   carrier?: Carrier;
   shipFromLocation?: Location;
   shipToCustomer?: Customer;
+  shipToLocation?: ShipToLocation; // selected ship-to address (overrides customer's default address)
   qaProducts: QAProduct[];
 }
 
@@ -67,6 +68,7 @@ export function generateBolPdf({
   customer,
   carrier,
   shipFromLocation,
+  shipToLocation,
   qaProducts,
 }: GenerateBolParams): { blobUrl: string; filename: string } {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
@@ -155,9 +157,14 @@ export function generateBolPdf({
   y = drawSectionHeader(doc, 'DELIVER TO', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'SHIPPER', rightCol, deliverHeaderY, rightHalf);
 
-  const deliverToName = customer?.name || shipment.customer || '';
-  const deliverToAddr = customer ? [customer.address, customer.city, customer.province].filter(Boolean).join(', ') : '';
-  const deliverToPostal = customer?.postalCode || '';
+  // Prefer the explicitly-selected ship-to location's address when present.
+  const deliverToName = shipToLocation?.name
+    ? `${customer?.name || shipment.customer || ''} — ${shipToLocation.name}`
+    : (customer?.name || shipment.customer || '');
+  const deliverToAddr = shipToLocation
+    ? [shipToLocation.addressLine1, shipToLocation.addressLine2, shipToLocation.city, shipToLocation.province, shipToLocation.country].filter(Boolean).join(', ')
+    : (customer ? [customer.address, customer.city, customer.province].filter(Boolean).join(', ') : '');
+  const deliverToPostal = shipToLocation?.postalCode || customer?.postalCode || '';
 
   const shipperName = shipFromLocation?.name || order?.location || 'Sucro Can Canada';
   const shipperAddr = shipFromLocation ? [shipFromLocation.address, shipFromLocation.city, shipFromLocation.province].filter(Boolean).join(', ') : '';

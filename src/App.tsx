@@ -60,7 +60,7 @@ import { resolveProductName as resolveProductNameRule, resolveShortForm as resol
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -278,6 +278,7 @@ export default function App() {
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
   const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
   const [orderLocation, setOrderLocation] = useState('');
+  const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -1341,11 +1342,17 @@ export default function App() {
       const customer = customers.find(c => c.name === order.customer);
       const carrier = carriers.find(c => c.name === order.carrier);
       const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
+      // Resolve ship-to location: order's selection wins; otherwise undefined so the PDF
+      // falls back to the customer's default address.
+      const shipToLocation = order.shipToLocationId
+        ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId)
+        : undefined;
       const { blobUrl, filename } = generateOrderConfirmationPdf({
         order,
         customer,
         carrier,
         shipperLocation,
+        shipToLocation,
         qaProducts,
         skus,
       });
@@ -1379,6 +1386,11 @@ export default function App() {
       const cust = customers.find(c => c.name === shipment.customer);
       const carr = carriers.find(c => c.name === shipment.carrier);
       const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
+      // Resolve ship-to location: order's selection wins; otherwise leave undefined so
+      // the BOL falls back to the customer's default address.
+      const shipToLoc = linkedOrder?.shipToLocationId
+        ? cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)
+        : undefined;
       const { blobUrl, filename } = generateBolPdf({
         shipment,
         order: linkedOrder,
@@ -1386,6 +1398,7 @@ export default function App() {
         carrier: carr,
         shipFromLocation: shipFromLoc,
         shipToCustomer: cust,
+        shipToLocation: shipToLoc,
         qaProducts,
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
@@ -2349,6 +2362,10 @@ export default function App() {
   };
   const [contractOrdersPopup, setContractOrdersPopup] = useState<string | null>(null); // contract number for orders popup
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  // Ship-To Location editor state — scoped to the open Edit Customer modal
+  const [editingShipTo, setEditingShipTo] = useState<ShipToLocation | null>(null);
+  const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', notes: '' });
+  const [showShipToForm, setShowShipToForm] = useState(false);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingFreightRate, setEditingFreightRate] = useState<FreightRate | null>(null);
   const [editingContract, setEditingContract] = useState<Contract | null>(null);
@@ -4923,6 +4940,7 @@ export default function App() {
                               setOrderDeliveryDate(ord.deliveryDate || '');
                               setOrderCarrier(ord.carrier || '');
                               setOrderShippingTerms(ord.shippingTerms || '');
+                              setOrderShipToId(ord.shipToLocationId || '');
                               setOrderLocation(ord.location || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
@@ -6071,6 +6089,11 @@ export default function App() {
           fiscalYears={fiscalYears}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           customerGroups={customerGroups}
+          skus={skus}
+          qaProducts={qaProducts}
+          sugarTypes={sugarTypes}
+          productGroups={productGroups}
+          namingFormulas={namingFormulas}
         />
       );
     }
@@ -8049,6 +8072,7 @@ export default function App() {
                         setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
                         setOrderCarrier(viewingOrderCard.carrier || '');
                         setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
+                        setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
                         if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
@@ -10777,6 +10801,188 @@ export default function App() {
                     />
                   </div>
                 </div>
+
+                {/* Ship-To Locations */}
+                <div className="border border-[#141414] overflow-hidden">
+                  <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 flex justify-between items-center">
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest">Ship-To Locations</h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingShipTo(null);
+                        const existing = editingCustomer.shipToLocations || [];
+                        // Generate next 3-digit code (010, 020, 030 etc.)
+                        const maxCode = existing.reduce((max, l) => {
+                          const num = parseInt(l.locationCode || '0', 10);
+                          return !isNaN(num) && num > max ? num : max;
+                        }, 0);
+                        const nextCode = String(maxCode + 10).padStart(3, '0');
+                        setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', notes: '' });
+                        setShowShipToForm(true);
+                      }}
+                      className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
+                    >
+                      <Plus size={12} /> Add Ship-To
+                    </button>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest border-b border-[#141414]/10">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Code</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Name</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Address</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">City / Province</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Postal Code</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Country</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70">Contact</th>
+                        <th className="px-3 py-2 text-right font-bold opacity-70">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#141414]/10">
+                      {(editingCustomer.shipToLocations || []).length === 0 && (
+                        <tr><td colSpan={8} className="p-6 text-center text-xs opacity-50 italic">No ship-to locations yet. Use "Add Ship-To" to add one.</td></tr>
+                      )}
+                      {(editingCustomer.shipToLocations || []).map(loc => (
+                        <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors">
+                          <td className="px-3 py-2 font-mono font-bold">{loc.locationCode}</td>
+                          <td className="px-3 py-2 font-bold">{loc.name}</td>
+                          <td className="px-3 py-2">{loc.addressLine1}{loc.addressLine2 ? `, ${loc.addressLine2}` : ''}</td>
+                          <td className="px-3 py-2">{[loc.city, loc.province].filter(Boolean).join(', ') || '—'}</td>
+                          <td className="px-3 py-2 font-mono">{loc.postalCode || '—'}</td>
+                          <td className="px-3 py-2">{loc.country || '—'}</td>
+                          <td className="px-3 py-2 text-[10px]">{loc.phone || '—'}{loc.email ? <><br />{loc.email}</> : null}</td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingShipTo(loc);
+                                setShipToForm({
+                                  locationCode: loc.locationCode,
+                                  name: loc.name,
+                                  addressLine1: loc.addressLine1,
+                                  addressLine2: loc.addressLine2 || '',
+                                  city: loc.city || '',
+                                  province: loc.province || '',
+                                  country: loc.country || '',
+                                  postalCode: loc.postalCode || '',
+                                  phone: loc.phone || '',
+                                  email: loc.email || '',
+                                  notes: loc.notes || '',
+                                });
+                                setShowShipToForm(true);
+                              }}
+                              className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                              title="Edit ship-to"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!window.confirm(`Delete ship-to "${loc.name}"?`)) return;
+                                setEditingCustomer({
+                                  ...editingCustomer,
+                                  shipToLocations: (editingCustomer.shipToLocations || []).filter(l => l.id !== loc.id),
+                                });
+                              }}
+                              className="p-1.5 text-red-500 hover:bg-red-50 transition-colors"
+                              title="Delete ship-to"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Inline Ship-To form */}
+                  {showShipToForm && (
+                    <div className="bg-[#F5F5F5] border-t border-[#141414]/10 p-4 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-70">{editingShipTo ? 'Edit Ship-To' : 'Add Ship-To'}</h5>
+                        <button type="button" onClick={() => { setShowShipToForm(false); setEditingShipTo(null); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><X size={14} /></button>
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Location Code</label>
+                          <input value={shipToForm.locationCode} onChange={(e) => setShipToForm({ ...shipToForm, locationCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono outline-none" placeholder="e.g. 010" />
+                        </div>
+                        <div className="col-span-3 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Location Name *</label>
+                          <input value={shipToForm.name} onChange={(e) => setShipToForm({ ...shipToForm, name: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Main Warehouse, Vancouver DC" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Address Line 1</label>
+                          <input value={shipToForm.addressLine1} onChange={(e) => setShipToForm({ ...shipToForm, addressLine1: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Address Line 2</label>
+                          <input value={shipToForm.addressLine2 || ''} onChange={(e) => setShipToForm({ ...shipToForm, addressLine2: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Suite, Unit, etc." />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">City</label>
+                          <input value={shipToForm.city || ''} onChange={(e) => setShipToForm({ ...shipToForm, city: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Province / State</label>
+                          <input value={shipToForm.province || ''} onChange={(e) => setShipToForm({ ...shipToForm, province: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Postal Code</label>
+                          <input value={shipToForm.postalCode || ''} onChange={(e) => setShipToForm({ ...shipToForm, postalCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Country</label>
+                          <input value={shipToForm.country || ''} onChange={(e) => setShipToForm({ ...shipToForm, country: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Canada, USA" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Phone</label>
+                          <input value={shipToForm.phone || ''} onChange={(e) => setShipToForm({ ...shipToForm, phone: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Email</label>
+                          <input type="email" value={shipToForm.email || ''} onChange={(e) => setShipToForm({ ...shipToForm, email: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!shipToForm.name.trim()) return;
+                            const list = editingCustomer.shipToLocations || [];
+                            if (editingShipTo) {
+                              setEditingCustomer({
+                                ...editingCustomer,
+                                shipToLocations: list.map(l => l.id === editingShipTo.id ? { ...editingShipTo, ...shipToForm } : l),
+                              });
+                            } else {
+                              const newLoc: ShipToLocation = { id: `STL-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, ...shipToForm };
+                              setEditingCustomer({
+                                ...editingCustomer,
+                                shipToLocations: [...list, newLoc],
+                              });
+                            }
+                            setShowShipToForm(false);
+                            setEditingShipTo(null);
+                          }}
+                          disabled={!shipToForm.name.trim()}
+                          className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
+                        >
+                          {editingShipTo ? 'Save Ship-To' : 'Add Ship-To'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowShipToForm(false); setEditingShipTo(null); }}
+                          className="flex-1 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
                   <textarea
@@ -10790,6 +10996,8 @@ export default function App() {
                     onClick={() => {
                       setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
                       setEditingCustomer(null);
+                      setShowShipToForm(false);
+                      setEditingShipTo(null);
                       resetModalState('customer');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
@@ -10797,7 +11005,7 @@ export default function App() {
                     Save Changes
                   </button>
                   <button
-                    onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}
+                    onClick={() => { setEditingCustomer(null); setShowShipToForm(false); setEditingShipTo(null); resetModalState('customer'); }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
                     Cancel
@@ -11429,6 +11637,7 @@ export default function App() {
                   setOrderDeliveryDate(ord.deliveryDate || '');
                   setOrderCarrier(ord.carrier || '');
                   setOrderShippingTerms((ord.shippingTerms as any) || '');
+                  setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
                   setOrderLineItems(ord.lineItems);
                   if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
@@ -11526,7 +11735,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -11654,6 +11863,31 @@ export default function App() {
                           <option key={loc.id} value={loc.name}>{loc.name}</option>
                         ))}
                       </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Ship To (Destination)</label>
+                      {(() => {
+                        const cust = customers.find(c => c.id === orderCustomerId);
+                        const shipTos = cust?.shipToLocations || [];
+                        if (!cust) {
+                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/50">Select a customer first</div>;
+                        }
+                        if (shipTos.length === 0) {
+                          return <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/50">No ship-to locations on file</div>;
+                        }
+                        return (
+                          <select
+                            value={orderShipToId}
+                            onChange={(e) => setOrderShipToId(e.target.value)}
+                            className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                          >
+                            <option value="">Select Ship-To (optional)</option>
+                            {shipTos.map(loc => (
+                              <option key={loc.id} value={loc.id}>{loc.locationCode ? `${loc.locationCode} — ` : ''}{loc.name}{loc.city ? `, ${loc.city}` : ''}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Pallet Type</label>
@@ -11966,6 +12200,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          shipToLocationId: orderShipToId || undefined,
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
                         };
@@ -11988,6 +12223,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                         };
                         setOrders([...orders, newOrder]);
@@ -12002,6 +12238,7 @@ export default function App() {
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
                       setOrderLocation('');
+                      setOrderShipToId('');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -12034,6 +12271,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                         };
                         setOrders([...orders, newOrder]);
@@ -12065,6 +12303,7 @@ export default function App() {
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
                       setOrderLocation('');
+                      setOrderShipToId('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >

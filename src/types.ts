@@ -45,6 +45,21 @@ export interface SKU {
   productLongForm?: string; // Auto-calculated: ProductFormat + SugarType + Conv./Organic + Color
 }
 
+export interface ShipToLocation {
+  id: string;
+  locationCode: string;
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city?: string;
+  province?: string;     // Province / State
+  country?: string;
+  postalCode?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
+
 export interface Customer {
   id: string;
   name: string;
@@ -66,6 +81,7 @@ export interface Customer {
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
   customerGroupId?: string;
+  shipToLocations?: ShipToLocation[];
 }
 
 export interface Person {
@@ -358,6 +374,7 @@ export interface Order {
   currency?: string;       // currency from CSV or contract (e.g. "CAD", "USD")
   palletType?: 'CHEP' | 'One Way' | ''; // from contract
   hidden?: boolean;        // hide instead of delete for confirmed orders (BOL permanently reserved)
+  shipToLocationId?: string; // references ShipToLocation.id under the order's customer
 }
 
 export const INITIAL_CARRIERS: Carrier[] = [
@@ -564,6 +581,7 @@ export const INITIAL_SUGAR_TYPES: SugarType[] = [
 export interface PackagingFormat {
   id: string;
   name: string;
+  code: string; // short identifier (e.g. "BAG", "TOT", "BLK")
   description: string;
   packagingLine: string;
   location: string;
