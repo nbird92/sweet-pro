@@ -6882,31 +6882,47 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${(c.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber ? null : c.contractNumber); }}
-                          className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
-                          title="View orders on this contract"
-                        >
-                          {(c.volumeTaken || 0).toFixed(2)}
-                        </button>
-                      </td>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
-                        {(() => {
-                          const volumeOnOrder = orders
-                            .filter(o => o.status !== 'Cancelled' && (o.contractNumber === c.contractNumber || o.lineItems.some(li => li.contractNumber === c.contractNumber)))
-                            .reduce((sum, o) => sum + (o.lineItems.reduce((s, li) => s + (li.contractNumber === c.contractNumber ? li.qty : 0), 0) || o.amount / (c.finalPrice || 1)), 0);
-                          return (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber ? null : c.contractNumber); }}
-                              className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
-                              title="View orders on this contract"
-                            >
-                              {volumeOnOrder.toFixed(2)}
-                            </button>
-                          );
-                        })()}
-                      </td>
+                      {(() => {
+                        // Compute Volume Taken (invoiced) and Volume on Order (not yet invoiced)
+                        // for this contract directly from current orders + invoices.
+                        const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
+                        const ordersOnContract = orders.filter(o =>
+                          o.status !== 'Cancelled' && (
+                            o.contractNumber === c.contractNumber ||
+                            (o.lineItems || []).some(li => li.contractNumber === c.contractNumber)
+                          )
+                        );
+                        const sumWeight = (o: Order) => (o.lineItems || [])
+                          .reduce((s, li) => s + (li.contractNumber === c.contractNumber ? (li.totalWeight || 0) : 0), 0);
+                        const volumeTakenComputed = ordersOnContract
+                          .filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
+                          .reduce((sum, o) => sum + sumWeight(o), 0);
+                        const volumeOnOrderComputed = ordersOnContract
+                          .filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
+                          .reduce((sum, o) => sum + sumWeight(o), 0);
+                        return (
+                          <>
+                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber + ':taken' ? null : c.contractNumber + ':taken'); }}
+                                className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
+                                title="View invoiced orders on this contract"
+                              >
+                                {volumeTakenComputed.toFixed(2)}
+                              </button>
+                            </td>
+                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber + ':onorder' ? null : c.contractNumber + ':onorder'); }}
+                                className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
+                                title="View non-invoiced orders on this contract"
+                              >
+                                {volumeOnOrderComputed.toFixed(2)}
+                              </button>
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
@@ -11613,21 +11629,39 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] min-w-[700px] max-w-4xl w-full overflow-hidden max-h-[85vh] overflow-y-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
-                <div className="flex items-center gap-3">
-                  <FileText size={16} className="opacity-70" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">Orders on Contract</span>
-                  <span className="text-sm font-bold font-mono">{contractOrdersPopup}</span>
-                </div>
-                <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
-              </div>
               {(() => {
-                const contractOrders = orders.filter(o =>
+                // Parse the popup key — it's either '<contractNumber>' (legacy),
+                // '<contractNumber>:taken', or '<contractNumber>:onorder'.
+                const raw = contractOrdersPopup;
+                const [popupContract, popupFilter] = raw.includes(':') ? raw.split(':') : [raw, 'all'];
+                const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
+                const titleLabel = popupFilter === 'taken'
+                  ? 'Invoiced Orders'
+                  : popupFilter === 'onorder'
+                  ? 'Orders on Contract (not yet invoiced)'
+                  : 'Orders on Contract';
+                return (
+                  <>
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center sticky top-0 z-10">
+                      <div className="flex items-center gap-3">
+                        <FileText size={16} className="opacity-70" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">{titleLabel}</span>
+                        <span className="text-sm font-bold font-mono">{popupContract}</span>
+                      </div>
+                      <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
+                    </div>
+                    {(() => {
+                const allMatching = orders.filter(o =>
                   o.status !== 'Cancelled' && (
-                    o.contractNumber === contractOrdersPopup ||
-                    o.lineItems.some(li => li.contractNumber === contractOrdersPopup)
+                    o.contractNumber === popupContract ||
+                    o.lineItems.some(li => li.contractNumber === popupContract)
                   )
                 );
+                const contractOrders = popupFilter === 'taken'
+                  ? allMatching.filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
+                  : popupFilter === 'onorder'
+                  ? allMatching.filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
+                  : allMatching;
 
                 const openOrderForEdit = (ord: Order) => {
                   const cust = customers.find(c => c.name === ord.customer);
@@ -11647,11 +11681,11 @@ export default function App() {
                 };
 
                 if (contractOrders.length === 0) {
-                  return <div className="p-8 text-center text-xs opacity-50 italic">No active orders on this contract yet.</div>;
+                  return <div className="p-8 text-center text-xs opacity-50 italic">No {popupFilter === 'taken' ? 'invoiced' : popupFilter === 'onorder' ? 'open' : 'active'} orders on this contract.</div>;
                 }
 
                 const totalQty = contractOrders.reduce((sum, o) =>
-                  sum + o.lineItems.reduce((s, li) => s + (li.contractNumber === contractOrdersPopup ? li.totalWeight : 0), 0),
+                  sum + o.lineItems.reduce((s, li) => s + (li.contractNumber === popupContract ? li.totalWeight : 0), 0),
                 0);
                 const totalAmount = contractOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
 
@@ -11675,7 +11709,7 @@ export default function App() {
                         const productLabel = ord.product
                           ? productToShortform(ord.product)
                           : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
-                        const lineQty = ord.lineItems.reduce((s, li) => s + (li.contractNumber === contractOrdersPopup ? li.totalWeight : 0), 0);
+                        const lineQty = ord.lineItems.reduce((s, li) => s + (li.contractNumber === popupContract ? li.totalWeight : 0), 0);
                         return (
                           <tr
                             key={ord.id}
@@ -11718,6 +11752,9 @@ export default function App() {
               <div className="bg-[#F5F5F5] border-t border-[#141414]/10 px-4 py-2 text-[10px] italic opacity-60">
                 Tip: click any order row to open the Edit Order menu.
               </div>
+                  </>
+                );
+              })()}
             </motion.div>
           </div>
         )}

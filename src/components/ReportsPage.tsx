@@ -149,8 +149,9 @@ export default function ReportsPage({
   );
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // REPORT 1: Sales by Customer (ranked by volume)
+  // REPORT 1: Sales by Customer Group (with expandable customer detail)
   // ═══════════════════════════════════════════════════════════════════════════
+  // First aggregate invoices by customer (amalgamating ship-to and other variants)
   const customerSalesData = useMemo(() => {
     const map = new Map<string, { customer: string; totalMt: number; totalRevenue: number; orderCount: number; avgPrice: number }>();
 
@@ -181,18 +182,97 @@ export default function ReportsPage({
     }));
   }, [invoices]);
 
-  const sortedCustomerSales = useMemo(() => {
-    let list = customerSalesData;
+  // Now roll customer totals up into customer groups
+  interface CustomerGroupRow {
+    groupKey: string;
+    groupName: string;
+    totalMt: number;
+    totalRevenue: number;
+    orderCount: number;
+    avgPrice: number;
+    pctOfTotal: number;
+    customers: Array<{ customer: string; totalMt: number; totalRevenue: number; orderCount: number; avgPrice: number; pctOfGroup: number }>;
+  }
+
+  const customerGroupSalesData = useMemo<CustomerGroupRow[]>(() => {
+    // Build customerName -> groupId map
+    const custNameToGroupId = new Map<string, string>();
+    for (const c of customers) {
+      if (c.name && c.customerGroupId) custNameToGroupId.set(c.name, c.customerGroupId);
+    }
+    const groupById = new Map(customerGroups.map(g => [g.id, g] as const));
+
+    // Bucket customers by group
+    const groups = new Map<string, CustomerGroupRow>();
+    for (const cs of customerSalesData) {
+      const gid = custNameToGroupId.get(cs.customer) || '__UNGROUPED__';
+      const gname = gid === '__UNGROUPED__' ? 'Ungrouped' : (groupById.get(gid)?.name || 'Ungrouped');
+      let row = groups.get(gid);
+      if (!row) {
+        row = {
+          groupKey: gid,
+          groupName: gname,
+          totalMt: 0,
+          totalRevenue: 0,
+          orderCount: 0,
+          avgPrice: 0,
+          pctOfTotal: 0,
+          customers: [],
+        };
+        groups.set(gid, row);
+      }
+      row.totalMt += cs.totalMt;
+      row.totalRevenue += cs.totalRevenue;
+      row.orderCount += cs.orderCount;
+      row.customers.push({
+        customer: cs.customer,
+        totalMt: cs.totalMt,
+        totalRevenue: cs.totalRevenue,
+        orderCount: cs.orderCount,
+        avgPrice: cs.avgPrice,
+        pctOfGroup: 0,
+      });
+    }
+    const rows = Array.from(groups.values());
+    const grandTotal = rows.reduce((s, r) => s + r.totalMt, 0);
+    for (const r of rows) {
+      r.avgPrice = r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0;
+      r.pctOfTotal = grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0;
+      for (const cust of r.customers) {
+        cust.pctOfGroup = r.totalMt > 0 ? (cust.totalMt / r.totalMt) * 100 : 0;
+      }
+      r.customers.sort((a, b) => b.totalMt - a.totalMt);
+    }
+    return rows;
+  }, [customerSalesData, customers, customerGroups]);
+
+  // Expanded-row state for the group report
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const sortedCustomerGroupSales = useMemo(() => {
+    let list = customerGroupSalesData;
     if (custSearch.trim()) {
       const q = custSearch.toLowerCase();
-      list = list.filter(r => r.customer.toLowerCase().includes(q));
+      list = list.filter(r =>
+        r.groupName.toLowerCase().includes(q) ||
+        r.customers.some(c => c.customer.toLowerCase().includes(q))
+      );
     }
     if (custSort.key) {
       list = [...list].sort((a, b) => {
         let va: string | number = '';
         let vb: string | number = '';
         switch (custSort.key) {
-          case 'customer': va = a.customer; vb = b.customer; break;
+          case 'customer':
+          case 'groupName': va = a.groupName; vb = b.groupName; break;
           case 'totalMt': va = a.totalMt; vb = b.totalMt; break;
           case 'totalRevenue': va = a.totalRevenue; vb = b.totalRevenue; break;
           case 'orderCount': va = a.orderCount; vb = b.orderCount; break;
@@ -205,10 +285,10 @@ export default function ReportsPage({
       });
     }
     return list;
-  }, [customerSalesData, custSearch, custSort]);
+  }, [customerGroupSalesData, custSearch, custSort]);
 
-  const customerGrandTotalMt = useMemo(() => customerSalesData.reduce((s, r) => s + r.totalMt, 0), [customerSalesData]);
-  const customerGrandTotalRev = useMemo(() => customerSalesData.reduce((s, r) => s + r.totalRevenue, 0), [customerSalesData]);
+  const customerGrandTotalMt = useMemo(() => customerGroupSalesData.reduce((s, r) => s + r.totalMt, 0), [customerGroupSalesData]);
+  const customerGrandTotalRev = useMemo(() => customerGroupSalesData.reduce((s, r) => s + r.totalRevenue, 0), [customerGroupSalesData]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // REPORT 2: Sales by Product (ranked by volume)
@@ -222,8 +302,9 @@ export default function ReportsPage({
 
     for (const inv of invoices) {
       if (!inv.product || !inv.qty) continue;
-      const key = toShortform(inv.product);
-      if (!key) continue; // skip products that aren't in the catalog
+      // Prefer the catalog shortform; if the invoice's product can't be
+      // resolved, fall back to the raw stored name so the row still appears.
+      const key = toShortform(inv.product) || inv.product;
       const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
@@ -730,13 +811,13 @@ export default function ReportsPage({
   };
 
   const buildCustomerSheet = useCallback((wb: ExcelJS.Workbook) => {
-    const ws = wb.addWorksheet('Sales by Customer');
+    const ws = wb.addWorksheet('Sales by Customer Group');
     const dateStr = new Date().toLocaleDateString();
-    addTitleRows(ws, 'Sales Volume by Customer', `Generated ${dateStr} | ${customerSalesData.length} customers | ${formatNum(customerGrandTotalMt)} MT total`);
+    addTitleRows(ws, 'Sales Volume by Customer Group', `Generated ${dateStr} | ${customerGroupSalesData.length} groups | ${formatNum(customerGrandTotalMt)} MT total`);
 
     // Headers
     const headerRowNum = ws.rowCount + 1;
-    ws.addRow(['#', 'Customer', 'Total (MT)', 'Revenue', 'Invoices', 'Avg $/MT', '% of Total']);
+    ws.addRow(['#', 'Customer Group / Customer', 'Total (MT)', 'Revenue', 'Invoices', 'Avg $/MT', '% of Total']);
     applyHeaderRow(ws, headerRowNum);
     ws.getRow(headerRowNum).getCell(3).alignment = { horizontal: 'right' };
     ws.getRow(headerRowNum).getCell(4).alignment = { horizontal: 'right' };
@@ -744,32 +825,44 @@ export default function ReportsPage({
     ws.getRow(headerRowNum).getCell(6).alignment = { horizontal: 'right' };
     ws.getRow(headerRowNum).getCell(7).alignment = { horizontal: 'right' };
 
-    // Data rows
-    sortedCustomerSales.forEach((row, idx) => {
-      const r = ws.addRow([idx + 1, row.customer, row.totalMt, row.totalRevenue, row.orderCount, row.avgPrice, row.pctOfTotal / 100]);
-      r.getCell(3).numFmt = NUMBER_FMT;
-      r.getCell(4).numFmt = CURRENCY_FMT;
-      r.getCell(5).numFmt = INT_FMT;
-      r.getCell(6).numFmt = CURRENCY_FMT;
-      r.getCell(7).numFmt = PCT_FMT;
-      r.getCell(3).alignment = { horizontal: 'right' };
-      r.getCell(4).alignment = { horizontal: 'right' };
-      r.getCell(5).alignment = { horizontal: 'right' };
-      r.getCell(6).alignment = { horizontal: 'right' };
-      r.getCell(7).alignment = { horizontal: 'right' };
-      // Alternate row shading
-      if (idx % 2 === 1) {
-        r.eachCell((cell) => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+    // Data rows — group row, then indented customer rows
+    sortedCustomerGroupSales.forEach((row, idx) => {
+      const gr = ws.addRow([idx + 1, row.groupName, row.totalMt, row.totalRevenue, row.orderCount, row.avgPrice, row.pctOfTotal / 100]);
+      gr.getCell(3).numFmt = NUMBER_FMT;
+      gr.getCell(4).numFmt = CURRENCY_FMT;
+      gr.getCell(5).numFmt = INT_FMT;
+      gr.getCell(6).numFmt = CURRENCY_FMT;
+      gr.getCell(7).numFmt = PCT_FMT;
+      gr.font = { bold: true };
+      gr.getCell(3).alignment = { horizontal: 'right' };
+      gr.getCell(4).alignment = { horizontal: 'right' };
+      gr.getCell(5).alignment = { horizontal: 'right' };
+      gr.getCell(6).alignment = { horizontal: 'right' };
+      gr.getCell(7).alignment = { horizontal: 'right' };
+      // Customer breakdown rows
+      row.customers.forEach(cust => {
+        const cr = ws.addRow(['', `    ${cust.customer}`, cust.totalMt, cust.totalRevenue, cust.orderCount, cust.avgPrice, cust.pctOfGroup / 100]);
+        cr.getCell(3).numFmt = NUMBER_FMT;
+        cr.getCell(4).numFmt = CURRENCY_FMT;
+        cr.getCell(5).numFmt = INT_FMT;
+        cr.getCell(6).numFmt = CURRENCY_FMT;
+        cr.getCell(7).numFmt = PCT_FMT;
+        cr.getCell(3).alignment = { horizontal: 'right' };
+        cr.getCell(4).alignment = { horizontal: 'right' };
+        cr.getCell(5).alignment = { horizontal: 'right' };
+        cr.getCell(6).alignment = { horizontal: 'right' };
+        cr.getCell(7).alignment = { horizontal: 'right' };
+        cr.eachCell((cell) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF6FF' } };
         });
-      }
+      });
     });
 
     // Total row
     const totalRowNum = ws.rowCount + 1;
-    const totalInvoices = customerSalesData.reduce((s, r) => s + r.orderCount, 0);
+    const totalInvoices = customerGroupSalesData.reduce((s, r) => s + r.orderCount, 0);
     const avgAll = customerGrandTotalMt > 0 ? customerGrandTotalRev / customerGrandTotalMt : 0;
-    const r = ws.addRow(['', `Total (${customerSalesData.length} customers)`, customerGrandTotalMt, customerGrandTotalRev, totalInvoices, avgAll, 1]);
+    const r = ws.addRow(['', `Total (${customerGroupSalesData.length} groups)`, customerGrandTotalMt, customerGrandTotalRev, totalInvoices, avgAll, 1]);
     r.getCell(3).numFmt = NUMBER_FMT;
     r.getCell(4).numFmt = CURRENCY_FMT;
     r.getCell(5).numFmt = INT_FMT;
@@ -784,7 +877,7 @@ export default function ReportsPage({
 
     // Column widths
     ws.getColumn(1).width = 5;
-    ws.getColumn(2).width = 35;
+    ws.getColumn(2).width = 40;
     ws.getColumn(3).width = 16;
     ws.getColumn(4).width = 18;
     ws.getColumn(5).width = 12;
@@ -793,7 +886,7 @@ export default function ReportsPage({
 
     // Freeze header
     ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
-  }, [sortedCustomerSales, customerSalesData, customerGrandTotalMt, customerGrandTotalRev]);
+  }, [sortedCustomerGroupSales, customerGroupSalesData, customerGrandTotalMt, customerGrandTotalRev]);
 
   const buildProductSheet = useCallback((wb: ExcelJS.Workbook) => {
     const ws = wb.addWorksheet('Sales by Product');
@@ -1141,12 +1234,12 @@ export default function ReportsPage({
         </div>
       </div>
 
-      {/* ═══════════════ REPORT 1: Sales by Customer ═══════════════ */}
+      {/* ═══════════════ REPORT 1: Sales Volume by Customer Group ═══════════════ */}
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
             <Users size={14} />
-            Sales Volume by Customer
+            Sales Volume by Customer Group
           </h3>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
@@ -1155,7 +1248,7 @@ export default function ReportsPage({
                 type="text"
                 value={custSearch}
                 onChange={(e) => setCustSearch(e.target.value)}
-                placeholder="Search customers..."
+                placeholder="Search groups or customers..."
                 className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
               />
               {custSearch && <button onClick={() => setCustSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
@@ -1169,9 +1262,10 @@ export default function ReportsPage({
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 w-8"></th>
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 w-8">#</th>
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  <SortHeader label="Customer" sortKey="customer" current={custSort} onToggle={toggleSort(setCustSort)} />
+                  <SortHeader label="Customer Group" sortKey="groupName" current={custSort} onToggle={toggleSort(setCustSort)} />
                 </th>
                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
                   <div className="flex justify-end"><SortHeader label="Total (MT)" sortKey="totalMt" current={custSort} onToggle={toggleSort(setCustSort)} /></div>
@@ -1191,36 +1285,69 @@ export default function ReportsPage({
               </tr>
             </thead>
             <tbody>
-              {sortedCustomerSales.map((row, idx) => (
-                <tr key={row.customer} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-2 text-gray-400 font-mono">{idx + 1}</td>
-                  <td className="px-4 py-2 font-medium">{row.customer}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatNum(row.totalMt)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.totalRevenue)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{row.orderCount}</td>
-                  <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.avgPrice)}</td>
-                  <td className="px-4 py-2 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-16 h-2 bg-gray-200 overflow-hidden">
-                        <div className="h-full bg-[#141414]" style={{ width: `${Math.min(100, row.pctOfTotal)}%` }} />
-                      </div>
-                      <span className="font-mono w-12 text-right">{row.pctOfTotal.toFixed(1)}%</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {sortedCustomerSales.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No invoice data available.</td></tr>
+              {sortedCustomerGroupSales.map((row, idx) => {
+                const isExpanded = expandedGroups.has(row.groupKey);
+                return (
+                  <React.Fragment key={row.groupKey}>
+                    <tr className="border-b border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => toggleGroup(row.groupKey)}>
+                      <td className="px-2 py-2 text-center">
+                        <button type="button" className="p-1 hover:bg-gray-200 transition-colors" onClick={(e) => { e.stopPropagation(); toggleGroup(row.groupKey); }} aria-label="Toggle customers">
+                          {isExpanded ? <ChevronDown size={14} /> : <ChevronDown size={14} className="-rotate-90" />}
+                        </button>
+                      </td>
+                      <td className="px-4 py-2 text-gray-400 font-mono">{idx + 1}</td>
+                      <td className="px-4 py-2 font-bold">
+                        {row.groupName}
+                        <span className="ml-2 text-[10px] opacity-50 font-normal">({row.customers.length} customer{row.customers.length === 1 ? '' : 's'})</span>
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono font-bold">{formatNum(row.totalMt)}</td>
+                      <td className="px-4 py-2 text-right font-mono font-bold">{formatCurrency(row.totalRevenue)}</td>
+                      <td className="px-4 py-2 text-right font-mono">{row.orderCount}</td>
+                      <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.avgPrice)}</td>
+                      <td className="px-4 py-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-2 bg-gray-200 overflow-hidden">
+                            <div className="h-full bg-[#141414]" style={{ width: `${Math.min(100, row.pctOfTotal)}%` }} />
+                          </div>
+                          <span className="font-mono w-12 text-right">{row.pctOfTotal.toFixed(1)}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && row.customers.map(cust => (
+                      <tr key={`${row.groupKey}__${cust.customer}`} className="border-b border-gray-100 bg-blue-50/30 text-[11px]">
+                        <td className="px-2 py-1.5"></td>
+                        <td className="px-4 py-1.5 text-gray-300 font-mono"></td>
+                        <td className="px-4 py-1.5 pl-10 text-gray-700">{cust.customer}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{formatNum(cust.totalMt)}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(cust.totalRevenue)}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{cust.orderCount}</td>
+                        <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(cust.avgPrice)}</td>
+                        <td className="px-4 py-1.5 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-16 h-1.5 bg-gray-200 overflow-hidden">
+                              <div className="h-full bg-blue-400" style={{ width: `${Math.min(100, cust.pctOfGroup)}%` }} />
+                            </div>
+                            <span className="font-mono w-12 text-right text-[10px] opacity-60">{cust.pctOfGroup.toFixed(1)}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+              {sortedCustomerGroupSales.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No invoice data available.</td></tr>
               )}
             </tbody>
-            {sortedCustomerSales.length > 0 && (
+            {sortedCustomerGroupSales.length > 0 && (
               <tfoot>
                 <tr className="bg-gray-50 font-bold border-t-2 border-[#141414]">
                   <td className="px-4 py-2"></td>
-                  <td className="px-4 py-2 text-[10px] uppercase tracking-widest">Total ({customerSalesData.length} customers)</td>
+                  <td className="px-4 py-2"></td>
+                  <td className="px-4 py-2 text-[10px] uppercase tracking-widest">Total ({customerGroupSalesData.length} group{customerGroupSalesData.length === 1 ? '' : 's'})</td>
                   <td className="px-4 py-2 text-right font-mono">{formatNum(customerGrandTotalMt)}</td>
                   <td className="px-4 py-2 text-right font-mono">{formatCurrency(customerGrandTotalRev)}</td>
-                  <td className="px-4 py-2 text-right font-mono">{customerSalesData.reduce((s, r) => s + r.orderCount, 0)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{customerGroupSalesData.reduce((s, r) => s + r.orderCount, 0)}</td>
                   <td className="px-4 py-2 text-right font-mono">{customerGrandTotalMt > 0 ? formatCurrency(customerGrandTotalRev / customerGrandTotalMt) : '—'}</td>
                   <td className="px-4 py-2 text-right font-mono">100.0%</td>
                 </tr>
