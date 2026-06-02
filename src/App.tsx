@@ -3896,6 +3896,7 @@ export default function App() {
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[60px]">Time</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[100px]">Delivery Date</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Customer</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Ship To</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Product</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Contract</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">PO</th>
@@ -3923,7 +3924,7 @@ export default function App() {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
                                                           <td className="px-2 py-1 text-[10px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
-                                                          <td colSpan={15} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
+                                                          <td colSpan={16} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -3944,6 +3945,13 @@ export default function App() {
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{(() => {
+                                                          // Look up ship-to via linked order's shipToLocationId
+                                                          const linkedOrder = orders.find(o => o.bolNumber === s.bol);
+                                                          if (!linkedOrder?.shipToLocationId) return '—';
+                                                          const cust = customers.find(c => c.name === linkedOrder.customer);
+                                                          return cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)?.name || '—';
+                                                        })()}</td>
                                                         <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
@@ -5001,6 +5009,7 @@ export default function App() {
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="BOL Number" sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Customer" sortKey="customer" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Ship To" sortKey="shipToName" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -5020,7 +5029,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={16} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={17} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       No orders yet. Use "Add Order" to create new orders.
                     </td>
                   </tr>
@@ -5034,11 +5043,17 @@ export default function App() {
                   const productUnmatched = ord.product
                     ? !productMatchesCurrentSku(ord.product)
                     : ord.lineItems.some(li => !productMatchesCurrentSku(li.productName));
+                  // Resolve ship-to location name from the order's customer
+                  const ordCustomerRec = customers.find(c => c.name === ord.customer);
+                  const shipToName = ord.shipToLocationId
+                    ? (ordCustomerRec?.shipToLocations?.find(l => l.id === ord.shipToLocationId)?.name || '—')
+                    : '—';
                   return (
                     <React.Fragment key={ord.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
                         <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(totalWeight * 1000).toFixed(0)}</td>
