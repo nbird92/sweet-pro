@@ -650,7 +650,7 @@ export default function QualityAssurancePage({
     title: 'Quality Assurance',
     subtitle: `Generated ${new Date().toLocaleDateString()} | ${qaProducts.length} products`,
     columns: [
-      { header: 'Prod No.', key: 'id' },
+      { header: 'Prod No.', key: 'productCode' },
       { header: 'Product Name', key: 'productName' },
       { header: 'Packaging Format', key: 'productFormat' },
       { header: 'Product Group', key: 'productGroup' },
@@ -719,7 +719,7 @@ export default function QualityAssurancePage({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                <SortHeader label="Prod No." sortKey="id" />
+                <SortHeader label="Prod No." sortKey="productCode" />
                 <SortHeader label="Product Name" sortKey="productName" />
                 <SortHeader label="Packaging Format" sortKey="productFormat" />
                 <SortHeader label="Product Group" sortKey="productGroup" />
@@ -748,7 +748,7 @@ export default function QualityAssurancePage({
                     style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}
                     onClick={() => openDetail(p)}
                   >
-                    <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.id}</td>
+                    <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.productCode || '—'}</td>
                     <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{(() => {
                       const resolved = resolveProductName(namingFormulas, p, { sugarTypes, productGroups });
                       if (resolved && resolved.trim()) return resolved;

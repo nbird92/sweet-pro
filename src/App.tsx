@@ -279,6 +279,7 @@ export default function App() {
   const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
   const [orderLocation, setOrderLocation] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
+  const [orderCustomerNumberInput, setOrderCustomerNumberInput] = useState<string>(''); // manual customer number entry in order modal
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
@@ -1837,6 +1838,71 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, lastSynced, user]);
 
+  // One-time backfill: assign a uniform 6-digit productCode to every SKU and
+  // mirror it onto every matching QAProduct. Existing codes are preserved.
+  const productCodeBackfillRan = useRef(false);
+  useEffect(() => {
+    if (productCodeBackfillRan.current) return;
+    if (skus.length === 0 && qaProducts.length === 0) return;
+
+    // Collect existing codes so we don't re-use one
+    const used = new Set<string>();
+    skus.forEach(s => { if (s.productCode) used.add(s.productCode); });
+    qaProducts.forEach(q => { if (q.productCode) used.add(q.productCode); });
+
+    let next = 1;
+    // Seed counter at the highest numeric code already in use
+    used.forEach(c => {
+      const n = parseInt(c, 10);
+      if (!isNaN(n) && n >= next) next = n + 1;
+    });
+    const nextCode = (): string => {
+      let candidate = String(next).padStart(6, '0');
+      while (used.has(candidate)) {
+        next++;
+        candidate = String(next).padStart(6, '0');
+      }
+      used.add(candidate);
+      next++;
+      return candidate;
+    };
+
+    // Assign to SKUs missing a code (sorted by id for stable ordering)
+    const skuUpdates = new Map<string, string>();
+    [...skus].sort((a, b) => (a.id || '').localeCompare(b.id || '')).forEach(s => {
+      if (!s.productCode) skuUpdates.set(s.id, nextCode());
+    });
+
+    // Build skuId -> productCode lookup (existing + new) for QA mirror
+    const skuCodeLookup = new Map<string, string>();
+    skus.forEach(s => {
+      const code = skuUpdates.get(s.id) || s.productCode;
+      if (code) skuCodeLookup.set(s.id, code);
+    });
+
+    // Assign to QA products: mirror SKU's code; otherwise generate new
+    const qaUpdates = new Map<string, string>();
+    qaProducts.forEach(q => {
+      if (q.productCode) return; // already set
+      const mirrored = skuCodeLookup.get(q.skuId);
+      if (mirrored) qaUpdates.set(q.id, mirrored);
+      else qaUpdates.set(q.id, nextCode());
+    });
+
+    if (skuUpdates.size === 0 && qaUpdates.size === 0) {
+      productCodeBackfillRan.current = true;
+      return;
+    }
+
+    if (skuUpdates.size > 0) {
+      setSkus(prev => prev.map(s => skuUpdates.has(s.id) ? { ...s, productCode: skuUpdates.get(s.id) } : s));
+    }
+    if (qaUpdates.size > 0) {
+      setQaProducts(prev => prev.map(q => qaUpdates.has(q.id) ? { ...q, productCode: qaUpdates.get(q.id) } : q));
+    }
+    productCodeBackfillRan.current = true;
+  }, [skus, qaProducts]);
+
   // One-time backfill: regenerate BOL numbers for orders that don't match the
   // canonical format (single letter + 6 digits). The counter starts from the
   // max BOL counter already present in both the orders and invoices tables,
@@ -2751,6 +2817,33 @@ export default function App() {
     return resolveProduct(productName).sku !== null;
   };
 
+  // Find every active contract that matches a given customer. Contracts may
+  // reference the customer by Customer.id, by Customer.customerNumber, or by
+  // name (depending on how the contract was created / imported), so try all
+  // three. Customers in the same Customer Group are also considered.
+  const contractsForCustomer = (cust: Customer | undefined | null): Contract[] => {
+    if (!cust) return [];
+    const groupId = cust.customerGroupId;
+    const groupSiblings = groupId
+      ? customers.filter(c => c.customerGroupId === groupId)
+      : [cust];
+    const ids = new Set(groupSiblings.map(c => c.id));
+    const numbers = new Set(groupSiblings.map(c => (c.customerNumber || '').trim()).filter(Boolean));
+    const names = new Set(groupSiblings.map(c => (c.name || '').trim()).filter(Boolean));
+    return contracts.filter(ct => {
+      if (ct.active === false) return false;
+      const cn = (ct.customerNumber || '').trim();
+      const nm = (ct.customerName || '').trim();
+      return ids.has(cn) || numbers.has(cn) || names.has(nm);
+    });
+  };
+
+  // Sorted, alphabetized customer list for dropdowns (case-insensitive by name)
+  const customersSorted = React.useMemo(
+    () => [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
+    [customers]
+  );
+
   // Build the merged product attribute object used to evaluate naming-formula rules.
   const buildProductAttrs = (sku: SKU | null, qa: QAProduct | null) => ({
     productFormat: qa?.productFormat || sku?.productFormat,
@@ -2866,7 +2959,8 @@ export default function App() {
         description: matchingSku?.description,
       };
       const value = synthetic.name;
-      const label = skuToShortform(synthetic) || value;
+      // Show the product NAME (full descriptive label) rather than the shortform
+      const label = synthetic.name || value;
       entries.push({ value, label, key: qa.id });
       if (value) seenValues.add(value);
     }
@@ -2877,7 +2971,7 @@ export default function App() {
     for (const s of skus) {
       if (qaSkuIds.has(s.id)) continue;
       const value = (s.name && s.name.trim()) || s.id;
-      const label = skuToShortform(s) || value;
+      const label = s.name || value;
       entries.push({ value, label, key: s.id });
       if (value) seenValues.add(value);
     }
@@ -2888,7 +2982,7 @@ export default function App() {
     if (currentValue && !seenValues.has(currentValue)) {
       entries.push({
         value: currentValue,
-        label: productToShortform(currentValue) || currentValue,
+        label: currentValue,
         key: `_ghost-${currentValue}`,
       });
     }
@@ -5037,6 +5131,7 @@ export default function App() {
                               }
                               const cust = customers.find(c => c.name === ord.customer);
                               setOrderCustomerId(cust?.id || '');
+                              setOrderCustomerNumberInput(cust?.customerNumber || '');
                               setOrderPO(ord.po);
                               setOrderShipmentDate(ord.shipmentDate || '');
                               setOrderDeliveryDate(ord.deliveryDate || '');
@@ -5046,7 +5141,7 @@ export default function App() {
                               setOrderLocation(ord.location || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
-                                setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
+                                setFilteredOrderContracts(contractsForCustomer(cust));
                               }
                               setEditingOrder(ord);
                               setIsAddingOrder(false);
@@ -5175,7 +5270,7 @@ export default function App() {
           title: 'Product Catalog',
           subtitle: `Generated ${new Date().toLocaleDateString()} | ${skus.length} products`,
           columns: [
-            { header: 'Prod No.', key: 'id' },
+            { header: 'Prod No.', key: 'productCode' },
             { header: 'Product Name', key: 'productName' },
             { header: 'Packaging Format', key: 'productFormat' },
             { header: 'Product Group', key: 'productGroup' },
@@ -5247,7 +5342,7 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Prod No." sortKey="id" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Prod No." sortKey="productCode" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product Name" sortKey="productName" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Packaging Format" sortKey="productFormat" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Product Group" sortKey="productGroup" currentSort={sortConfig} onSort={handleSort} />
@@ -5294,7 +5389,7 @@ export default function App() {
                   return (
                     <React.Fragment key={s.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.id}</td>
+                        <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10">{s.productCode || '—'}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{productName}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">{productFormat}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">
@@ -6004,7 +6099,7 @@ export default function App() {
                         <select value={newSampleData.customer} onChange={e => setNewSampleData({ ...newSampleData, customer: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select customer...</option>
-                          {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                          {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -6083,7 +6178,7 @@ export default function App() {
                         <select value={editingSampleRequest.customer} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, customer: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select customer...</option>
-                          {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                          {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -8196,6 +8291,7 @@ export default function App() {
                       <button onClick={() => {
                         const cust = customers.find(c => c.name === viewingOrderCard.customer);
                         setOrderCustomerId(cust?.id || '');
+                        setOrderCustomerNumberInput(cust?.customerNumber || '');
                         setOrderPO(viewingOrderCard.po);
                         setOrderShipmentDate(viewingOrderCard.shipmentDate || '');
                         setOrderDeliveryDate(viewingOrderCard.deliveryDate || '');
@@ -8204,7 +8300,7 @@ export default function App() {
                         setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
-                        if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
+                        if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
                         setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
                         setIsAddingOrder(false);
                         setViewingOrderCard(null);
@@ -11814,6 +11910,7 @@ export default function App() {
                 const openOrderForEdit = (ord: Order) => {
                   const cust = customers.find(c => c.name === ord.customer);
                   setOrderCustomerId(cust?.id || '');
+                  setOrderCustomerNumberInput(cust?.customerNumber || '');
                   setOrderPO(ord.po);
                   setOrderShipmentDate(ord.shipmentDate || '');
                   setOrderDeliveryDate(ord.deliveryDate || '');
@@ -11822,7 +11919,7 @@ export default function App() {
                   setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
                   setOrderLineItems(ord.lineItems);
-                  if (cust) setFilteredOrderContracts(contracts.filter(c => c.customerNumber === cust.id && c.active !== false));
+                  if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
                   setEditingOrder(ord);
                   setIsAddingOrder(false);
                   setContractOrdersPopup(null);
@@ -11920,14 +12017,14 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
               <div className="p-6 space-y-4">
                 {/* Customer, PO, Carrier & Dates Section */}
                 <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
-                  <div className="grid grid-cols-3 gap-6">
+                  <div className="grid grid-cols-4 gap-6">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
                       <select
@@ -11936,8 +12033,9 @@ export default function App() {
                           const customerId = e.target.value;
                           setOrderCustomerId(customerId);
                           const customer = customers.find(c => c.id === customerId);
+                          setOrderCustomerNumberInput(customer?.customerNumber || '');
                           if (customer) {
-                            const filtered = contracts.filter(c => c.customerNumber === customerId && c.active !== false);
+                            const filtered = contractsForCustomer(customer);
                             setFilteredOrderContracts(filtered);
                             // Auto-fill carrier from customer default
                             if (customer.defaultCarrierCode) {
@@ -11951,8 +12049,31 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                       >
                         <option value="">Select Customer</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {customersSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Customer # (optional)</label>
+                      <input
+                        type="text"
+                        value={orderCustomerNumberInput}
+                        onChange={(e) => {
+                          const num = e.target.value;
+                          setOrderCustomerNumberInput(num);
+                          // Try to resolve to a customer by customer number
+                          const match = customers.find(c => (c.customerNumber || '').trim() === num.trim());
+                          if (match) {
+                            setOrderCustomerId(match.id);
+                            setFilteredOrderContracts(contractsForCustomer(match));
+                            if (match.defaultCarrierCode) {
+                              const defaultCarrier = carriers.find(c => c.carrierNumber === match.defaultCarrierCode || c.name === match.defaultCarrierCode);
+                              if (defaultCarrier) setOrderCarrier(defaultCarrier.name);
+                            }
+                          }
+                        }}
+                        placeholder="Type to match by number"
+                        className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                      />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">PO #</label>
@@ -12424,6 +12545,7 @@ export default function App() {
                       setOrderShippingTerms('');
                       setOrderLocation('');
                       setOrderShipToId('');
+                      setOrderCustomerNumberInput('');
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
                   >
@@ -12489,6 +12611,7 @@ export default function App() {
                       setOrderShippingTerms('');
                       setOrderLocation('');
                       setOrderShipToId('');
+                      setOrderCustomerNumberInput('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -12558,7 +12681,7 @@ export default function App() {
                             className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                           >
                             <option value="">Select Customer</option>
-                            {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                            {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                           </select>
                         </div>
                         <div className="space-y-0.5">

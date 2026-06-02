@@ -28,6 +28,7 @@ export interface CommodityConfig {
 
 export interface SKU {
   id: string;
+  productCode?: string; // Uniform 6-digit catalog code (e.g. "000001"). Display value for the Prod No. column.
   name: string; // Product Description (editable)
   productGroup: string;
   category: 'Conventional' | 'Organic';
@@ -529,6 +530,7 @@ export interface BOMItem {
 
 export interface QAProduct {
   id: string;
+  productCode?: string; // Uniform 6-digit catalog code; mirrors the matching SKU.productCode
   skuId: string;
   skuName: string;
   productGroup: string;
