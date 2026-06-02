@@ -831,30 +831,43 @@ export default function QualityAssurancePage({
               <th className="p-4 border-r border-[#141414]/10">City</th>
               <th className="p-4 border-r border-[#141414]/10">Province</th>
               <th className="p-4 border-r border-[#141414]/10">Postal Code</th>
+              <th className="p-4 border-r border-[#141414]/10 text-center">Active</th>
               <th className="p-4">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
-            {locations.map(loc => (
-              <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors cursor-pointer group" onClick={() => openLocationDetail(loc)}>
-                <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
-                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
-                <td className="p-4 text-xs">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onUpdateLocations(locations.filter(l => l.id !== loc.id)); }}
-                    className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {locations.map(loc => {
+              const isActive = loc.active !== false; // undefined defaults to active
+              return (
+                <tr key={loc.id} className={`hover:bg-[#F9F9F9] transition-colors cursor-pointer group ${isActive ? '' : 'opacity-50'}`} onClick={() => openLocationDetail(loc)}>
+                  <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
+                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
+                  <td className="p-4 text-xs border-r border-[#141414]/10 text-center" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isActive}
+                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, active: e.target.checked } : l))}
+                      className="w-4 h-4 cursor-pointer"
+                      title={isActive ? 'Active — shown in location dropdowns' : 'Inactive — hidden from location dropdowns'}
+                    />
+                  </td>
+                  <td className="p-4 text-xs">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onUpdateLocations(locations.filter(l => l.id !== loc.id)); }}
+                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
             {locations.length === 0 && (
-              <tr><td colSpan={7} className="p-12 text-center text-xs opacity-50 italic">No locations added yet.</td></tr>
+              <tr><td colSpan={8} className="p-12 text-center text-xs opacity-50 italic">No locations added yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -996,7 +1009,7 @@ export default function QualityAssurancePage({
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
                   >
                     <option value="">Select Location</option>
-                    {locations.map(loc => (
+                    {locations.filter(l => l.active !== false).map(loc => (
                       <option key={loc.id} value={loc.name}>{loc.name}</option>
                     ))}
                   </select>
@@ -2142,6 +2155,18 @@ export default function QualityAssurancePage({
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</label>
                         <input value={editLocationData.postalCode || ''} onChange={(e) => setEditLocationData({ ...editLocationData, postalCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Postal Code" />
                       </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Active</label>
+                        <select
+                          value={editLocationData.active === false ? 'No' : 'Yes'}
+                          onChange={(e) => setEditLocationData({ ...editLocationData, active: e.target.value === 'Yes' })}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          title="Inactive locations are hidden from all location dropdowns across the app"
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                      </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 gap-4">
@@ -2151,6 +2176,14 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">City</div><div className="text-xs font-bold">{selectedLocation.city || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Province</div><div className="text-xs font-bold">{selectedLocation.province || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</div><div className="text-xs font-bold">{selectedLocation.postalCode || '—'}</div></div>
+                      <div>
+                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Active</div>
+                        <div className="text-xs font-bold">
+                          <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${selectedLocation.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                            {selectedLocation.active !== false ? 'Yes' : 'No'}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2424,7 +2457,7 @@ export default function QualityAssurancePage({
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
                       <select value={newProductData.location} onChange={(e) => setNewProductData(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                         <option value="">Select Location</option>
-                        {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                        {locations.filter(l => l.active !== false).map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
                       </select>
                     </div>
                     <div>
@@ -2617,7 +2650,7 @@ export default function QualityAssurancePage({
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
                         <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                           <option value="">Select Location</option>
-                          {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                          {locations.filter(l => l.active !== false).map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
                         </select>
                       </div>
                       <div>

@@ -236,6 +236,7 @@ export interface Location {
   province: string;
   postalCode: string;
   bays: string[];
+  active?: boolean; // Whether this location is shown in the location dropdowns across the app. Defaults to true when undefined.
   appointmentStartTime?: string;  // e.g. '00:00'
   appointmentEndTime?: string;    // e.g. '22:30'
   appointmentDuration?: number;   // minutes per appointment slot (e.g. 90)

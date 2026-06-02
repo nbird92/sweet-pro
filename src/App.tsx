@@ -110,7 +110,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
               <select value={lead.location} onChange={(e) => setLead({ ...lead, location: e.target.value })}
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
                 <option value="">Select location</option>
-                {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
               </select></div>
             <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
               <select value={lead.status} onChange={(e) => setLead({ ...lead, status: e.target.value as SalesLead['status'] })}
@@ -2846,6 +2846,14 @@ export default function App() {
     [customers]
   );
 
+  // Active locations only — used by every location dropdown across the app so
+  // inactive (Location.active === false) locations stay hidden. Historical
+  // records that reference an inactive location continue to display its name.
+  const activeLocations = React.useMemo(
+    () => locations.filter(l => l.active !== false),
+    [locations]
+  );
+
   // Build the merged product attribute object used to evaluate naming-formula rules.
   const buildProductAttrs = (sku: SKU | null, qa: QAProduct | null) => ({
     productFormat: qa?.productFormat || sku?.productFormat,
@@ -3806,7 +3814,7 @@ export default function App() {
                 onChange={(e) => setScheduleLocation(e.target.value)}
                 className="bg-[#E4E3E0] text-[#141414] border border-[#E4E3E0] px-3 py-1.5 text-xs font-bold focus:outline-none"
               >
-                {locations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
+                {activeLocations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
               </select>
             </div>
             <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
@@ -6173,7 +6181,7 @@ export default function App() {
                         <select value={newSampleData.location} onChange={e => setNewSampleData({ ...newSampleData, location: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select location...</option>
-                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -6252,7 +6260,7 @@ export default function App() {
                         <select value={editingSampleRequest.location} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, location: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select location...</option>
-                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -6837,7 +6845,7 @@ export default function App() {
                       </td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">
                         <select value={m.location} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, location: e.target.value } : x))} className="bg-transparent focus:outline-none">
-                          {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                         </select>
                       </td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">
@@ -8573,7 +8581,7 @@ export default function App() {
                       className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                     >
                       <option value="">No Default</option>
-                      {locations.map(l => (
+                      {activeLocations.map(l => (
                         <option key={l.id} value={l.locationCode}>{l.locationCode} — {l.name}</option>
                       ))}
                     </select>
@@ -9630,7 +9638,7 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Location</option>
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -9818,7 +9826,7 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Location</option>
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -10214,7 +10222,7 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Location</option>
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -11557,7 +11565,7 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Location</option>
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -11663,7 +11671,7 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Location</option>
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -12343,7 +12351,7 @@ export default function App() {
                           const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
                           return c?.origin ? `Auto: ${c.origin}` : 'Select Location';
                         })()}</option>
-                        {locations.map(loc => (
+                        {activeLocations.map(loc => (
                           <option key={loc.id} value={loc.name}>{loc.name}</option>
                         ))}
                       </select>
@@ -13811,7 +13819,7 @@ export default function App() {
                               className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                             >
                               <option value="">Select Location</option>
-                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                              {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                             </select>
                           </div>
                           <div className="space-y-0.5">
@@ -14285,13 +14293,13 @@ export default function App() {
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
                       <select name="from" defaultValue="Hamilton" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                       </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">To (Final Destination)</label>
                       <select name="to" defaultValue="Vancouver" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                       </select>
                     </div>
                   </div>
@@ -14366,14 +14374,14 @@ export default function App() {
                             <label className="text-[9px] uppercase font-bold opacity-50">From</label>
                             <select value={leg.from} onChange={(e) => updateLeg(leg.id, 'from', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
                               <option value="">Select</option>
-                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                              {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                             </select>
                           </div>
                           <div className="space-y-0.5">
                             <label className="text-[9px] uppercase font-bold opacity-50">To</label>
                             <select value={leg.to} onChange={(e) => updateLeg(leg.id, 'to', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
                               <option value="">Select</option>
-                              {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                              {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                             </select>
                           </div>
                           <div className="space-y-0.5">
@@ -14454,13 +14462,13 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
                     <select value={editingTransfer.from} onChange={(e) => setEditingTransfer({...editingTransfer, from: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">To (Final Destination)</label>
                     <select value={editingTransfer.to} onChange={(e) => setEditingTransfer({...editingTransfer, to: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                 </div>
@@ -14549,14 +14557,14 @@ export default function App() {
                           <label className="text-[9px] uppercase font-bold opacity-50">From</label>
                           <select value={leg.from} onChange={(e) => updateEditLeg(leg.id, 'from', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
                             <option value="">Select</option>
-                            {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                            {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                           </select>
                         </div>
                         <div className="space-y-0.5">
                           <label className="text-[9px] uppercase font-bold opacity-50">To</label>
                           <select value={leg.to} onChange={(e) => updateEditLeg(leg.id, 'to', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none">
                             <option value="">Select</option>
-                            {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                            {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                           </select>
                         </div>
                         <div className="space-y-0.5">
