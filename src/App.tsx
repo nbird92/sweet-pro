@@ -2934,9 +2934,28 @@ export default function App() {
   // variant they've configured (even when several QA products are linked
   // to the same SKU via the QA "Pre-fill from Existing Product" flow).
   // Returns { value, label, key } per option.
+  //
+  // The label is the rendered Product Name (from the Naming Formula rules,
+  // e.g. "20kg Bagged Granulated Conventional 45"). Falls back to the SKU's
+  // stored name, then productFormat, then id so an option is always selectable.
   const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string }> => {
     const entries: Array<{ value: string; label: string; key: string }> = [];
     const seenValues = new Set<string>();
+
+    // Render the catalog Product Name for a SKU + QA pair, using the same
+    // naming-formula rules the QA page uses. Falls back to the SKU's stored
+    // name when no rule produces output.
+    const renderProductName = (sku: SKU, qa: QAProduct | null): string => {
+      const product = buildProductAttrs(sku, qa);
+      const ruleResult = resolveProductNameRule(namingFormulas, product, { sugarTypes, productGroups });
+      if (ruleResult && ruleResult.trim()) return ruleResult.trim();
+      // Legacy fallback formula
+      if (product.productFormat && product.sugarType) {
+        const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+        return `${wt}${product.productFormat} ${product.sugarType} ${product.category} ${product.maxColor || 0}`;
+      }
+      return sku.name || qa?.skuName || sku.id;
+    };
 
     // 1) One entry per QA product (each QA is a distinct product variant)
     for (const qa of qaProducts) {
@@ -2959,8 +2978,7 @@ export default function App() {
         description: matchingSku?.description,
       };
       const value = synthetic.name;
-      // Show the product NAME (full descriptive label) rather than the shortform
-      const label = synthetic.name || value;
+      const label = renderProductName(synthetic, qa);
       entries.push({ value, label, key: qa.id });
       if (value) seenValues.add(value);
     }
@@ -2971,7 +2989,8 @@ export default function App() {
     for (const s of skus) {
       if (qaSkuIds.has(s.id)) continue;
       const value = (s.name && s.name.trim()) || s.id;
-      const label = s.name || value;
+      // Use the rendered Product Name from the naming formula rules
+      const label = renderProductName(s, null);
       entries.push({ value, label, key: s.id });
       if (value) seenValues.add(value);
     }
