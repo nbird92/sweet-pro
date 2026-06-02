@@ -2020,7 +2020,15 @@ export default function App() {
     }
   }, [config.contractStartDate, config.contractEndDate, marketData]);
 
-  const [selectedSkuId, setSelectedSkuId] = useState(INITIAL_SKUS[1].id);
+  // Default the quote tool to the Bulk Granulated SKU (zero product differential)
+  // so users start from the simplest baseline. Falls back to the first SKU if
+  // no bulk-granulated SKU exists in the catalog.
+  const [selectedSkuId, setSelectedSkuId] = useState(() => {
+    const bulkGranulated = INITIAL_SKUS.find(s =>
+      s.productGroup === 'Bulk' && (s.sugarType === 'Granulated' || /granulated/i.test(s.name)) && (s.premiumCadMt ?? 0) === 0
+    ) || INITIAL_SKUS.find(s => s.productGroup === 'Bulk');
+    return (bulkGranulated || INITIAL_SKUS[0]).id;
+  });
   const [selectedSugarTypeId, setSelectedSugarTypeId] = useState<string>('');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
@@ -2361,6 +2369,7 @@ export default function App() {
     setInvoices(prev => prev.map(i => i.id === id ? { ...i, status } : i));
   };
   const [contractOrdersPopup, setContractOrdersPopup] = useState<string | null>(null); // contract number for orders popup
+  const [showInactiveContracts, setShowInactiveContracts] = useState(false); // toggles inactive contracts on/off in the contracts table
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   // Ship-To Location editor state — scoped to the open Edit Customer modal
   const [editingShipTo, setEditingShipTo] = useState<ShipToLocation | null>(null);
@@ -6627,7 +6636,9 @@ export default function App() {
     }
 
     if (activePage === 'Contracts') {
-      const filteredContracts = getSortedAndFilteredData<Contract>(contracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
+      const activeOnlyContracts = showInactiveContracts ? contracts : contracts.filter(c => c.active !== false);
+      const filteredContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
+      const inactiveCount = contracts.filter(c => c.active === false).length;
 
       const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
       const contractExportSheets = (): SheetSpec[] => [{
@@ -6664,6 +6675,15 @@ export default function App() {
             exportSheets={contractExportSheets}
             exportFileName="Contracts"
           >
+            <button
+              onClick={() => setShowInactiveContracts(v => !v)}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              title={showInactiveContracts ? 'Hide inactive contracts' : 'Show inactive contracts'}
+            >
+              {showInactiveContracts ? <EyeOff size={12} /> : <Eye size={12} />}
+              {showInactiveContracts ? 'Hide Inactive' : 'Show Inactive'}
+              {inactiveCount > 0 && <span className="opacity-60">({inactiveCount})</span>}
+            </button>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + contractCsvHeaders.join(",");
                 const link = document.createElement("a");
@@ -8270,142 +8290,176 @@ export default function App() {
           const confirmSku = skus.find(s => s.id === selectedSkuId) || skus[0];
           const confirmCustomer = customers.find(c => c.name === customer);
           const totalValue = calculations.finalMt * config.volumeMt;
+          const finalPriceCadMt = calculations.finalMt;
           return (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-6xl w-full overflow-hidden max-h-[92vh] overflow-y-auto"
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
-                <AlertCircle size={20} className="text-amber-400" />
-                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Contract Creation</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm leading-relaxed">
-                  Are you sure you want to create a new contract for <span className="font-bold underline">{customer}</span>?
-                  This will finalize the current quote parameters into a binding contract record.
-                </p>
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3 max-h-[50vh] overflow-y-auto">
-                  {/* Customer & Product */}
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Customer & Product</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Customer</div>
-                    <div className="font-bold text-right">{customer}</div>
-                    {confirmCustomer?.customerNumber && <>
-                      <div className="opacity-60">Customer #</div>
-                      <div className="font-bold text-right">{confirmCustomer.customerNumber}</div>
-                    </>}
-                    <div className="opacity-60">Product (SKU)</div>
-                    <div className="font-bold text-right">{confirmSku.name}</div>
-                    <div className="opacity-60">Product Differential</div>
-                    <div className="font-bold text-right">CAD ${confirmSku.premiumCadMt.toFixed(2)}/MT</div>
-                    {config.customerDifferentialCadMt !== 0 && (<>
-                      <div className="opacity-60">Customer Differential</div>
-                      <div className="font-bold text-right">CAD ${config.customerDifferentialCadMt.toFixed(2)}/MT</div>
-                    </>)}
+              {/* Banner header — matches Contract Detail style */}
+              <div className="bg-[#141414] text-[#E4E3E0] sticky top-0 z-10">
+                <div className="px-6 py-3 flex justify-between items-center border-b border-white/10">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle size={18} className="text-amber-400" />
+                    <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-70">Confirm Contract Creation</h3>
                   </div>
-
-                  {/* Raw Material & Pricing */}
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Raw Material & Pricing</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Raw Price (USD/CWT)</div>
-                    <div className="font-bold text-right">USD ${config.rawPriceUsdCwt.toFixed(2)}</div>
-                    <div className="opacity-60">Raw Price (USD/MT)</div>
-                    <div className="font-bold text-right">USD ${calculations.rawMtUsd.toFixed(2)}</div>
-                    <div className="opacity-60">Ocean Freight (USD/MT)</div>
-                    <div className="font-bold text-right">USD ${config.oceanFreightUsdMt.toFixed(2)}</div>
-                    <div className="opacity-60">Yield Loss Multiplier</div>
-                    <div className="font-bold text-right">{config.yieldLossMultiplier}x</div>
-                    <div className="opacity-60">FX Rate (USD/CAD)</div>
-                    <div className="font-bold text-right">{config.fxRate.toFixed(4)}</div>
-                    <div className="opacity-60">Refining Margin (CAD/MT)</div>
-                    <div className="font-bold text-right">CAD ${config.refiningMarginCadMt.toFixed(2)}</div>
-                    <div className="opacity-60">FCA {config.origin} Bulk</div>
-                    <div className="font-bold text-right">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</div>
-                    {calculations.differential !== 0 && (<>
-                      <div className="opacity-60">Product Differential ({confirmSku.name})</div>
-                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.differential.toFixed(2)}/MT</div>
-                    </>)}
-                    {config.customerDifferentialCadMt !== 0 && (<>
-                      <div className="opacity-60">Customer Differential</div>
-                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.customerDifferential.toFixed(2)}/MT</div>
-                    </>)}
+                  <button onClick={() => setShowContractConfirm(false)} className="p-1.5 hover:bg-white/20 transition-all" title="Cancel"><X size={16} /></button>
+                </div>
+                <div className="px-6 py-5 grid grid-cols-12 gap-6 items-center">
+                  <div className="col-span-5">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Customer</div>
+                    <div className="text-2xl font-black break-words">{customer || '—'}</div>
+                    <div className="text-[10px] opacity-50 font-mono">{confirmCustomer?.customerNumber || ''}</div>
                   </div>
-
-                  {/* Logistics & Shipping */}
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Logistics & Shipping</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Origin</div>
-                    <div className="font-bold text-right">{config.origin}</div>
-                    <div className="opacity-60">Currency</div>
-                    <div className="font-bold text-right">{config.currency}</div>
-                    {config.isDelivered && <>
-                      <div className="opacity-60">Destination</div>
-                      <div className="font-bold text-right">{config.destination}</div>
-                      {config.freightType && <>
-                        <div className="opacity-60">Freight Type</div>
-                        <div className="font-bold text-right">{config.freightType}</div>
-                      </>}
-                      <div className="opacity-60">Delivered Freight</div>
-                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.deliveredFreight.toFixed(2)}/MT</div>
-                      <div className="opacity-60">Volume Per Load</div>
-                      <div className="font-bold text-right">{config.volumePerLoadMt} MT</div>
-                    </>}
-                    {config.shippingTerms && <>
-                      <div className="opacity-60">Shipping Terms</div>
-                      <div className="font-bold text-right">{config.shippingTerms}</div>
-                    </>}
-                    {config.isExport && <>
-                      <div className="opacity-60">Export Duty (USD/MT)</div>
-                      <div className="font-bold text-right">USD ${config.exportDutyUsdMt.toFixed(2)}</div>
-                    </>}
-                    {config.isPalletCharge && <>
-                      <div className="opacity-60">Pallet Charge</div>
-                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.palletCharge.toFixed(2)}/MT</div>
-                    </>}
-                    {config.palletType && <>
-                      <div className="opacity-60">Pallet Type</div>
-                      <div className="font-bold text-right">{config.palletType}</div>
-                    </>}
-                    {config.origin === 'Vancouver' && <>
-                      <div className="opacity-60">Supply Chain Cost</div>
-                      <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.vancouverSupplyChainCost.toFixed(2)}/MT</div>
-                    </>}
+                  <div className="col-span-2">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Currency</div>
+                    <div className="text-sm font-bold">{config.currency || '—'}</div>
+                    <div className="mt-2 text-[10px] uppercase tracking-widest opacity-50">Volume</div>
+                    <div className="text-sm font-bold">{config.volumeMt} MT</div>
                   </div>
-
-                  {/* Contract Terms */}
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 pt-2">Contract Terms</div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60">Contract Volume</div>
-                    <div className="font-bold text-right">{config.volumeMt} MT</div>
-                    <div className="opacity-60">Start Date</div>
-                    <div className="font-bold text-right">{config.contractStartDate || 'N/A'}</div>
-                    <div className="opacity-60">End Date</div>
-                    <div className="font-bold text-right">{config.contractEndDate || 'N/A'}</div>
-                    {(config.paymentTerms || confirmCustomer?.defaultPaymentTerms) && <>
-                      <div className="opacity-60">Payment Terms</div>
-                      <div className="font-bold text-right">{config.paymentTerms || confirmCustomer?.defaultPaymentTerms}</div>
-                    </>}
+                  <div className="col-span-2">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Final Price</div>
+                    <div className="text-2xl font-black">${finalPriceCadMt.toFixed(2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
+                    <div className="text-[10px] opacity-50 mt-1">{calculations.currencySymbol}</div>
                   </div>
-
-                  {/* Financial Summary */}
-                  <div className="border-t-2 border-[#141414]/20 pt-3 mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                    <div className="opacity-60 font-bold">Final Price</div>
-                    <div className="font-black text-right text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</div>
-                    <div className="opacity-60">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</div>
-                    <div className="font-bold text-right">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</div>
-                    <div className="opacity-60">Total Contract Value</div>
-                    <div className="font-bold text-right">{calculations.currencySymbol} ${totalValue.toFixed(2)}</div>
+                  <div className="col-span-3">
+                    <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Total Contract Value</div>
+                    <div className="text-2xl font-black">{calculations.currencySymbol} ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div className="mt-2 text-[10px] uppercase tracking-widest opacity-50">Period</div>
+                    <div className="text-[10px] font-bold">{config.contractStartDate || '—'} → {config.contractEndDate || '—'}</div>
                   </div>
                 </div>
-                <div className="flex gap-4">
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="text-xs leading-relaxed opacity-70 italic">
+                  Review the quote details below. Clicking "Confirm &amp; Create" finalizes these parameters into a binding contract record.
+                </div>
+
+                {/* Two-up: Contract Terms + Product / Logistics */}
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Contract Terms</h4>
+                    </div>
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">Customer</td><td className="px-4 py-2 font-bold">{customer || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Customer #</td><td className="px-4 py-2 font-mono font-bold">{confirmCustomer?.customerNumber || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Start Date</td><td className="px-4 py-2 font-bold">{config.contractStartDate || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">End Date</td><td className="px-4 py-2 font-bold">{config.contractEndDate || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Shipping Terms</td><td className="px-4 py-2 font-bold">{config.shippingTerms || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Payment Terms</td><td className="px-4 py-2 font-bold">{config.paymentTerms || confirmCustomer?.defaultPaymentTerms || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Pallet Type</td><td className="px-4 py-2 font-bold">{config.palletType || '—'}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="border border-[#141414] overflow-hidden">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest">Product &amp; Logistics</h4>
+                    </div>
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">SKU</td><td className="px-4 py-2 font-bold">{confirmSku?.name || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{config.origin || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{config.isDelivered ? (config.destination || '—') : '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Freight Type</td><td className="px-4 py-2 font-bold">{config.freightType || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{config.volumeMt} MT</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Per Load</td><td className="px-4 py-2 font-bold">{config.volumePerLoadMt} MT</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Product Differential</td><td className="px-4 py-2 font-bold">CAD ${(confirmSku?.premiumCadMt ?? 0).toFixed(2)}/MT</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Pricing breakdown table */}
+                <div className="border border-[#141414] overflow-hidden">
+                  <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 flex justify-between items-center">
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest">Pricing Breakdown</h4>
+                    <div className="text-[10px] uppercase tracking-widest opacity-70">
+                      Total: <span className="font-bold opacity-100">{calculations.currencySymbol} ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest">
+                      <tr>
+                        <th className="px-4 py-2 text-left opacity-60 font-bold">Component</th>
+                        <th className="px-4 py-2 text-right opacity-60 font-bold">Value</th>
+                        <th className="px-4 py-2 text-left opacity-60 font-bold">Component</th>
+                        <th className="px-4 py-2 text-right opacity-60 font-bold">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#141414]/10">
+                      <tr>
+                        <td className="px-4 py-2 opacity-70">Raw Price (USD/CWT)</td>
+                        <td className="px-4 py-2 text-right font-bold">USD ${config.rawPriceUsdCwt.toFixed(2)}</td>
+                        <td className="px-4 py-2 opacity-70">Raw Price (USD/MT)</td>
+                        <td className="px-4 py-2 text-right font-bold">USD ${calculations.rawMtUsd.toFixed(2)}</td>
+                      </tr>
+                      <tr className="bg-[#F9F9F9]">
+                        <td className="px-4 py-2 opacity-70">Ocean Freight (USD/MT)</td>
+                        <td className="px-4 py-2 text-right font-bold">USD ${config.oceanFreightUsdMt.toFixed(2)}</td>
+                        <td className="px-4 py-2 opacity-70">Yield Loss Multiplier</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.yieldLossMultiplier}x</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-2 opacity-70">FX Rate (USD/CAD)</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.fxRate.toFixed(4)}</td>
+                        <td className="px-4 py-2 opacity-70">Refining Margin</td>
+                        <td className="px-4 py-2 text-right font-bold">CAD ${config.refiningMarginCadMt.toFixed(2)}/MT</td>
+                      </tr>
+                      <tr className="bg-[#F9F9F9]">
+                        <td className="px-4 py-2 opacity-70">FCA {config.origin} Bulk</td>
+                        <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</td>
+                        <td className="px-4 py-2 opacity-70">Product Differential</td>
+                        <td className="px-4 py-2 text-right font-bold">{calculations.differential !== 0 ? `${calculations.currencySymbol} $${calculations.differential.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-2 opacity-70">Customer Differential</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.customerDifferentialCadMt !== 0 ? `${calculations.currencySymbol} $${calculations.customerDifferential.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Delivered Freight</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isDelivered ? `${calculations.currencySymbol} $${calculations.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr className="bg-[#F9F9F9]">
+                        <td className="px-4 py-2 opacity-70">Export Duty</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isExport ? `USD $${config.exportDutyUsdMt.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Pallet Charge</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isPalletCharge ? `${calculations.currencySymbol} $${calculations.palletCharge.toFixed(2)}/MT` : '—'}</td>
+                      </tr>
+                      {config.origin === 'Vancouver' && (
+                        <tr>
+                          <td className="px-4 py-2 opacity-70">Supply Chain Cost</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.vancouverSupplyChainCost.toFixed(2)}/MT</td>
+                          <td className="px-4 py-2 opacity-70">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</td>
+                        </tr>
+                      )}
+                      {config.origin !== 'Vancouver' && (
+                        <tr>
+                          <td className="px-4 py-2 opacity-70">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</td>
+                          <td className="px-4 py-2"></td>
+                          <td className="px-4 py-2"></td>
+                        </tr>
+                      )}
+                      <tr className="bg-[#141414] text-[#E4E3E0]">
+                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>Final Price</td>
+                        <td className="px-4 py-3 text-right font-black text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex gap-4 pt-2">
                   <button
                     onClick={createContract}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
                   >
-                    <CheckCircle2 size={16} /> Confirm & Create
+                    <CheckCircle2 size={16} /> Confirm &amp; Create
                   </button>
                   <button
                     onClick={() => setShowContractConfirm(false)}
