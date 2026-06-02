@@ -1837,6 +1837,83 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, lastSynced, user]);
 
+  // One-time backfill: regenerate BOL numbers for orders that don't match the
+  // canonical format (single letter + 6 digits). The counter starts from the
+  // max BOL counter already present in both the orders and invoices tables,
+  // so new sequence numbers never collide with anything in invoices.
+  const bolBackfillRan = useRef(false);
+  useEffect(() => {
+    if (bolBackfillRan.current) return;
+    if (orders.length === 0) return;
+    if (productGroups.length === 0 || skus.length === 0) return; // need catalog to pick prefix
+
+    const isCanonical = (bol: string | undefined) => !!bol && /^[A-Z]\d{6}$/.test(bol);
+    const ordersNeedingBol = orders.filter(o => !isCanonical(o.bolNumber));
+    if (ordersNeedingBol.length === 0) {
+      bolBackfillRan.current = true;
+      return;
+    }
+
+    // Determine prefix for an order by looking at its line items' product groups
+    const prefixForOrder = (o: Order): string => {
+      const groups = (o.lineItems || []).map(li => {
+        const sku = skus.find(s => s.name === li.productName);
+        return sku?.productGroup || 'Other';
+      });
+      const unique = new Set(groups);
+      if (unique.size === 1) {
+        const pg = productGroups.find(g => g.name === [...unique][0]);
+        if (pg?.bolCode) return pg.bolCode;
+      }
+      return 'P';
+    };
+
+    // Build a per-prefix counter that starts at the current max in BOTH orders and invoices
+    const counterByPrefix = new Map<string, number>();
+    const usedBols = new Set<string>();
+    const extract = (bol: string | undefined): { prefix: string; n: number } | null => {
+      if (!bol) return null;
+      const canon = bol.match(/^([A-Z])(\d{6})$/);
+      if (canon) return { prefix: canon[1], n: parseInt(canon[2], 10) };
+      const dash = bol.match(/^([A-Z])-\d+-(\d+)$/);
+      if (dash) return { prefix: dash[1], n: parseInt(dash[2], 10) };
+      return null;
+    };
+    const seed = (bol: string | undefined) => {
+      if (!bol) return;
+      usedBols.add(bol);
+      const p = extract(bol);
+      if (!p) return;
+      const cur = counterByPrefix.get(p.prefix) || 0;
+      if (p.n > cur) counterByPrefix.set(p.prefix, p.n);
+    };
+    orders.forEach(o => seed(o.bolNumber));
+    invoices.forEach(i => seed(i.bolNumber));
+
+    const nextBol = (prefix: string): string => {
+      let n = (counterByPrefix.get(prefix) || 0) + 1;
+      let candidate = `${prefix}${String(n).padStart(6, '0')}`;
+      while (usedBols.has(candidate)) {
+        n++;
+        candidate = `${prefix}${String(n).padStart(6, '0')}`;
+      }
+      counterByPrefix.set(prefix, n);
+      usedBols.add(candidate);
+      return candidate;
+    };
+
+    // Assign new BOLs (sorted by creation date, oldest first, to keep order intuitive)
+    const sorted = [...ordersNeedingBol].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const remap = new Map<string, string>(); // orderId -> newBol
+    sorted.forEach(o => {
+      const newBol = nextBol(prefixForOrder(o));
+      remap.set(o.id, newBol);
+    });
+
+    setOrders(prev => prev.map(o => remap.has(o.id) ? { ...o, bolNumber: remap.get(o.id)! } : o));
+    bolBackfillRan.current = true;
+  }, [orders, invoices, productGroups, skus]);
+
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
   useEffect(() => {
@@ -2170,21 +2247,36 @@ export default function App() {
       if (pg?.bolCode) prefix = pg.bolCode;
     }
 
-    // Find highest existing BOL with same prefix and extract 6-digit counter
-    const samePrefixBOLs = orders
-      .map(o => o.bolNumber)
-      .filter(bol => bol?.startsWith(prefix) && /^[A-Z]\d{6}$/.test(bol))
-      .map(bol => parseInt(bol.slice(1)) || 0);
+    // Consider BOLs from BOTH orders AND invoices so sequences never collide.
+    const allBols = [
+      ...orders.map(o => o.bolNumber || ''),
+      ...invoices.map(inv => inv.bolNumber || ''),
+    ];
 
-    // Also check legacy format (PREFIX-YEAR-COUNTER)
-    const legacyBOLs = orders
-      .map(o => o.bolNumber)
-      .filter(bol => bol?.startsWith(prefix + '-'))
-      .map(bol => parseInt(bol.split('-')[2]) || 0);
+    // Pull the 6-digit counter off any BOL that starts with the same letter,
+    // including legacy formats like PREFIX-YEAR-COUNTER.
+    const counters: number[] = [];
+    for (const bol of allBols) {
+      if (!bol) continue;
+      if (/^[A-Z]\d{6}$/.test(bol) && bol[0] === prefix) {
+        counters.push(parseInt(bol.slice(1), 10) || 0);
+      } else if (bol.startsWith(prefix + '-')) {
+        const parts = bol.split('-');
+        const last = parts[parts.length - 1];
+        const n = parseInt(last, 10);
+        if (!isNaN(n)) counters.push(n);
+      } else if (/^[A-Z]\d+$/.test(bol) && bol[0] === prefix) {
+        // Fallback for variable-length numeric tails
+        const n = parseInt(bol.slice(1), 10);
+        if (!isNaN(n)) counters.push(n);
+      }
+    }
 
-    const maxCounter = Math.max(...samePrefixBOLs, ...legacyBOLs, 0);
-    const nextCounter = (maxCounter + 1).toString().padStart(6, '0');
-    return `${prefix}${nextCounter}`;
+    let next = (counters.length > 0 ? Math.max(...counters) : 0) + 1;
+    // Guarantee no collision with any existing BOL (across orders + invoices)
+    const allBolSet = new Set(allBols.filter(Boolean));
+    while (allBolSet.has(`${prefix}${String(next).padStart(6, '0')}`)) next++;
+    return `${prefix}${String(next).padStart(6, '0')}`;
   };
 
   const updateShipmentStatus = (id: string, status: string) => {
@@ -2935,7 +3027,8 @@ export default function App() {
 
     const newContract: Contract = {
       id: `CON-${Date.now()}`,
-      contractNumber: `CON-${new Date().getFullYear()}-${String(contracts.length + 1).padStart(3, '0')}`,
+      // Leave blank — user fills in the number from ITAS after creation
+      contractNumber: '',
       customerNumber: selectedCustomer.id,
       customerName: selectedCustomer.name,
       contractVolume: config.volumeMt,
@@ -9402,7 +9495,7 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Contract: {editingContract.contractNumber}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Contract: {editingContract.contractNumber || '(no number)'}</h3>
                 <button onClick={() => setEditingContract(null)} className="hover:rotate-90 transition-transform">
                   <X size={20} />
                 </button>
@@ -9415,7 +9508,8 @@ export default function App() {
                       type="text"
                       value={editingContract.contractNumber}
                       onChange={(e) => setEditingContract({ ...editingContract, contractNumber: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="To be added from ITAS"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
                     />
                   </div>
                   <div className="space-y-1">
