@@ -2885,6 +2885,24 @@ export default function App() {
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
   };
 
+  // Resolve a free-text product name to its catalog Product Name (the same
+  // rendered string that appears in the order line-item dropdown). Used so
+  // the line-item table in the order modal shows the same descriptive text
+  // the user selected, instead of the raw stored name / shortform.
+  const productNameToDisplay = (productName: string | undefined): string => {
+    if (!productName) return '';
+    const { sku, qa } = resolveProduct(productName);
+    if (!sku && !qa) return productName;
+    const product = buildProductAttrs(sku, qa);
+    const ruleResult = resolveProductNameRule(namingFormulas, product, { sugarTypes, productGroups });
+    if (ruleResult && ruleResult.trim()) return ruleResult.trim();
+    if (product.productFormat && product.sugarType) {
+      const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+      return `${wt}${product.productFormat} ${product.sugarType} ${product.category} ${product.maxColor || 0}`;
+    }
+    return sku?.name || qa?.skuName || productName;
+  };
+
   // Compute the user-facing Product Name for a SKU + its QA pairing.
   // Uses user-defined naming-formula rules first; falls back to legacy concatenation.
   const productToName = (sku: SKU): string => {
@@ -12524,7 +12542,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {orderLineItems.map((item, idx) => (
                           <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
-                            <td className="p-2">{productToShortform(item.productName)}</td>
+                            <td className="p-2">{productNameToDisplay(item.productName)}</td>
                             <td className="p-2">{item.qty}</td>
                             <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
                             <td className="p-2">{item.contractNumber}</td>
