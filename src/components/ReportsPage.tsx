@@ -76,30 +76,97 @@ export default function ReportsPage({
   productGroups,
   namingFormulas,
 }: ReportsPageProps) {
-  // Resolve any free-text product name to the SKU's shortform from the Products catalog.
-  // If no SKU matches, returns null (caller decides whether to skip or display raw).
-  const toShortform = useCallback((rawProduct: string | undefined): string | null => {
+  // Resolve a free-text invoice product name to a SKU/QA pair from the
+  // Products catalog. Tries exact match (case-insensitive), then a fuzzy
+  // keyword match. Returns null when no current catalog entry matches.
+  const resolveToCatalog = useCallback((rawProduct: string | undefined): { sku: SKU | null; qa: QAProduct | null } | null => {
     if (!rawProduct) return null;
     const trimmed = rawProduct.trim();
     if (!trimmed) return null;
-    // Try exact SKU name match first
+    const lower = trimmed.toLowerCase();
+
+    // 1. Exact SKU name match
     let sku = skus.find(s => s.name === trimmed) || null;
     let qa = sku
-      ? qaProducts.find(q => q.skuId === sku!.id)
+      ? qaProducts.find(q => q.skuId === sku!.id) || null
       : qaProducts.find(q => q.skuName === trimmed) || null;
-    if (qa && !sku) sku = skus.find(s => s.id === qa!.skuId) || null;
-    if (!sku && !qa) {
-      // Case-insensitive fallback
-      const lower = trimmed.toLowerCase();
-      sku = skus.find(s => s.name?.trim().toLowerCase() === lower) || null;
-      if (!sku) {
-        qa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === lower) || null;
-        if (qa) sku = skus.find(s => s.id === qa!.skuId) || null;
-      } else {
-        qa = qaProducts.find(q => q.skuId === sku!.id) || null;
+    if (qa && !sku) sku = skus.find(s => s.id === qa.skuId) || null;
+    if (sku || qa) return { sku, qa };
+
+    // 2. Case-insensitive / trimmed match
+    sku = skus.find(s => s.name?.trim().toLowerCase() === lower) || null;
+    if (!sku) {
+      qa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === lower) || null;
+      if (qa) sku = skus.find(s => s.id === qa!.skuId) || null;
+    } else {
+      qa = qaProducts.find(q => q.skuId === sku!.id) || null;
+    }
+    if (sku || qa) return { sku, qa };
+
+    // 3. Fuzzy keyword match — detect sugar type, group, color, weight,
+    //    category and score every SKU.
+    let detectedSugar: string | undefined;
+    if (lower.includes('molasses')) detectedSugar = 'Molasses';
+    else if (lower.includes('granulated') || lower.includes('fine granulated')) detectedSugar = 'Granulated';
+    else if (lower.includes('icing') || lower.includes('powdered')) detectedSugar = 'Icing';
+    else if (lower.includes('brown')) detectedSugar = 'Brown';
+    else if (lower.includes('yellow')) detectedSugar = 'Yellow';
+    else if (lower.includes('liquid')) detectedSugar = 'Liquid';
+    if (!detectedSugar) {
+      for (const st of sugarTypes) {
+        if (st.abbreviation && new RegExp(`\\b${st.abbreviation}\\b`).test(trimmed)) {
+          detectedSugar = st.name;
+          break;
+        }
       }
     }
-    if (!sku && !qa) return null;
+
+    let detectedGroup: string | undefined;
+    if (lower.includes('bulk')) detectedGroup = 'Bulk';
+    else if (lower.includes('tote')) detectedGroup = 'Tote';
+    else if (lower.includes('bag')) detectedGroup = 'Bagged';
+    else if (lower.includes('liquid')) detectedGroup = 'Liquid';
+
+    const detectedCategory: 'Conventional' | 'Organic' = lower.includes('organic') ? 'Organic' : 'Conventional';
+    const trailingColor = trimmed.match(/(\d{2,3})\s*$/);
+    const anyColor = trimmed.match(/\b(\d{2,3})\b/);
+    const detectedColor: number | undefined = trailingColor
+      ? parseInt(trailingColor[1])
+      : (anyColor ? parseInt(anyColor[1]) : undefined);
+    const weightMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*kg\b/i);
+    const detectedWeight: number | undefined = weightMatch ? parseFloat(weightMatch[1]) : undefined;
+
+    let best: SKU | null = null;
+    let bestScore = 0;
+    for (const s of skus) {
+      const q = qaProducts.find(p => p.skuId === s.id);
+      const sugarT = q?.sugarType || s.sugarType;
+      const groupT = q?.productGroup || s.productGroup;
+      const catT = q?.category || s.category;
+      const colorT = q?.maxColor ?? s.maxColor;
+      const weightT = q?.netWeightKg ?? s.netWeightKg ?? s.netWeight;
+      let score = 0;
+      if (detectedSugar && sugarT === detectedSugar) score += 5;
+      if (detectedGroup && groupT === detectedGroup) score += 4;
+      if (catT === detectedCategory) score += 1;
+      if (detectedColor !== undefined && colorT === detectedColor) score += 3;
+      if (detectedWeight !== undefined && weightT === detectedWeight) score += 3;
+      const skuLower = (s.name || '').trim().toLowerCase();
+      if (skuLower && (lower.includes(skuLower) || skuLower.includes(lower))) score += 4;
+      if (score > bestScore) { bestScore = score; best = s; }
+    }
+    if (best && bestScore >= 5) {
+      return { sku: best, qa: qaProducts.find(p => p.skuId === best!.id) || null };
+    }
+    return null;
+  }, [skus, qaProducts, sugarTypes]);
+
+  // Resolve any free-text product name to the SKU's shortform. Returns null
+  // when the product is no longer in the catalog so the report can skip it.
+  const toShortform = useCallback((rawProduct: string | undefined): string | null => {
+    const match = resolveToCatalog(rawProduct);
+    if (!match || (!match.sku && !match.qa)) return null;
+    const { sku, qa } = match;
     const product = {
       productFormat: qa?.productFormat || sku?.productFormat,
       productGroup: qa?.productGroup || sku?.productGroup,
@@ -112,15 +179,17 @@ export default function ReportsPage({
     };
     const ruleResult = resolveShortForm(namingFormulas, product, { sugarTypes, productGroups });
     if (ruleResult && ruleResult.trim()) return ruleResult.trim();
-    // Legacy fallback
+    // Legacy fallback — fall back to the SKU's name if we can't render a shortform
     if (product.sugarType === 'Molasses') return 'MOL';
     const st = sugarTypes.find(t => t.name === product.sugarType);
-    if (!st || !product.category || product.maxColor === undefined) return null;
+    if (!st || !product.category || product.maxColor === undefined) {
+      return sku?.name || qa?.skuName || null;
+    }
     const co = product.category === 'Conventional' ? 'C' : 'B';
     if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
-  }, [skus, qaProducts, sugarTypes, productGroups, namingFormulas]);
+  }, [resolveToCatalog, sugarTypes, productGroups, namingFormulas]);
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [custSearch, setCustSearch] = useState('');
   const [custSort, setCustSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
@@ -195,17 +264,45 @@ export default function ReportsPage({
   }
 
   const customerGroupSalesData = useMemo<CustomerGroupRow[]>(() => {
-    // Build customerName -> groupId map
-    const custNameToGroupId = new Map<string, string>();
+    // Build a case-insensitive name -> groupId lookup so invoice
+    // customer strings that differ slightly in case / whitespace still match
+    // their underlying customer record's group. Also map by customer number
+    // and id as fallbacks.
+    const normalize = (s: string | undefined | null) =>
+      (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const custLookupToGroupId = new Map<string, string>();
     for (const c of customers) {
-      if (c.name && c.customerGroupId) custNameToGroupId.set(c.name, c.customerGroupId);
+      if (!c.customerGroupId) continue;
+      if (c.name) custLookupToGroupId.set(`n:${normalize(c.name)}`, c.customerGroupId);
+      if (c.itasCustomerName) custLookupToGroupId.set(`n:${normalize(c.itasCustomerName)}`, c.customerGroupId);
+      if (c.customerNumber) custLookupToGroupId.set(`c:${normalize(c.customerNumber)}`, c.customerGroupId);
+      if (c.id) custLookupToGroupId.set(`i:${normalize(c.id)}`, c.customerGroupId);
     }
     const groupById = new Map(customerGroups.map(g => [g.id, g] as const));
+
+    const findGroupForInvoiceCustomer = (invoiceCustomer: string): string | null => {
+      const key = `n:${normalize(invoiceCustomer)}`;
+      const direct = custLookupToGroupId.get(key);
+      if (direct) return direct;
+      // Try resolving by customer number or id if the invoice ever stored those
+      const byCust = custLookupToGroupId.get(`c:${normalize(invoiceCustomer)}`);
+      if (byCust) return byCust;
+      const byId = custLookupToGroupId.get(`i:${normalize(invoiceCustomer)}`);
+      if (byId) return byId;
+      // Last resort: substring overlap with any customer name
+      const inv = normalize(invoiceCustomer);
+      for (const c of customers) {
+        if (!c.customerGroupId) continue;
+        const n = normalize(c.name);
+        if (n && (inv.includes(n) || n.includes(inv))) return c.customerGroupId;
+      }
+      return null;
+    };
 
     // Bucket customers by group
     const groups = new Map<string, CustomerGroupRow>();
     for (const cs of customerSalesData) {
-      const gid = custNameToGroupId.get(cs.customer) || '__UNGROUPED__';
+      const gid = findGroupForInvoiceCustomer(cs.customer) || '__UNGROUPED__';
       const gname = gid === '__UNGROUPED__' ? 'Ungrouped' : (groupById.get(gid)?.name || 'Ungrouped');
       let row = groups.get(gid);
       if (!row) {
@@ -302,9 +399,11 @@ export default function ReportsPage({
 
     for (const inv of invoices) {
       if (!inv.product || !inv.qty) continue;
-      // Prefer the catalog shortform; if the invoice's product can't be
-      // resolved, fall back to the raw stored name so the row still appears.
-      const key = toShortform(inv.product) || inv.product;
+      // Only include invoices whose product still resolves to a current
+      // SKU in the catalog. Anything else is treated as 'no longer exists'
+      // and is dropped from the report.
+      const key = toShortform(inv.product);
+      if (!key) continue;
       const existing = map.get(key);
       if (existing) {
         existing.totalMt += inv.qty;
