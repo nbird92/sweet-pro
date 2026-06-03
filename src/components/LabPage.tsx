@@ -502,7 +502,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       {/* Add / Edit Lot Code Modal */}
       <AnimatePresence>
         {isOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -743,7 +743,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       {/* Shipment Search Picker Modal */}
       <AnimatePresence>
         {showShipmentPicker && (
-          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[400] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -877,7 +877,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       {/* Clear All Confirmation */}
       <AnimatePresence>
         {clearAllConfirm && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -913,7 +913,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       {/* Delete Lot Code Confirmation */}
       <AnimatePresence>
         {deleteConfirmId && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}

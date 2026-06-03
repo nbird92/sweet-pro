@@ -927,7 +927,7 @@ export default function SalesForecastPage({
                       {annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                     </td>
                     <td className="px-4 py-2 text-center">
-                      <div className="flex items-center justify-center gap-2">
+                      <div className="flex items-center-safe justify-center gap-2">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1165,7 +1165,7 @@ export default function SalesForecastPage({
       <AnimatePresence>
         {customerModalOpen && editingCf && selectedFY && (
           <div
-            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
+            className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
             onClick={() => {
               setCustomerModalOpen(false);
               setEditingCustomerId(null);
@@ -1315,7 +1315,7 @@ export default function SalesForecastPage({
                                   !editable ? 'bg-gray-100 text-gray-500' : 'opacity-60'
                                 }`}
                               >
-                                <div className="flex items-center justify-center gap-0.5">
+                                <div className="flex items-center-safe justify-center gap-0.5">
                                   {h}
                                   {locked && <Lock size={8} className="text-red-500" />}
                                 </div>
@@ -1487,7 +1487,7 @@ export default function SalesForecastPage({
       <AnimatePresence>
         {productViewModalOpen && viewingProduct && selectedFY && (
           <div
-            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
+            className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
             onClick={() => {
               setProductViewModalOpen(false);
               setViewingProduct(null);

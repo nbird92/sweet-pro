@@ -950,7 +950,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Packaging Format Modal */}
       <AnimatePresence>
         {showPackagingFormatModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowPackagingFormatModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowPackagingFormatModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1062,7 +1062,7 @@ export default function QualityAssurancePage({
       {/* Delete Packaging Format Confirmation Modal */}
       <AnimatePresence>
         {deletePackagingFormatConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeletePackagingFormatConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeletePackagingFormatConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1189,7 +1189,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Naming Formula Modal */}
       <AnimatePresence>
         {showNamingFormulaModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowNamingFormulaModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowNamingFormulaModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1493,7 +1493,7 @@ export default function QualityAssurancePage({
       {/* Delete Naming Formula Confirmation Modal */}
       <AnimatePresence>
         {deleteNamingFormulaConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteNamingFormulaConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteNamingFormulaConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1601,7 +1601,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Product Group Modal */}
       <AnimatePresence>
         {showProductGroupModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowProductGroupModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowProductGroupModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1692,7 +1692,7 @@ export default function QualityAssurancePage({
       {/* Delete Product Group Confirmation */}
       <AnimatePresence>
         {deleteProductGroupConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteProductGroupConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteProductGroupConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1783,7 +1783,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Sugar Type Modal */}
       <AnimatePresence>
         {showSugarTypeModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowSugarTypeModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowSugarTypeModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1856,7 +1856,7 @@ export default function QualityAssurancePage({
       {/* Delete Sugar Type Confirmation */}
       <AnimatePresence>
         {deleteSugarTypeConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteSugarTypeConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteSugarTypeConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1973,7 +1973,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Template Modal */}
       <AnimatePresence>
         {showTemplateModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowTemplateModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowTemplateModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2081,7 +2081,7 @@ export default function QualityAssurancePage({
       {/* Delete Template Confirmation */}
       <AnimatePresence>
         {deleteTemplateConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteTemplateConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteTemplateConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2113,7 +2113,7 @@ export default function QualityAssurancePage({
       {/* Location Detail Card Modal */}
       <AnimatePresence>
         {selectedLocation && editLocationData && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeLocationDetail}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeLocationDetail}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2360,14 +2360,14 @@ export default function QualityAssurancePage({
                 <div className="flex gap-4 pt-2">
                   {isEditingLocation ? (
                     <>
-                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all">
+                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all">
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
                       <button onClick={() => { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Cancel</button>
                     </>
                   ) : (
                     <>
-                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all">Edit Location</button>
+                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all">Edit Location</button>
                       <button onClick={closeLocationDetail} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Close</button>
                     </>
                   )}
@@ -2388,7 +2388,7 @@ export default function QualityAssurancePage({
       {/* Add Product Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowAddModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowAddModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2566,7 +2566,7 @@ export default function QualityAssurancePage({
                   <button
                     onClick={handleAddProduct}
                     disabled={!newProductData.productFormat?.trim()}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
                   >
                     <CheckCircle2 size={16} /> Add Product
                   </button>
@@ -2586,7 +2586,7 @@ export default function QualityAssurancePage({
       {/* Product Detail Card Modal */}
       <AnimatePresence>
         {selectedProduct && displayData && !productModalMinimized && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeDetail}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeDetail}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3339,7 +3339,7 @@ export default function QualityAssurancePage({
                     <>
                       <button
                         onClick={saveChanges}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all"
                       >
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
@@ -3354,7 +3354,7 @@ export default function QualityAssurancePage({
                     <>
                       <button
                         onClick={() => setIsEditing(true)}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all"
                       >
                         Edit Product
                       </button>
@@ -3387,7 +3387,7 @@ export default function QualityAssurancePage({
       {/* Send for Approval Sub-Modal */}
       <AnimatePresence>
         {showApprovalModal && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setShowApprovalModal(false)}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowApprovalModal(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3417,7 +3417,7 @@ export default function QualityAssurancePage({
                   <button
                     onClick={handleSendApproval}
                     disabled={!approvalRecipientId}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
                   >
                     <Send size={14} /> Send
                   </button>
@@ -3437,7 +3437,7 @@ export default function QualityAssurancePage({
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deleteConfirmId && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setDeleteConfirmId(null)}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}

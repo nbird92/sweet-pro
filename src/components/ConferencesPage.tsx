@@ -859,7 +859,7 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
 }) {
   const [selectedSalesPersonId, setSelectedSalesPersonId] = useState('');
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+    <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden">
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
@@ -976,7 +976,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+    <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden">
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
