@@ -309,14 +309,25 @@ function buildCodeCandidates(raw: string): string[] {
 
 /**
  * Lookup a QA product by candidate code. Matches QA.skuName (normalized)
- * and QA.productCode (normalized). Returns the QA product or null.
+ * and QA.productCode (normalized). When multiple QA variants share a code
+ * (e.g. one "Tote" + one "Bulk" of GC100), prefers the one whose
+ * productFormat matches the expectedFormat hint. Returns null if no match.
  */
-function findQAByCode(code: string, qaProducts: QAProduct[]): QAProduct | null {
+function findQAByCode(
+  code: string,
+  qaProducts: QAProduct[],
+  expectedFormat?: string,
+): QAProduct | null {
+  const matches: QAProduct[] = [];
   for (const q of qaProducts) {
-    if (normCode(q.skuName) === code) return q;
-    if (q.productCode && normCode(q.productCode) === code) return q;
+    if (normCode(q.skuName) === code) matches.push(q);
+    else if (q.productCode && normCode(q.productCode) === code) matches.push(q);
   }
-  return null;
+  if (matches.length === 0) return null;
+  if (matches.length === 1 || !expectedFormat) return matches[0];
+  const want = expectedFormat.toLowerCase();
+  const preferred = matches.find(q => (q.productFormat || '').toLowerCase().includes(want));
+  return preferred || matches[0];
 }
 
 /**
@@ -349,21 +360,30 @@ function resolveProduct(
   raw: string,
   skus: SKU[],
   qaProducts: QAProduct[],
+  expectedFormat?: string,
 ): { productName: string; productDisplayName?: string; productKey?: string } {
   if (!raw) return { productName: raw };
   const trimmed = raw.trim();
   const norm = trimmed.toLowerCase();
 
+  // Helper: prefer a QA child of a matched SKU that fits expectedFormat.
+  const qaChildForSKU = (skuId: string): QAProduct | null => {
+    const children = qaProducts.filter(q => q.skuId === skuId);
+    if (children.length === 0) return null;
+    if (!expectedFormat || children.length === 1) return children[0];
+    const want = expectedFormat.toLowerCase();
+    return children.find(q => (q.productFormat || '').toLowerCase().includes(want)) || children[0];
+  };
+
   // 1. Code-based candidates (covers "LC100X", "GC-100", "LC 170", etc).
   for (const cand of buildCodeCandidates(trimmed)) {
-    const qa = findQAByCode(cand, qaProducts);
+    const qa = findQAByCode(cand, qaProducts, expectedFormat);
     if (qa) {
       return { productName: qa.skuName, productDisplayName: qa.skuName, productKey: qa.id };
     }
     const sku = findSKUByCode(cand, skus);
     if (sku) {
-      // Prefer a QA child of this SKU when available
-      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      const qaChild = qaChildForSKU(sku.id);
       return {
         productName: qaChild?.skuName || sku.name,
         productDisplayName: qaChild?.skuName || sku.name,
@@ -381,13 +401,13 @@ function resolveProduct(
   if (norm === 'molasses') translated.push('MOLASSES');
 
   for (const cand of translated) {
-    const qa = findQAByCode(cand, qaProducts);
+    const qa = findQAByCode(cand, qaProducts, expectedFormat);
     if (qa) {
       return { productName: qa.skuName, productDisplayName: qa.skuName, productKey: qa.id };
     }
     const sku = findSKUByCode(cand, skus);
     if (sku) {
-      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      const qaChild = qaChildForSKU(sku.id);
       return {
         productName: qaChild?.skuName || sku.name,
         productDisplayName: qaChild?.skuName || sku.name,
@@ -403,7 +423,7 @@ function resolveProduct(
     }
     const sku = skus.find(s => (s.name || '').trim().toLowerCase() === 'molasses');
     if (sku) {
-      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      const qaChild = qaChildForSKU(sku.id);
       return {
         productName: qaChild?.skuName || sku.name,
         productDisplayName: qaChild?.skuName || sku.name,
@@ -425,7 +445,7 @@ function resolveProduct(
     return sn && (sn.includes(norm) || norm.includes(sn));
   });
   if (skuLoose) {
-    const qaChild = qaProducts.find(q => q.skuId === skuLoose.id) || null;
+    const qaChild = qaChildForSKU(skuLoose.id);
     return {
       productName: qaChild?.skuName || skuLoose.name,
       productDisplayName: qaChild?.skuName || skuLoose.name,
@@ -435,6 +455,20 @@ function resolveProduct(
 
   // 4. Fallback — keep raw (will show as unmatched in the preview)
   return { productName: trimmed };
+}
+
+/**
+ * Per-tab defaults: expected QA productFormat (used to disambiguate when
+ * multiple QA variants share a code) and the per-unit weight in kg
+ * (Totes are 1000 kg each by user spec; everything else is bulk/loose).
+ */
+function tabDefaults(tab: string): { expectedFormat?: string; netWeightPerUnitKg: number } {
+  const t = (tab || '').toUpperCase();
+  if (t === 'TOT') return { expectedFormat: 'Tote', netWeightPerUnitKg: 1000 };
+  if (t === 'DRY') return { expectedFormat: 'Bulk', netWeightPerUnitKg: 0 };
+  if (t === 'LIQ') return { expectedFormat: 'Liquid', netWeightPerUnitKg: 0 };
+  if (t === 'MOLASSES') return { expectedFormat: 'Liquid', netWeightPerUnitKg: 0 };
+  return { netWeightPerUnitKg: 0 };
 }
 
 /* ------------------------------------------------------------------ */
@@ -516,19 +550,32 @@ export function parsedRowsToOrders(
 
       // Resolve catalog refs
       const customerCanonical = resolveCustomer(r.customerName, customers);
-      const productRefs = resolveProduct(r.productRaw, skus, qaProducts);
+      const defaults = tabDefaults(r.tab);
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, defaults.expectedFormat);
       const carrierCanonical = resolveCarrier(r.carrierName, carriers);
 
-      // Build line item — qty in MT in the sheet, stored as MT in the line.
+      // Build line item.
+      //
+      // Sheet column M is ORDERED QTY (MT). For tote orders each tote is
+      // 1,000 kg = 1 MT, so the MT figure equals the number of totes; we
+      // store qty as units (number of totes) and netWeightPerUnit = 1000.
+      // For bulk / liquid / molasses tabs we have no fixed per-unit weight,
+      // so qty stays in MT and netWeightPerUnit is 0 (legacy behaviour).
+      const totalWeightKg = r.quantityMT * 1000;
+      const isTote = defaults.netWeightPerUnitKg > 0;
+      const qty = isTote
+        ? Math.round(totalWeightKg / defaults.netWeightPerUnitKg) // number of totes
+        : r.quantityMT;
+
       const lineItem: OrderLineItem = {
         id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         productName: productRefs.productName,
         productDisplayName: productRefs.productDisplayName,
         productKey: productRefs.productKey,
-        qty: r.quantityMT,
+        qty,
         contractNumber: '',
-        netWeightPerUnit: 0,
-        totalWeight: r.quantityMT * 1000, // MT → KG for totalWeight
+        netWeightPerUnit: defaults.netWeightPerUnitKg,
+        totalWeight: totalWeightKg,
         unitAmount: 0,
         mtAmount: 0,
         lineAmount: 0,

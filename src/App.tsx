@@ -9403,23 +9403,37 @@ export default function App() {
                             <th className="p-2 text-left font-bold">PO</th>
                             <th className="p-2 text-left font-bold">Ship Date</th>
                             <th className="p-2 text-left font-bold">Deliver</th>
-                            <th className="p-2 text-right font-bold">Qty (MT)</th>
+                            <th className="p-2 text-right font-bold">Qty</th>
                             <th className="p-2 text-left font-bold">Carrier</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {orderSyncPreview.newOrders.map(o => (
-                            <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
-                              <td className="p-2 font-mono font-bold">{o.bolNumber || '—'}</td>
-                              <td className="p-2">{o.customer}</td>
-                              <td className="p-2">{o.product}</td>
-                              <td className="p-2 font-mono">{o.po || '—'}</td>
-                              <td className="p-2">{o.shipmentDate}</td>
-                              <td className="p-2">{o.deliveryDate || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(o.lineItems[0]?.qty || 0).toFixed(3)}</td>
-                              <td className="p-2">{o.carrier || '—'}</td>
-                            </tr>
-                          ))}
+                          {orderSyncPreview.newOrders.map(o => {
+                            const li = o.lineItems[0];
+                            const qty = li?.qty || 0;
+                            const unitKg = li?.netWeightPerUnit || 0;
+                            const totalKg = li?.totalWeight || 0;
+                            const qtyLabel = unitKg > 0
+                              ? `${qty} × ${unitKg}kg`               // Totes: "30 × 1000kg"
+                              : `${qty.toFixed(3)} MT`;              // Bulk/Liquid: MT
+                            return (
+                              <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                                <td className="p-2 font-mono font-bold">{o.bolNumber || '—'}</td>
+                                <td className="p-2">{o.customer}</td>
+                                <td className="p-2">{o.product}</td>
+                                <td className="p-2 font-mono">{o.po || '—'}</td>
+                                <td className="p-2">{o.shipmentDate}</td>
+                                <td className="p-2">{o.deliveryDate || '—'}</td>
+                                <td className="p-2 text-right font-mono">
+                                  {qtyLabel}
+                                  {unitKg > 0 && totalKg > 0 && (
+                                    <span className="opacity-50 text-[10px] ml-1">({(totalKg / 1000).toFixed(3)} MT)</span>
+                                  )}
+                                </td>
+                                <td className="p-2">{o.carrier || '—'}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
