@@ -277,19 +277,73 @@ function resolveCarrier(raw: string, carriers: Carrier[]): string {
 }
 
 /**
- * Resolve a raw product string from the sheet into a catalog product.
+ * Strip dashes and spaces; upper-case. "GC-100" → "GC100", "LC 170" → "LC170".
+ */
+function normCode(s: string): string {
+  return (s || '').replace(/[-\s]/g, '').toUpperCase();
+}
+
+/**
+ * Strip trailing X (and any preceding dash/space) from a normalized code.
+ * "LC100X" → "LC100", "LC170X" → "LC170", "GC100" → "GC100" (unchanged).
+ * Only strips a SINGLE trailing X when the rest of the code still has digits,
+ * so we never turn "X" or "AX" into a code that won't resolve sensibly.
+ */
+function stripTrailingX(code: string): string {
+  const m = code.match(/^([A-Z]{2,3}\d+)X$/);
+  return m ? m[1] : code;
+}
+
+/**
+ * Build the list of candidate normalized codes to try, in priority order.
+ *   "LC100X"  → ["LC100X", "LC100"]
+ *   "GC-100"  → ["GC100"]
+ *   "LC-170X" → ["LC170X", "LC170"]
+ */
+function buildCodeCandidates(raw: string): string[] {
+  const c0 = normCode(raw);
+  if (!c0) return [];
+  const c1 = stripTrailingX(c0);
+  return c1 !== c0 ? [c0, c1] : [c0];
+}
+
+/**
+ * Lookup a QA product by candidate code. Matches QA.skuName (normalized)
+ * and QA.productCode (normalized). Returns the QA product or null.
+ */
+function findQAByCode(code: string, qaProducts: QAProduct[]): QAProduct | null {
+  for (const q of qaProducts) {
+    if (normCode(q.skuName) === code) return q;
+    if (q.productCode && normCode(q.productCode) === code) return q;
+  }
+  return null;
+}
+
+/**
+ * Lookup a SKU by candidate code. Matches SKU.name (normalized).
+ */
+function findSKUByCode(code: string, skus: SKU[]): SKU | null {
+  for (const s of skus) {
+    if (normCode(s.name) === code) return s;
+  }
+  return null;
+}
+
+/**
+ * Resolve a raw product string from the sheet into a QA product (preferred)
+ * or SKU. QA is the source of truth for the product catalog; we fall back to
+ * SKU only when no QA variant exists.
  *
  * Resolution order:
- *   1. Exact case-insensitive SKU.name match.
- *   2. QA.skuName match.
- *   3. Normalized-code match (strips dashes, spaces, trailing "X" suffix —
- *      so "GC-100" → "GC100", "LC100X" → "LC100" when no exact LC100X SKU).
- *   4. Translation rules from user spec:
- *        "Totes <n>" / "Bulk <n>" → "GC<n>"
- *        "Liquid <n>"             → "LC<n>"
+ *   1. Build code candidates from the raw text (e.g. "LC100X" → ["LC100X", "LC100"]).
+ *      For each candidate, try QA.skuName / QA.productCode match, then SKU.name match.
+ *   2. Translation rules from user spec:
+ *        "Totes <n>" / "Bulk <n>" → GC<n>      (e.g. "Totes 100" → "GC100")
+ *        "Liquid <n>"             → LC<n>      (e.g. "Liquid 350" → "LC350")
  *        "Molasses"               → "Molasses" (if catalog has it)
- *   5. Substring match.
- *   6. Fallback: keep raw text.
+ *      Each translated candidate is checked against QA first, then SKU.
+ *   3. Substring match against QA.skuName, then SKU.name (last resort).
+ *   4. Fallback: keep raw text (caller treats as "unmatched").
  */
 function resolveProduct(
   raw: string,
@@ -300,68 +354,86 @@ function resolveProduct(
   const trimmed = raw.trim();
   const norm = trimmed.toLowerCase();
 
-  // 1. Exact SKU.name match
-  const exactSku = skus.find(s => (s.name || '').trim().toLowerCase() === norm);
-  if (exactSku) {
-    const qa = qaProducts.find(q => q.skuId === exactSku.id) || null;
-    return { productName: exactSku.name, productKey: qa?.id || exactSku.id };
-  }
-
-  // 2. QA skuName match
-  const qaByName = qaProducts.find(q => (q.skuName || '').trim().toLowerCase() === norm);
-  if (qaByName) {
-    return { productName: qaByName.skuName || trimmed, productKey: qaByName.id };
-  }
-
-  // 3. Normalized-code match (strip dashes/spaces; also try without trailing X)
-  const stripped = trimmed.replace(/[-\s]/g, '').toUpperCase();
-  const candidates = [stripped, stripped.replace(/X$/, '')];
-  for (const cand of candidates) {
-    const m = skus.find(s => (s.name || '').replace(/[-\s]/g, '').toUpperCase() === cand);
-    if (m) {
-      const qa = qaProducts.find(q => q.skuId === m.id) || null;
-      return { productName: m.name, productKey: qa?.id || m.id };
+  // 1. Code-based candidates (covers "LC100X", "GC-100", "LC 170", etc).
+  for (const cand of buildCodeCandidates(trimmed)) {
+    const qa = findQAByCode(cand, qaProducts);
+    if (qa) {
+      return { productName: qa.skuName, productDisplayName: qa.skuName, productKey: qa.id };
+    }
+    const sku = findSKUByCode(cand, skus);
+    if (sku) {
+      // Prefer a QA child of this SKU when available
+      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      return {
+        productName: qaChild?.skuName || sku.name,
+        productDisplayName: qaChild?.skuName || sku.name,
+        productKey: qaChild?.id || sku.id,
+      };
     }
   }
 
-  // 4. Translation rules
+  // 2. Translation rules
+  const translated: string[] = [];
   const totesBulk = /^(?:totes?|bulk)\s*(\d+)/i.exec(trimmed);
-  if (totesBulk) {
-    const candidate = `GC${totesBulk[1]}`;
-    const m = skus.find(s => (s.name || '').replace(/[-\s]/g, '').toUpperCase() === candidate);
-    if (m) {
-      const qa = qaProducts.find(q => q.skuId === m.id) || null;
-      return { productName: m.name, productKey: qa?.id || m.id };
-    }
-  }
+  if (totesBulk) translated.push(`GC${totesBulk[1]}`);
   const liquid = /^liquid\s*(\d+)/i.exec(trimmed);
-  if (liquid) {
-    const candidate = `LC${liquid[1]}`;
-    const m = skus.find(s => (s.name || '').replace(/[-\s]/g, '').toUpperCase() === candidate);
-    if (m) {
-      const qa = qaProducts.find(q => q.skuId === m.id) || null;
-      return { productName: m.name, productKey: qa?.id || m.id };
+  if (liquid) translated.push(`LC${liquid[1]}`);
+  if (norm === 'molasses') translated.push('MOLASSES');
+
+  for (const cand of translated) {
+    const qa = findQAByCode(cand, qaProducts);
+    if (qa) {
+      return { productName: qa.skuName, productDisplayName: qa.skuName, productKey: qa.id };
+    }
+    const sku = findSKUByCode(cand, skus);
+    if (sku) {
+      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      return {
+        productName: qaChild?.skuName || sku.name,
+        productDisplayName: qaChild?.skuName || sku.name,
+        productKey: qaChild?.id || sku.id,
+      };
     }
   }
+  // Molasses special case — match by name when no normalized code hit
   if (norm === 'molasses') {
-    const m = skus.find(s => (s.name || '').trim().toLowerCase() === 'molasses');
-    if (m) {
-      const qa = qaProducts.find(q => q.skuId === m.id) || null;
-      return { productName: m.name, productKey: qa?.id || m.id };
+    const qa = qaProducts.find(q => (q.skuName || '').trim().toLowerCase() === 'molasses');
+    if (qa) {
+      return { productName: qa.skuName, productDisplayName: qa.skuName, productKey: qa.id };
+    }
+    const sku = skus.find(s => (s.name || '').trim().toLowerCase() === 'molasses');
+    if (sku) {
+      const qaChild = qaProducts.find(q => q.skuId === sku.id) || null;
+      return {
+        productName: qaChild?.skuName || sku.name,
+        productDisplayName: qaChild?.skuName || sku.name,
+        productKey: qaChild?.id || sku.id,
+      };
     }
   }
 
-  // 5. Substring match (loose)
-  const loose = skus.find(s => {
+  // 3. Substring match (loose) — QA first
+  const qaLoose = qaProducts.find(q => {
+    const sn = (q.skuName || '').trim().toLowerCase();
+    return sn && (sn.includes(norm) || norm.includes(sn));
+  });
+  if (qaLoose) {
+    return { productName: qaLoose.skuName, productDisplayName: qaLoose.skuName, productKey: qaLoose.id };
+  }
+  const skuLoose = skus.find(s => {
     const sn = (s.name || '').trim().toLowerCase();
     return sn && (sn.includes(norm) || norm.includes(sn));
   });
-  if (loose) {
-    const qa = qaProducts.find(q => q.skuId === loose.id) || null;
-    return { productName: loose.name, productKey: qa?.id || loose.id };
+  if (skuLoose) {
+    const qaChild = qaProducts.find(q => q.skuId === skuLoose.id) || null;
+    return {
+      productName: qaChild?.skuName || skuLoose.name,
+      productDisplayName: qaChild?.skuName || skuLoose.name,
+      productKey: qaChild?.id || skuLoose.id,
+    };
   }
 
-  // 6. Fallback — keep raw
+  // 4. Fallback — keep raw (will show as unmatched in the preview)
   return { productName: trimmed };
 }
 
