@@ -71,6 +71,7 @@ import ReportsPage from './components/ReportsPage';
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
+import { syncOrdersSheet, type OrderSyncResult } from './utils/googleOrderSheetSync';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -2550,6 +2551,9 @@ export default function App() {
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [sheetSyncPreview, setSheetSyncPreview] = useState<SheetSyncResult | null>(null);
   const [sheetSyncError, setSheetSyncError] = useState<string | null>(null);
+  const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
+  const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
+  const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -3907,6 +3911,32 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
+            <button
+              onClick={async () => {
+                setSheetSyncError(null);
+                setIsSyncingSheet(true);
+                try {
+                  const preview = await syncShipmentScheduleSheet({
+                    existingOrders: orders,
+                    existingShipments: [...hamiltonShipments, ...vancouverShipments],
+                    customers,
+                    skus,
+                    qaProducts,
+                    carriers,
+                  });
+                  setSheetSyncPreview(preview);
+                } catch (err) {
+                  setSheetSyncError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setIsSyncingSheet(false);
+                }
+              }}
+              disabled={isSyncingSheet}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              title="Pull FERGUSON and SHERMAN tabs from the shipment-schedule Google Sheet and stage new orders/shipments for review."
+            >
+              <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync Shipments'}
+            </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Plus size={12} /> Batch
@@ -5086,29 +5116,28 @@ export default function App() {
             </button>
             <button
               onClick={async () => {
-                setSheetSyncError(null);
-                setIsSyncingSheet(true);
+                setOrderSyncError(null);
+                setIsSyncingOrdersSheet(true);
                 try {
-                  const preview = await syncShipmentScheduleSheet({
+                  const preview = await syncOrdersSheet({
                     existingOrders: orders,
-                    existingShipments: [...hamiltonShipments, ...vancouverShipments],
                     customers,
                     skus,
                     qaProducts,
                     carriers,
                   });
-                  setSheetSyncPreview(preview);
+                  setOrderSyncPreview(preview);
                 } catch (err) {
-                  setSheetSyncError(err instanceof Error ? err.message : String(err));
+                  setOrderSyncError(err instanceof Error ? err.message : String(err));
                 } finally {
-                  setIsSyncingSheet(false);
+                  setIsSyncingOrdersSheet(false);
                 }
               }}
-              disabled={isSyncingSheet}
+              disabled={isSyncingOrdersSheet}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
-              title="Pull FERGUSON and SHERMAN tabs from the configured Google Sheet and stage new orders/shipments for review."
+              title="Pull LIQ, TOT, DRY and Molasses tabs from the orders Google Sheet and stage new orders for review."
             >
-              <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync from Sheet'}
+              <FileText size={12} /> {isSyncingOrdersSheet ? 'Syncing…' : 'Sync Orders'}
             </button>
             <button
               onClick={() => setIsAddingBatchOrder(true)}
@@ -9299,6 +9328,178 @@ export default function App() {
                   className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
                 >
                   Import {sheetSyncPreview.newOrders.length + sheetSyncPreview.newShipments.length} Records
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Orders Sheet Sync — Error popup */}
+        {orderSyncError && (
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto" onClick={() => setOrderSyncError(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={18} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Orders Sync Failed</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm whitespace-pre-wrap">{orderSyncError}</p>
+                <p className="text-[11px] opacity-70">If the error mentions HTTP 403 / 401 or CORS, make sure the orders spreadsheet is shared as "Anyone with the link can view".</p>
+                <div className="flex justify-end">
+                  <button onClick={() => setOrderSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all">Close</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Orders Sheet Sync — Preview / Confirm modal */}
+        {orderSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setOrderSyncPreview(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Sync Preview — Orders Sheet (LIQ / TOT / DRY / Molasses)</h3>
+                <button onClick={() => setOrderSyncPreview(null)} className="hover:rotate-90 transition-transform"><X size={18} /></button>
+              </div>
+
+              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Summary cards */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-emerald-50 border border-emerald-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">New Orders</div>
+                    <div className="text-2xl font-black">{orderSyncPreview.newOrders.length}</div>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Skipped</div>
+                    <div className="text-2xl font-black">{orderSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Errors</div>
+                    <div className="text-2xl font-black">{orderSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {/* New Orders table */}
+                {orderSyncPreview.newOrders.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Orders ({orderSyncPreview.newOrders.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-left font-bold">Ship Date</th>
+                            <th className="p-2 text-left font-bold">Deliver</th>
+                            <th className="p-2 text-right font-bold">Qty (MT)</th>
+                            <th className="p-2 text-left font-bold">Carrier</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderSyncPreview.newOrders.map(o => (
+                            <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{o.bolNumber || '—'}</td>
+                              <td className="p-2">{o.customer}</td>
+                              <td className="p-2">{o.product}</td>
+                              <td className="p-2 font-mono">{o.po || '—'}</td>
+                              <td className="p-2">{o.shipmentDate}</td>
+                              <td className="p-2">{o.deliveryDate || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(o.lineItems[0]?.qty || 0).toFixed(3)}</td>
+                              <td className="p-2">{o.carrier || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Skipped */}
+                {orderSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({orderSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold w-16">Tab</th>
+                            <th className="p-2 text-left font-bold w-32">BOL</th>
+                            <th className="p-2 text-left font-bold w-32">PO</th>
+                            <th className="p-2 text-left font-bold">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2 text-[10px] uppercase opacity-70">{s.tab}</td>
+                              <td className="p-2 font-mono">{s.bolNumber || '—'}</td>
+                              <td className="p-2 font-mono">{s.poNumber || '—'}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {orderSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 text-red-700">Errors ({orderSyncPreview.errors.length})</h4>
+                    <div className="border border-red-200 bg-red-50 max-h-40 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {orderSyncPreview.errors.map((e, i) => (
+                            <tr key={i} className="border-b border-red-200/50">
+                              <td className="p-2 font-mono w-40">{e.tab} row {e.rowIdx}</td>
+                              <td className="p-2">{e.message}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {orderSyncPreview.newOrders.length === 0 && (
+                  <div className="text-center p-8 opacity-60 text-sm">
+                    No new orders to import — every row was already in the orders table, invoiced, cancelled, or missing required fields.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="border-t border-[#141414]/10 p-4 flex justify-end gap-3 bg-[#F9F9F9]">
+                <button
+                  onClick={() => setOrderSyncPreview(null)}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (orderSyncPreview.newOrders.length > 0) {
+                      setOrders([...orders, ...orderSyncPreview.newOrders]);
+                    }
+                    setOrderSyncPreview(null);
+                  }}
+                  disabled={orderSyncPreview.newOrders.length === 0}
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
+                >
+                  Import {orderSyncPreview.newOrders.length} Orders
                 </button>
               </div>
             </motion.div>
