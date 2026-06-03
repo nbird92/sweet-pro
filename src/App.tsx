@@ -70,6 +70,7 @@ import SalesForecastPage from './components/SalesForecastPage';
 import ReportsPage from './components/ReportsPage';
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
+import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -82,7 +83,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
   setNewLeadFollowUp: React.Dispatch<React.SetStateAction<Record<string, { date: string; description: string; infoSent: string }>>>;
 }) {
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -2545,6 +2546,10 @@ export default function App() {
   const [isAddingCarrier, setIsAddingCarrier] = useState(false);
   const [showPreviousWeeks, setShowPreviousWeeks] = useState(false);
   const [isAddingBatchShipment, setIsAddingBatchShipment] = useState(false);
+  // Google Sheets shipment-schedule sync
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [sheetSyncPreview, setSheetSyncPreview] = useState<SheetSyncResult | null>(null);
+  const [sheetSyncError, setSheetSyncError] = useState<string | null>(null);
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -2893,6 +2898,73 @@ export default function App() {
     if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
+  };
+
+  // Resolve a line item to its rendered shortform.
+  // Prefers the stored productKey (QA id) so multi-QA SKU collisions don't
+  // surface as the wrong variant — e.g. picking LC170 stays LC170 in the
+  // orders table even when LC170 and GC100 share an SKU.name.
+  // Falls back to productDisplayName matching, then to productToShortform
+  // for legacy items without a productKey or display name.
+  const lineItemToShortform = (item: { productKey?: string; productDisplayName?: string; productName: string }): string => {
+    // Helper: render shortform from a SKU+QA pair
+    const shortformFromPair = (sku: SKU | null, qa: QAProduct | null): string => {
+      const product = buildProductAttrs(sku, qa);
+      const fromRule = resolveShortFormRule(namingFormulas, product, { sugarTypes, productGroups });
+      if (fromRule && fromRule.trim()) return fromRule.trim();
+      // Legacy fallback
+      if (product.sugarType === 'Molasses') return 'MOL';
+      const st = sugarTypes.find(t => t.name === product.sugarType);
+      if (st && product.category && product.maxColor !== undefined) {
+        const co = product.category === 'Conventional' ? 'C' : 'B';
+        if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
+        const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
+        return `${wt}${st.abbreviation}${co}${product.maxColor}`;
+      }
+      return '';
+    };
+
+    // 1. Match by stored productKey (most precise)
+    if (item.productKey) {
+      const qa = qaProducts.find(q => q.id === item.productKey) || null;
+      if (qa) {
+        const sku = skus.find(s => s.id === qa.skuId) || null;
+        const sf = shortformFromPair(sku, qa);
+        if (sf) return sf;
+      }
+      // productKey may reference an SKU id directly (unpaired SKU dropdown entry)
+      const skuByKey = skus.find(s => s.id === item.productKey) || null;
+      if (skuByKey) {
+        const skuQa = qaProducts.find(q => q.skuId === skuByKey.id) || null;
+        const sf = shortformFromPair(skuByKey, skuQa);
+        if (sf) return sf;
+      }
+    }
+
+    // 2. Legacy: match by productDisplayName against the dropdown labels.
+    //    Handles line items saved before productKey was tracked but with
+    //    the rendered Product Name persisted.
+    if (item.productDisplayName) {
+      const opts = buildOrderProductOptions();
+      const opt = opts.find(o => o.label === item.productDisplayName);
+      if (opt) {
+        const qa = qaProducts.find(q => q.id === opt.key) || null;
+        if (qa) {
+          const sku = skus.find(s => s.id === qa.skuId) || null;
+          const sf = shortformFromPair(sku, qa);
+          if (sf) return sf;
+        }
+        const skuByKey = skus.find(s => s.id === opt.key) || null;
+        if (skuByKey) {
+          const skuQa = qaProducts.find(q => q.skuId === skuByKey.id) || null;
+          const sf = shortformFromPair(skuByKey, skuQa);
+          if (sf) return sf;
+        }
+      }
+    }
+
+    // 3. Fall back to free-text resolution (legacy items with neither key nor display)
+    return productToShortform(item.productName);
   };
 
   // Resolve a free-text product name to its catalog Product Name (the same
@@ -3830,10 +3902,6 @@ export default function App() {
               }}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
-            </button>
-            <button onClick={() => exportCSV(shipmentCsvHeaders, locationShipments, `${locationName.toLowerCase()}_shipments_export.csv`)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
-              <Download size={12} /> CSV
             </button>
             <button onClick={() => fileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
@@ -4860,7 +4928,7 @@ export default function App() {
                                       <tbody className="divide-y divide-[#141414]/10">
                                         {invoiceLineItems.map(item => (
                                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{productToShortform(item.productName)}</td>
+                                            <td className="p-3">{lineItemToShortform(item)}</td>
                                             <td className="p-3">{item.qty}</td>
                                             <td className="p-3">{item.netWeightPerUnit}</td>
                                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -5012,13 +5080,35 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> Template
             </button>
-            <button onClick={() => exportCSV(orderCsvHeaders, buildOrderRows(), 'orders_export.csv')}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
-              <Download size={12} /> CSV
-            </button>
             <button onClick={() => orderFileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
+            </button>
+            <button
+              onClick={async () => {
+                setSheetSyncError(null);
+                setIsSyncingSheet(true);
+                try {
+                  const preview = await syncShipmentScheduleSheet({
+                    existingOrders: orders,
+                    existingShipments: [...hamiltonShipments, ...vancouverShipments],
+                    customers,
+                    skus,
+                    qaProducts,
+                    carriers,
+                  });
+                  setSheetSyncPreview(preview);
+                } catch (err) {
+                  setSheetSyncError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setIsSyncingSheet(false);
+                }
+              }}
+              disabled={isSyncingSheet}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              title="Pull FERGUSON and SHERMAN tabs from the configured Google Sheet and stage new orders/shipments for review."
+            >
+              <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync from Sheet'}
             </button>
             <button
               onClick={() => setIsAddingBatchOrder(true)}
@@ -5083,9 +5173,16 @@ export default function App() {
                 )}
                 {filteredOrders.map(ord => {
                   const totalWeight = ord.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
-                  const productDisplay = ord.product
-                    ? productToShortform(ord.product)
-                    : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
+                  // Build the product display by resolving each line item to its
+                  // shortform via lineItemToShortform — which prefers the stored
+                  // productKey (QA id) so multi-QA SKU collisions resolve to the
+                  // exact variant the user picked (e.g. LC170 vs. GC100 sharing
+                  // an SKU name). Falls back to the order's joined .product string.
+                  const lineItemDisplay = ord.lineItems
+                    .map(li => lineItemToShortform(li))
+                    .filter(Boolean)
+                    .join(', ');
+                  const productDisplay = lineItemDisplay || (ord.product ? productToShortform(ord.product) : '—');
                   // Outlier check: product (or any line item) does not match a current SKU
                   const productUnmatched = ord.product
                     ? !productMatchesCurrentSku(ord.product)
@@ -5294,7 +5391,7 @@ export default function App() {
                                       <tbody className="divide-y divide-[#141414]/10">
                                         {ord.lineItems.map(item => (
                                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{productToShortform(item.productName)}</td>
+                                            <td className="p-3">{lineItemToShortform(item)}</td>
                                             <td className="p-3">{item.qty}</td>
                                             <td className="p-3">{item.netWeightPerUnit}</td>
                                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -6146,7 +6243,7 @@ export default function App() {
           {/* Add Sample Request Modal */}
           <AnimatePresence>
             {showAddSampleModal && (
-              <motion.div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <motion.div className="fixed inset-0 bg-black/50 flex items-center-safe justify-center z-50 overflow-y-auto p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
                   initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -6225,7 +6322,7 @@ export default function App() {
           {/* Edit Sample Request Modal */}
           <AnimatePresence>
             {editingSampleRequest && (
-              <motion.div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+              <motion.div className="fixed inset-0 bg-black/50 flex items-center-safe justify-center z-50 overflow-y-auto p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
                   initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -7417,7 +7514,7 @@ export default function App() {
 
     if (activePage !== 'Customer Quote') {
       return (
-        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-12">
+        <div className="flex flex-col items-center-safe justify-center min-h-[60vh] text-center p-12">
           <div className="bg-white border border-[#141414] p-12 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full">
             <h2 className="text-xl font-bold uppercase mb-4">{activePage}</h2>
             <p className="text-sm opacity-50 italic mb-8">This module is currently under development.</p>
@@ -8040,7 +8137,7 @@ export default function App() {
       {/* Login Modal */}
       <AnimatePresence>
         {!user && !authLoading && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8054,7 +8151,7 @@ export default function App() {
                 <p className="text-xs opacity-60">Sign in with your Google Workspace account to continue.</p>
                 <button
                   onClick={handleGoogleSignIn}
-                  className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-3"
+                  className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-3"
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
@@ -8074,7 +8171,7 @@ export default function App() {
       {/* Invoice Card Modal */}
       <AnimatePresence>
         {editingInvoiceCard && !getModalState('invoice').minimized && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8170,7 +8267,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {(editingInvoiceCard.lineItems || []).map(item => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                            <td className="p-3">{productToShortform(item.productName)}</td>
+                            <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{item.qty}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -8212,7 +8309,7 @@ export default function App() {
       {/* Order Card Modal */}
       <AnimatePresence>
         {viewingOrderCard && !getModalState('order').minimized && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8310,7 +8407,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {viewingOrderCard.lineItems.map(item => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
-                            <td className="p-3">{productToShortform(item.productName)}</td>
+                            <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{item.qty}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -8473,7 +8570,7 @@ export default function App() {
       {/* PDF Preview Modal */}
       <AnimatePresence>
         {pdfPreview && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md" onClick={handleClosePdfPreview}>
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={handleClosePdfPreview}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8528,7 +8625,7 @@ export default function App() {
       {/* Add / Edit Carrier Modal */}
       <AnimatePresence>
         {editingCarrier && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8612,7 +8709,7 @@ export default function App() {
                       setIsAddingCarrier(false);
                       setEditingCarrier(null);
                     }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
                   >
                     <CheckCircle2 size={16} /> {isAddingCarrier ? 'Add Carrier' : 'Save Changes'}
                   </button>
@@ -8637,7 +8734,7 @@ export default function App() {
           const totalValue = calculations.finalMt * config.volumeMt;
           const finalPriceCadMt = calculations.finalMt;
           return (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-4 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8802,7 +8899,7 @@ export default function App() {
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={createContract}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
                   >
                     <CheckCircle2 size={16} /> Confirm &amp; Create
                   </button>
@@ -8868,7 +8965,7 @@ export default function App() {
             setShowEmailQuote(false);
           };
           return (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -8966,7 +9063,7 @@ export default function App() {
                 <button
                   onClick={openInGmail}
                   disabled={!emailTo}
-                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2 disabled:opacity-50"
                 >
                   <Send size={14} /> Send via Gmail
                 </button>
@@ -8991,8 +9088,225 @@ export default function App() {
           );
         })()}
 
+        {/* Google Sheet Sync — Error popup */}
+        {sheetSyncError && (
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto" onClick={() => setSheetSyncError(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <AlertCircle size={18} className="text-red-400" />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Sheet Sync Failed</h3>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-sm whitespace-pre-wrap">{sheetSyncError}</p>
+                <p className="text-[11px] opacity-70">If the error mentions HTTP 403 / 401 or CORS, make sure the source spreadsheet is shared as "Anyone with the link can view" or published to web (File → Share → Publish to web).</p>
+                <div className="flex justify-end">
+                  <button onClick={() => setSheetSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all">Close</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Google Sheet Sync — Preview / Confirm modal */}
+        {sheetSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setSheetSyncPreview(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Sync Preview — Google Sheet</h3>
+                <button onClick={() => setSheetSyncPreview(null)} className="hover:rotate-90 transition-transform"><X size={18} /></button>
+              </div>
+
+              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Summary cards */}
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="bg-emerald-50 border border-emerald-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">New Orders</div>
+                    <div className="text-2xl font-black">{sheetSyncPreview.newOrders.length}</div>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">New Shipments</div>
+                    <div className="text-2xl font-black">{sheetSyncPreview.newShipments.length}</div>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Skipped (existing)</div>
+                    <div className="text-2xl font-black">{sheetSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Errors</div>
+                    <div className="text-2xl font-black">{sheetSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {/* New Orders table */}
+                {sheetSyncPreview.newOrders.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Orders ({sheetSyncPreview.newOrders.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
+                          <tr>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-left font-bold">Date</th>
+                            <th className="p-2 text-left font-bold">Qty</th>
+                            <th className="p-2 text-left font-bold">Carrier</th>
+                            <th className="p-2 text-left font-bold">Location</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sheetSyncPreview.newOrders.map(o => (
+                            <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{o.bolNumber}</td>
+                              <td className="p-2">{o.customer}</td>
+                              <td className="p-2">{o.product}</td>
+                              <td className="p-2 font-mono">{o.po}</td>
+                              <td className="p-2">{o.shipmentDate}</td>
+                              <td className="p-2 text-right">{o.lineItems[0]?.qty || 0}</td>
+                              <td className="p-2">{o.carrier || '—'}</td>
+                              <td className="p-2">{o.location || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* New Shipments table */}
+                {sheetSyncPreview.newShipments.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Shipments ({sheetSyncPreview.newShipments.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Date</th>
+                            <th className="p-2 text-left font-bold">Time</th>
+                            <th className="p-2 text-left font-bold">Bay</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Arrive</th>
+                            <th className="p-2 text-left font-bold">Start</th>
+                            <th className="p-2 text-left font-bold">Out</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sheetSyncPreview.newShipments.map(s => (
+                            <tr key={s.id} className="border-b border-[#141414]/5 hover:bg-blue-50/50">
+                              <td className="p-2">{s.date}</td>
+                              <td className="p-2">{s.time}</td>
+                              <td className="p-2 text-[10px]">{s.bay}</td>
+                              <td className="p-2">{s.customer}</td>
+                              <td className="p-2">{s.product}</td>
+                              <td className="p-2 font-mono font-bold">{s.bol}</td>
+                              <td className="p-2">{s.arrive || '—'}</td>
+                              <td className="p-2">{s.start || '—'}</td>
+                              <td className="p-2">{s.out || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Skipped */}
+                {sheetSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({sheetSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {sheetSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2 font-mono font-bold w-32">{s.bolNumber}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {sheetSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 text-red-700">Errors ({sheetSyncPreview.errors.length})</h4>
+                    <div className="border border-red-200 bg-red-50 max-h-40 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {sheetSyncPreview.errors.map((e, i) => (
+                            <tr key={i} className="border-b border-red-200/50">
+                              <td className="p-2 font-mono w-32">{e.bay} row {e.rowIdx}</td>
+                              <td className="p-2">{e.message}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {sheetSyncPreview.newOrders.length === 0 && sheetSyncPreview.newShipments.length === 0 && (
+                  <div className="text-center p-8 opacity-60 text-sm">
+                    No new orders or shipments to import — the sheet is already in sync with the app.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="border-t border-[#141414]/10 p-4 flex justify-end gap-3 bg-[#F9F9F9]">
+                <button
+                  onClick={() => setSheetSyncPreview(null)}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    // Commit the preview to app state. Orders go to orders[];
+                    // shipments are bucketed by location into Hamilton or
+                    // Vancouver shipment lists (both Ferguson and Sherman
+                    // locations are Hamilton-side).
+                    if (sheetSyncPreview.newOrders.length > 0) {
+                      setOrders([...orders, ...sheetSyncPreview.newOrders]);
+                    }
+                    if (sheetSyncPreview.newShipments.length > 0) {
+                      const hamiltonAdds = sheetSyncPreview.newShipments.filter(s =>
+                        (s.location || '').toLowerCase().includes('hamilton'));
+                      const vancouverAdds = sheetSyncPreview.newShipments.filter(s =>
+                        !(s.location || '').toLowerCase().includes('hamilton'));
+                      if (hamiltonAdds.length > 0) setHamiltonShipments([...hamiltonShipments, ...hamiltonAdds]);
+                      if (vancouverAdds.length > 0) setVancouverShipments([...vancouverShipments, ...vancouverAdds]);
+                    }
+                    setSheetSyncPreview(null);
+                  }}
+                  disabled={sheetSyncPreview.newOrders.length === 0 && sheetSyncPreview.newShipments.length === 0}
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
+                >
+                  Import {sheetSyncPreview.newOrders.length + sheetSyncPreview.newShipments.length} Records
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {isAddingBatchShipment && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -9077,7 +9391,7 @@ export default function App() {
           </div>
         )}
         {(isAddingShipment || editingShipment) && !getModalState('shipment').minimized && (
-          <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -9572,7 +9886,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => editingShipment && handleGenerateBol(editingShipment)}
-                        className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                        className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
                       >
                         <FileText size={14} /> Preview BOL
                       </button>
@@ -9589,14 +9903,14 @@ export default function App() {
                             setEditingShipment(null);
                             setPendingCompleteOrderId(null);
                           }}
-                          className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all"
+                          className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-emerald-700 transition-all"
                         >
                           <FileText size={14} /> Complete &amp; Bill
                         </button>
                       )}
                       <button
                         onClick={() => editingShipment && handleGenerateCoa(editingShipment)}
-                        className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
+                        className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
                       >
                         <FileText size={14} /> Preview COA
                       </button>
@@ -9615,7 +9929,7 @@ export default function App() {
         )}
 
         {isAddingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -9739,7 +10053,7 @@ export default function App() {
         )}
 
         {editingContract && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -9991,7 +10305,7 @@ export default function App() {
         )}
 
         {selectedContractDetail && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-4 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10182,7 +10496,7 @@ export default function App() {
                       setEditingContract(selectedContractDetail);
                       setSelectedContractDetail(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
                   >
                     <Edit2 size={16} /> Edit Contract
                   </button>
@@ -10199,7 +10513,7 @@ export default function App() {
         )}
 
         {editingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10322,7 +10636,7 @@ export default function App() {
         )}
 
         {isAddingCustomer && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10550,7 +10864,7 @@ export default function App() {
         )}
 
         {isAddingProductGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10627,7 +10941,7 @@ export default function App() {
         )}
 
         {isAddingSugarType && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingSugarType(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingSugarType(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10691,7 +11005,7 @@ export default function App() {
         )}
 
         {editingSugarType && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10752,7 +11066,7 @@ export default function App() {
         )}
 
         {editingProductGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10827,7 +11141,7 @@ export default function App() {
         )}
 
         {isAddingSku && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11010,7 +11324,7 @@ export default function App() {
         )}
 
         {editingCustomer && !getModalState('customer').minimized && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11433,7 +11747,7 @@ export default function App() {
         )}
 
         {editingSku && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11542,7 +11856,7 @@ export default function App() {
         )}
 
         {isAddingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11648,7 +11962,7 @@ export default function App() {
         )}
 
         {editingFreightRate && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11753,7 +12067,7 @@ export default function App() {
         )}
 
         {isAddingSupplyChain && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11831,7 +12145,7 @@ export default function App() {
         )}
 
         {editingSupplyChain && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11914,7 +12228,7 @@ export default function App() {
       </AnimatePresence>
 
         {skuToConfirm && (
-          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[1000] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11994,14 +12308,14 @@ export default function App() {
         )}
 
         {errorBox && (
-          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-6 bg-[#141414]/20 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[2000] flex items-center-safe justify-center p-6 bg-[#141414]/20 backdrop-blur-sm overflow-y-auto">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="bg-white border-2 border-red-500 shadow-[16px_16px_0px_0px_rgba(239,68,68,1)] max-w-sm w-full p-10 text-center space-y-8"
             >
               <div className="flex justify-center">
-                <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center text-red-500">
+                <div className="w-20 h-20 bg-red-100 rounded-full flex items-center-safe justify-center text-red-500">
                   <AlertCircle size={40} />
                 </div>
               </div>
@@ -12021,7 +12335,7 @@ export default function App() {
 
         {/* Contract Orders Popup - shows every order using this contract */}
         {contractOrdersPopup && (
-          <div className="fixed inset-0 z-[700] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractOrdersPopup(null)}>
+          <div className="fixed inset-0 z-[700] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractOrdersPopup(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -12107,9 +12421,8 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-[#141414]/10">
                       {contractOrders.map(ord => {
-                        const productLabel = ord.product
-                          ? productToShortform(ord.product)
-                          : ord.lineItems.map(li => productToShortform(li.productName)).join(', ');
+                        const lineItemLabel = ord.lineItems.map(li => lineItemToShortform(li)).filter(Boolean).join(', ');
+                        const productLabel = lineItemLabel || (ord.product ? productToShortform(ord.product) : '—');
                         const lineQty = ord.lineItems.reduce((s, li) => s + (li.contractNumber === popupContract ? li.totalWeight : 0), 0);
                         return (
                           <tr
@@ -12162,7 +12475,7 @@ export default function App() {
 
         {/* Add/Edit Order Modal - New Line Items Version */}
         {(isAddingOrder || editingOrder) && !isAddingBatchOrder && (
-          <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -12493,6 +12806,7 @@ export default function App() {
                               ...orderLineItems[editingLineItemIdx],
                               productName: newLineItem.productName,
                               productDisplayName: newLineItem.productDisplayName || undefined,
+                              productKey: newLineItem.productKey || undefined,
                               qty: newLineItem.qty,
                               contractNumber: newLineItem.contractNumber,
                               netWeightPerUnit: netWeightKg / 1000,
@@ -12511,6 +12825,7 @@ export default function App() {
                               id: `LINEITEM-${Date.now()}-${Math.random()}`,
                               productName: newLineItem.productName,
                               productDisplayName: newLineItem.productDisplayName || undefined,
+                              productKey: newLineItem.productKey || undefined,
                               qty: newLineItem.qty,
                               contractNumber: newLineItem.contractNumber,
                               netWeightPerUnit: netWeightKg / 1000,
@@ -12578,14 +12893,19 @@ export default function App() {
                                   // Find the dropdown option whose value/label best matches the saved line item so
                                   // the dropdown displays the right selection when editing.
                                   const opts = buildOrderProductOptions(item.productName);
+                                  // Prefer stored productKey when present (it uniquely identifies
+                                  // the QA variant, even when several QAs share an SKU name).
+                                  const byKey = item.productKey
+                                    ? opts.find(o => o.key === item.productKey)
+                                    : undefined;
                                   const byDisplay = item.productDisplayName
                                     ? opts.find(o => o.label === item.productDisplayName)
                                     : undefined;
                                   const byValue = opts.find(o => o.value === item.productName);
-                                  const matchingOpt = byDisplay || byValue;
+                                  const matchingOpt = byKey || byDisplay || byValue;
                                   setNewLineItem({
                                     productName: item.productName,
-                                    productKey: matchingOpt?.key || '',
+                                    productKey: item.productKey || matchingOpt?.key || '',
                                     productDisplayName: item.productDisplayName || matchingOpt?.label || '',
                                     qty: item.qty,
                                     contractNumber: item.contractNumber,
@@ -12679,7 +12999,7 @@ export default function App() {
                         const updatedOrder: Order = {
                           ...editingOrder,
                           customer: customers.find(c => c.id === orderCustomerId)?.name || editingOrder.customer,
-                          product: orderLineItems.map(li => li.productName).join(', '),
+                          product: orderLineItems.map(li => li.productDisplayName || li.productName).join(', '),
                           contractNumber: contractNumbers.join(', '),
                           po: orderPO,
                           shipmentDate: orderShipmentDate || undefined,
@@ -12700,7 +13020,7 @@ export default function App() {
                           id: `ORD-${Date.now()}`,
                           bolNumber: generateBOLNumber(orderLineItems),
                           customer: customers.find(c => c.id === orderCustomerId)?.name || '',
-                          product: orderLineItems.map(li => li.productName).join(', '),
+                          product: orderLineItems.map(li => li.productDisplayName || li.productName).join(', '),
                           contractNumber: contractNumbers.join(', '),
                           po: orderPO,
                           date: new Date().toISOString().split('T')[0],
@@ -12749,7 +13069,7 @@ export default function App() {
                           id: `ORD-${Date.now()}`,
                           bolNumber: generateBOLNumber(orderLineItems),
                           customer: customers.find(c => c.id === orderCustomerId)?.name || '',
-                          product: orderLineItems.map(li => li.productName).join(', '),
+                          product: orderLineItems.map(li => li.productDisplayName || li.productName).join(', '),
                           contractNumber: contractNumbers.join(', '),
                           po: orderPO,
                           date: new Date().toISOString().split('T')[0],
@@ -12808,7 +13128,7 @@ export default function App() {
 
         {/* Add Batch Orders Modal */}
         {isAddingBatchOrder && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13048,7 +13368,7 @@ export default function App() {
                                           const next = batchOrder.entries.filter((_, i) => i !== idx);
                                           setBatchOrder({...batchOrder, entries: next});
                                         }}
-                                        className="w-7 h-7 rounded-full flex items-center justify-center text-red-500 hover:bg-red-50 transition-all"
+                                        className="w-7 h-7 rounded-full flex items-center-safe justify-center text-red-500 hover:bg-red-50 transition-all"
                                       >
                                         <Trash2 size={14} />
                                       </button>
@@ -13202,7 +13522,7 @@ export default function App() {
 
         {/* Customer Delete Confirmation Dialog */}
         {customerDeleteConfirmId && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13239,7 +13559,7 @@ export default function App() {
 
         {/* Add Customer Group Modal */}
         {isAddingCustomerGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setIsAddingCustomerGroup(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingCustomerGroup(false)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13318,7 +13638,7 @@ export default function App() {
 
         {/* Edit Customer Group Modal */}
         {editingCustomerGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setEditingCustomerGroup(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setEditingCustomerGroup(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13438,7 +13758,7 @@ export default function App() {
 
         {/* Delete Customer Group Confirmation */}
         {customerGroupDeleteConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-[#141414]/40 backdrop-blur-sm" onClick={() => setCustomerGroupDeleteConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setCustomerGroupDeleteConfirmId(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13475,7 +13795,7 @@ export default function App() {
 
         {/* Order Delete Confirmation Dialog */}
         {orderDeleteConfirmId && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13512,7 +13832,7 @@ export default function App() {
 
         {/* Hide Order Confirmation */}
         {orderHideConfirmId && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13549,7 +13869,7 @@ export default function App() {
 
         {/* Shipment Delete Confirmation */}
         {shipmentDeleteConfirmId && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13597,7 +13917,7 @@ export default function App() {
             });
           })();
           return (
-            <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
               <motion.div
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -13657,7 +13977,7 @@ export default function App() {
 
         {/* Order Confirmation Dialog */}
         {showOrderConfirmation && pendingStatusChange && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13724,7 +14044,7 @@ export default function App() {
                             setShowOrderConfirmation(false);
                             setPendingStatusChange(null);
                           }}
-                          className={`flex-1 py-4 font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-2 ${
+                          className={`flex-1 py-4 font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2 ${
                             isCancelling ? 'bg-red-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'
                           }`}
                         >
@@ -13750,7 +14070,7 @@ export default function App() {
 
         {/* Shipment Creation Modal */}
         {isCreatingShipments && (
-          <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13959,7 +14279,7 @@ export default function App() {
                             <tbody className="divide-y divide-[#141414]/10">
                               {order.lineItems.map(item => (
                                 <tr key={item.id} className="hover:bg-[#F9F9F9]">
-                                  <td className="p-2">{productToShortform(item.productName)}</td>
+                                  <td className="p-2">{lineItemToShortform(item)}</td>
                                   <td className="p-2">{item.qty}</td>
                                   <td className="p-2">{(item.netWeightPerUnit * 1000).toFixed(0)}</td>
                                   <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
@@ -14109,7 +14429,7 @@ export default function App() {
 
       {/* Appointment Schedule Modal */}
       {editingAppointmentSchedule && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+        <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -14254,7 +14574,7 @@ export default function App() {
             setNewTransferLegs(prev => prev.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 })));
           };
           return (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -14446,7 +14766,7 @@ export default function App() {
             setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
           };
           return (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}

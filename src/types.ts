@@ -348,6 +348,7 @@ export interface OrderLineItem {
   id: string;
   productName: string;
   productDisplayName?: string; // Rendered Product Name captured at selection time so the line shows what the user picked even when several QA products share a SKU name
+  productKey?: string; // QA product id (or SKU id for unpaired SKUs) — uniquely identifies the chosen catalog variant so display logic can render the correct shortform when multiple QAs share an SKU name
   qty: number;
   contractNumber: string;
   netWeightPerUnit: number;
