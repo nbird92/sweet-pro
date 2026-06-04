@@ -2820,10 +2820,14 @@ export default function App() {
   // True if the product name can be resolved to a current SKU. Used to highlight outliers.
   const productMatchesCurrentSku = (productName: string | undefined): boolean => {
     if (!productName) return true; // empty cells aren't outliers
-    // Already a shortform shape — treat as matched to avoid false warnings
+    // Already a shortform shape — treat as matched to avoid false warnings.
+    // Shortforms are <letters><optional C/B><digits>, optionally prefixed
+    // with a weight token like "25kg ". Letters before the digits can be the
+    // sugar-type abbreviation alone (e.g. LC170, GC100) OR include an explicit
+    // category char (e.g. GBC100 = Granulated Bulk Conventional 100).
     const looksLikeShortform = productName === 'MOL'
-      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CB]\d+$/.test(productName)
-      || /^[A-Z]{2,4}[CB]\d+$/.test(productName);
+      || /^\d+(\.\d+)?kg\s+[A-Z]{1,4}\d+$/.test(productName)
+      || /^[A-Z]{1,4}\d+$/.test(productName);
     if (looksLikeShortform) return true;
     return resolveProduct(productName).sku !== null;
   };
@@ -4739,6 +4743,33 @@ export default function App() {
     if (activePage === 'Invoices') {
       const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['bolNumber', 'customer', 'product', 'po', 'status']);
 
+      // ----- Perf: memoize the row-level lookups so the invoice table scales -----
+      // Previously each row did customers.find(), orders.find() x2, and
+      // productMatchesCurrentSku() (which scans skus+qa) x2. With hundreds of
+      // invoices this turned every keystroke into millions of ops. The maps
+      // below collapse all of that to amortised O(1) per row.
+      const customersByName = new Map<string, Customer>();
+      for (const c of customers) customersByName.set(c.name, c);
+
+      const ordersByBol = new Map<string, Order>();
+      for (const o of orders) {
+        if (o.bolNumber) ordersByBol.set(o.bolNumber, o);
+      }
+
+      // Cache productMatchesCurrentSku per unique product string seen in this
+      // render. Two calls per row → one resolve per distinct product across the
+      // whole table.
+      const productMatchCache = new Map<string, boolean>();
+      const productMatches = (p: string | undefined): boolean => {
+        const k = p || '';
+        let v = productMatchCache.get(k);
+        if (v === undefined) {
+          v = productMatchesCurrentSku(p);
+          productMatchCache.set(k, v);
+        }
+        return v;
+      };
+
       const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
       const invoiceExportSheets = (): SheetSpec[] => [{
         sheetName: 'Invoices',
@@ -4829,7 +4860,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredInvoices.map(i => {
                   // Auto-calculate due date from invoice date + customer payment terms
-                  const invoiceCustomer = customers.find(c => c.name === i.customer);
+                  const invoiceCustomer = customersByName.get(i.customer);
                   const paymentTermsStr = invoiceCustomer?.defaultPaymentTerms ? String(invoiceCustomer.defaultPaymentTerms) : '';
                   const paymentDays = paymentTermsStr ? parseInt(paymentTermsStr.match(/\d+/)?.[0] || '0') : 0;
                   const calculatedDueDate = (() => {
@@ -4842,9 +4873,10 @@ export default function App() {
                     return '';
                   })();
                   const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
-                  // Get line items: from invoice directly, or look up linked order by BOL
-                  const invoiceLineItems = i.lineItems || orders.find(o => o.bolNumber === i.bolNumber)?.lineItems || [];
-                  const linkedOrder = orders.find(o => o.bolNumber === i.bolNumber);
+                  // Get line items: from invoice directly, or look up linked order by BOL (memoised)
+                  const linkedOrder = i.bolNumber ? ordersByBol.get(i.bolNumber) : undefined;
+                  const invoiceLineItems = i.lineItems || linkedOrder?.lineItems || [];
+                  const productOk = productMatches(i.product);
                   return (
                   <React.Fragment key={i.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
@@ -4852,7 +4884,7 @@ export default function App() {
                         <input
                           type="text"
                           value={i.invoiceNumber || ''}
-                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, invoiceNumber: e.target.value } : inv))}
+                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, invoiceNumber: e.target.value } : inv))}
                           placeholder="—"
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
@@ -4860,7 +4892,7 @@ export default function App() {
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productMatchesCurrentSku(i.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(i.product) ? `No matching product in catalog: ${i.product}` : ''}>{productToShortform(i.product)}{!productMatchesCurrentSku(i.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${i.product}` : ''}>{productToShortform(i.product)}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
@@ -4870,7 +4902,7 @@ export default function App() {
                           value={i.pricePerMt ?? ''}
                           onChange={(e) => {
                             const ppm = parseFloat(e.target.value) || 0;
-                            setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
+                            setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
                           }}
                           placeholder="—"
                           className="bg-transparent w-20 focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
@@ -4879,7 +4911,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         <select
                           value={i.status}
-                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, status: e.target.value } : inv))}
+                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, status: e.target.value } : inv))}
                           className="bg-transparent font-bold uppercase text-[10px] focus:outline-none cursor-pointer"
                           style={{ color: getStatusColor(i.status).text }}
                         >
@@ -4897,7 +4929,7 @@ export default function App() {
                         <input
                           type="text"
                           value={i.splitNo || ''}
-                          onChange={(e) => setInvoices(invoices.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
+                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
                           placeholder="—"
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
@@ -7607,13 +7639,13 @@ export default function App() {
             <div className="space-y-4">
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Origin</label>
-                <select 
-                  value={config.origin} 
+                <select
+                  value={config.origin}
                   onChange={(e) => setConfig(prev => ({ ...prev, origin: e.target.value as any }))}
                   className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                 >
-                  <option value="Hamilton">Hamilton</option>
-                  <option value="Vancouver">Vancouver</option>
+                  <option value="">Select…</option>
+                  {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                 </select>
               </div>
 
@@ -10882,13 +10914,13 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
-                    <select 
-                      value={newCustomer.defaultLocation} 
-                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultLocation: e.target.value as 'Hamilton' | 'Vancouver' })}
+                    <select
+                      value={newCustomer.defaultLocation}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultLocation: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select…</option>
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -11599,11 +11631,15 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
                     <select
                       value={editingCustomer.defaultLocation}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultLocation: e.target.value as 'Hamilton' | 'Vancouver' })}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultLocation: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      <option value="">Select…</option>
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {/* If the saved location is no longer in the active list, render it so editingCustomer doesn't show blank */}
+                      {editingCustomer.defaultLocation && !activeLocations.some(l => l.name === editingCustomer.defaultLocation) && (
+                        <option value={editingCustomer.defaultLocation}>{editingCustomer.defaultLocation} (inactive)</option>
+                      )}
                     </select>
                   </div>
                   <div className="space-y-1">

@@ -65,7 +65,7 @@ export interface Customer {
   id: string;
   name: string;
   customerNumber?: string;
-  defaultLocation: 'Hamilton' | 'Vancouver';
+  defaultLocation: string;  // canonical Location.name — see locations table
   address?: string;
   city?: string;
   province?: string;
