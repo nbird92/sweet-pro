@@ -5262,6 +5262,30 @@ export default function App() {
             >
               <Plus size={12} /> Add Order
             </button>
+            {/* TEMPORARY — wipes every order from the table and Firestore so the
+                user can start fresh. Remove this button once the table is in
+                the desired state. */}
+            <button
+              onClick={async () => {
+                const count = orders.length;
+                if (count === 0) { alert('No orders to clear.'); return; }
+                const first = window.confirm(`Clear ALL ${count} orders? This cannot be undone.`);
+                if (!first) return;
+                const second = window.confirm(`Really delete every order? Type-check: this removes ${count} records permanently.`);
+                if (!second) return;
+                setOrders([]);
+                try {
+                  await syncCollection(COLLECTIONS.orders, []);
+                  alert(`Cleared ${count} orders.`);
+                } catch (err) {
+                  alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Orders may reappear on reload.`);
+                }
+              }}
+              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-all whitespace-nowrap border border-red-300/40"
+              title="TEMPORARY: deletes every order from the table and Firestore. Remove this button after use."
+            >
+              <X size={12} /> Clear All
+            </button>
           </PageBanner>
 
           <div className="px-6 pt-4">
