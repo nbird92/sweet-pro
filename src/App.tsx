@@ -2554,6 +2554,11 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
+  // Invoice page: progressive rendering — only paint the first N rows initially,
+  // then add 200 at a time on "Show more". Keeps the DOM small when the table
+  // has thousands of invoices so click / scroll / load stays fast.
+  const INVOICE_PAGE_SIZE = 200;
+  const [invoiceVisibleCount, setInvoiceVisibleCount] = useState(INVOICE_PAGE_SIZE);
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -4742,6 +4747,14 @@ export default function App() {
 
     if (activePage === 'Invoices') {
       const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['bolNumber', 'customer', 'product', 'po', 'status']);
+      // Progressive rendering: paint only the first invoiceVisibleCount rows.
+      // The browser's content-visibility hint (applied to each <tr> below) also
+      // skips render work for off-screen rows that ARE in the DOM.
+      // When the user is actively searching we render the full filtered result
+      // so a search hit beyond the slice limit isn't hidden.
+      const effectiveLimit = searchTerm ? filteredInvoices.length : invoiceVisibleCount;
+      const visibleInvoices = filteredInvoices.slice(0, effectiveLimit);
+      const invoicesRemaining = filteredInvoices.length - visibleInvoices.length;
 
       // ----- Perf: memoize the row-level lookups so the invoice table scales -----
       // Previously each row did customers.find(), orders.find() x2, and
@@ -4868,7 +4881,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
-                {filteredInvoices.map(i => {
+                {visibleInvoices.map(i => {
                   // Auto-calculate due date from invoice date + customer payment terms
                   const invoiceCustomer = customersByName.get(i.customer);
                   const paymentTermsStr = invoiceCustomer?.defaultPaymentTerms ? String(invoiceCustomer.defaultPaymentTerms) : '';
@@ -4889,7 +4902,12 @@ export default function App() {
                   const productOk = productMatches(i.product);
                   return (
                   <React.Fragment key={i.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
+                    {/* content-visibility lets the browser skip render work for rows that aren't on screen.
+                        contain-intrinsic-size is a hint at the un-rendered row's height so scrollbars stay accurate. */}
+                    <tr
+                      className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer"
+                      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
+                      onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
                       <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         {/*
                           Uncontrolled input: defaultValue + onBlur. Typing no
@@ -5051,6 +5069,27 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {invoicesRemaining > 0 && (
+            <div className="bg-white border-x border-b border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] p-4 flex items-center justify-between text-xs">
+              <div className="opacity-60">
+                Showing <span className="font-bold">{visibleInvoices.length}</span> of <span className="font-bold">{filteredInvoices.length}</span> invoices
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setInvoiceVisibleCount(c => c + INVOICE_PAGE_SIZE)}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold uppercase tracking-widest hover:bg-[#333] transition-colors"
+                >
+                  Show {Math.min(INVOICE_PAGE_SIZE, invoicesRemaining)} more
+                </button>
+                <button
+                  onClick={() => setInvoiceVisibleCount(filteredInvoices.length)}
+                  className="px-4 py-2 border border-[#141414] font-bold uppercase tracking-widest hover:bg-[#F5F5F5] transition-colors"
+                >
+                  Show all ({invoicesRemaining})
+                </button>
+              </div>
+            </div>
+          )}
           </div>
         </div>
       );
