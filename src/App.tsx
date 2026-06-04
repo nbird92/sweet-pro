@@ -4756,9 +4756,9 @@ export default function App() {
         if (o.bolNumber) ordersByBol.set(o.bolNumber, o);
       }
 
-      // Cache productMatchesCurrentSku per unique product string seen in this
-      // render. Two calls per row → one resolve per distinct product across the
-      // whole table.
+      // Cache productMatchesCurrentSku + productToShortform per unique product
+      // string seen in this render. Each call previously scanned skus + qaProducts,
+      // and we call them several times per row.
       const productMatchCache = new Map<string, boolean>();
       const productMatches = (p: string | undefined): boolean => {
         const k = p || '';
@@ -4766,6 +4766,16 @@ export default function App() {
         if (v === undefined) {
           v = productMatchesCurrentSku(p);
           productMatchCache.set(k, v);
+        }
+        return v;
+      };
+      const productShortformCache = new Map<string, string>();
+      const productShortformCached = (p: string | undefined): string => {
+        const k = p || '';
+        let v = productShortformCache.get(k);
+        if (v === undefined) {
+          v = productToShortform(p);
+          productShortformCache.set(k, v);
         }
         return v;
       };
@@ -4881,10 +4891,24 @@ export default function App() {
                   <React.Fragment key={i.id}>
                     <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
                       <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        {/*
+                          Uncontrolled input: defaultValue + onBlur. Typing no
+                          longer triggers a state update per keystroke (which
+                          would re-render every row of the invoice table);
+                          state is committed only when the field loses focus.
+                          key={i.invoiceNumber || ''} resets the input when the
+                          underlying value changes externally (e.g. CSV import).
+                        */}
                         <input
                           type="text"
-                          value={i.invoiceNumber || ''}
-                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, invoiceNumber: e.target.value } : inv))}
+                          key={i.invoiceNumber || ''}
+                          defaultValue={i.invoiceNumber || ''}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== (i.invoiceNumber || '')) {
+                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, invoiceNumber: v } : inv));
+                            }
+                          }}
                           placeholder="—"
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
@@ -4892,17 +4916,20 @@ export default function App() {
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${i.product}` : ''}>{productToShortform(i.product)}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${i.product}` : ''}>{productShortformCached(i.product)}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
                           step="0.01"
-                          value={i.pricePerMt ?? ''}
-                          onChange={(e) => {
+                          key={i.pricePerMt ?? ''}
+                          defaultValue={i.pricePerMt ?? ''}
+                          onBlur={(e) => {
                             const ppm = parseFloat(e.target.value) || 0;
-                            setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
+                            if (ppm !== (i.pricePerMt ?? 0)) {
+                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
+                            }
                           }}
                           placeholder="—"
                           className="bg-transparent w-20 focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
@@ -4928,8 +4955,14 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
-                          value={i.splitNo || ''}
-                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, splitNo: e.target.value } : inv))}
+                          key={i.splitNo || ''}
+                          defaultValue={i.splitNo || ''}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== (i.splitNo || '')) {
+                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, splitNo: v } : inv));
+                            }
+                          }}
                           placeholder="—"
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
