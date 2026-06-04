@@ -651,3 +651,393 @@ export async function syncOrdersSheet(opts: {
   result.errors.unshift(...fetchErrors);
   return result;
 }
+
+/* ====================================================================== */
+/* Configurable importer — any sheet, any tab, any column layout          */
+/* ====================================================================== */
+/*
+ * The functions above sync from a hardcoded sheet + tab list. The block
+ * below makes the importer generic: callers supply a SheetImportConfig
+ * describing which sheet to pull, which tabs to read, and how each tab's
+ * columns map onto the canonical order fields. The matching/dedupe logic
+ * (resolveCustomer / resolveProduct / resolveCarrier / parsedRowsToOrders)
+ * is reused verbatim.
+ *
+ * The default Sucro Shipment-Log preset is exported as
+ * DEFAULT_ORDER_IMPORT_CONFIG so callers can fall back to it.
+ */
+
+/** Per-field column index mapping. All fields except customer + bolNumber
+ *  + quantityMT are optional; missing fields are treated as empty cells. */
+export interface ColumnMap {
+  customer?: number;
+  shipTo?: number;
+  poNumber?: number;
+  product?: number;
+  carrier?: number;
+  bolNumber?: number;
+  shipmentDate?: number;
+  deliveryDate?: number;
+  quantityMT?: number;
+  invoiceNumber?: number;
+  status?: number;
+}
+
+export interface ConfiguredTab {
+  tabName: string;
+  columns: ColumnMap;
+  /** Hint for QA-format disambiguation (Tote, Bulk, Liquid, Molasses, ...). */
+  expectedFormat?: string;
+  /** Per-unit weight in kg; tab default for tote rows. 0 leaves qty in MT. */
+  netWeightPerUnitKg?: number;
+  /** If a product cell is blank, use this string instead (e.g. "Molasses"). */
+  productFallback?: string;
+  /** PO prefixes to skip (e.g. "TRANSFER" for the Molasses tab). */
+  skipPoPrefixes?: string[];
+}
+
+export interface SheetImportConfig {
+  /** Display name for the saved preset (e.g. "Sucro Shipment Log"). */
+  name: string;
+  /** Spreadsheet ID extracted from the URL. */
+  sheetId: string;
+  /** Tabs to import. */
+  tabs: ConfiguredTab[];
+}
+
+/** "0 → A, 1 → B, ..., 25 → Z, 26 → AA, 27 → AB, ..." */
+export function columnLetter(idx: number): string {
+  if (idx < 0) return '';
+  let n = idx;
+  let s = '';
+  while (n >= 0) {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
+/** Extract the spreadsheet ID from any Google Sheets URL form. */
+export function extractSheetId(url: string): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  // Already an ID
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) return trimmed;
+  const m = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+/** Fetch a tab's CSV from an arbitrary sheet (no hardcoded ID). */
+export async function fetchTabFromSheet(sheetId: string, tabName: string): Promise<string> {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch tab "${tabName}": HTTP ${res.status}. The sheet must be shared "Anyone with the link can view".`,
+    );
+  }
+  return await res.text();
+}
+
+/** Fetch the header row + first 5 sample rows of a tab for the column-mapping UI. */
+export async function fetchTabPreview(
+  sheetId: string,
+  tabName: string,
+): Promise<{ headers: string[]; sampleRows: string[][] }> {
+  const csv = await fetchTabFromSheet(sheetId, tabName);
+  const rows = parseCSV(csv);
+  const headers = rows[0] || [];
+  const sampleRows = rows.slice(1, 6);
+  return { headers, sampleRows };
+}
+
+/**
+ * Best-effort column auto-detection from header text. Returns a ColumnMap
+ * where each field points at the first header matching a known keyword
+ * pattern, or undefined if nothing matches.
+ */
+export function autoDetectColumns(headers: string[]): ColumnMap {
+  const lower = headers.map(h => (h || '').trim().toLowerCase());
+  const find = (test: (h: string) => boolean): number | undefined => {
+    const idx = lower.findIndex(test);
+    return idx >= 0 ? idx : undefined;
+  };
+  return {
+    customer: find(h => /^customer$|^client$/.test(h) || h === 'customer name'),
+    shipTo: find(h => /^location$|ship[- ]?to/.test(h)),
+    poNumber: find(h => h === 'po' || h === 'po #' || h === 'po number' || /purchase order/.test(h)),
+    product: find(h => h === 'product' || h === 'sku' || h === 'item'),
+    carrier: find(h => /carrier|trucking/.test(h)),
+    bolNumber: find(h => h === 'bol' || h === 'bol #' || h === 'bol number' || /bill of lading/.test(h) || /^bol date$/.test(h)),
+    shipmentDate: find(h => /^load(?:ing)? date$|^ship(?:ment)? date$|^bol date$/.test(h)),
+    deliveryDate: find(h => /^deliver(?:y)? date$/.test(h)),
+    quantityMT: find(h => /^qty|quantity|^ordered qty|qty shipped/.test(h)),
+    invoiceNumber: find(h => h === 'invoice #' || h === 'invoice no' || h === 'invoice number'),
+    status: find(h => h === 'status' || /cancel/.test(h)),
+  };
+}
+
+/** Parse a tab using a caller-supplied column map. */
+export function parseConfiguredTab(rows: string[][], tab: ConfiguredTab): ParsedOrderRow[] {
+  if (rows.length < 2) return [];
+  const cm = tab.columns;
+  const cell = (row: string[], idx: number | undefined): string =>
+    idx === undefined || idx < 0 ? '' : (row[idx] ?? '').trim();
+
+  const skipPrefixes = (tab.skipPoPrefixes || []).map(p => p.toUpperCase());
+
+  const out: ParsedOrderRow[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const customer = cell(row, cm.customer);
+    const shipTo = cell(row, cm.shipTo);
+    const po = cell(row, cm.poNumber);
+    let product = cell(row, cm.product);
+    const carrier = cell(row, cm.carrier);
+    const bol = cell(row, cm.bolNumber);
+    const qtyRaw = cell(row, cm.quantityMT);
+    const shipDateRaw = cell(row, cm.shipmentDate);
+    const delivDateRaw = cell(row, cm.deliveryDate);
+    const invoiceVal = cell(row, cm.invoiceNumber);
+    const status = cell(row, cm.status);
+
+    // Empty / placeholder row — skip
+    if (!customer && !bol && !po && !product) continue;
+    if (bol.toLowerCase() === 'bl number') continue;
+    if (skipPrefixes.some(p => po.toUpperCase().startsWith(p))) continue;
+
+    if (!product && tab.productFallback) product = tab.productFallback;
+
+    const shipmentDate = parseSheetDate(shipDateRaw);
+    const deliveryDate = parseSheetDate(delivDateRaw) || shipmentDate;
+    const qty = parseFloat(qtyRaw);
+
+    out.push({
+      tab: tab.tabName,
+      rowIdx: i + 1,
+      bolNumber: bol,
+      poNumber: po,
+      customerName: customer,
+      shipToName: shipTo,
+      productRaw: product,
+      carrierName: carrier,
+      shipmentDate,
+      deliveryDate,
+      quantityMT: Number.isFinite(qty) ? qty : 0,
+      invoiceNumber: invoiceVal,
+      status,
+    });
+  }
+  return out;
+}
+
+/**
+ * Like parsedRowsToOrders but lets each ParsedOrderRow carry the tab's
+ * expectedFormat + netWeightPerUnitKg override (looked up via tab name).
+ * Falls back to tabDefaults() when the configured tab has no override —
+ * preserves the LIQ/TOT/DRY/Molasses behaviour when those names are used.
+ */
+export function parsedRowsToOrdersConfigured(
+  parsed: ParsedOrderRow[],
+  configured: ConfiguredTab[],
+  existingOrders: Order[],
+  customers: Customer[],
+  skus: SKU[],
+  qaProducts: QAProduct[],
+  carriers: Carrier[],
+): OrderSyncResult {
+  const tabByName = new Map<string, ConfiguredTab>();
+  for (const t of configured) tabByName.set(t.tabName, t);
+  // Monkey-patch resolveProduct + lineItem construction by re-implementing the
+  // body of parsedRowsToOrders here so we can pick per-tab expectedFormat /
+  // netWeightPerUnit. (Kept inline rather than refactoring the older function
+  // to avoid disturbing the existing hardcoded sync.)
+  const result: OrderSyncResult = { newOrders: [], skipped: [], errors: [] };
+  const existingBOLs = new Set(
+    existingOrders.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean),
+  );
+  const existingPOs = new Set(
+    existingOrders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean),
+  );
+  const addedBOLs = new Set<string>();
+  const addedPOs = new Set<string>();
+
+  for (const r of parsed) {
+    try {
+      if (isCancelledStatus(r.status)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row marked cancelled (Status column)' });
+        continue;
+      }
+      if (isInvoicedValue(r.invoiceNumber)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: `Already invoiced (${r.invoiceNumber.trim()})` });
+        continue;
+      }
+      if (!r.bolNumber && !r.poNumber) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row has no BOL or PO' });
+        continue;
+      }
+      if (!r.shipmentDate) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row has no shipment date' });
+        continue;
+      }
+      const bolU = r.bolNumber.trim().toUpperCase();
+      const poU = r.poNumber.trim().toUpperCase();
+      if (bolU && (existingBOLs.has(bolU) || addedBOLs.has(bolU))) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'BOL already exists in orders table' });
+        continue;
+      }
+      if (poU && (existingPOs.has(poU) || addedPOs.has(poU))) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'PO already exists in orders table' });
+        continue;
+      }
+
+      // Per-tab defaults: explicit overrides from config > built-in tabDefaults
+      const explicit = tabByName.get(r.tab);
+      const builtIn = tabDefaults(r.tab);
+      const expectedFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
+      const netWeightPerUnitKg = explicit?.netWeightPerUnitKg ?? builtIn.netWeightPerUnitKg;
+
+      const customerCanonical = resolveCustomer(r.customerName, customers);
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+
+      const totalWeightKg = r.quantityMT * 1000;
+      const isTote = netWeightPerUnitKg > 0;
+      const qty = isTote ? Math.round(totalWeightKg / netWeightPerUnitKg) : r.quantityMT;
+
+      const lineItem: OrderLineItem = {
+        id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        productName: productRefs.productName,
+        productDisplayName: productRefs.productDisplayName,
+        productKey: productRefs.productKey,
+        qty,
+        contractNumber: '',
+        netWeightPerUnit: netWeightPerUnitKg,
+        totalWeight: totalWeightKg,
+        unitAmount: 0,
+        mtAmount: 0,
+        lineAmount: 0,
+      };
+
+      const newOrder: Order = {
+        id: `ORD-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        bolNumber: r.bolNumber,
+        customer: customerCanonical,
+        product: productRefs.productDisplayName || productRefs.productName,
+        po: r.poNumber,
+        date: r.shipmentDate,
+        shipmentDate: r.shipmentDate,
+        deliveryDate: r.deliveryDate,
+        status: 'Open',
+        lineItems: [lineItem],
+        amount: 0,
+        carrier: carrierCanonical || undefined,
+      };
+      result.newOrders.push(newOrder);
+      if (bolU) addedBOLs.add(bolU);
+      if (poU) addedPOs.add(poU);
+    } catch (err) {
+      result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/**
+ * Run a sync against an arbitrary sheet/config. Errors fetching individual
+ * tabs are surfaced via the errors array — successful tabs still import.
+ */
+export async function syncOrdersFromConfig(
+  config: SheetImportConfig,
+  ctx: {
+    existingOrders: Order[];
+    customers: Customer[];
+    skus: SKU[];
+    qaProducts: QAProduct[];
+    carriers: Carrier[];
+  },
+): Promise<OrderSyncResult> {
+  const allParsed: ParsedOrderRow[] = [];
+  const fetchErrors: OrderSyncResult['errors'] = [];
+
+  for (const tab of config.tabs) {
+    try {
+      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+      const rows = parseCSV(csv);
+      allParsed.push(...parseConfiguredTab(rows, tab));
+    } catch (err) {
+      fetchErrors.push({
+        tab: tab.tabName,
+        rowIdx: 0,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const result = parsedRowsToOrdersConfigured(
+    allParsed,
+    config.tabs,
+    ctx.existingOrders,
+    ctx.customers,
+    ctx.skus,
+    ctx.qaProducts,
+    ctx.carriers,
+  );
+  result.errors.unshift(...fetchErrors);
+  return result;
+}
+
+/**
+ * Default preset that reproduces the original hardcoded behaviour — same
+ * sheet, same four tabs, same column indices. Saved as the built-in
+ * preset so users can start from this and tweak.
+ */
+export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
+  name: 'Sucro Shipment Log (default)',
+  sheetId: ORDER_SHEET_ID,
+  tabs: [
+    {
+      tabName: 'LIQ',
+      expectedFormat: 'Liquid',
+      netWeightPerUnitKg: 0,
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+    },
+    {
+      tabName: 'TOT',
+      expectedFormat: 'Tote',
+      netWeightPerUnitKg: 1000,
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+    },
+    {
+      tabName: 'DRY',
+      expectedFormat: 'Bulk',
+      netWeightPerUnitKg: 0,
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+    },
+    {
+      tabName: 'Molasses',
+      expectedFormat: 'Liquid',
+      netWeightPerUnitKg: 0,
+      productFallback: 'Molasses',
+      skipPoPrefixes: ['TRANSFER'],
+      columns: { customer: 3, poNumber: 4, carrier: 10, bolNumber: 9, quantityMT: 6, shipmentDate: 1 },
+    },
+  ],
+};
+
+/** Canonical field list for the column-mapping UI (label + key). */
+export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required?: boolean }> = [
+  { key: 'customer', label: 'Customer', required: true },
+  { key: 'shipTo', label: 'Ship To / Location' },
+  { key: 'poNumber', label: 'PO Number' },
+  { key: 'product', label: 'Product' },
+  { key: 'carrier', label: 'Carrier' },
+  { key: 'bolNumber', label: 'BOL Number', required: true },
+  { key: 'shipmentDate', label: 'Shipment Date', required: true },
+  { key: 'deliveryDate', label: 'Delivery Date' },
+  { key: 'quantityMT', label: 'Quantity (MT)', required: true },
+  { key: 'invoiceNumber', label: 'Invoice # (skip if filled)' },
+  { key: 'status', label: 'Status / Cancellation' },
+];

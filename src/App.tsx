@@ -71,7 +71,20 @@ import ReportsPage from './components/ReportsPage';
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
-import { syncOrdersSheet, type OrderSyncResult } from './utils/googleOrderSheetSync';
+import {
+  syncOrdersSheet,
+  syncOrdersFromConfig,
+  fetchTabPreview,
+  extractSheetId,
+  autoDetectColumns,
+  columnLetter,
+  DEFAULT_ORDER_IMPORT_CONFIG,
+  ORDER_FIELDS,
+  type OrderSyncResult,
+  type SheetImportConfig,
+  type ConfiguredTab,
+  type ColumnMap,
+} from './utils/googleOrderSheetSync';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -2554,6 +2567,20 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
+  // Configurable order-sync UI ("paste a sheet URL, map columns, save preset"):
+  const [isConfiguringOrderSync, setIsConfiguringOrderSync] = useState(false);
+  const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
+  const [orderSyncUrl, setOrderSyncUrl] = useState(`https://docs.google.com/spreadsheets/d/${DEFAULT_ORDER_IMPORT_CONFIG.sheetId}/`);
+  const [orderSyncEditingTabIdx, setOrderSyncEditingTabIdx] = useState<number | null>(null);
+  const [orderSyncTabHeaders, setOrderSyncTabHeaders] = useState<string[] | null>(null);
+  const [orderSyncTabSample, setOrderSyncTabSample] = useState<string[][]>([]);
+  const [orderSyncFetchingHeaders, setOrderSyncFetchingHeaders] = useState(false);
+  const [orderSyncPresets, setOrderSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('orderImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
   // Invoice page: progressive rendering — only paint the first N rows initially,
   // then add 200 at a time on "Show more". Keeps the DOM small when the table
   // has thousands of invoices so click / scroll / load stays fast.
@@ -5219,27 +5246,19 @@ export default function App() {
               <FileText size={12} /> Import CSV
             </button>
             <button
-              onClick={async () => {
-                setOrderSyncError(null);
-                setIsSyncingOrdersSheet(true);
-                try {
-                  const preview = await syncOrdersSheet({
-                    existingOrders: orders,
-                    customers,
-                    skus,
-                    qaProducts,
-                    carriers,
-                  });
-                  setOrderSyncPreview(preview);
-                } catch (err) {
-                  setOrderSyncError(err instanceof Error ? err.message : String(err));
-                } finally {
-                  setIsSyncingOrdersSheet(false);
-                }
+              onClick={() => {
+                // Open the configurator. Default the config + URL to the
+                // built-in Sucro preset unless the user has saved one.
+                setOrderSyncConfig(orderSyncPresets[0] || DEFAULT_ORDER_IMPORT_CONFIG);
+                setOrderSyncUrl(`https://docs.google.com/spreadsheets/d/${(orderSyncPresets[0] || DEFAULT_ORDER_IMPORT_CONFIG).sheetId}/`);
+                setOrderSyncEditingTabIdx(null);
+                setOrderSyncTabHeaders(null);
+                setOrderSyncTabSample([]);
+                setIsConfiguringOrderSync(true);
               }}
               disabled={isSyncingOrdersSheet}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
-              title="Pull LIQ, TOT, DRY and Molasses tabs from the orders Google Sheet and stage new orders for review."
+              title="Configure a Google Sheet source and column mapping, then pull new orders for review."
             >
               <FileText size={12} /> {isSyncingOrdersSheet ? 'Syncing…' : 'Sync Orders'}
             </button>
@@ -9485,6 +9504,290 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Orders Sheet Sync — Configuration modal */}
+        {isConfiguringOrderSync && (() => {
+          const cfg = orderSyncConfig;
+          const updateCfg = (patch: Partial<SheetImportConfig>) => setOrderSyncConfig(prev => ({ ...prev, ...patch }));
+          const updateTab = (idx: number, patch: Partial<ConfiguredTab>) => {
+            setOrderSyncConfig(prev => ({
+              ...prev,
+              tabs: prev.tabs.map((t, i) => i === idx ? { ...t, ...patch } : t),
+            }));
+          };
+          const updateTabColumns = (idx: number, patch: Partial<ColumnMap>) => {
+            setOrderSyncConfig(prev => ({
+              ...prev,
+              tabs: prev.tabs.map((t, i) => i === idx ? { ...t, columns: { ...t.columns, ...patch } } : t),
+            }));
+          };
+          const addTab = () => {
+            setOrderSyncConfig(prev => ({
+              ...prev,
+              tabs: [...prev.tabs, { tabName: 'New Tab', columns: {}, expectedFormat: '', netWeightPerUnitKg: 0 }],
+            }));
+            setOrderSyncEditingTabIdx(cfg.tabs.length);
+            setOrderSyncTabHeaders(null);
+            setOrderSyncTabSample([]);
+          };
+          const removeTab = (idx: number) => {
+            setOrderSyncConfig(prev => ({ ...prev, tabs: prev.tabs.filter((_, i) => i !== idx) }));
+            if (orderSyncEditingTabIdx === idx) setOrderSyncEditingTabIdx(null);
+          };
+          const editingTab = orderSyncEditingTabIdx !== null ? cfg.tabs[orderSyncEditingTabIdx] : null;
+          const idFromUrl = extractSheetId(orderSyncUrl) || cfg.sheetId;
+          const fetchHeaders = async () => {
+            if (orderSyncEditingTabIdx === null) return;
+            const tab = cfg.tabs[orderSyncEditingTabIdx];
+            setOrderSyncFetchingHeaders(true);
+            setOrderSyncTabHeaders(null);
+            setOrderSyncTabSample([]);
+            try {
+              const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
+              const preview = await fetchTabPreview(id, tab.tabName);
+              setOrderSyncTabHeaders(preview.headers);
+              setOrderSyncTabSample(preview.sampleRows);
+            } catch (err) {
+              setOrderSyncError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setOrderSyncFetchingHeaders(false);
+            }
+          };
+          const autoMap = () => {
+            if (orderSyncEditingTabIdx === null || !orderSyncTabHeaders) return;
+            updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders));
+          };
+          const savePreset = () => {
+            const name = window.prompt('Preset name:', cfg.name || 'My Order Sheet');
+            if (!name) return;
+            const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
+            const toSave: SheetImportConfig = { ...cfg, name, sheetId: id };
+            setOrderSyncPresets(prev => {
+              const existing = prev.findIndex(p => p.name === name);
+              const next = existing >= 0
+                ? prev.map((p, i) => i === existing ? toSave : p)
+                : [...prev, toSave];
+              try { localStorage.setItem('orderImportPresets', JSON.stringify(next)); } catch {}
+              return next;
+            });
+            setOrderSyncConfig(toSave);
+            alert(`Saved preset "${name}".`);
+          };
+          const deletePreset = (name: string) => {
+            if (!window.confirm(`Delete preset "${name}"?`)) return;
+            setOrderSyncPresets(prev => {
+              const next = prev.filter(p => p.name !== name);
+              try { localStorage.setItem('orderImportPresets', JSON.stringify(next)); } catch {}
+              return next;
+            });
+          };
+          const loadPreset = (preset: SheetImportConfig) => {
+            setOrderSyncConfig(preset);
+            setOrderSyncUrl(`https://docs.google.com/spreadsheets/d/${preset.sheetId}/`);
+            setOrderSyncEditingTabIdx(null);
+            setOrderSyncTabHeaders(null);
+            setOrderSyncTabSample([]);
+          };
+          const runPreview = async () => {
+            const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
+            const toRun: SheetImportConfig = { ...cfg, sheetId: id };
+            setOrderSyncError(null);
+            setIsSyncingOrdersSheet(true);
+            try {
+              const preview = await syncOrdersFromConfig(toRun, {
+                existingOrders: orders, customers, skus, qaProducts, carriers,
+              });
+              setOrderSyncPreview(preview);
+              setIsConfiguringOrderSync(false);
+            } catch (err) {
+              setOrderSyncError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setIsSyncingOrdersSheet(false);
+            }
+          };
+          return (
+            <div className="fixed inset-0 z-[450] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setIsConfiguringOrderSync(false)}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full max-h-[92vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure Order Sheet Sync</h3>
+                  <button onClick={() => setIsConfiguringOrderSync(false)} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+
+                <div className="p-6 space-y-6">
+                  {/* Saved presets */}
+                  <div className="space-y-2">
+                    <div className="text-[10px] uppercase font-bold opacity-50">Saved Presets</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => loadPreset(DEFAULT_ORDER_IMPORT_CONFIG)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Sucro Default</button>
+                      {orderSyncPresets.map(p => (
+                        <div key={p.name} className="flex items-center border border-[#141414]">
+                          <button onClick={() => loadPreset(p)} className={`px-3 py-1.5 text-[10px] font-bold uppercase ${cfg.name === p.name ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#F5F5F5]'}`}>{p.name}</button>
+                          <button onClick={() => deletePreset(p.name)} title="Delete preset" className="px-2 py-1.5 hover:bg-red-100 border-l border-[#141414] text-red-700"><X size={12} /></button>
+                        </div>
+                      ))}
+                      {orderSyncPresets.length === 0 && <div className="text-[10px] opacity-50 italic self-center">No custom presets saved yet. Configure below and click "Save Preset".</div>}
+                    </div>
+                  </div>
+
+                  {/* Sheet URL */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Google Sheets URL</label>
+                    <input
+                      type="text"
+                      value={orderSyncUrl}
+                      onChange={(e) => setOrderSyncUrl(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                    />
+                    <div className="text-[10px] opacity-60">Sheet ID: <span className="font-mono">{idFromUrl || '— (paste a valid URL)'}</span></div>
+                    <div className="text-[10px] opacity-60">Sheet must be shared "Anyone with the link can view" so we can fetch it.</div>
+                  </div>
+
+                  {/* Preset name */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Preset Name</label>
+                    <input
+                      type="text"
+                      value={cfg.name}
+                      onChange={(e) => updateCfg({ name: e.target.value })}
+                      placeholder="My Order Sheet"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Tabs list */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] uppercase font-bold opacity-50">Tabs to Import</div>
+                      <button onClick={addTab} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] flex items-center gap-1"><Plus size={10} /> Add Tab</button>
+                    </div>
+                    {cfg.tabs.length === 0 && <div className="text-[10px] opacity-50 italic">No tabs configured. Add one above.</div>}
+                    {cfg.tabs.map((tab, idx) => {
+                      const isEditing = orderSyncEditingTabIdx === idx;
+                      const mappedFields = ORDER_FIELDS.filter(f => tab.columns[f.key] !== undefined && tab.columns[f.key]! >= 0).length;
+                      const reqMissing = ORDER_FIELDS.filter(f => f.required && (tab.columns[f.key] === undefined || tab.columns[f.key]! < 0)).map(f => f.label);
+                      return (
+                        <div key={idx} className={`border ${isEditing ? 'border-blue-500' : 'border-[#141414]/30'} bg-[#F5F5F5]`}>
+                          <div className="flex items-center gap-2 p-3">
+                            <input
+                              type="text"
+                              value={tab.tabName}
+                              onChange={(e) => updateTab(idx, { tabName: e.target.value })}
+                              placeholder="Tab name (e.g. LIQ)"
+                              className="flex-1 bg-white border border-[#141414] px-3 py-2 text-sm font-mono outline-none"
+                            />
+                            <select
+                              value={tab.expectedFormat || ''}
+                              onChange={(e) => updateTab(idx, { expectedFormat: e.target.value || undefined })}
+                              className="bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
+                              title="QA productFormat hint — disambiguates GC100 Bulk vs GC100 Tote etc."
+                            >
+                              <option value="">No format hint</option>
+                              <option value="Liquid">Liquid</option>
+                              <option value="Bulk">Bulk</option>
+                              <option value="Bagged">Bagged</option>
+                              <option value="Tote">Tote</option>
+                            </select>
+                            <input
+                              type="number"
+                              value={tab.netWeightPerUnitKg || 0}
+                              onChange={(e) => updateTab(idx, { netWeightPerUnitKg: parseFloat(e.target.value) || 0 })}
+                              className="w-24 bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
+                              placeholder="kg/unit"
+                              title="Per-unit kg. 1000 for totes, 0 to leave qty in MT."
+                            />
+                            <span className="text-[10px] opacity-60 font-mono whitespace-nowrap">{mappedFields}/{ORDER_FIELDS.length} mapped</span>
+                            <button onClick={() => { setOrderSyncEditingTabIdx(isEditing ? null : idx); setOrderSyncTabHeaders(null); setOrderSyncTabSample([]); }} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase bg-white hover:bg-[#E4E3E0]">{isEditing ? 'Done' : 'Map'}</button>
+                            <button onClick={() => removeTab(idx)} className="p-1.5 border border-[#141414] hover:bg-red-100 text-red-700" title="Remove tab"><X size={12} /></button>
+                          </div>
+                          {reqMissing.length > 0 && (
+                            <div className="px-3 pb-2 text-[10px] text-red-700">Missing required: {reqMissing.join(', ')}</div>
+                          )}
+                          {isEditing && (
+                            <div className="border-t border-[#141414]/30 p-4 space-y-4 bg-white">
+                              <div className="flex items-center gap-2">
+                                <button onClick={fetchHeaders} disabled={orderSyncFetchingHeaders || !idFromUrl} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:opacity-80 disabled:opacity-50">{orderSyncFetchingHeaders ? 'Fetching…' : 'Fetch Headers'}</button>
+                                {orderSyncTabHeaders && (
+                                  <button onClick={autoMap} className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Auto-detect Columns</button>
+                                )}
+                                <span className="text-[10px] opacity-60">Fetches row 1 (headers) + a few sample rows so you can map columns.</span>
+                              </div>
+                              {orderSyncTabHeaders && (
+                                <>
+                                  <div className="border border-[#141414]/20 overflow-x-auto max-h-48">
+                                    <table className="text-[10px] w-full">
+                                      <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
+                                        <tr>{orderSyncTabHeaders.map((h, i) => <th key={i} className="p-1 text-left border-r border-white/10 whitespace-nowrap">{columnLetter(i)}: {h || <span className="opacity-50">(blank)</span>}</th>)}</tr>
+                                      </thead>
+                                      <tbody>
+                                        {orderSyncTabSample.map((row, ri) => (
+                                          <tr key={ri} className="border-b border-[#141414]/10">{orderSyncTabHeaders!.map((_, ci) => <td key={ci} className="p-1 border-r border-[#141414]/5 font-mono whitespace-nowrap max-w-[140px] truncate" title={row[ci]}>{row[ci] || ''}</td>)}</tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-3">
+                                    {ORDER_FIELDS.map(field => (
+                                      <div key={field.key} className="space-y-1">
+                                        <label className="text-[10px] uppercase font-bold opacity-60">{field.label}{field.required && <span className="text-red-700 ml-1">*</span>}</label>
+                                        <select
+                                          value={tab.columns[field.key] !== undefined ? String(tab.columns[field.key]) : ''}
+                                          onChange={(e) => updateTabColumns(idx, { [field.key]: e.target.value === '' ? undefined : parseInt(e.target.value, 10) } as Partial<ColumnMap>)}
+                                          className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none"
+                                        >
+                                          <option value="">— Not mapped —</option>
+                                          {orderSyncTabHeaders!.map((h, i) => <option key={i} value={i}>{columnLetter(i)}: {h || '(blank)'}</option>)}
+                                        </select>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-60">Product fallback (used when the product cell is blank)</label>
+                                    <input
+                                      type="text"
+                                      value={tab.productFallback || ''}
+                                      onChange={(e) => updateTab(idx, { productFallback: e.target.value || undefined })}
+                                      placeholder="e.g. Molasses"
+                                      className="w-full bg-[#F5F5F5] border border-[#141414] px-3 py-2 text-xs outline-none"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase font-bold opacity-60">Skip rows whose PO starts with (comma-separated)</label>
+                                    <input
+                                      type="text"
+                                      value={(tab.skipPoPrefixes || []).join(', ')}
+                                      onChange={(e) => updateTab(idx, { skipPoPrefixes: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                      placeholder="e.g. TRANSFER"
+                                      className="w-full bg-[#F5F5F5] border border-[#141414] px-3 py-2 text-xs outline-none"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between sticky bottom-0">
+                  <button onClick={savePreset} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Save Preset</button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setIsConfiguringOrderSync(false)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{isSyncingOrdersSheet ? 'Fetching…' : 'Preview Import →'}</button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
 
         {/* Orders Sheet Sync — Preview / Confirm modal */}
         {orderSyncPreview && (
