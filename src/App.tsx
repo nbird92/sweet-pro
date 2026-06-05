@@ -2899,6 +2899,31 @@ export default function App() {
     return resolveProduct(productName).sku !== null;
   };
 
+  // Strip the trailing numeric suffix from a split number to get its parent
+  // contract number. Example: "S03399.B29" → "S03399.B". Splits are
+  // contract-number + sequence digits (e.g. "S04280.G01" → contract S04280.G).
+  // When the input has no trailing digits we return it unchanged.
+  const contractNumberFromSplit = (split: string | undefined | null): string => {
+    if (!split) return '';
+    return String(split).replace(/\d+$/, '');
+  };
+
+  // True when an order / line item / invoice belongs to a given contract.
+  // Matches by:
+  //   1. Direct contractNumber equality on the record itself.
+  //   2. splitNumber / splitNo whose contract prefix matches contractNumber.
+  // (Caller may layer line-item contract matches on top.)
+  const matchesContractByNumberOrSplit = (
+    target: string | undefined,
+    split: string | undefined,
+    contractNumber: string,
+  ): boolean => {
+    if (!contractNumber) return false;
+    if (target && target === contractNumber) return true;
+    if (split && contractNumberFromSplit(split) === contractNumber) return true;
+    return false;
+  };
+
   // Find every active contract that matches a given customer. Contracts may
   // reference the customer by Customer.id, by Customer.customerNumber, or by
   // name (depending on how the contract was created / imported), so try all
@@ -7549,23 +7574,44 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       {(() => {
-                        // Compute Volume Taken (invoiced) and Volume on Order (not yet invoiced)
-                        // for this contract directly from current orders + invoices.
-                        const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
-                        const ordersOnContract = orders.filter(o =>
-                          o.status !== 'Cancelled' && (
-                            o.contractNumber === c.contractNumber ||
-                            (o.lineItems || []).some(li => li.contractNumber === c.contractNumber)
-                          )
+                        // Volume Taken is computed from INVOICES directly so a
+                        // billed split that doesn't carry an explicit contractNumber
+                        // (only a splitNo like "S03399.B29") still counts against
+                        // its parent contract "S03399.B".
+                        //   Match an invoice to this contract via:
+                        //     - inv.contractNumber === c.contractNumber, OR
+                        //     - inv.splitNo prefix (digits stripped) === c.contractNumber
+                        //   Sum invoice.qty (MT) per match.
+                        const invoicesOnContract = invoices.filter(inv =>
+                          inv.status !== 'Cancelled' && matchesContractByNumberOrSplit(inv.contractNumber, inv.splitNo, c.contractNumber)
                         );
-                        const sumWeight = (o: Order) => (o.lineItems || [])
-                          .reduce((s, li) => s + (li.contractNumber === c.contractNumber ? (li.totalWeight || 0) : 0), 0);
-                        const volumeTakenComputed = ordersOnContract
-                          .filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
-                          .reduce((sum, o) => sum + sumWeight(o), 0);
+                        const volumeTakenComputed = invoicesOnContract
+                          .reduce((sum, inv) => sum + (inv.qty || 0), 0);
+
+                        // Volume on Order = orders matching this contract that
+                        // haven't been invoiced yet. Match orders by their own
+                        // contractNumber, any line item's contractNumber, OR
+                        // splitNumber prefix → contract number.
+                        const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
+                        const ordersOnContract = orders.filter(o => {
+                          if (o.status === 'Cancelled') return false;
+                          if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, c.contractNumber)) return true;
+                          if ((o.lineItems || []).some(li => li.contractNumber === c.contractNumber)) return true;
+                          return false;
+                        });
+                        const sumOrderWeight = (o: Order) => {
+                          // Prefer summing only the line items that name this
+                          // contract; fall back to summing all line items when
+                          // the order's own contractNumber / split is the match.
+                          const matchingLines = (o.lineItems || []).filter(li => li.contractNumber === c.contractNumber);
+                          if (matchingLines.length > 0) {
+                            return matchingLines.reduce((s, li) => s + (li.totalWeight || 0), 0);
+                          }
+                          return (o.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
+                        };
                         const volumeOnOrderComputed = ordersOnContract
                           .filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
-                          .reduce((sum, o) => sum + sumWeight(o), 0);
+                          .reduce((sum, o) => sum + sumOrderWeight(o), 0);
                         return (
                           <>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
@@ -13320,14 +13366,29 @@ export default function App() {
                       <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
                     </div>
                     {(() => {
-                const allMatching = orders.filter(o =>
-                  o.status !== 'Cancelled' && (
-                    o.contractNumber === popupContract ||
-                    o.lineItems.some(li => li.contractNumber === popupContract)
-                  )
+                // Match orders to the popup's contract by their own
+                // contractNumber, any line-item contractNumber, OR their
+                // splitNumber's contract prefix (digits stripped).
+                const allMatching = orders.filter(o => {
+                  if (o.status === 'Cancelled') return false;
+                  if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, popupContract)) return true;
+                  if ((o.lineItems || []).some(li => li.contractNumber === popupContract)) return true;
+                  return false;
+                });
+                // For the "Invoiced" view, additionally include orders whose
+                // matching invoice references the contract via splitNo even
+                // when the order itself doesn't carry the link.
+                const invoiceMatchedBols = new Set(
+                  invoices
+                    .filter(inv => inv.status !== 'Cancelled' && matchesContractByNumberOrSplit(inv.contractNumber, inv.splitNo, popupContract))
+                    .map(inv => inv.bolNumber)
+                    .filter(Boolean) as string[]
                 );
+                const allMatchingPlus = popupFilter === 'taken'
+                  ? Array.from(new Set([...allMatching, ...orders.filter(o => o.bolNumber && invoiceMatchedBols.has(o.bolNumber))]))
+                  : allMatching;
                 const contractOrders = popupFilter === 'taken'
-                  ? allMatching.filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
+                  ? allMatchingPlus.filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
                   : popupFilter === 'onorder'
                   ? allMatching.filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
                   : allMatching;
