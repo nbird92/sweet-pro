@@ -9709,6 +9709,20 @@ export default function App() {
                               placeholder="kg/unit"
                               title="Per-unit kg. 1000 for totes, 0 to leave qty in MT."
                             />
+                            {/* Location dropdown — shipping ORIGIN, sourced from the Locations table.
+                                Separate concept from the per-row Ship-To column (customer site). */}
+                            <select
+                              value={tab.defaultLocation || ''}
+                              onChange={(e) => updateTab(idx, { defaultLocation: e.target.value || undefined })}
+                              className="bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
+                              title="Shipping origin stamped on every imported order from this tab. Pulled from the Locations table."
+                            >
+                              <option value="">— Location —</option>
+                              {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                              {tab.defaultLocation && !activeLocations.some(l => l.name === tab.defaultLocation) && (
+                                <option value={tab.defaultLocation}>{tab.defaultLocation} (inactive)</option>
+                              )}
+                            </select>
                             <span className="text-[10px] opacity-60 font-mono whitespace-nowrap">{mappedFields}/{ORDER_FIELDS.length} mapped</span>
                             <button onClick={() => { setOrderSyncEditingTabIdx(isEditing ? null : idx); setOrderSyncTabHeaders(null); setOrderSyncTabSample([]); }} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase bg-white hover:bg-[#E4E3E0]">{isEditing ? 'Done' : 'Map'}</button>
                             <button onClick={() => removeTab(idx)} className="p-1.5 border border-[#141414] hover:bg-red-100 text-red-700" title="Remove tab"><X size={12} /></button>

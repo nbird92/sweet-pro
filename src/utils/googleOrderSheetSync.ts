@@ -807,6 +807,13 @@ export interface ConfiguredTab {
   productFallback?: string;
   /** PO prefixes to skip (e.g. "TRANSFER" for the Molasses tab). */
   skipPoPrefixes?: string[];
+  /**
+   * Shipping origin (Location.name) for orders imported from this tab.
+   * Stamped on Order.location; chosen from the app's Locations table in
+   * the configurator UI. Separate from the per-row Ship-To column, which
+   * carries the destination customer site.
+   */
+  defaultLocation?: string;
 }
 
 export interface SheetImportConfig {
@@ -878,7 +885,7 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
   };
   return {
     customer: find(h => /^customer$|^client$/.test(h) || h === 'customer name'),
-    shipTo: find(h => /^location$|ship[- ]?to/.test(h)),
+    shipTo: find(h => /ship[- ]?to/.test(h) || h === 'location' || h === 'destination'),
     poNumber: find(h => h === 'po' || h === 'po #' || h === 'po number' || /purchase order/.test(h)),
     product: find(h => h === 'product' || h === 'sku' || h === 'item'),
     carrier: find(h => /carrier|trucking/.test(h)),
@@ -1080,6 +1087,21 @@ export function parsedRowsToOrdersConfigured(
         lineAmount: 0,
       };
 
+      // Resolve the sheet's ship-to text against this customer's saved
+      // shipToLocations. Match on name (case-insensitive). When unmatched,
+      // leave shipToLocationId blank — the orders table will show "—".
+      const customerRec = customers.find(c => c.name === customerCanonical);
+      let shipToLocationId: string | undefined;
+      if (r.shipToName && customerRec?.shipToLocations?.length) {
+        const want = r.shipToName.trim().toLowerCase();
+        const match = customerRec.shipToLocations.find(l => (l.name || '').trim().toLowerCase() === want)
+          || customerRec.shipToLocations.find(l => {
+            const ln = (l.name || '').trim().toLowerCase();
+            return ln && (ln.includes(want) || want.includes(ln));
+          });
+        if (match) shipToLocationId = match.id;
+      }
+
       const newOrder: Order = {
         id: `ORD-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         bolNumber: r.bolNumber,
@@ -1094,6 +1116,11 @@ export function parsedRowsToOrdersConfigured(
         lineItems: [lineItem],
         amount: 0,
         carrier: carrierCanonical || undefined,
+        // Origin (Hamilton, Vancouver, ...) chosen from the Locations table
+        // in the modal; Ship-To (customer site) resolved per-row from the
+        // sheet's mapped column.
+        location: explicit?.defaultLocation || undefined,
+        shipToLocationId,
       };
       result.newOrders.push(newOrder);
       if (bolU) addedBOLs.add(bolU);
@@ -1190,7 +1217,7 @@ export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
 /** Canonical field list for the column-mapping UI (label + key). */
 export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required?: boolean }> = [
   { key: 'customer', label: 'Customer', required: true },
-  { key: 'shipTo', label: 'Ship To / Location' },
+  { key: 'shipTo', label: 'Ship To (customer site)' },
   { key: 'poNumber', label: 'PO Number' },
   { key: 'product', label: 'Product' },
   { key: 'carrier', label: 'Carrier' },
