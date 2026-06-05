@@ -9862,6 +9862,7 @@ export default function App() {
                             <th className="p-2 text-left font-bold">Ship Date</th>
                             <th className="p-2 text-left font-bold">Deliver</th>
                             <th className="p-2 text-right font-bold">Qty</th>
+                            <th className="p-2 text-right font-bold">Total Weight (kg)</th>
                             <th className="p-2 text-left font-bold">Carrier</th>
                           </tr>
                         </thead>
@@ -9870,10 +9871,15 @@ export default function App() {
                             const li = o.lineItems[0];
                             const qty = li?.qty || 0;
                             const unitKg = li?.netWeightPerUnit || 0;
-                            const totalKg = li?.totalWeight || 0;
+                            // Single source of truth for weight: Ordered Qty (MT) × 1000.
+                            // For tote rows li.qty is the number of totes, so we recompute
+                            // weight from totalWeight (set by the importer) rather than
+                            // qty * something. Bulk/liquid: qty IS the MT value.
+                            const weightKg = li?.totalWeight ?? (unitKg > 0 ? qty * unitKg : qty * 1000);
+                            const weightMt = weightKg / 1000;
                             const qtyLabel = unitKg > 0
                               ? `${qty} × ${unitKg}kg`               // Totes: "30 × 1000kg"
-                              : `${qty.toFixed(3)} MT`;              // Bulk/Liquid: MT
+                              : `${weightMt.toFixed(3)} MT`;          // Bulk/Liquid: MT
                             const contract = o.contractNumber || li?.contractNumber || '';
                             return (
                               <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
@@ -9884,11 +9890,10 @@ export default function App() {
                                 <td className="p-2 font-mono">{contract || '—'}</td>
                                 <td className="p-2">{o.shipmentDate}</td>
                                 <td className="p-2">{o.deliveryDate || '—'}</td>
-                                <td className="p-2 text-right font-mono">
-                                  {qtyLabel}
-                                  {unitKg > 0 && totalKg > 0 && (
-                                    <span className="opacity-50 text-[10px] ml-1">({(totalKg / 1000).toFixed(3)} MT)</span>
-                                  )}
+                                <td className="p-2 text-right font-mono">{qtyLabel}</td>
+                                <td className="p-2 text-right font-mono font-bold">
+                                  {weightKg.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                  <span className="opacity-50 text-[10px] ml-1">({weightMt.toFixed(3)} MT)</span>
                                 </td>
                                 <td className="p-2">{o.carrier || '—'}</td>
                               </tr>

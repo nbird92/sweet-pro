@@ -38,6 +38,11 @@ type OrderTab = typeof ORDER_TABS[number];
 // the order has been invoiced — that's our "invoiced" marker, not column S.
 const COL_BV_INDEX = 73;
 
+/** Single-order cap. One truckload ≈ 100 MT / 100,000 kg; anything larger is
+ *  almost certainly a unit mix-up in the sheet (e.g. kg pasted into the MT
+ *  column) and gets surfaced in the preview's Skipped list. */
+export const MAX_ORDER_MT = 100;
+
 // Molasses tab column layout (0-indexed):
 //   A=0 WEEK, B=1 BOL DATE, C=2 DAY, D=3 CLIENT, E=4 PO NUMBER,
 //   F=5 Litres, G=6 QTY Shipped (MT), H=7 BRIX, I=8 QUANTITY (DRY BASIS),
@@ -577,6 +582,17 @@ export function parsedRowsToOrders(
         });
         continue;
       }
+      // A single order can't be more than one full truckload (100 MT /
+      // 100,000 kg). Larger values are almost always a unit mix-up in the
+      // sheet (e.g. kg pasted into the MT column) and would import as
+      // nonsensical multi-truckload orders.
+      if (r.quantityMT > MAX_ORDER_MT) {
+        result.skipped.push({
+          tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber,
+          reason: `Quantity ${r.quantityMT} MT exceeds the ${MAX_ORDER_MT} MT maximum per order`,
+        });
+        continue;
+      }
 
       const bolU = r.bolNumber.trim().toUpperCase();
       const poU = r.poNumber.trim().toUpperCase();
@@ -1034,6 +1050,14 @@ export function parsedRowsToOrdersConfigured(
       // Skip blank / non-numeric / zero quantities — see parsedRowsToOrders.
       if (!Number.isFinite(r.quantityMT) || r.quantityMT <= 0) {
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Quantity is blank or not a positive number' });
+        continue;
+      }
+      // One-truckload cap — see parsedRowsToOrders for rationale.
+      if (r.quantityMT > MAX_ORDER_MT) {
+        result.skipped.push({
+          tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber,
+          reason: `Quantity ${r.quantityMT} MT exceeds the ${MAX_ORDER_MT} MT maximum per order`,
+        });
         continue;
       }
       const bolU = r.bolNumber.trim().toUpperCase();
