@@ -187,6 +187,8 @@ export interface Contract {
   margin?: number; // Margin in CAD/MT
   active?: boolean; // Contract active status (defaults to true)
   contractLines?: ContractLine[]; // Product-specific lines with differentials
+  contractDate?: string; // ISO date the contract was signed/created (display + CSV)
+  itasName?: string; // ITAS-system customer name, mirrored onto the contract for CSV portability
 }
 
 export interface ContractLine {
@@ -385,6 +387,22 @@ export const INITIAL_CARRIERS: Carrier[] = [
   { id: 'CARR-001', carrierNumber: '1001', name: 'FastTruck', contactEmail: 'ops@fasttruck.com', contactPhone: '555-0101', defaultLocationCode: '100' },
   { id: 'CARR-002', carrierNumber: '1002', name: 'WestLogistics', contactEmail: 'dispatch@westlog.com', contactPhone: '555-0102', defaultLocationCode: '200' },
   { id: 'CARR-003', carrierNumber: '1003', name: 'Maersk', contactEmail: 'support@maersk.com', contactPhone: '555-0103', defaultLocationCode: '200' },
+];
+
+/** A user-managed shipping-terms entry (e.g. FOB, DAP, FCA, custom names).
+ *  Populates the Shipping Terms dropdown on the Customer Quote page and
+ *  lives in its own table on the Supply Chain page. */
+export interface ShippingTerm {
+  id: string;
+  name: string;        // short code, e.g. "FCA"
+  description: string; // free-text description shown next to the dropdown
+}
+
+export const INITIAL_SHIPPING_TERMS: ShippingTerm[] = [
+  { id: 'ST-001', name: 'FOB', description: 'Free On Board — seller delivers to port; buyer takes on freight + risk' },
+  { id: 'ST-002', name: 'DAP', description: 'Delivered At Place — seller pays freight; buyer handles import duties' },
+  { id: 'ST-003', name: 'DDP', description: 'Delivered Duty Paid — seller pays freight + import duties' },
+  { id: 'ST-004', name: 'FCA', description: 'Free Carrier — seller delivers to carrier at named place' },
 ];
 
 export const INITIAL_SUPPLY_CHAIN: SupplyChainComponent[] = [

@@ -60,7 +60,7 @@ import { resolveProductName as resolveProductNameRule, resolveShortForm as resol
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -229,6 +229,7 @@ export default function App() {
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
+  const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>(INITIAL_SHIPPING_TERMS);
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
   const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
   const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
@@ -997,6 +998,8 @@ export default function App() {
           const paymentTerms = entry.paymentterms || '';
           const palletType = entry.pallettype || '';
           const margin = parseFloat(entry.margin || '0') || 0;
+          const contractDate = entry.contractdate || entry.contract_date || '';
+          const itasName = entry.itasname || entry.itas || '';
 
           // Check if contract with this number already exists — update in working array
           const existingIdx = workingContracts.findIndex(c => c.contractNumber === contractNumber);
@@ -1029,6 +1032,8 @@ export default function App() {
               paymentTerms: paymentTerms || c.paymentTerms,
               palletType: (palletType || c.palletType) as any,
               margin: margin || c.margin,
+              contractDate: contractDate || c.contractDate,
+              itasName: itasName || c.itasName,
             };
             continue;
           }
@@ -1060,6 +1065,8 @@ export default function App() {
             palletType: (palletType || undefined) as any,
             margin: margin || undefined,
             active: true,
+            ...(contractDate ? { contractDate } : {}),
+            ...(itasName ? { itasName } : {}),
           });
         }
 
@@ -1507,6 +1514,7 @@ export default function App() {
     salesleads: JSON.stringify([]),
     qatemplates: JSON.stringify([]),
     customergroups: JSON.stringify([]),
+    shippingterms: JSON.stringify(INITIAL_SHIPPING_TERMS),
   });
 
   // Fetch initial data from Firestore
@@ -1764,6 +1772,10 @@ export default function App() {
         setNamingFormulas(mapped);
         lastSyncedData.current.namingformulas = JSON.stringify(mapped);
       }
+      if (data.shippingTerms?.length) {
+        setShippingTermsList(data.shippingTerms as ShippingTerm[]);
+        lastSyncedData.current.shippingterms = JSON.stringify(data.shippingTerms);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1831,6 +1843,7 @@ export default function App() {
         { collection: COLLECTIONS.customerGroups, key: 'customergroups', data: customerGroups },
         { collection: COLLECTIONS.packagingFormats, key: 'packagingformats', data: packagingFormats },
         { collection: COLLECTIONS.namingFormulas, key: 'namingformulas', data: namingFormulas },
+        { collection: COLLECTIONS.shippingTerms, key: 'shippingterms', data: shippingTermsList },
       ];
 
       try {
@@ -1856,7 +1869,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, lastSynced, user]);
 
   // One-time backfill: assign a uniform 6-digit productCode to every SKU and
   // mirror it onto every matching QAProduct. Existing codes are preserved.
@@ -7089,6 +7102,68 @@ export default function App() {
             </div>
           </div>
 
+          {/* Shipping Terms Table — populates the Customer Quote shipping-terms dropdown */}
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-widest">Shipping Terms</h3>
+              <button
+                onClick={() => setShippingTermsList([...shippingTermsList, { id: `ST-${Date.now()}`, name: '', description: '' }])}
+                className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
+              >
+                <Plus size={12} /> Add Term
+              </button>
+            </div>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                  <th className="p-4 border-r border-[#141414]/10 w-48">Name</th>
+                  <th className="p-4 border-r border-[#141414]/10">Description</th>
+                  <th className="p-4 w-24">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {shippingTermsList.map(term => (
+                  <tr key={term.id} className="hover:bg-[#F9F9F9] transition-colors">
+                    <td className="p-3 border-r border-[#141414]/10">
+                      <input
+                        type="text"
+                        value={term.name}
+                        onChange={(e) => setShippingTermsList(prev => prev.map(t => t.id === term.id ? { ...t, name: e.target.value } : t))}
+                        placeholder="e.g. FOB"
+                        className="w-full bg-transparent text-xs font-bold uppercase focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                      />
+                    </td>
+                    <td className="p-3 border-r border-[#141414]/10">
+                      <input
+                        type="text"
+                        value={term.description}
+                        onChange={(e) => setShippingTermsList(prev => prev.map(t => t.id === term.id ? { ...t, description: e.target.value } : t))}
+                        placeholder="Description / Incoterm meaning"
+                        className="w-full bg-transparent text-xs focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                      />
+                    </td>
+                    <td className="p-3">
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Delete shipping term "${term.name || term.id}"?`)) {
+                            setShippingTermsList(prev => prev.filter(t => t.id !== term.id));
+                          }
+                        }}
+                        className="p-1 hover:bg-red-100 text-red-700 transition-all"
+                        title="Delete term"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {shippingTermsList.length === 0 && (
+                  <tr><td colSpan={3} className="p-8 text-center text-xs opacity-50 italic">No shipping terms defined. Click "Add Term" to add one — it'll appear in the Customer Quote dropdown.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
           {/* CHEP Pallets Inventory */}
           <div className="space-y-4">
             <div className="flex justify-between items-center">
@@ -7201,7 +7276,7 @@ export default function App() {
       const filteredContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
       const inactiveCount = contracts.filter(c => c.active === false).length;
 
-      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
       const contractExportSheets = (): SheetSpec[] => [{
         sheetName: 'Contracts',
         title: 'Contract Management',
@@ -7256,13 +7331,22 @@ export default function App() {
               <Download size={12} /> Template
             </button>
             <button onClick={() => {
-                const rows = contracts.map(c => ({
-                  ...c,
-                  volumeOutstanding: undefined,
-                  id: undefined,
-                  active: undefined,
-                  contractLines: undefined,
-                }));
+                const rows = contracts.map(c => {
+                  // Backfill itasName from the linked customer's itasCustomerName
+                  // when the contract doesn't carry its own value, so the export
+                  // always has something to show.
+                  const linkedItas = c.itasName
+                    || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName
+                    || '';
+                  return {
+                    ...c,
+                    itasName: linkedItas,
+                    volumeOutstanding: undefined,
+                    id: undefined,
+                    active: undefined,
+                    contractLines: undefined,
+                  };
+                });
                 exportCSV(contractCsvHeaders, rows, 'contracts_export.csv');
               }}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
@@ -7443,6 +7527,7 @@ export default function App() {
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume on Order (MT)" sortKey="volumeOnOrder" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Contract Date" sortKey="contractDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />
@@ -7458,7 +7543,7 @@ export default function App() {
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${(c.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
@@ -7505,6 +7590,7 @@ export default function App() {
                         );
                       })()}
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractDate || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
@@ -7849,12 +7935,17 @@ export default function App() {
                   value={config.shippingTerms || ''}
                   onChange={(e) => setConfig(prev => ({ ...prev, shippingTerms: e.target.value as any }))}
                   className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
+                  title={shippingTermsList.find(t => t.name === config.shippingTerms)?.description || ''}
                 >
                   <option value="">Select Terms</option>
-                  <option value="FOB">FOB</option>
-                  <option value="DAP">DAP</option>
-                  <option value="DDP">DDP</option>
-                  <option value="FCA">FCA</option>
+                  {/* Populated from the Shipping Terms table on the Supply Chain page.
+                      If the saved value isn't in the list (legacy/inactive), keep it as a fallback option. */}
+                  {shippingTermsList.filter(t => t.name).map(t => (
+                    <option key={t.id} value={t.name}>{t.name}{t.description ? ` — ${t.description}` : ''}</option>
+                  ))}
+                  {config.shippingTerms && !shippingTermsList.some(t => t.name === config.shippingTerms) && (
+                    <option value={config.shippingTerms}>{config.shippingTerms}</option>
+                  )}
                 </select>
               </div>
               <div className="space-y-1">

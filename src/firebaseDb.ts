@@ -41,6 +41,7 @@ export const COLLECTIONS = {
   customerGroups: 'customerGroups',
   packagingFormats: 'packagingFormats',
   namingFormulas: 'namingFormulas',
+  shippingTerms: 'shippingTerms',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
