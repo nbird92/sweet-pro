@@ -65,6 +65,8 @@ export interface ParsedOrderRow {
   status: string;
   /** Contract number from the sheet (column W on LIQ/TOT/DRY, N on Molasses) */
   contractNumber: string;
+  /** Split / sub-shipment number from the sheet (column R on LIQ/TOT/DRY) */
+  splitNumber: string;
 }
 
 export interface OrderSyncResult {
@@ -194,6 +196,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
     const shipDateRaw = cell(row, 1); // B
     const delivDateRaw = cell(row, 3); // D
     const contractRaw = cell(row, 22); // W = CONTRACT
+    const splitRaw = cell(row, 17);    // R = SPLIT
     const invoiceBV = cell(row, COL_BV_INDEX); // BV
     let status = statusCol >= 0 ? cell(row, statusCol) : '';
 
@@ -227,6 +230,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       invoiceNumber: invoiceBV,
       status,
       contractNumber: contractRaw,
+      splitNumber: splitRaw,
     });
   }
   return out;
@@ -279,6 +283,7 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       invoiceNumber: '', // Molasses tab has no BV invoice column
       status,
       contractNumber: contractRaw,
+      splitNumber: '', // Molasses tab has no split column
     });
   }
   return out;
@@ -699,6 +704,7 @@ export function parsedRowsToOrders(
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
         contractNumber: r.contractNumber || undefined,
+        splitNumber: r.splitNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
         deliveryDate: r.deliveryDate,
@@ -794,6 +800,7 @@ export interface ColumnMap {
   invoiceNumber?: number;
   status?: number;
   contractNumber?: number;
+  splitNumber?: number;
 }
 
 export interface ConfiguredTab {
@@ -896,6 +903,7 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     invoiceNumber: find(h => h === 'invoice #' || h === 'invoice no' || h === 'invoice number'),
     status: find(h => h === 'status' || /cancel/.test(h)),
     contractNumber: find(h => h === 'contract' || h === 'contract #' || h === 'contract number' || h === 'p contract'),
+    splitNumber: find(h => h === 'split' || h === 'split #' || h === 'split number' || h === 'split no'),
   };
 }
 
@@ -927,6 +935,7 @@ export function parseConfiguredTab(
     const delivDateRaw = cell(row, cm.deliveryDate);
     const invoiceVal = cell(row, cm.invoiceNumber);
     const contractRaw = cell(row, cm.contractNumber);
+    const splitRaw = cell(row, cm.splitNumber);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip
@@ -964,6 +973,7 @@ export function parseConfiguredTab(
       invoiceNumber: invoiceVal,
       status,
       contractNumber: contractRaw,
+      splitNumber: splitRaw,
     });
   }
   return out;
@@ -1109,6 +1119,7 @@ export function parsedRowsToOrdersConfigured(
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
         contractNumber: r.contractNumber || undefined,
+        splitNumber: r.splitNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
         deliveryDate: r.deliveryDate,
@@ -1189,19 +1200,19 @@ export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
       tabName: 'LIQ',
       expectedFormat: 'Liquid',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'TOT',
       expectedFormat: 'Tote',
       netWeightPerUnitKg: 1000,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'DRY',
       expectedFormat: 'Bulk',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'Molasses',
@@ -1226,6 +1237,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'deliveryDate', label: 'Delivery Date' },
   { key: 'quantityMT', label: 'Quantity (MT)', required: true },
   { key: 'contractNumber', label: 'Contract Number' },
+  { key: 'splitNumber', label: 'Split Number' },
   { key: 'invoiceNumber', label: 'Invoice # (skip if filled)' },
   { key: 'status', label: 'Status / Cancellation' },
 ];

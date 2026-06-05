@@ -9854,6 +9854,7 @@ export default function App() {
                             <th className="p-2 text-left font-bold">Product</th>
                             <th className="p-2 text-left font-bold">PO</th>
                             <th className="p-2 text-left font-bold">Contract #</th>
+                            <th className="p-2 text-left font-bold">Split #</th>
                             <th className="p-2 text-left font-bold">Ship Date</th>
                             <th className="p-2 text-left font-bold">Deliver</th>
                             <th className="p-2 text-right font-bold">Qty</th>
@@ -9883,6 +9884,7 @@ export default function App() {
                                 <td className="p-2">{o.product}</td>
                                 <td className="p-2 font-mono">{o.po || '—'}</td>
                                 <td className="p-2 font-mono">{contract || '—'}</td>
+                                <td className="p-2 font-mono">{o.splitNumber || '—'}</td>
                                 <td className="p-2">{o.shipmentDate}</td>
                                 <td className="p-2">{o.deliveryDate || '—'}</td>
                                 <td className="p-2 text-right font-mono">{qtyLabel}</td>
