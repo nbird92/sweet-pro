@@ -330,6 +330,29 @@ function normCode(s: string): string {
 }
 
 /**
+ * Recursively remove keys whose value is `undefined`. Firestore writes
+ * reject documents containing `undefined`; we run this on every imported
+ * order as a defensive last line so a future conditional that happens to
+ * leave an undefined field doesn't break the whole sync.
+ *
+ * Preserves arrays, primitives, and null. Empty strings, 0, false stay.
+ */
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(v => stripUndefined(v)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
  * Strip trailing X (and any preceding dash/space) from a normalized code.
  * "LC100X" → "LC100", "LC170X" → "LC170", "GC100" → "GC100" (unchanged).
  * Only strips a SINGLE trailing X when the rest of the code still has digits,
@@ -686,8 +709,6 @@ export function parsedRowsToOrders(
       const lineItem: OrderLineItem = {
         id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         productName: productRefs.productName,
-        productDisplayName: productRefs.productDisplayName,
-        productKey: productRefs.productKey,
         qty,
         contractNumber: r.contractNumber || '',
         netWeightPerUnit: defaults.netWeightPerUnitKg,
@@ -695,26 +716,34 @@ export function parsedRowsToOrders(
         unitAmount: 0,
         mtAmount: 0,
         lineAmount: 0,
+        // Optional fields — omit when missing so Firestore doesn't choke
+        // on undefined values.
+        ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
+        ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
       };
 
+      // Build the order WITHOUT undefined-valued optional fields. Firestore
+      // rejects writes containing `undefined`; conditional spread ensures
+      // empty optionals are omitted from the object entirely instead of
+      // landing as undefined values.
       const newOrder: Order = {
         id: `ORD-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         bolNumber: r.bolNumber,
         customer: customerCanonical,
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
-        contractNumber: r.contractNumber || undefined,
-        splitNumber: r.splitNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
-        deliveryDate: r.deliveryDate,
+        deliveryDate: r.deliveryDate || '',
         status: 'Open',
         lineItems: [lineItem],
         amount: 0,
-        carrier: carrierCanonical || undefined,
+        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(r.splitNumber ? { splitNumber: r.splitNumber } : {}),
+        ...(carrierCanonical ? { carrier: carrierCanonical } : {}),
       };
 
-      result.newOrders.push(newOrder);
+      result.newOrders.push(stripUndefined(newOrder));
       if (bolU) addedBOLs.add(bolU);
       if (poU) addedPOs.add(poU);
     } catch (err) {
@@ -1086,8 +1115,6 @@ export function parsedRowsToOrdersConfigured(
       const lineItem: OrderLineItem = {
         id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         productName: productRefs.productName,
-        productDisplayName: productRefs.productDisplayName,
-        productKey: productRefs.productKey,
         qty,
         contractNumber: r.contractNumber || '',
         netWeightPerUnit: netWeightPerUnitKg,
@@ -1095,6 +1122,10 @@ export function parsedRowsToOrdersConfigured(
         unitAmount: 0,
         mtAmount: 0,
         lineAmount: 0,
+        // Optional fields — omit when missing so Firestore doesn't choke
+        // on undefined values.
+        ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
+        ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
       };
 
       // Resolve the sheet's ship-to text against this customer's saved
@@ -1112,28 +1143,28 @@ export function parsedRowsToOrdersConfigured(
         if (match) shipToLocationId = match.id;
       }
 
+      // Build the order WITHOUT undefined-valued optional fields. Firestore
+      // rejects writes containing `undefined`; conditional spread keeps
+      // empty optionals out of the document entirely.
       const newOrder: Order = {
         id: `ORD-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         bolNumber: r.bolNumber,
         customer: customerCanonical,
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
-        contractNumber: r.contractNumber || undefined,
-        splitNumber: r.splitNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
-        deliveryDate: r.deliveryDate,
+        deliveryDate: r.deliveryDate || '',
         status: 'Open',
         lineItems: [lineItem],
         amount: 0,
-        carrier: carrierCanonical || undefined,
-        // Origin (Hamilton, Vancouver, ...) chosen from the Locations table
-        // in the modal; Ship-To (customer site) resolved per-row from the
-        // sheet's mapped column.
-        location: explicit?.defaultLocation || undefined,
-        shipToLocationId,
+        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(r.splitNumber ? { splitNumber: r.splitNumber } : {}),
+        ...(carrierCanonical ? { carrier: carrierCanonical } : {}),
+        ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
+        ...(shipToLocationId ? { shipToLocationId } : {}),
       };
-      result.newOrders.push(newOrder);
+      result.newOrders.push(stripUndefined(newOrder));
       if (bolU) addedBOLs.add(bolU);
       if (poU) addedPOs.add(poU);
     } catch (err) {
