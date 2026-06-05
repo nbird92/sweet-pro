@@ -9667,6 +9667,26 @@ export default function App() {
                     />
                   </div>
 
+                  {/* Sheets API key — required for strikethrough / red-fill cancel detection */}
+                  <div className="space-y-1 border border-amber-400/50 bg-amber-50/40 p-3">
+                    <label className="text-[10px] uppercase font-bold opacity-70 flex items-center gap-2">
+                      <span>Google Sheets API Key</span>
+                      <span className="text-amber-700 font-normal normal-case">(optional — required to detect red fill + strikethrough cancellations)</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={cfg.apiKey || ''}
+                      onChange={(e) => updateCfg({ apiKey: e.target.value })}
+                      placeholder="AIzaSy... (leave blank to use plain CSV fetch)"
+                      className="w-full bg-white border border-[#141414] p-3 text-sm font-mono outline-none"
+                    />
+                    <div className="text-[10px] opacity-70 leading-snug">
+                      The public CSV endpoint Google exposes <span className="font-bold">strips all cell formatting</span>. To skip rows you've marked as cancelled by colouring them red + striking them through, the importer needs the Sheets API v4, which requires an API key.<br />
+                      Setup: console.cloud.google.com → create a project → enable "Google Sheets API" → Credentials → Create API key. Restrict the key to the Sheets API for safety. The key is stored locally in this browser only.<br />
+                      <span className="font-bold">Without a key:</span> the importer falls back to the CSV path and only catches rows containing the words "cancel", "void", "cxl", "dnl" or a single "x".
+                    </div>
+                  </div>
+
                   {/* Tabs list */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">

@@ -135,14 +135,21 @@ function isCancelledStatus(status: string): boolean {
 }
 
 /**
- * True if ANY cell in the row contains the substring "cancel"
- * (case-insensitive). Matches "cancel", "cancelled", "cancellation", etc.
- * Used to skip rows the user has flagged as cancelled even when there's no
- * dedicated Status column.
+ * True if ANY cell in the row contains text that signals cancellation.
+ * Matches: "cancel" / "cancelled" / "cancellation", "void", "cxl", "DNL"
+ * (do-not-load), or a cell that is exactly "x" / "X" (case-insensitive).
+ * Used as the CSV-path fallback when we can't read cell formatting.
  */
 function rowHasCancelKeyword(row: string[]): boolean {
   for (const cell of row) {
-    if (cell && /cancel/i.test(cell)) return true;
+    if (!cell) continue;
+    const s = cell.trim();
+    if (!s) continue;
+    if (/cancel/i.test(s)) return true;
+    if (/\bvoid\b/i.test(s)) return true;
+    if (/\bcxl\b/i.test(s)) return true;
+    if (/\bdnl\b/i.test(s)) return true;
+    if (/^x$/i.test(s)) return true;
   }
   return false;
 }
@@ -734,6 +741,13 @@ export interface SheetImportConfig {
   sheetId: string;
   /** Tabs to import. */
   tabs: ConfiguredTab[];
+  /**
+   * Optional Google Sheets API v4 key. When provided, the importer fetches
+   * tab data via the Sheets API with includeGridData=true so it can read
+   * cell formatting (background colour, strikethrough). Without a key the
+   * importer falls back to the public CSV endpoint, which strips formatting.
+   */
+  apiKey?: string;
 }
 
 /** "0 → A, 1 → B, ..., 25 → Z, 26 → AA, 27 → AB, ..." */
@@ -768,6 +782,73 @@ export async function fetchTabFromSheet(sheetId: string, tabName: string): Promi
     );
   }
   return await res.text();
+}
+
+/* ------------------------------------------------------------------ */
+/* Sheets API v4 fetcher (with formatting)                              */
+/* ------------------------------------------------------------------ */
+
+/** Returned by the API-aware fetcher: CSV-equivalent values, plus a set of
+ *  row indices (0-based against `values`, header at index 0) where the row
+ *  was flagged as cancelled via cell formatting (strikethrough OR red fill).
+ */
+export interface FetchedTabWithFormat {
+  values: string[][];
+  cancelledRowIndices: Set<number>;
+}
+
+/** Crude "is this red?" check on a Sheets API color object. The API returns
+ *  RGB values in [0,1]. We treat anything with strong red dominance over
+ *  green + blue as "red fill" — same heuristic the user described
+ *  ("highlighted red"). */
+function isRedColor(color: { red?: number; green?: number; blue?: number } | undefined): boolean {
+  if (!color) return false;
+  const r = color.red ?? 0;
+  const g = color.green ?? 0;
+  const b = color.blue ?? 0;
+  return r >= 0.7 && g <= 0.5 && b <= 0.5;
+}
+
+/**
+ * Fetch a tab via Sheets API v4 with grid data so we can detect
+ * strikethrough + red background formatting. Requires the caller-supplied
+ * apiKey to have Sheets API enabled. Throws with a helpful message on
+ * 403 (key restriction, API not enabled, sheet not public).
+ */
+export async function fetchTabFromSheetsAPI(
+  sheetId: string,
+  tabName: string,
+  apiKey: string,
+): Promise<FetchedTabWithFormat> {
+  const range = encodeURIComponent(tabName);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?ranges=${range}&includeGridData=true&fields=sheets(properties(title),data(rowData(values(formattedValue,effectiveFormat(textFormat(strikethrough),backgroundColor)))))&key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(
+      `Sheets API request for tab "${tabName}" failed: HTTP ${res.status}. ${text || ''}\nCheck: (1) the API key is valid and has the Google Sheets API enabled, (2) the sheet is shared "Anyone with the link can view", (3) the tab name matches exactly.`,
+    );
+  }
+  const json = await res.json();
+  const sheet = json.sheets?.[0];
+  if (!sheet) throw new Error(`Sheets API returned no sheet data for "${tabName}".`);
+  const rowData = sheet.data?.[0]?.rowData || [];
+  const values: string[][] = [];
+  const cancelledRowIndices = new Set<number>();
+  for (let i = 0; i < rowData.length; i++) {
+    const cells = rowData[i].values || [];
+    const rowValues: string[] = [];
+    let rowCancelled = false;
+    for (const cell of cells) {
+      rowValues.push(cell.formattedValue ?? '');
+      const fmt = cell.effectiveFormat;
+      if (fmt?.textFormat?.strikethrough === true) rowCancelled = true;
+      if (isRedColor(fmt?.backgroundColor)) rowCancelled = true;
+    }
+    values.push(rowValues);
+    if (rowCancelled && i > 0) cancelledRowIndices.add(i); // skip header row
+  }
+  return { values, cancelledRowIndices };
 }
 
 /** Fetch the header row + first 5 sample rows of a tab for the column-mapping UI. */
@@ -809,8 +890,15 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
   };
 }
 
-/** Parse a tab using a caller-supplied column map. */
-export function parseConfiguredTab(rows: string[][], tab: ConfiguredTab): ParsedOrderRow[] {
+/** Parse a tab using a caller-supplied column map. When formattingCancelled
+ *  is supplied (from the Sheets API path), any row whose 0-based index is in
+ *  the set is flagged as cancelled via cell formatting, regardless of its
+ *  text content. */
+export function parseConfiguredTab(
+  rows: string[][],
+  tab: ConfiguredTab,
+  formattingCancelled?: Set<number>,
+): ParsedOrderRow[] {
   if (rows.length < 2) return [];
   const cm = tab.columns;
   const cell = (row: string[], idx: number | undefined): string =>
@@ -841,9 +929,15 @@ export function parseConfiguredTab(rows: string[][], tab: ConfiguredTab): Parsed
     if (bol.toLowerCase() === 'bl number') continue;
     if (skipPrefixes.some(p => po.toUpperCase().startsWith(p))) continue;
 
-    // Cancel-keyword anywhere in the row → mark as cancelled so the converter
-    // skips it with a clear reason in the preview.
-    if (!status && rowHasCancelKeyword(row)) status = 'CANCELLED (keyword in row)';
+    // Cancel signals — in priority order:
+    //  1. The Sheets API saw red-fill or strikethrough on any cell in this row
+    //  2. The text "cancel" appears anywhere in the row
+    //  3. The mapped Status column itself contains a cancel marker
+    if (!status && formattingCancelled?.has(i)) {
+      status = 'CANCELLED (red fill or strikethrough in sheet)';
+    } else if (!status && rowHasCancelKeyword(row)) {
+      status = 'CANCELLED (keyword in row)';
+    }
 
     if (!product && tab.productFallback) product = tab.productFallback;
 
@@ -1002,12 +1096,23 @@ export async function syncOrdersFromConfig(
 ): Promise<OrderSyncResult> {
   const allParsed: ParsedOrderRow[] = [];
   const fetchErrors: OrderSyncResult['errors'] = [];
+  const useApi = !!(config.apiKey && config.apiKey.trim());
 
   for (const tab of config.tabs) {
     try {
-      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
-      const rows = parseCSV(csv);
-      allParsed.push(...parseConfiguredTab(rows, tab));
+      if (useApi) {
+        // Sheets API path — gets values AND formatting; can detect red fill
+        // and strikethrough that the CSV endpoint silently strips.
+        const { values, cancelledRowIndices } = await fetchTabFromSheetsAPI(
+          config.sheetId, tab.tabName, config.apiKey!,
+        );
+        allParsed.push(...parseConfiguredTab(values, tab, cancelledRowIndices));
+      } else {
+        // CSV fallback — no formatting, keyword-only cancel detection.
+        const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+        const rows = parseCSV(csv);
+        allParsed.push(...parseConfiguredTab(rows, tab));
+      }
     } catch (err) {
       fetchErrors.push({
         tab: tab.tabName,
