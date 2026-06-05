@@ -9832,6 +9832,7 @@ export default function App() {
                             <th className="p-2 text-left font-bold">Customer</th>
                             <th className="p-2 text-left font-bold">Product</th>
                             <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-left font-bold">Contract #</th>
                             <th className="p-2 text-left font-bold">Ship Date</th>
                             <th className="p-2 text-left font-bold">Deliver</th>
                             <th className="p-2 text-right font-bold">Qty</th>
@@ -9847,12 +9848,14 @@ export default function App() {
                             const qtyLabel = unitKg > 0
                               ? `${qty} × ${unitKg}kg`               // Totes: "30 × 1000kg"
                               : `${qty.toFixed(3)} MT`;              // Bulk/Liquid: MT
+                            const contract = o.contractNumber || li?.contractNumber || '';
                             return (
                               <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
                                 <td className="p-2 font-mono font-bold">{o.bolNumber || '—'}</td>
                                 <td className="p-2">{o.customer}</td>
                                 <td className="p-2">{o.product}</td>
                                 <td className="p-2 font-mono">{o.po || '—'}</td>
+                                <td className="p-2 font-mono">{contract || '—'}</td>
                                 <td className="p-2">{o.shipmentDate}</td>
                                 <td className="p-2">{o.deliveryDate || '—'}</td>
                                 <td className="p-2 text-right font-mono">

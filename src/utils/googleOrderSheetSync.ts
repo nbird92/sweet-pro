@@ -58,6 +58,8 @@ export interface ParsedOrderRow {
   quantityMT: number;
   invoiceNumber: string;
   status: string;
+  /** Contract number from the sheet (column W on LIQ/TOT/DRY, N on Molasses) */
+  contractNumber: string;
 }
 
 export interface OrderSyncResult {
@@ -132,6 +134,19 @@ function isCancelledStatus(status: string): boolean {
   return false;
 }
 
+/**
+ * True if ANY cell in the row contains the substring "cancel"
+ * (case-insensitive). Matches "cancel", "cancelled", "cancellation", etc.
+ * Used to skip rows the user has flagged as cancelled even when there's no
+ * dedicated Status column.
+ */
+function rowHasCancelKeyword(row: string[]): boolean {
+  for (const cell of row) {
+    if (cell && /cancel/i.test(cell)) return true;
+  }
+  return false;
+}
+
 /** Is the BV value a real invoice id (e.g. "SI2600051")? Empty strings, "N/A", placeholder dashes don't count. */
 function isInvoicedValue(bv: string): boolean {
   if (!bv) return false;
@@ -166,13 +181,18 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
     const qtyRaw = cell(row, 12);    // M (ordered MT)
     const shipDateRaw = cell(row, 1); // B
     const delivDateRaw = cell(row, 3); // D
+    const contractRaw = cell(row, 22); // W = CONTRACT
     const invoiceBV = cell(row, COL_BV_INDEX); // BV
-    const status = statusCol >= 0 ? cell(row, statusCol) : '';
+    let status = statusCol >= 0 ? cell(row, statusCol) : '';
 
     // Empty / placeholder row — skip
     if (!customer && !bol && !po && !product) continue;
     // Sheet has many template rows with "BL Number" placeholder in column L.
     if (bol.toLowerCase() === 'bl number') continue;
+
+    // Cancel-keyword anywhere in the row → mark status so isCancelledStatus()
+    // skips the row downstream and the preview shows a clear reason.
+    if (!status && rowHasCancelKeyword(row)) status = 'CANCELLED (keyword in row)';
 
     const shipmentDate = parseSheetDate(shipDateRaw);
     const deliveryDate = parseSheetDate(delivDateRaw) || shipmentDate;
@@ -192,6 +212,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       quantityMT: Number.isFinite(qty) ? qty : 0,
       invoiceNumber: invoiceBV,
       status,
+      contractNumber: contractRaw,
     });
   }
   return out;
@@ -214,12 +235,15 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
     const qtyRaw = cell(row, 6);      // G QTY Shipped (MT)
     const lot = cell(row, 9);         // J Lot# — used as BOL when present
     const carrier = cell(row, 10);    // K Trucking Company
-    const status = statusCol >= 0 ? cell(row, statusCol) : '';
+    const contractRaw = cell(row, 13); // N P CONTRACT
+    let status = statusCol >= 0 ? cell(row, statusCol) : '';
 
     if (!customer && !po && !bolDateRaw) continue;
     // User asked us to skip transfers in the shipment sheet — same call here:
     // anything tagged TRANSFER- in the PO column is an internal transfer.
     if (po.toUpperCase().startsWith('TRANSFER')) continue;
+
+    if (!status && rowHasCancelKeyword(row)) status = 'CANCELLED (keyword in row)';
 
     const shipmentDate = parseSheetDate(bolDateRaw);
     const qty = parseFloat(qtyRaw);
@@ -238,6 +262,7 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       quantityMT: Number.isFinite(qty) ? qty : 0,
       invoiceNumber: '', // Molasses tab has no BV invoice column
       status,
+      contractNumber: contractRaw,
     });
   }
   return out;
@@ -573,7 +598,7 @@ export function parsedRowsToOrders(
         productDisplayName: productRefs.productDisplayName,
         productKey: productRefs.productKey,
         qty,
-        contractNumber: '',
+        contractNumber: r.contractNumber || '',
         netWeightPerUnit: defaults.netWeightPerUnitKg,
         totalWeight: totalWeightKg,
         unitAmount: 0,
@@ -587,6 +612,7 @@ export function parsedRowsToOrders(
         customer: customerCanonical,
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
+        contractNumber: r.contractNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
         deliveryDate: r.deliveryDate,
@@ -681,6 +707,7 @@ export interface ColumnMap {
   quantityMT?: number;
   invoiceNumber?: number;
   status?: number;
+  contractNumber?: number;
 }
 
 export interface ConfiguredTab {
@@ -774,6 +801,7 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     quantityMT: find(h => /^qty|quantity|^ordered qty|qty shipped/.test(h)),
     invoiceNumber: find(h => h === 'invoice #' || h === 'invoice no' || h === 'invoice number'),
     status: find(h => h === 'status' || /cancel/.test(h)),
+    contractNumber: find(h => h === 'contract' || h === 'contract #' || h === 'contract number' || h === 'p contract'),
   };
 }
 
@@ -801,12 +829,17 @@ export function parseConfiguredTab(rows: string[][], tab: ConfiguredTab): Parsed
     const shipDateRaw = cell(row, cm.shipmentDate);
     const delivDateRaw = cell(row, cm.deliveryDate);
     const invoiceVal = cell(row, cm.invoiceNumber);
-    const status = cell(row, cm.status);
+    const contractRaw = cell(row, cm.contractNumber);
+    let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip
     if (!customer && !bol && !po && !product) continue;
     if (bol.toLowerCase() === 'bl number') continue;
     if (skipPrefixes.some(p => po.toUpperCase().startsWith(p))) continue;
+
+    // Cancel-keyword anywhere in the row → mark as cancelled so the converter
+    // skips it with a clear reason in the preview.
+    if (!status && rowHasCancelKeyword(row)) status = 'CANCELLED (keyword in row)';
 
     if (!product && tab.productFallback) product = tab.productFallback;
 
@@ -828,6 +861,7 @@ export function parseConfiguredTab(rows: string[][], tab: ConfiguredTab): Parsed
       quantityMT: Number.isFinite(qty) ? qty : 0,
       invoiceNumber: invoiceVal,
       status,
+      contractNumber: contractRaw,
     });
   }
   return out;
@@ -913,7 +947,7 @@ export function parsedRowsToOrdersConfigured(
         productDisplayName: productRefs.productDisplayName,
         productKey: productRefs.productKey,
         qty,
-        contractNumber: '',
+        contractNumber: r.contractNumber || '',
         netWeightPerUnit: netWeightPerUnitKg,
         totalWeight: totalWeightKg,
         unitAmount: 0,
@@ -927,6 +961,7 @@ export function parsedRowsToOrdersConfigured(
         customer: customerCanonical,
         product: productRefs.productDisplayName || productRefs.productName,
         po: r.poNumber,
+        contractNumber: r.contractNumber || undefined,
         date: r.shipmentDate,
         shipmentDate: r.shipmentDate,
         deliveryDate: r.deliveryDate,
@@ -1002,19 +1037,19 @@ export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
       tabName: 'LIQ',
       expectedFormat: 'Liquid',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'TOT',
       expectedFormat: 'Tote',
       netWeightPerUnitKg: 1000,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'DRY',
       expectedFormat: 'Bulk',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'Molasses',
@@ -1022,7 +1057,7 @@ export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
       netWeightPerUnitKg: 0,
       productFallback: 'Molasses',
       skipPoPrefixes: ['TRANSFER'],
-      columns: { customer: 3, poNumber: 4, carrier: 10, bolNumber: 9, quantityMT: 6, shipmentDate: 1 },
+      columns: { customer: 3, poNumber: 4, carrier: 10, bolNumber: 9, quantityMT: 6, shipmentDate: 1, contractNumber: 13 },
     },
   ],
 };
@@ -1038,6 +1073,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'shipmentDate', label: 'Shipment Date', required: true },
   { key: 'deliveryDate', label: 'Delivery Date' },
   { key: 'quantityMT', label: 'Quantity (MT)', required: true },
+  { key: 'contractNumber', label: 'Contract Number' },
   { key: 'invoiceNumber', label: 'Invoice # (skip if filled)' },
   { key: 'status', label: 'Status / Cancellation' },
 ];
