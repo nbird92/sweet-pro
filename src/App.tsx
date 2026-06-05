@@ -74,13 +74,16 @@ import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from '.
 import {
   syncOrdersSheet,
   syncOrdersFromConfig,
+  syncInvoicesFromConfig,
   fetchTabPreview,
   extractSheetId,
   autoDetectColumns,
   columnLetter,
   DEFAULT_ORDER_IMPORT_CONFIG,
+  DEFAULT_INVOICE_IMPORT_CONFIG,
   ORDER_FIELDS,
   type OrderSyncResult,
+  type InvoiceSyncResult,
   type SheetImportConfig,
   type ConfiguredTab,
   type ColumnMap,
@@ -2573,8 +2576,11 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
-  // Configurable order-sync UI ("paste a sheet URL, map columns, save preset"):
-  const [isConfiguringOrderSync, setIsConfiguringOrderSync] = useState(false);
+  // Configurable sync UI — same modal serves both Orders and Invoices.
+  // syncMode tracks which mode the modal is in; null means closed.
+  type SyncMode = 'orders' | 'invoices';
+  const [syncMode, setSyncMode] = useState<SyncMode | null>(null);
+  const isConfiguringOrderSync = syncMode !== null;
   const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
   const [orderSyncUrl, setOrderSyncUrl] = useState(`https://docs.google.com/spreadsheets/d/${DEFAULT_ORDER_IMPORT_CONFIG.sheetId}/`);
   const [orderSyncEditingTabIdx, setOrderSyncEditingTabIdx] = useState<number | null>(null);
@@ -2584,6 +2590,16 @@ export default function App() {
   const [orderSyncPresets, setOrderSyncPresets] = useState<SheetImportConfig[]>(() => {
     try {
       const raw = localStorage.getItem('orderImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
+  // Invoice-sync state — uses a separate preset store so invoice presets
+  // don't clash with order presets.
+  const [isSyncingInvoiceSheet, setIsSyncingInvoiceSheet] = useState(false);
+  const [invoiceSyncPreview, setInvoiceSyncPreview] = useState<InvoiceSyncResult | null>(null);
+  const [invoiceSyncPresets, setInvoiceSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('invoiceImportPresets');
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
@@ -4873,6 +4889,23 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
+            <button
+              onClick={() => {
+                // Open the same configurator modal in invoice mode.
+                const preset = invoiceSyncPresets[0] || DEFAULT_INVOICE_IMPORT_CONFIG;
+                setOrderSyncConfig(preset);
+                setOrderSyncUrl(`https://docs.google.com/spreadsheets/d/${preset.sheetId}/`);
+                setOrderSyncEditingTabIdx(null);
+                setOrderSyncTabHeaders(null);
+                setOrderSyncTabSample([]);
+                setSyncMode('invoices');
+              }}
+              disabled={isSyncingInvoiceSheet}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              title="Pull invoiced rows from a Google Sheet and stage them for review."
+            >
+              <FileText size={12} /> {isSyncingInvoiceSheet ? 'Syncing…' : 'Sync Invoices'}
+            </button>
             <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
               className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
               <Upload size={12} /> Import &amp; Replace
@@ -5260,7 +5293,7 @@ export default function App() {
                 setOrderSyncEditingTabIdx(null);
                 setOrderSyncTabHeaders(null);
                 setOrderSyncTabSample([]);
-                setIsConfiguringOrderSync(true);
+                setSyncMode('orders');
               }}
               disabled={isSyncingOrdersSheet}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
@@ -9563,17 +9596,24 @@ export default function App() {
             if (orderSyncEditingTabIdx === null || !orderSyncTabHeaders) return;
             updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders));
           };
+          // Preset storage is per-mode: orders presets live under
+          // 'orderImportPresets', invoices under 'invoiceImportPresets'.
+          const presetStorageKey = syncMode === 'invoices' ? 'invoiceImportPresets' : 'orderImportPresets';
+          const modePresets = syncMode === 'invoices' ? invoiceSyncPresets : orderSyncPresets;
+          const setModePresets = syncMode === 'invoices' ? setInvoiceSyncPresets : setOrderSyncPresets;
+          const modeDefaultConfig = syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG : DEFAULT_ORDER_IMPORT_CONFIG;
+          const modeDefaultName = syncMode === 'invoices' ? 'Sucro Invoices Default' : 'Sucro Default';
           const savePreset = () => {
-            const name = window.prompt('Preset name:', cfg.name || 'My Order Sheet');
+            const name = window.prompt('Preset name:', cfg.name || (syncMode === 'invoices' ? 'My Invoice Sheet' : 'My Order Sheet'));
             if (!name) return;
             const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
             const toSave: SheetImportConfig = { ...cfg, name, sheetId: id };
-            setOrderSyncPresets(prev => {
+            setModePresets(prev => {
               const existing = prev.findIndex(p => p.name === name);
               const next = existing >= 0
                 ? prev.map((p, i) => i === existing ? toSave : p)
                 : [...prev, toSave];
-              try { localStorage.setItem('orderImportPresets', JSON.stringify(next)); } catch {}
+              try { localStorage.setItem(presetStorageKey, JSON.stringify(next)); } catch {}
               return next;
             });
             setOrderSyncConfig(toSave);
@@ -9581,9 +9621,9 @@ export default function App() {
           };
           const deletePreset = (name: string) => {
             if (!window.confirm(`Delete preset "${name}"?`)) return;
-            setOrderSyncPresets(prev => {
+            setModePresets(prev => {
               const next = prev.filter(p => p.name !== name);
-              try { localStorage.setItem('orderImportPresets', JSON.stringify(next)); } catch {}
+              try { localStorage.setItem(presetStorageKey, JSON.stringify(next)); } catch {}
               return next;
             });
           };
@@ -9598,21 +9638,37 @@ export default function App() {
             const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
             const toRun: SheetImportConfig = { ...cfg, sheetId: id };
             setOrderSyncError(null);
-            setIsSyncingOrdersSheet(true);
-            try {
-              const preview = await syncOrdersFromConfig(toRun, {
-                existingOrders: orders, customers, skus, qaProducts, carriers,
-              });
-              setOrderSyncPreview(preview);
-              setIsConfiguringOrderSync(false);
-            } catch (err) {
-              setOrderSyncError(err instanceof Error ? err.message : String(err));
-            } finally {
-              setIsSyncingOrdersSheet(false);
+            if (syncMode === 'invoices') {
+              setIsSyncingInvoiceSheet(true);
+              try {
+                const preview = await syncInvoicesFromConfig(toRun, {
+                  existingInvoices: invoices, existingOrders: orders,
+                  customers, skus, qaProducts, carriers,
+                });
+                setInvoiceSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingInvoiceSheet(false);
+              }
+            } else {
+              setIsSyncingOrdersSheet(true);
+              try {
+                const preview = await syncOrdersFromConfig(toRun, {
+                  existingOrders: orders, customers, skus, qaProducts, carriers,
+                });
+                setOrderSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingOrdersSheet(false);
+              }
             }
           };
           return (
-            <div className="fixed inset-0 z-[450] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setIsConfiguringOrderSync(false)}>
+            <div className="fixed inset-0 z-[450] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setSyncMode(null)}>
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -9621,23 +9677,23 @@ export default function App() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure Order Sheet Sync</h3>
-                  <button onClick={() => setIsConfiguringOrderSync(false)} className="hover:opacity-70"><X size={16} /></button>
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : 'Order'} Sheet Sync</h3>
+                  <button onClick={() => setSyncMode(null)} className="hover:opacity-70"><X size={16} /></button>
                 </div>
 
                 <div className="p-6 space-y-6">
-                  {/* Saved presets */}
+                  {/* Saved presets — mode-specific store */}
                   <div className="space-y-2">
                     <div className="text-[10px] uppercase font-bold opacity-50">Saved Presets</div>
                     <div className="flex flex-wrap gap-2">
-                      <button onClick={() => loadPreset(DEFAULT_ORDER_IMPORT_CONFIG)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Sucro Default</button>
-                      {orderSyncPresets.map(p => (
+                      <button onClick={() => loadPreset(modeDefaultConfig)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">{modeDefaultName}</button>
+                      {modePresets.map(p => (
                         <div key={p.name} className="flex items-center border border-[#141414]">
                           <button onClick={() => loadPreset(p)} className={`px-3 py-1.5 text-[10px] font-bold uppercase ${cfg.name === p.name ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#F5F5F5]'}`}>{p.name}</button>
                           <button onClick={() => deletePreset(p.name)} title="Delete preset" className="px-2 py-1.5 hover:bg-red-100 border-l border-[#141414] text-red-700"><X size={12} /></button>
                         </div>
                       ))}
-                      {orderSyncPresets.length === 0 && <div className="text-[10px] opacity-50 italic self-center">No custom presets saved yet. Configure below and click "Save Preset".</div>}
+                      {modePresets.length === 0 && <div className="text-[10px] opacity-50 italic self-center">No custom presets saved yet. Configure below and click "Save Preset".</div>}
                     </div>
                   </div>
 
@@ -9801,14 +9857,141 @@ export default function App() {
                 <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between sticky bottom-0">
                   <button onClick={savePreset} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Save Preset</button>
                   <div className="flex gap-2">
-                    <button onClick={() => setIsConfiguringOrderSync(false)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
-                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{isSyncingOrdersSheet ? 'Fetching…' : 'Preview Import →'}</button>
+                    <button onClick={() => setSyncMode(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet) ? 'Fetching…' : 'Preview Import →'}</button>
                   </div>
                 </div>
               </motion.div>
             </div>
           );
         })()}
+
+        {/* Invoice Sheet Sync — Preview / Confirm modal */}
+        {invoiceSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setInvoiceSyncPreview(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><DollarSign size={14} /> Invoice Sync Preview</h3>
+                <button onClick={() => setInvoiceSyncPreview(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="border border-emerald-500/40 bg-emerald-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">New Invoices</div>
+                    <div className="text-2xl font-bold">{invoiceSyncPreview.newInvoices.length}</div>
+                  </div>
+                  <div className="border border-amber-500/40 bg-amber-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Skipped</div>
+                    <div className="text-2xl font-bold">{invoiceSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="border border-red-500/40 bg-red-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Errors</div>
+                    <div className="text-2xl font-bold">{invoiceSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {/* New invoices table */}
+                {invoiceSyncPreview.newInvoices.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Invoices ({invoiceSyncPreview.newInvoices.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Invoice #</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-right font-bold">Qty (MT)</th>
+                            <th className="p-2 text-right font-bold">Price/MT</th>
+                            <th className="p-2 text-right font-bold">Amount</th>
+                            <th className="p-2 text-left font-bold">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {invoiceSyncPreview.newInvoices.map(inv => (
+                            <tr key={inv.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{inv.invoiceNumber}</td>
+                              <td className="p-2 font-mono">{inv.bolNumber}</td>
+                              <td className="p-2">{inv.customer}</td>
+                              <td className="p-2">{inv.product}</td>
+                              <td className="p-2 font-mono">{inv.po || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(inv.qty || 0).toFixed(3)}</td>
+                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-right font-mono font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-2">{inv.date}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Skipped */}
+                {invoiceSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({invoiceSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto text-xs">
+                      <table className="w-full">
+                        <thead className="bg-[#F5F5F5] sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Tab</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Invoice #</th>
+                            <th className="p-2 text-left font-bold">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {invoiceSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2">{s.tab}</td>
+                              <td className="p-2 font-mono">{s.bolNumber || '—'}</td>
+                              <td className="p-2 font-mono">{s.invoiceNumber || '—'}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {invoiceSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70 text-red-700">Errors ({invoiceSyncPreview.errors.length})</h4>
+                    <div className="border border-red-300 bg-red-50 max-h-32 overflow-y-auto p-2 text-xs">
+                      {invoiceSyncPreview.errors.map((e, i) => (
+                        <div key={i} className="py-1"><span className="font-mono">{e.tab}</span>{e.rowIdx ? `:row ${e.rowIdx}` : ''} — <span className="text-red-700">{e.message}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setInvoiceSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button
+                  disabled={invoiceSyncPreview.newInvoices.length === 0}
+                  onClick={() => {
+                    setInvoices([...invoices, ...invoiceSyncPreview.newInvoices]);
+                    setInvoiceSyncPreview(null);
+                  }}
+                  className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                >
+                  Import {invoiceSyncPreview.newInvoices.length} Invoice{invoiceSyncPreview.newInvoices.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
 
         {/* Orders Sheet Sync — Preview / Confirm modal */}
         {orderSyncPreview && (

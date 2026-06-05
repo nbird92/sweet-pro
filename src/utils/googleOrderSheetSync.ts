@@ -18,7 +18,7 @@
 // The sheet must be either "Anyone with link can view" or published to the
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
-import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier } from '../types';
+import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice } from '../types';
 import { parseCSV } from './googleSheetsSync';
 
 // Workbook containing the order tabs to import.
@@ -67,6 +67,8 @@ export interface ParsedOrderRow {
   contractNumber: string;
   /** Split / sub-shipment number from the sheet (column R on LIQ/TOT/DRY) */
   splitNumber: string;
+  /** Price per metric tonne (used when building Invoices). */
+  pricePerMt: number;
 }
 
 export interface OrderSyncResult {
@@ -197,6 +199,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
     const delivDateRaw = cell(row, 3); // D
     const contractRaw = cell(row, 22); // W = CONTRACT
     const splitRaw = cell(row, 17);    // R = SPLIT
+    const priceRaw = cell(row, 23);    // X = PRICE PER MT
     const invoiceBV = cell(row, COL_BV_INDEX); // BV
     let status = statusCol >= 0 ? cell(row, statusCol) : '';
 
@@ -231,6 +234,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       status,
       contractNumber: contractRaw,
       splitNumber: splitRaw,
+      pricePerMt: (() => { const n = parseFloat(priceRaw); return Number.isFinite(n) ? n : 0; })(),
     });
   }
   return out;
@@ -284,6 +288,7 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       status,
       contractNumber: contractRaw,
       splitNumber: '', // Molasses tab has no split column
+      pricePerMt: 0,
     });
   }
   return out;
@@ -830,6 +835,9 @@ export interface ColumnMap {
   status?: number;
   contractNumber?: number;
   splitNumber?: number;
+  /** Price per MT — used by the invoice-sync path; multiplied by quantityMT
+   *  to produce Invoice.amount. */
+  pricePerMt?: number;
 }
 
 export interface ConfiguredTab {
@@ -933,6 +941,7 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     status: find(h => h === 'status' || /cancel/.test(h)),
     contractNumber: find(h => h === 'contract' || h === 'contract #' || h === 'contract number' || h === 'p contract'),
     splitNumber: find(h => h === 'split' || h === 'split #' || h === 'split number' || h === 'split no'),
+    pricePerMt: find(h => /^price\s*(per\s*)?mt$|^price\/mt$|^unit price$/.test(h)),
   };
 }
 
@@ -965,6 +974,7 @@ export function parseConfiguredTab(
     const invoiceVal = cell(row, cm.invoiceNumber);
     const contractRaw = cell(row, cm.contractNumber);
     const splitRaw = cell(row, cm.splitNumber);
+    const priceRawC = cell(row, cm.pricePerMt);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip
@@ -1003,6 +1013,7 @@ export function parseConfiguredTab(
       status,
       contractNumber: contractRaw,
       splitNumber: splitRaw,
+      pricePerMt: (() => { const n = parseFloat(priceRawC); return Number.isFinite(n) ? n : 0; })(),
     });
   }
   return out;
@@ -1231,19 +1242,19 @@ export const DEFAULT_ORDER_IMPORT_CONFIG: SheetImportConfig = {
       tabName: 'LIQ',
       expectedFormat: 'Liquid',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, pricePerMt: 23, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'TOT',
       expectedFormat: 'Tote',
       netWeightPerUnitKg: 1000,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, pricePerMt: 23, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'DRY',
       expectedFormat: 'Bulk',
       netWeightPerUnitKg: 0,
-      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, invoiceNumber: COL_BV_INDEX },
+      columns: { customer: 5, shipTo: 6, poNumber: 7, product: 8, carrier: 9, bolNumber: 11, quantityMT: 12, shipmentDate: 1, deliveryDate: 3, contractNumber: 22, splitNumber: 17, pricePerMt: 23, invoiceNumber: COL_BV_INDEX },
     },
     {
       tabName: 'Molasses',
@@ -1269,6 +1280,198 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'quantityMT', label: 'Quantity (MT)', required: true },
   { key: 'contractNumber', label: 'Contract Number' },
   { key: 'splitNumber', label: 'Split Number' },
-  { key: 'invoiceNumber', label: 'Invoice # (skip if filled)' },
+  { key: 'pricePerMt', label: 'Price / MT (invoices)' },
+  { key: 'invoiceNumber', label: 'Invoice Number' },
   { key: 'status', label: 'Status / Cancellation' },
 ];
+
+/* ====================================================================== */
+/* Invoice sync — reuses the orders fetch + parse pipeline, builds Invoice */
+/* records instead of Order records. Inverse rule: invoiced rows are the   */
+/* IMPORTS here (orders sync skips them). Dedup is by invoiceNumber and    */
+/* BOL. Imports DO link to an existing order by BOL when one exists, so    */
+/* invoice line items inherit from the matching order.                    */
+/* ====================================================================== */
+
+export interface InvoiceSyncResult {
+  newInvoices: Invoice[];
+  skipped: Array<{ tab: string; bolNumber: string; invoiceNumber: string; reason: string }>;
+  errors: Array<{ tab: string; rowIdx: number; message: string }>;
+}
+
+export function parsedRowsToInvoicesConfigured(
+  parsed: ParsedOrderRow[],
+  configured: ConfiguredTab[],
+  existingInvoices: Invoice[],
+  existingOrders: Order[],
+  customers: Customer[],
+  skus: SKU[],
+  qaProducts: QAProduct[],
+  carriers: Carrier[],
+): InvoiceSyncResult {
+  const tabByName = new Map<string, ConfiguredTab>();
+  for (const t of configured) tabByName.set(t.tabName, t);
+
+  const result: InvoiceSyncResult = { newInvoices: [], skipped: [], errors: [] };
+
+  // Dedupe sets — invoices keyed on invoiceNumber AND on bolNumber (so two
+  // rows that share either with an existing invoice don't double-import).
+  const existingInvoiceNumbers = new Set(
+    existingInvoices.map(i => (i.invoiceNumber || '').trim().toUpperCase()).filter(Boolean),
+  );
+  const existingInvoiceBols = new Set(
+    existingInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean),
+  );
+  const addedInvoiceNumbers = new Set<string>();
+  const addedInvoiceBols = new Set<string>();
+
+  // BOL → Order lookup for line-item inheritance
+  const ordersByBol = new Map<string, Order>();
+  for (const o of existingOrders) {
+    if (o.bolNumber) ordersByBol.set(o.bolNumber.trim().toUpperCase(), o);
+  }
+
+  for (const r of parsed) {
+    try {
+      // 1. Cancelled row — skip
+      if (isCancelledStatus(r.status)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row marked cancelled' });
+        continue;
+      }
+      // 2. NOT invoiced — skip (this is the inverse of the orders sync).
+      //    Invoices REQUIRE an invoice number to exist in this row.
+      if (!isInvoicedValue(r.invoiceNumber)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no invoice number (not yet billed)' });
+        continue;
+      }
+      // 3. Require BOL — invoices have to link back to a shipment
+      if (!r.bolNumber || !r.bolNumber.trim()) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no BOL number' });
+        continue;
+      }
+      // 4. Need a usable date
+      if (!r.shipmentDate) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no shipment date' });
+        continue;
+      }
+      // 5. Quantity sanity
+      if (!Number.isFinite(r.quantityMT) || r.quantityMT <= 0) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Quantity is blank or not a positive number' });
+        continue;
+      }
+      if (r.quantityMT > MAX_ORDER_MT) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: `Quantity ${r.quantityMT} MT exceeds the ${MAX_ORDER_MT} MT maximum` });
+        continue;
+      }
+
+      const invU = r.invoiceNumber.trim().toUpperCase();
+      const bolU = r.bolNumber.trim().toUpperCase();
+
+      // 6. Dedup by invoice # and BOL
+      if (existingInvoiceNumbers.has(invU) || addedInvoiceNumbers.has(invU)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice number already exists' });
+        continue;
+      }
+      if (existingInvoiceBols.has(bolU) || addedInvoiceBols.has(bolU)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice already exists for this BOL' });
+        continue;
+      }
+
+      // Resolve catalog refs (same path as orders, so display matches).
+      const explicit = tabByName.get(r.tab);
+      const builtIn = tabDefaults(r.tab);
+      const tabFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
+      const bolPrefix = r.bolNumber.trim().charAt(0).toUpperCase();
+      let expectedFormat = tabFormat;
+      if (bolPrefix === 'B') expectedFormat = 'Bulk';
+      else if (bolPrefix === 'P') expectedFormat = 'Bagged';
+
+      const customerCanonical = resolveCustomer(r.customerName, customers);
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+
+      // Pricing: amount = pricePerMt × quantityMT (qty is MT for bulk/liquid;
+      // for totes the parsed quantityMT is the truckload size in MT, so the
+      // same multiplication is correct).
+      const pricePerMt = Number.isFinite(r.pricePerMt) ? r.pricePerMt : 0;
+      const amount = Math.round(pricePerMt * r.quantityMT * 100) / 100;
+
+      // Try to inherit line items from a matching order (by BOL).
+      const linkedOrder = ordersByBol.get(bolU);
+      const lineItems = linkedOrder ? linkedOrder.lineItems : undefined;
+
+      const newInvoice: Invoice = {
+        id: `INV-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        invoiceNumber: r.invoiceNumber,
+        bolNumber: r.bolNumber,
+        customer: customerCanonical,
+        product: productRefs.productDisplayName || productRefs.productName,
+        po: r.poNumber,
+        qty: r.quantityMT,
+        carrier: carrierCanonical || '',
+        amount,
+        shipmentId: linkedOrder?.id || '',
+        date: r.shipmentDate,
+        status: 'Open',
+        ...(pricePerMt > 0 ? { pricePerMt } : {}),
+        ...(r.splitNumber ? { splitNo: r.splitNumber } : {}),
+        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
+        ...(lineItems ? { lineItems } : {}),
+      };
+
+      result.newInvoices.push(stripUndefined(newInvoice));
+      addedInvoiceNumbers.add(invU);
+      addedInvoiceBols.add(bolU);
+    } catch (err) {
+      result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Run an invoice sync against any sheet/config. Same fetch + parse path as
+ *  orders; the difference is the row-to-record conversion. */
+export async function syncInvoicesFromConfig(
+  config: SheetImportConfig,
+  ctx: {
+    existingInvoices: Invoice[];
+    existingOrders: Order[];
+    customers: Customer[];
+    skus: SKU[];
+    qaProducts: QAProduct[];
+    carriers: Carrier[];
+  },
+): Promise<InvoiceSyncResult> {
+  const allParsed: ParsedOrderRow[] = [];
+  const fetchErrors: InvoiceSyncResult['errors'] = [];
+
+  for (const tab of config.tabs) {
+    try {
+      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+      const rows = parseCSV(csv);
+      allParsed.push(...parseConfiguredTab(rows, tab));
+    } catch (err) {
+      fetchErrors.push({
+        tab: tab.tabName,
+        rowIdx: 0,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const result = parsedRowsToInvoicesConfigured(
+    allParsed, config.tabs,
+    ctx.existingInvoices, ctx.existingOrders, ctx.customers, ctx.skus, ctx.qaProducts, ctx.carriers,
+  );
+  result.errors.unshift(...fetchErrors);
+  return result;
+}
+
+/** Default preset for the invoice importer — same sheet/tabs as the orders
+ *  default, but kept as a separate config so users can save invoice-specific
+ *  presets independently of order-import presets. */
+export const DEFAULT_INVOICE_IMPORT_CONFIG: SheetImportConfig = {
+  ...DEFAULT_ORDER_IMPORT_CONFIG,
+  name: 'Sucro Invoices (default)',
+};
