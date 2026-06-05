@@ -216,7 +216,9 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       carrierName: carrier,
       shipmentDate,
       deliveryDate,
-      quantityMT: Number.isFinite(qty) ? qty : 0,
+      // NaN here when the cell was blank or non-numeric — the converter
+      // skips those rows with a clear reason rather than importing qty 0.
+      quantityMT: qty,
       invoiceNumber: invoiceBV,
       status,
       contractNumber: contractRaw,
@@ -266,7 +268,9 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       carrierName: carrier,
       shipmentDate,
       deliveryDate: shipmentDate,
-      quantityMT: Number.isFinite(qty) ? qty : 0,
+      // NaN here when the cell was blank or non-numeric — the converter
+      // skips those rows with a clear reason rather than importing qty 0.
+      quantityMT: qty,
       invoiceNumber: '', // Molasses tab has no BV invoice column
       status,
       contractNumber: contractRaw,
@@ -561,6 +565,15 @@ export function parsedRowsToOrders(
         result.skipped.push({
           tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber,
           reason: 'Row has no shipment date',
+        });
+        continue;
+      }
+      // Need a real ordered quantity. Blank cells, text like "TBD", and any
+      // value <= 0 are skipped — we should never create a 0-MT order.
+      if (!Number.isFinite(r.quantityMT) || r.quantityMT <= 0) {
+        result.skipped.push({
+          tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber,
+          reason: 'Quantity is blank or not a positive number',
         });
         continue;
       }
@@ -956,7 +969,9 @@ export function parseConfiguredTab(
       carrierName: carrier,
       shipmentDate,
       deliveryDate,
-      quantityMT: Number.isFinite(qty) ? qty : 0,
+      // NaN here when the cell was blank or non-numeric — the converter
+      // skips those rows with a clear reason rather than importing qty 0.
+      quantityMT: qty,
       invoiceNumber: invoiceVal,
       status,
       contractNumber: contractRaw,
@@ -1014,6 +1029,11 @@ export function parsedRowsToOrdersConfigured(
       }
       if (!r.shipmentDate) {
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row has no shipment date' });
+        continue;
+      }
+      // Skip blank / non-numeric / zero quantities — see parsedRowsToOrders.
+      if (!Number.isFinite(r.quantityMT) || r.quantityMT <= 0) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Quantity is blank or not a positive number' });
         continue;
       }
       const bolU = r.bolNumber.trim().toUpperCase();
