@@ -537,11 +537,15 @@ export function parsedRowsToOrders(
         });
         continue;
       }
-      // Need at least one of BOL or PO to identify the order
-      if (!r.bolNumber && !r.poNumber) {
+      // Require an explicit BOL number. Previously we accepted rows with
+      // a PO but no BOL — those imported with bolNumber:'' and the app's
+      // BOL backfill then assigned them sequential ids like P000019,
+      // which surfaced as "phantom" orders the user couldn't find in the
+      // source sheet. The BOL must come from the sheet.
+      if (!r.bolNumber || !r.bolNumber.trim()) {
         result.skipped.push({
           tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber,
-          reason: 'Row has no BOL or PO',
+          reason: 'Row has no BOL number',
         });
         continue;
       }
@@ -908,8 +912,10 @@ export function parsedRowsToOrdersConfigured(
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: `Already invoiced (${r.invoiceNumber.trim()})` });
         continue;
       }
-      if (!r.bolNumber && !r.poNumber) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row has no BOL or PO' });
+      // Require an explicit BOL — see comment in parsedRowsToOrders. Empty
+      // BOLs caused the app's backfill to assign phantom P0000XX numbers.
+      if (!r.bolNumber || !r.bolNumber.trim()) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row has no BOL number' });
         continue;
       }
       if (!r.shipmentDate) {

@@ -1930,8 +1930,14 @@ export default function App() {
     if (orders.length === 0) return;
     if (productGroups.length === 0 || skus.length === 0) return; // need catalog to pick prefix
 
-    const isCanonical = (bol: string | undefined) => !!bol && /^[A-Z]\d{6}$/.test(bol);
-    const ordersNeedingBol = orders.filter(o => !isCanonical(o.bolNumber));
+    // Only backfill orders whose BOL is EMPTY. Previously this checked
+    // /^[A-Z]\d{6}$/ ("canonical") and rewrote anything else — that was the
+    // cause of "phantom" P0000XX orders: imported BOLs like L2054980 (LIQ)
+    // or B304582 (DRY) don't match the canonical shape, so they were getting
+    // renamed away from the value in the source sheet. Imported BOLs are
+    // authoritative; only blank ones get an auto-assigned sequence number.
+    const hasBol = (bol: string | undefined) => !!bol && bol.trim().length > 0;
+    const ordersNeedingBol = orders.filter(o => !hasBol(o.bolNumber));
     if (ordersNeedingBol.length === 0) {
       bolBackfillRan.current = true;
       return;
