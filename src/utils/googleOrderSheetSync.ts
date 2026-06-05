@@ -350,9 +350,16 @@ function buildCodeCandidates(raw: string): string[] {
 
 /**
  * Lookup a QA product by candidate code. Matches QA.skuName (normalized)
- * and QA.productCode (normalized). When multiple QA variants share a code
- * (e.g. one "Tote" + one "Bulk" of GC100), prefers the one whose
- * productFormat matches the expectedFormat hint. Returns null if no match.
+ * and QA.productCode (normalized).
+ *
+ * Format hint semantics:
+ *   - No hint: return the first match (legacy).
+ *   - Hint given: STRICT. Only return a QA whose productFormat actually
+ *     contains the hint substring (case-insensitive). If no QA has the
+ *     expected format we return null so the caller treats the product as
+ *     unmatched — silently returning a wrong-format variant (e.g. "20kg
+ *     GC45" Bagged for a Bulk order) was the cause of B-prefix BOLs being
+ *     imported as packaged products.
  */
 function findQAByCode(
   code: string,
@@ -365,10 +372,13 @@ function findQAByCode(
     else if (q.productCode && normCode(q.productCode) === code) matches.push(q);
   }
   if (matches.length === 0) return null;
-  if (matches.length === 1 || !expectedFormat) return matches[0];
+  if (!expectedFormat) return matches[0];
   const want = expectedFormat.toLowerCase();
   const preferred = matches.find(q => (q.productFormat || '').toLowerCase().includes(want));
-  return preferred || matches[0];
+  // Strict: never substitute a wrong-format variant when a format was asked
+  // for. The caller will fall through to the SKU/raw-text path with the
+  // unmatched flag visible in the preview.
+  return preferred || null;
 }
 
 /**
@@ -407,13 +417,25 @@ function resolveProduct(
   const trimmed = raw.trim();
   const norm = trimmed.toLowerCase();
 
-  // Helper: prefer a QA child of a matched SKU that fits expectedFormat.
+  // Helper: pick a QA child of a matched SKU. Strict on format hint —
+  // returns null when none of the children match the requested format
+  // (caller treats the product as unmatched rather than substituting a
+  // wrong-format variant).
   const qaChildForSKU = (skuId: string): QAProduct | null => {
     const children = qaProducts.filter(q => q.skuId === skuId);
     if (children.length === 0) return null;
-    if (!expectedFormat || children.length === 1) return children[0];
+    if (!expectedFormat) return children[0];
     const want = expectedFormat.toLowerCase();
-    return children.find(q => (q.productFormat || '').toLowerCase().includes(want)) || children[0];
+    return children.find(q => (q.productFormat || '').toLowerCase().includes(want)) || null;
+  };
+
+  // Helper: check a SKU's own productFormat against the hint (covers SKUs
+  // that have no QA children).
+  const skuMatchesFormat = (sku: SKU): boolean => {
+    if (!expectedFormat) return true;
+    const fmt = ((sku as any).productFormat || '').toString().toLowerCase();
+    if (!fmt) return false;
+    return fmt.includes(expectedFormat.toLowerCase());
   };
 
   // 1. Code-based candidates (covers "LC100X", "GC-100", "LC 170", etc).
@@ -424,12 +446,17 @@ function resolveProduct(
     }
     const sku = findSKUByCode(cand, skus);
     if (sku) {
+      // Try a format-matching QA child first; if no child fits the format
+      // and the SKU itself doesn't match the format, skip — the caller
+      // continues with translation / substring / raw fallback.
       const qaChild = qaChildForSKU(sku.id);
-      return {
-        productName: qaChild?.skuName || sku.name,
-        productDisplayName: qaChild?.skuName || sku.name,
-        productKey: qaChild?.id || sku.id,
-      };
+      if (qaChild) {
+        return { productName: qaChild.skuName, productDisplayName: qaChild.skuName, productKey: qaChild.id };
+      }
+      if (skuMatchesFormat(sku)) {
+        return { productName: sku.name, productDisplayName: sku.name, productKey: sku.id };
+      }
+      // Wrong format — keep looking.
     }
   }
 
@@ -449,11 +476,12 @@ function resolveProduct(
     const sku = findSKUByCode(cand, skus);
     if (sku) {
       const qaChild = qaChildForSKU(sku.id);
-      return {
-        productName: qaChild?.skuName || sku.name,
-        productDisplayName: qaChild?.skuName || sku.name,
-        productKey: qaChild?.id || sku.id,
-      };
+      if (qaChild) {
+        return { productName: qaChild.skuName, productDisplayName: qaChild.skuName, productKey: qaChild.id };
+      }
+      if (skuMatchesFormat(sku)) {
+        return { productName: sku.name, productDisplayName: sku.name, productKey: sku.id };
+      }
     }
   }
   // Molasses special case — match by name when no normalized code hit
@@ -465,37 +493,43 @@ function resolveProduct(
     const sku = skus.find(s => (s.name || '').trim().toLowerCase() === 'molasses');
     if (sku) {
       const qaChild = qaChildForSKU(sku.id);
-      return {
-        productName: qaChild?.skuName || sku.name,
-        productDisplayName: qaChild?.skuName || sku.name,
-        productKey: qaChild?.id || sku.id,
-      };
+      if (qaChild) {
+        return { productName: qaChild.skuName, productDisplayName: qaChild.skuName, productKey: qaChild.id };
+      }
+      if (skuMatchesFormat(sku)) {
+        return { productName: sku.name, productDisplayName: sku.name, productKey: sku.id };
+      }
     }
   }
 
-  // 3. Substring match (loose) — QA first
+  // 3. Substring match (loose) — QA first. Only consider QAs matching the
+  // expected format when a hint is set.
   const qaLoose = qaProducts.find(q => {
     const sn = (q.skuName || '').trim().toLowerCase();
-    return sn && (sn.includes(norm) || norm.includes(sn));
+    if (!sn || !(sn.includes(norm) || norm.includes(sn))) return false;
+    if (!expectedFormat) return true;
+    return (q.productFormat || '').toLowerCase().includes(expectedFormat.toLowerCase());
   });
   if (qaLoose) {
     return { productName: qaLoose.skuName, productDisplayName: qaLoose.skuName, productKey: qaLoose.id };
   }
   const skuLoose = skus.find(s => {
     const sn = (s.name || '').trim().toLowerCase();
-    return sn && (sn.includes(norm) || norm.includes(sn));
+    if (!sn || !(sn.includes(norm) || norm.includes(sn))) return false;
+    return skuMatchesFormat(s);
   });
   if (skuLoose) {
     const qaChild = qaChildForSKU(skuLoose.id);
-    return {
-      productName: qaChild?.skuName || skuLoose.name,
-      productDisplayName: qaChild?.skuName || skuLoose.name,
-      productKey: qaChild?.id || skuLoose.id,
-    };
+    if (qaChild) {
+      return { productName: qaChild.skuName, productDisplayName: qaChild.skuName, productKey: qaChild.id };
+    }
+    return { productName: skuLoose.name, productDisplayName: skuLoose.name, productKey: skuLoose.id };
   }
 
-  // 4. Fallback — keep raw (will show as unmatched in the preview)
-  return { productName: trimmed };
+  // 4. Fallback — keep raw, but normalized (strip dashes/spaces). So
+  // "GC-45" surfaces in the preview as "GC45" rather than "GC-45".
+  const cleaned = trimmed.replace(/-/g, '').replace(/\s+/g, ' ').trim();
+  return { productName: cleaned };
 }
 
 /**
@@ -616,7 +650,14 @@ export function parsedRowsToOrders(
       // Resolve catalog refs
       const customerCanonical = resolveCustomer(r.customerName, customers);
       const defaults = tabDefaults(r.tab);
-      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, defaults.expectedFormat);
+      // BOL-prefix override (see parsedRowsToOrdersConfigured): B=Bulk,
+      // P=Bagged. Prevents a Bulk-prefixed BOL from resolving to a
+      // packaged QA variant when the catalog has both.
+      const bolPrefix = (r.bolNumber || '').trim().charAt(0).toUpperCase();
+      let expectedFormat = defaults.expectedFormat;
+      if (bolPrefix === 'B') expectedFormat = 'Bulk';
+      else if (bolPrefix === 'P') expectedFormat = 'Bagged';
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
       const carrierCanonical = resolveCarrier(r.carrierName, carriers);
 
       // Build line item.
@@ -1074,7 +1115,17 @@ export function parsedRowsToOrdersConfigured(
       // Per-tab defaults: explicit overrides from config > built-in tabDefaults
       const explicit = tabByName.get(r.tab);
       const builtIn = tabDefaults(r.tab);
-      const expectedFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
+      const tabFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
+      // BOL-prefix override: per the user's numbering scheme, a BOL that
+      // starts with "B" is a Bulk order and "P" is Packaged (bagged). When
+      // the prefix is one of those, force the format hint to the right
+      // value so a Bulk BOL can never silently resolve to a packaged QA
+      // (the GC45 / 20kg GC45 bug). The prefix takes precedence over the
+      // tab-level hint when they disagree.
+      const bolPrefix = (r.bolNumber || '').trim().charAt(0).toUpperCase();
+      let expectedFormat = tabFormat;
+      if (bolPrefix === 'B') expectedFormat = 'Bulk';
+      else if (bolPrefix === 'P') expectedFormat = 'Bagged';
       const netWeightPerUnitKg = explicit?.netWeightPerUnitKg ?? builtIn.netWeightPerUnitKg;
 
       const customerCanonical = resolveCustomer(r.customerName, customers);
