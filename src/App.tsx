@@ -75,15 +75,18 @@ import {
   syncOrdersSheet,
   syncOrdersFromConfig,
   syncInvoicesFromConfig,
+  syncShipmentsFromConfig,
   fetchTabPreview,
   extractSheetId,
   autoDetectColumns,
   columnLetter,
   DEFAULT_ORDER_IMPORT_CONFIG,
   DEFAULT_INVOICE_IMPORT_CONFIG,
+  DEFAULT_SHIPMENT_IMPORT_CONFIG,
   ORDER_FIELDS,
   type OrderSyncResult,
   type InvoiceSyncResult,
+  type ShipmentSyncResult,
   type SheetImportConfig,
   type ConfiguredTab,
   type ColumnMap,
@@ -2666,9 +2669,9 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
-  // Configurable sync UI — same modal serves both Orders and Invoices.
+  // Configurable sync UI — same modal serves Orders, Invoices, and Shipments.
   // syncMode tracks which mode the modal is in; null means closed.
-  type SyncMode = 'orders' | 'invoices';
+  type SyncMode = 'orders' | 'invoices' | 'shipments';
   const [syncMode, setSyncMode] = useState<SyncMode | null>(null);
   const isConfiguringOrderSync = syncMode !== null;
   const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
@@ -2690,6 +2693,14 @@ export default function App() {
   const [invoiceSyncPresets, setInvoiceSyncPresets] = useState<SheetImportConfig[]>(() => {
     try {
       const raw = localStorage.getItem('invoiceImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
+  // Shipment-sync state (separate preset store from orders + invoices)
+  const [shipmentSyncPreview, setShipmentSyncPreview] = useState<ShipmentSyncResult | null>(null);
+  const [shipmentSyncPresets, setShipmentSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('shipmentImportPresets');
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
@@ -4085,28 +4096,19 @@ export default function App() {
               <FileText size={12} /> Import CSV
             </button>
             <button
-              onClick={async () => {
-                setSheetSyncError(null);
-                setIsSyncingSheet(true);
-                try {
-                  const preview = await syncShipmentScheduleSheet({
-                    existingOrders: orders,
-                    existingShipments: [...hamiltonShipments, ...vancouverShipments],
-                    customers,
-                    skus,
-                    qaProducts,
-                    carriers,
-                  });
-                  setSheetSyncPreview(preview);
-                } catch (err) {
-                  setSheetSyncError(err instanceof Error ? err.message : String(err));
-                } finally {
-                  setIsSyncingSheet(false);
-                }
+              onClick={() => {
+                // Open the same configurator modal in shipments mode.
+                const preset = shipmentSyncPresets[0] || DEFAULT_SHIPMENT_IMPORT_CONFIG;
+                setOrderSyncConfig(preset);
+                setOrderSyncUrl(preset.sheetId ? `https://docs.google.com/spreadsheets/d/${preset.sheetId}/` : '');
+                setOrderSyncEditingTabIdx(null);
+                setOrderSyncTabHeaders(null);
+                setOrderSyncTabSample([]);
+                setSyncMode('shipments');
               }}
               disabled={isSyncingSheet}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
-              title="Pull FERGUSON and SHERMAN tabs from the shipment-schedule Google Sheet and stage new orders/shipments for review."
+              title="Configure a Google Sheet source + column mapping, then pull new shipments for review."
             >
               <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync Shipments'}
             </button>
@@ -9844,13 +9846,28 @@ export default function App() {
             if (orderSyncEditingTabIdx === null || !orderSyncTabHeaders) return;
             updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders));
           };
-          // Preset storage is per-mode: orders presets live under
-          // 'orderImportPresets', invoices under 'invoiceImportPresets'.
-          const presetStorageKey = syncMode === 'invoices' ? 'invoiceImportPresets' : 'orderImportPresets';
-          const modePresets = syncMode === 'invoices' ? invoiceSyncPresets : orderSyncPresets;
-          const setModePresets = syncMode === 'invoices' ? setInvoiceSyncPresets : setOrderSyncPresets;
-          const modeDefaultConfig = syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG : DEFAULT_ORDER_IMPORT_CONFIG;
-          const modeDefaultName = syncMode === 'invoices' ? 'Sucro Invoices Default' : 'Sucro Default';
+          // Preset storage is per-mode: orders → 'orderImportPresets',
+          // invoices → 'invoiceImportPresets', shipments → 'shipmentImportPresets'.
+          const presetStorageKey =
+            syncMode === 'invoices' ? 'invoiceImportPresets'
+            : syncMode === 'shipments' ? 'shipmentImportPresets'
+            : 'orderImportPresets';
+          const modePresets =
+            syncMode === 'invoices' ? invoiceSyncPresets
+            : syncMode === 'shipments' ? shipmentSyncPresets
+            : orderSyncPresets;
+          const setModePresets =
+            syncMode === 'invoices' ? setInvoiceSyncPresets
+            : syncMode === 'shipments' ? setShipmentSyncPresets
+            : setOrderSyncPresets;
+          const modeDefaultConfig =
+            syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG
+            : syncMode === 'shipments' ? DEFAULT_SHIPMENT_IMPORT_CONFIG
+            : DEFAULT_ORDER_IMPORT_CONFIG;
+          const modeDefaultName =
+            syncMode === 'invoices' ? 'Sucro Invoices Default'
+            : syncMode === 'shipments' ? 'Shipments Template'
+            : 'Sucro Default';
           const savePreset = () => {
             const name = window.prompt('Preset name:', cfg.name || (syncMode === 'invoices' ? 'My Invoice Sheet' : 'My Order Sheet'));
             if (!name) return;
@@ -9900,6 +9917,20 @@ export default function App() {
               } finally {
                 setIsSyncingInvoiceSheet(false);
               }
+            } else if (syncMode === 'shipments') {
+              setIsSyncingSheet(true);
+              try {
+                const preview = await syncShipmentsFromConfig(toRun, {
+                  existingShipments: [...hamiltonShipments, ...vancouverShipments],
+                  customers, skus, qaProducts, carriers,
+                });
+                setShipmentSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingSheet(false);
+              }
             } else {
               setIsSyncingOrdersSheet(true);
               try {
@@ -9925,7 +9956,7 @@ export default function App() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : 'Order'} Sheet Sync</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : 'Order'} Sheet Sync</h3>
                   <button onClick={() => setSyncMode(null)} className="hover:opacity-70"><X size={16} /></button>
                 </div>
 
@@ -10113,6 +10144,136 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* Shipment Sheet Sync — Preview / Confirm modal */}
+        {shipmentSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setShipmentSyncPreview(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Truck size={14} /> Shipment Sync Preview</h3>
+                <button onClick={() => setShipmentSyncPreview(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="border border-emerald-500/40 bg-emerald-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">New Shipments</div>
+                    <div className="text-2xl font-bold">{shipmentSyncPreview.newShipments.length}</div>
+                  </div>
+                  <div className="border border-amber-500/40 bg-amber-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Skipped</div>
+                    <div className="text-2xl font-bold">{shipmentSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="border border-red-500/40 bg-red-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Errors</div>
+                    <div className="text-2xl font-bold">{shipmentSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {shipmentSyncPreview.newShipments.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Shipments ({shipmentSyncPreview.newShipments.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">Date</th>
+                            <th className="p-2 text-left font-bold">Time</th>
+                            <th className="p-2 text-left font-bold">Bay</th>
+                            <th className="p-2 text-left font-bold">Location</th>
+                            <th className="p-2 text-right font-bold">Qty (MT)</th>
+                            <th className="p-2 text-left font-bold">Carrier</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shipmentSyncPreview.newShipments.map(s => (
+                            <tr key={s.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{s.bol}</td>
+                              <td className="p-2">{s.customer}</td>
+                              <td className="p-2">{s.product}</td>
+                              <td className="p-2">{s.date}</td>
+                              <td className="p-2">{s.time || '—'}</td>
+                              <td className="p-2">{s.bay || '—'}</td>
+                              <td className="p-2">{s.location || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(s.qty || 0).toFixed(3)}</td>
+                              <td className="p-2">{s.carrier || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {shipmentSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({shipmentSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto text-xs">
+                      <table className="w-full">
+                        <thead className="bg-[#F5F5F5] sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Tab</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shipmentSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2">{s.tab}</td>
+                              <td className="p-2 font-mono">{s.bolNumber || '—'}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {shipmentSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70 text-red-700">Errors ({shipmentSyncPreview.errors.length})</h4>
+                    <div className="border border-red-300 bg-red-50 max-h-32 overflow-y-auto p-2 text-xs">
+                      {shipmentSyncPreview.errors.map((e, i) => (
+                        <div key={i} className="py-1"><span className="font-mono">{e.tab}</span>{e.rowIdx ? `:row ${e.rowIdx}` : ''} — <span className="text-red-700">{e.message}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setShipmentSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button
+                  disabled={shipmentSyncPreview.newShipments.length === 0}
+                  onClick={() => {
+                    // Bucket imports by location (default to Hamilton when blank).
+                    const newHam: Shipment[] = [];
+                    const newVan: Shipment[] = [];
+                    for (const s of shipmentSyncPreview.newShipments) {
+                      const locLower = (s.location || '').toLowerCase();
+                      if (locLower.includes('vancouver')) newVan.push(s);
+                      else newHam.push(s); // default + any "Hamilton …" goes here
+                    }
+                    if (newHam.length) setHamiltonShipments([...hamiltonShipments, ...newHam]);
+                    if (newVan.length) setVancouverShipments([...vancouverShipments, ...newVan]);
+                    setShipmentSyncPreview(null);
+                  }}
+                  className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                >
+                  Import {shipmentSyncPreview.newShipments.length} Shipment{shipmentSyncPreview.newShipments.length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
 
         {/* Invoice Sheet Sync — Preview / Confirm modal */}
         {invoiceSyncPreview && (

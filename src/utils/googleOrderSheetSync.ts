@@ -18,7 +18,7 @@
 // The sheet must be either "Anyone with link can view" or published to the
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
-import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice } from '../types';
+import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment } from '../types';
 import { parseCSV } from './googleSheetsSync';
 
 // Workbook containing the order tabs to import.
@@ -69,6 +69,10 @@ export interface ParsedOrderRow {
   splitNumber: string;
   /** Price per metric tonne (used when building Invoices). */
   pricePerMt: number;
+  /** Bay / dock value (used when building Shipments). */
+  bay: string;
+  /** Appointment time slot (used when building Shipments). */
+  appointmentTime: string;
 }
 
 export interface OrderSyncResult {
@@ -235,6 +239,8 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       contractNumber: contractRaw,
       splitNumber: splitRaw,
       pricePerMt: (() => { const n = parseFloat(priceRaw); return Number.isFinite(n) ? n : 0; })(),
+      bay: '',
+      appointmentTime: '',
     });
   }
   return out;
@@ -289,6 +295,8 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       contractNumber: contractRaw,
       splitNumber: '', // Molasses tab has no split column
       pricePerMt: 0,
+      bay: '',
+      appointmentTime: '',
     });
   }
   return out;
@@ -838,6 +846,10 @@ export interface ColumnMap {
   /** Price per MT — used by the invoice-sync path; multiplied by quantityMT
    *  to produce Invoice.amount. */
   pricePerMt?: number;
+  /** Bay / dock — used by the shipment-sync path; written to Shipment.bay. */
+  bay?: number;
+  /** Appointment time — used by the shipment-sync path; written to Shipment.time. */
+  appointmentTime?: number;
 }
 
 export interface ConfiguredTab {
@@ -942,6 +954,8 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     contractNumber: find(h => h === 'contract' || h === 'contract #' || h === 'contract number' || h === 'p contract'),
     splitNumber: find(h => h === 'split' || h === 'split #' || h === 'split number' || h === 'split no'),
     pricePerMt: find(h => /^price\s*(per\s*)?mt$|^price\/mt$|^unit price$/.test(h)),
+    bay: find(h => h === 'bay' || h === 'dock' || h === 'bay #' || h === 'dock #'),
+    appointmentTime: find(h => h === 'time' || h === 'appointment' || h === 'appt time' || h === 'appointment time'),
   };
 }
 
@@ -975,6 +989,8 @@ export function parseConfiguredTab(
     const contractRaw = cell(row, cm.contractNumber);
     const splitRaw = cell(row, cm.splitNumber);
     const priceRawC = cell(row, cm.pricePerMt);
+    const bayRaw = cell(row, cm.bay);
+    const apptTimeRaw = cell(row, cm.appointmentTime);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip
@@ -1014,6 +1030,8 @@ export function parseConfiguredTab(
       contractNumber: contractRaw,
       splitNumber: splitRaw,
       pricePerMt: (() => { const n = parseFloat(priceRawC); return Number.isFinite(n) ? n : 0; })(),
+      bay: bayRaw,
+      appointmentTime: apptTimeRaw,
     });
   }
   return out;
@@ -1281,6 +1299,8 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'contractNumber', label: 'Contract Number' },
   { key: 'splitNumber', label: 'Split Number' },
   { key: 'pricePerMt', label: 'Price / MT (invoices)' },
+  { key: 'bay', label: 'Bay / Dock (shipments)' },
+  { key: 'appointmentTime', label: 'Appointment Time (shipments)' },
   { key: 'invoiceNumber', label: 'Invoice Number' },
   { key: 'status', label: 'Status / Cancellation' },
 ];
@@ -1474,4 +1494,171 @@ export async function syncInvoicesFromConfig(
 export const DEFAULT_INVOICE_IMPORT_CONFIG: SheetImportConfig = {
   ...DEFAULT_ORDER_IMPORT_CONFIG,
   name: 'Sucro Invoices (default)',
+};
+
+/* ====================================================================== */
+/* Shipment sync — same fetch + parse pipeline, builds Shipment records   */
+/* instead of Order / Invoice. Tabular sheet layout: one shipment per row. */
+/* ====================================================================== */
+
+export interface ShipmentSyncResult {
+  newShipments: Shipment[];
+  skipped: Array<{ tab: string; bolNumber: string; reason: string }>;
+  errors: Array<{ tab: string; rowIdx: number; message: string }>;
+}
+
+/** ISO week number from a YYYY-MM-DD string. */
+function isoWeekFromDate(dateISO: string): number {
+  const d = new Date(dateISO + 'T00:00:00Z');
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const diff = target.getTime() - firstThursday.getTime();
+  return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
+}
+
+const SHORT_DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export function parsedRowsToShipmentsConfigured(
+  parsed: ParsedOrderRow[],
+  configured: ConfiguredTab[],
+  existingShipments: Shipment[],
+  customers: Customer[],
+  skus: SKU[],
+  qaProducts: QAProduct[],
+  carriers: Carrier[],
+): ShipmentSyncResult {
+  const tabByName = new Map<string, ConfiguredTab>();
+  for (const t of configured) tabByName.set(t.tabName, t);
+
+  const result: ShipmentSyncResult = { newShipments: [], skipped: [], errors: [] };
+
+  // Dedup: shipments are keyed on (bol + date + time + bay) so the same BOL
+  // can have multiple appointments at different docks/times without collision.
+  const shipmentKey = (s: { bol?: string; date?: string; time?: string; bay?: string }) =>
+    `${(s.bol || '').trim().toUpperCase()}|${s.date || ''}|${s.time || ''}|${s.bay || ''}`;
+  const existingKeys = new Set(existingShipments.map(s => shipmentKey(s)));
+  const addedKeys = new Set<string>();
+
+  for (const r of parsed) {
+    try {
+      if (isCancelledStatus(r.status)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: 'Row marked cancelled' });
+        continue;
+      }
+      if (!r.bolNumber || !r.bolNumber.trim()) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: 'Row has no BOL number' });
+        continue;
+      }
+      if (!r.shipmentDate) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: 'Row has no shipment date' });
+        continue;
+      }
+
+      const explicit = tabByName.get(r.tab);
+      const tabFormat = explicit?.expectedFormat;
+      const bolPrefix = r.bolNumber.trim().charAt(0).toUpperCase();
+      let expectedFormat = tabFormat;
+      if (bolPrefix === 'B') expectedFormat = 'Bulk';
+      else if (bolPrefix === 'P') expectedFormat = 'Bagged';
+
+      const customerCanonical = resolveCustomer(r.customerName, customers);
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+
+      const dateISO = r.shipmentDate;
+      const week = `Week ${isoWeekFromDate(dateISO)}`;
+      const d = new Date(dateISO + 'T00:00:00Z');
+      const day = SHORT_DAY[d.getUTCDay()];
+
+      const candidateKey = shipmentKey({
+        bol: r.bolNumber, date: dateISO, time: r.appointmentTime, bay: r.bay,
+      });
+      if (existingKeys.has(candidateKey) || addedKeys.has(candidateKey)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: 'Shipment already scheduled for this BOL/date/time/bay' });
+        continue;
+      }
+
+      const newShipment: Shipment = {
+        id: `SHIP-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        week,
+        date: dateISO,
+        day,
+        time: r.appointmentTime || '',
+        bay: r.bay || '',
+        customer: customerCanonical,
+        product: productRefs.productDisplayName || productRefs.productName,
+        po: r.poNumber,
+        bol: r.bolNumber,
+        qty: r.quantityMT,
+        carrier: carrierCanonical || '',
+        arrive: '',
+        start: '',
+        out: '',
+        status: 'Scheduled',
+        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
+      } as Shipment;
+
+      result.newShipments.push(stripUndefined(newShipment));
+      addedKeys.add(candidateKey);
+    } catch (err) {
+      result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Run a shipment sync against any sheet/config. Same fetch + parse path as
+ *  orders + invoices; the difference is the row-to-record conversion. */
+export async function syncShipmentsFromConfig(
+  config: SheetImportConfig,
+  ctx: {
+    existingShipments: Shipment[];
+    customers: Customer[];
+    skus: SKU[];
+    qaProducts: QAProduct[];
+    carriers: Carrier[];
+  },
+): Promise<ShipmentSyncResult> {
+  const allParsed: ParsedOrderRow[] = [];
+  const fetchErrors: ShipmentSyncResult['errors'] = [];
+
+  for (const tab of config.tabs) {
+    try {
+      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+      const rows = parseCSV(csv);
+      allParsed.push(...parseConfiguredTab(rows, tab));
+    } catch (err) {
+      fetchErrors.push({
+        tab: tab.tabName,
+        rowIdx: 0,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const result = parsedRowsToShipmentsConfigured(
+    allParsed, config.tabs,
+    ctx.existingShipments, ctx.customers, ctx.skus, ctx.qaProducts, ctx.carriers,
+  );
+  result.errors.unshift(...fetchErrors);
+  return result;
+}
+
+/** Default shipment-sync preset — tabular layout starter. Users can clone,
+ *  point at their sheet, save their own preset under a different name. */
+export const DEFAULT_SHIPMENT_IMPORT_CONFIG: SheetImportConfig = {
+  name: 'Shipments (tabular template)',
+  sheetId: '',
+  tabs: [
+    {
+      tabName: 'Sheet1',
+      columns: {
+        // Indices left blank — click "Fetch Headers" then "Auto-detect Columns"
+        // in the modal to populate them from a real sheet.
+      },
+    },
+  ],
 };
