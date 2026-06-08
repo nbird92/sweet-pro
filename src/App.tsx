@@ -7526,6 +7526,30 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Plus size={12} /> Backfill from Orders/Invoices
             </button>
+            {/* TEMPORARY — wipes every contract from the table and Firestore so
+                the user can start fresh. Remove this button once the table is
+                in the desired state. */}
+            <button
+              onClick={async () => {
+                const count = contracts.length;
+                if (count === 0) { alert('No contracts to clear.'); return; }
+                const first = window.confirm(`Clear ALL ${count} contracts? This cannot be undone.`);
+                if (!first) return;
+                const second = window.confirm(`Really delete every contract? Type-check: this removes ${count} records permanently.`);
+                if (!second) return;
+                setContracts([]);
+                try {
+                  await syncCollection(COLLECTIONS.contracts, []);
+                  alert(`Cleared ${count} contracts.`);
+                } catch (err) {
+                  alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Contracts may reappear on reload.`);
+                }
+              }}
+              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-all whitespace-nowrap border border-red-300/40"
+              title="TEMPORARY: deletes every contract from the table and Firestore. Remove this button after use."
+            >
+              <X size={12} /> Clear All
+            </button>
           </PageBanner>
 
           <div className="px-6 pt-4">
@@ -7612,6 +7636,13 @@ export default function App() {
                         const volumeOnOrderComputed = ordersOnContract
                           .filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
                           .reduce((sum, o) => sum + sumOrderWeight(o), 0);
+                        // Volume Outstanding is always Contract Volume − Volume Taken.
+                        // (Source of truth: the computed Volume Taken from
+                        // invoices; the persisted c.volumeOutstanding is ignored
+                        // because it can drift when invoices are added/removed
+                        // without touching the contract row.)
+                        const contractVolumeNum = c.contractVolume || 0;
+                        const volumeOutstandingComputed = contractVolumeNum - volumeTakenComputed;
                         return (
                           <>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
@@ -7632,10 +7663,12 @@ export default function App() {
                                 {volumeOnOrderComputed.toFixed(2)}
                               </button>
                             </td>
+                            <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${volumeOutstandingComputed < 0 ? 'text-red-700' : ''}`}>
+                              {volumeOutstandingComputed.toFixed(2)}
+                            </td>
                           </>
                         );
                       })()}
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(c.volumeOutstanding || c.contractVolume)?.toFixed(2)}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractDate || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
