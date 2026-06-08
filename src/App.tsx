@@ -7320,7 +7320,7 @@ export default function App() {
           { header: 'Final Price', key: 'finalPrice', format: 'currency' },
           { header: 'Currency', key: 'currency' },
           { header: 'FX Rate', key: 'fxRate', format: 'number' },
-          { header: '#11 Raw (USD)', key: 'rawPriceUsdMt', format: 'number' },
+          { header: 'Raws', key: 'rawPriceUsdMt', format: 'number' },
           { header: 'Margin (CAD/MT)', key: 'margin', format: 'number' },
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Payment Terms', key: 'paymentTerms' },
@@ -7570,7 +7570,7 @@ export default function App() {
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
                   <SortableHeader label="FX Rate" sortKey="fxRate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="#11 Raw (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Raws" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
@@ -7594,7 +7594,8 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? `$${(c.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
+                      {/* Raws — raw stored value, no MT↔cwt conversion. */}
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? c.rawPriceUsdMt : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       {(() => {
@@ -11463,8 +11464,8 @@ export default function App() {
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
-                        <td className="px-4 py-2 opacity-70">Raw #11 (USD/cwt)</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.rawPriceUsdMt ? `$${(selectedContractDetail.rawPriceUsdMt / 22.0462).toFixed(2)}` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Raws</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.rawPriceUsdMt ? selectedContractDetail.rawPriceUsdMt : '—'}</td>
                         <td className="px-4 py-2 opacity-70">Export Duty</td>
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</td>
                       </tr>
