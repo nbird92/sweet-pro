@@ -2019,6 +2019,83 @@ export default function App() {
     bolBackfillRan.current = true;
   }, [orders, invoices, productGroups, skus]);
 
+  // Auto-fill contract ↔ ITAS Name + Customer fields.
+  //   ITAS → Customer:
+  //     - Strongest signal: customer.itasCustomerName === contract.itasName.
+  //     - Otherwise strip a trailing ".X" suffix from the ITAS name and look
+  //       for a customer whose name matches (case-insensitive).
+  //         "Lalle.P"   → "Lalle"   → customer "Lalle"
+  //         "LECLERC.P" → "LECLERC" → customer "Leclerc"
+  //   Customer → ITAS:
+  //     - When the contract has a customer link but no itasName, copy
+  //       customer.itasCustomerName onto the contract.
+  // Only BLANK fields are filled; user-entered values are never overwritten.
+  // The effect is idempotent — once every contract is filled, it short-circuits.
+  useEffect(() => {
+    if (contracts.length === 0 || customers.length === 0) return;
+
+    const itasToCustomerKey = (itas: string | undefined): string => {
+      if (!itas) return '';
+      // Strip a trailing dot + 1-3 letters ("Lalle.P" → "Lalle").
+      const stripped = itas.replace(/\.[A-Za-z]{1,4}$/, '');
+      return stripped.trim().toLowerCase();
+    };
+
+    const findCustomerForItas = (itas: string): Customer | null => {
+      if (!itas) return null;
+      const itasNorm = itas.trim().toLowerCase();
+      // Direction A: exact itasCustomerName match — strongest signal.
+      const byItasField = customers.find(c => (c.itasCustomerName || '').trim().toLowerCase() === itasNorm);
+      if (byItasField) return byItasField;
+      // Direction B: name match against the stripped key.
+      const key = itasToCustomerKey(itas);
+      if (!key) return null;
+      return customers.find(c => (c.name || '').trim().toLowerCase() === key) || null;
+    };
+
+    const findCustomerForContract = (c: Contract): Customer | null => {
+      const byName = (c.customerName || '').trim().toLowerCase();
+      const byNumber = (c.customerNumber || '').trim();
+      if (byName) {
+        const match = customers.find(cust => (cust.name || '').trim().toLowerCase() === byName);
+        if (match) return match;
+      }
+      if (byNumber) {
+        const match = customers.find(cust => cust.customerNumber === byNumber || cust.id === byNumber);
+        if (match) return match;
+      }
+      return null;
+    };
+
+    let changed = false;
+    const updated = contracts.map(c => {
+      const patch: Partial<Contract> = {};
+
+      // Direction 1: ITAS → Customer (fill blank customerName / customerNumber)
+      if (c.itasName && (!c.customerName || !c.customerNumber)) {
+        const matched = findCustomerForItas(c.itasName);
+        if (matched) {
+          if (!c.customerName) patch.customerName = matched.name;
+          if (!c.customerNumber) patch.customerNumber = matched.customerNumber || matched.id;
+        }
+      }
+
+      // Direction 2: Customer → ITAS (fill blank itasName)
+      if (!c.itasName && (c.customerName || c.customerNumber)) {
+        const matched = findCustomerForContract(c);
+        if (matched?.itasCustomerName) {
+          patch.itasName = matched.itasCustomerName;
+        }
+      }
+
+      if (Object.keys(patch).length === 0) return c;
+      changed = true;
+      return { ...c, ...patch };
+    });
+
+    if (changed) setContracts(updated);
+  }, [contracts, customers]);
+
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);
   useEffect(() => {
