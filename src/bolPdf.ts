@@ -193,6 +193,8 @@ export function generateBolPdf({
 
   if (order?.lineItems && order.lineItems.length > 0) {
     order.lineItems.forEach(item => {
+      // QA spec lookup uses the bare productName so the catalog match
+      // works even when productDisplayName carries a weight suffix.
       const qaProduct = qaProducts.find(p => p.skuName === item.productName);
       const netWt = qaProduct?.netWeightKg || item.netWeightPerUnit || 0;
       const grossWt = qaProduct?.grossWeightKg || 0;
@@ -201,19 +203,24 @@ export function generateBolPdf({
       totalNetWeight += itemNet;
       totalGrossWeight += itemGross;
 
+      // Description Of Goods = the same product string the order shows
+      // (productDisplayName when set, falling back to bare productName).
+      const description = item.productDisplayName || item.productName || '';
       lineItemsData.push([
         item.totalWeight ? item.totalWeight.toFixed(2) : '',
         item.qty ? item.qty.toString() : '',
-        item.productName || '',
+        description,
         itemNet ? itemNet.toFixed(2) : '',
         itemGross ? itemGross.toFixed(2) : '',
       ]);
     });
   } else {
+    // No line items — fall back to the order's product field (matches what
+    // the order row shows in the Orders table) before the shipment's.
     lineItemsData.push([
       shipment.qty ? shipment.qty.toString() : '',
       '',
-      shipment.product || '',
+      order?.product || shipment.product || '',
       '',
       '',
     ]);

@@ -112,7 +112,13 @@ function generateCoaPage(
   // TOP INFO ROW — 4 equal-width fields
   // ═══════════════════════════════════════════════════════════
   const fieldW = contentWidth / 4;
-  const productName = shipment.product || order?.product || '';
+  // Display product = same string the order shows in the Orders table.
+  // Lookup product = bare catalog name used to hit the qaProducts table
+  // (Order.product may include a weight prefix like "20kg GC100" which
+  // wouldn't match a QA.skuName of "GC100").
+  const displayProductName = order?.product || shipment.product || '';
+  const lookupProductName = order?.lineItems?.[0]?.productName || shipment.product || displayProductName;
+  const productName = displayProductName;
   const bolNum = shipment.bol || order?.bolNumber || '';
   const lotNums = shipmentLotCodes.map(lc => lc.lotNumber).join(', ');
   const testDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
@@ -135,12 +141,18 @@ function generateCoaPage(
   y = drawSectionHeader(doc, 'PRODUCT INFORMATION', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'SHIPMENT INFORMATION', rightCol, headerY, rightHalf);
 
-  const qaProduct = qaProducts.find(p => p.skuName === productName);
+  // QA-spec lookup uses the bare productName (e.g. "GC100") since QA records
+  // are keyed on skuName without weight prefixes. Fall back to the display
+  // string when no line item is available.
+  const qaProduct =
+    qaProducts.find(p => p.skuName === lookupProductName) ||
+    qaProducts.find(p => p.skuName === productName);
   const origins = [...new Set(shipmentLotCodes.map(lc => lc.countryOfOrigin).filter(Boolean))].join(', ');
   const category = shipmentLotCodes.length > 0 ? shipmentLotCodes[0].category : (qaProduct?.category || '');
   const productGroup = qaProduct?.productGroup || (shipmentLotCodes.length > 0 ? shipmentLotCodes[0].productGroup : '');
 
   let ly = y;
+  // "Product" row shows the display string (same as the order shows).
   ly = drawFieldRow(doc, 'Product', productName, leftCol, ly, halfWidth);
   ly = drawFieldRow(doc, 'Product Group', productGroup, leftCol, ly, halfWidth);
   ly = drawFieldRow(doc, 'Category', category, leftCol, ly, halfWidth);
@@ -302,9 +314,15 @@ export function generateCoaPdf({
     .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
     .filter((lc): lc is LotCode => !!lc);
 
-  // Determine sugar type from lot codes or QA product
-  const productName = shipment.product || order?.product || '';
-  const qaProduct = qaProducts.find(p => p.skuName === productName);
+  // Determine sugar type from lot codes or QA product. Use the bare
+  // lookup name for the QA hit; the display-string is reserved for any
+  // user-facing fields.
+  const displayProductName = order?.product || shipment.product || '';
+  const lookupProductName = order?.lineItems?.[0]?.productName || shipment.product || displayProductName;
+  const productName = displayProductName;
+  const qaProduct =
+    qaProducts.find(p => p.skuName === lookupProductName) ||
+    qaProducts.find(p => p.skuName === productName);
   const sugarType = shipmentLotCodes.length > 0
     ? shipmentLotCodes[0].sugarType
     : (qaProduct?.sugarType || '');
