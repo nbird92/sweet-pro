@@ -9567,18 +9567,6 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
-                  {/* What happens next */}
-                  <div className="border border-blue-300 bg-blue-50 p-3 text-xs space-y-1">
-                    <div className="font-bold uppercase tracking-widest text-[10px] text-blue-900 mb-1">What happens when you confirm</div>
-                    <div>• Order status changes to <strong>Completed</strong></div>
-                    <div>• An invoice for <strong>${invoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> is created against the linked contract</div>
-                    {emailSettings.enabled && emailSettings.triggers.bolOnCompletedAndBilled && (
-                      <div>• <strong>BOL</strong> email is sent automatically (Email Center trigger is ON)</div>
-                    )}
-                    {emailSettings.enabled && emailSettings.triggers.coaOnCompletedAndBilled && (
-                      <div>• <strong>COA</strong> email is sent automatically (Email Center trigger is ON)</div>
-                    )}
-                  </div>
                 </div>
                 <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex justify-end gap-2">
                   <button
