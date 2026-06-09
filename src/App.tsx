@@ -287,6 +287,11 @@ export default function App() {
   const setModalMinimized = (key: string, val: boolean) => setModalStates(prev => ({ ...prev, [key]: { ...getModalState(key), minimized: val } }));
   const setModalMaximized = (key: string, val: boolean) => setModalStates(prev => ({ ...prev, [key]: { ...getModalState(key), maximized: val } }));
   const resetModalState = (key: string) => setModalStates(prev => { const next = { ...prev }; delete next[key]; return next; });
+
+  // Auto-maximize the Order Details modal whenever it opens — operators
+  // wanted it full-screen by default. They can still hit the Restore (▣)
+  // button to shrink it; that user choice persists for as long as the
+  // modal stays open. Opening a *different* order re-maximizes.
   const [isAddingOrder, setIsAddingOrder] = useState(false);
   const [isAddingBatchOrder, setIsAddingBatchOrder] = useState(false);
   const [batchOrder, setBatchOrder] = useState<{
@@ -1356,6 +1361,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Auto-maximize the Order Details modal whenever a new order is opened.
+  useEffect(() => {
+    if (viewingOrderCard) {
+      setModalMaximized('order', true);
+    }
+  }, [viewingOrderCard?.id]);
+
   const handleGoogleSignIn = async () => {
     try {
       setSyncError(null);
@@ -1808,6 +1820,9 @@ export default function App() {
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
   const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
+  // Confirm + summary popup shown before Complete & Bill actually runs.
+  // Holds the order being confirmed; null hides the dialog.
+  const [completeAndBillConfirm, setCompleteAndBillConfirm] = useState<Order | null>(null);
   const [editingCarrier, setEditingCarrier] = useState<Carrier | null>(null);
   const [isAddingShipment, setIsAddingShipment] = useState(false);
   const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
@@ -9409,18 +9424,7 @@ export default function App() {
                     </button>
                     {viewingOrderCard.status === 'Confirmed' && (
                       <button
-                        onClick={() => {
-                          const matchingShipment =
-                            [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === viewingOrderCard.bolNumber) ||
-                            null;
-                          if (matchingShipment) {
-                            setEditingShipment(matchingShipment);
-                            setPendingCompleteOrderId(viewingOrderCard.id);
-                          } else {
-                            completeAndBillOrder(viewingOrderCard.id);
-                          }
-                          setViewingOrderCard(null);
-                        }}
+                        onClick={() => setCompleteAndBillConfirm(viewingOrderCard)}
                         className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all"
                       >
                         <CheckCircle2 size={14} /> Complete &amp; Bill
@@ -9506,6 +9510,109 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Complete & Bill confirmation modal — shows an order summary so the
+            operator can sanity-check before billing. Triggered from the
+            Complete & Bill button in the order detail card. */}
+        {completeAndBillConfirm && (() => {
+          const ord = completeAndBillConfirm;
+          const cust = customers.find(c => c.name === ord.customer);
+          const shipTo = ord.shipToLocationId
+            ? cust?.shipToLocations?.find(l => l.id === ord.shipToLocationId)?.name
+            : '';
+          const contractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
+          const contract = contracts.find(c => c.contractNumber === contractNum);
+          const totalWeightMT = ord.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+          const totalWeightKg = totalWeightMT * 1000;
+          const invoiceAmount = contract
+            ? totalWeightMT * contract.finalPrice
+            : totalWeightMT * config.refiningMarginCadMt;
+          const productsList = ord.lineItems
+            .map(li => li.productDisplayName || li.productName)
+            .filter(Boolean).join(', ') || ord.product || '—';
+          return (
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setCompleteAndBillConfirm(null)}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-emerald-700 text-white px-6 py-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle2 size={16} /> Confirm Complete &amp; Bill
+                  </h3>
+                  <button onClick={() => setCompleteAndBillConfirm(null)} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+                <div className="p-6 space-y-5">
+                  <p className="text-sm">
+                    You are about to <strong>complete</strong> this order and create the corresponding <strong>invoice</strong>. Review the summary below before confirming — this action cannot be undone from the orders table.
+                  </p>
+                  <div className="border border-[#141414]/20 bg-[#F5F5F5]">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-[10px] uppercase font-bold tracking-widest">Order Summary</div>
+                    <table className="w-full text-sm">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <SummaryRow label="BOL Number" value={ord.bolNumber || '—'} mono />
+                        <SummaryRow label="Customer" value={ord.customer || '—'} bold />
+                        <SummaryRow label="Ship To" value={shipTo || '—'} />
+                        <SummaryRow label="PO Number" value={ord.po || '—'} mono />
+                        <SummaryRow label="Contract #" value={contractNum || '—'} mono />
+                        <SummaryRow label="Product(s)" value={productsList} />
+                        <SummaryRow label="Total Weight" value={`${totalWeightKg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg  (${totalWeightMT.toFixed(3)} MT)`} mono />
+                        <SummaryRow label="Shipment Date" value={ord.shipmentDate || '—'} />
+                        <SummaryRow label="Delivery Date" value={ord.deliveryDate || '—'} />
+                        <SummaryRow label="Carrier" value={ord.carrier || '—'} />
+                        <SummaryRow label="Invoice Amount" value={`$${invoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${ord.currency || 'CAD'}`} bold />
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* What happens next */}
+                  <div className="border border-blue-300 bg-blue-50 p-3 text-xs space-y-1">
+                    <div className="font-bold uppercase tracking-widest text-[10px] text-blue-900 mb-1">What happens when you confirm</div>
+                    <div>• Order status changes to <strong>Completed</strong></div>
+                    <div>• An invoice for <strong>${invoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> is created against the linked contract</div>
+                    {emailSettings.enabled && emailSettings.triggers.bolOnCompletedAndBilled && (
+                      <div>• <strong>BOL</strong> email is sent automatically (Email Center trigger is ON)</div>
+                    )}
+                    {emailSettings.enabled && emailSettings.triggers.coaOnCompletedAndBilled && (
+                      <div>• <strong>COA</strong> email is sent automatically (Email Center trigger is ON)</div>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex justify-end gap-2">
+                  <button
+                    onClick={() => setCompleteAndBillConfirm(null)}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const orderToBill = ord;
+                      setCompleteAndBillConfirm(null);
+                      // Match the previous flow: if a shipment is linked,
+                      // open the shipment-edit modal first (and complete
+                      // bill once it saves); otherwise bill immediately.
+                      const matchingShipment =
+                        [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === orderToBill.bolNumber) || null;
+                      if (matchingShipment) {
+                        setEditingShipment(matchingShipment);
+                        setPendingCompleteOrderId(orderToBill.id);
+                      } else {
+                        completeAndBillOrder(orderToBill.id);
+                      }
+                      setViewingOrderCard(null);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all"
+                  >
+                    <CheckCircle2 size={14} /> Confirm — Complete &amp; Bill
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Add / Edit Carrier Modal */}
@@ -15691,7 +15798,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
                 <AlertCircle size={20} className="text-amber-400" />
@@ -15705,6 +15812,19 @@ export default function App() {
                   const isCancelling = pendingStatusChange.newStatus === 'Cancelled';
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
                   const associatedShipments = allShipments.filter(s => s.bol === order.bolNumber);
+                  // New fields shown alongside the existing summary so the
+                  // operator can confirm product / destination / dates /
+                  // contract without leaving the modal.
+                  const cust = customers.find(c => c.name === order.customer);
+                  const shipTo = order.shipToLocationId
+                    ? cust?.shipToLocations?.find(l => l.id === order.shipToLocationId)?.name
+                    : '';
+                  const contractNum = order.contractNumber
+                    || order.lineItems.map(li => li.contractNumber).filter(Boolean)[0]
+                    || '';
+                  const productsList = order.lineItems
+                    .map(li => li.productDisplayName || li.productName)
+                    .filter(Boolean).join(', ') || order.product || '—';
                   return (
                     <>
                       <p className="text-sm leading-relaxed">
@@ -15714,21 +15834,37 @@ export default function App() {
                         }
                       </p>
                       <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                        <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
                           <span>BOL #</span>
-                          <span className="text-sm font-black">{order.bolNumber}</span>
+                          <span className="text-sm font-black text-right">{order.bolNumber || '—'}</span>
                         </div>
-                        <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
                           <span>Customer</span>
-                          <span className="text-sm font-black">{order.customer}</span>
+                          <span className="text-sm font-black text-right">{order.customer || '—'}</span>
                         </div>
-                        <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
+                          <span>Product</span>
+                          <span className="text-sm font-black text-right">{productsList}</span>
+                        </div>
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
+                          <span>Ship To</span>
+                          <span className="text-sm font-black text-right">{shipTo || '—'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
+                          <span>Contract #</span>
+                          <span className="text-sm font-black text-right font-mono">{contractNum || '—'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
+                          <span>Delivery Date</span>
+                          <span className="text-sm font-black text-right">{order.deliveryDate || '—'}</span>
+                        </div>
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
                           <span>Items</span>
-                          <span className="text-sm font-black">{order.lineItems.length}</span>
+                          <span className="text-sm font-black text-right">{order.lineItems.length}</span>
                         </div>
-                        <div className="flex justify-between text-[10px] uppercase font-bold opacity-50">
+                        <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
                           <span>Total Weight</span>
-                          <span className="text-sm font-black">{totalWeight.toFixed(2)} MT</span>
+                          <span className="text-sm font-black text-right">{totalWeight.toFixed(2)} MT</span>
                         </div>
                         {isCancelling && associatedShipments.length > 0 && (
                           <div className="flex justify-between text-[10px] uppercase font-bold text-red-500">
@@ -16673,6 +16809,17 @@ function SearchInput({ value, onChange, placeholder }: { value: string, onChange
         className="block w-full pl-10 pr-3 py-2 border border-[#141414] bg-white text-xs font-bold uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-[#141414]/20 transition-all shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]"
       />
     </div>
+  );
+}
+
+/** Compact label/value row used in the Complete & Bill summary and the
+ *  Confirm Order Status Change modal. */
+function SummaryRow({ label, value, bold, mono }: { label: string; value: React.ReactNode; bold?: boolean; mono?: boolean }) {
+  return (
+    <tr>
+      <td className="px-4 py-2 text-[10px] uppercase font-bold opacity-60 tracking-widest w-1/3 align-top">{label}</td>
+      <td className={`px-4 py-2 ${bold ? 'font-bold' : ''} ${mono ? 'font-mono' : ''}`}>{value}</td>
+    </tr>
   );
 }
 
