@@ -9329,6 +9329,40 @@ export default function App() {
                     >
                       <FileText size={14} /> Preview BOL
                     </button>
+                    {/* Preview COA — same stub-or-match shipment resolution as
+                        Preview BOL so the operator can review the Certificate
+                        of Analysis before completing the order. */}
+                    <button
+                      onClick={() => {
+                        const matchingShipment =
+                          [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === viewingOrderCard.bolNumber) ||
+                          ({
+                            id: `TMP-${viewingOrderCard.id}`,
+                            week: '',
+                            date: viewingOrderCard.shipmentDate || '',
+                            day: '',
+                            time: '',
+                            bay: '',
+                            customer: viewingOrderCard.customer,
+                            product: viewingOrderCard.product || viewingOrderCard.lineItems.map(li => li.productName).join(', '),
+                            contractNumber: viewingOrderCard.contractNumber || (viewingOrderCard.lineItems[0]?.contractNumber ?? ''),
+                            po: viewingOrderCard.po,
+                            bol: viewingOrderCard.bolNumber,
+                            qty: viewingOrderCard.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
+                            carrier: viewingOrderCard.carrier || '',
+                            arrive: '',
+                            start: '',
+                            out: '',
+                            status: 'Pending',
+                            deliveryDate: viewingOrderCard.deliveryDate || '',
+                            location: viewingOrderCard.location || '',
+                          } as Shipment);
+                        handleGenerateCoa(matchingShipment);
+                      }}
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                    >
+                      <FileText size={14} /> Preview COA
+                    </button>
                     {/* Edit Shipment — always available. Creates a draft shipment on the fly when none exists yet. */}
                     <button
                       onClick={() => {
