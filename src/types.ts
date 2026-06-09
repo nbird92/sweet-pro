@@ -405,6 +405,82 @@ export const INITIAL_SHIPPING_TERMS: ShippingTerm[] = [
   { id: 'ST-004', name: 'FCA', description: 'Free Carrier — seller delivers to carrier at named place' },
 ];
 
+/* ====================================================================== */
+/* Email Center — outbound transactional emails (order confirmations, BOLs */
+/* COAs, invoices) + their audit log. Powered by Resend.                  */
+/* ====================================================================== */
+
+export type EmailDocumentType = 'order_confirmation' | 'bol' | 'coa' | 'invoice';
+export type EmailStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'bounced';
+
+export interface EmailLog {
+  id: string;
+  type: EmailDocumentType;
+  /** Source record this email is about (one of these will be set). */
+  orderId?: string;
+  shipmentId?: string;
+  invoiceId?: string;
+  /** Snapshot of intended recipient + the actual recipient when test-mode is on. */
+  customerName: string;
+  recipientTo: string[];
+  recipientCc?: string[];
+  actualRecipientTo: string[]; // What was actually sent — differs from recipientTo when test-mode reroutes
+  subject: string;
+  attachmentFilename?: string;
+  attachmentSizeBytes?: number;
+  status: EmailStatus;
+  providerMessageId?: string; // Resend's message id
+  error?: string;
+  /** Stable key — e.g. "order_confirmation:ORD-123" — prevents double sends. */
+  idempotencyKey: string;
+  attemptCount: number;
+  testMode: boolean; // Was this send routed through test mode?
+  triggeredBy: 'automation' | 'manual' | 'retry';
+  triggeredByUser?: string;
+  createdAt: string;
+  sentAt?: string;
+}
+
+export interface EmailSettings {
+  id: string; // always "settings" (single-doc collection)
+  /** Master kill switch — when false, no sends happen at all. */
+  enabled: boolean;
+  /** When true, every send is rerouted to testAddress with [TEST] subject prefix. */
+  testMode: boolean;
+  testAddress: string;
+  /** Display name shown in From header, e.g. "Sucro Canada Sales". */
+  fromName: string;
+  /** Defaults pulled from server env when blank. */
+  fromAddress?: string;
+  replyToAddress?: string;
+  /** Always BCC these on every send (internal audit trail). */
+  internalCc: string[];
+  /** Per-event auto-send toggles. Off by default in Phase 1 — manual sends only. */
+  triggers: {
+    orderConfirmationOnConfirmed: boolean;
+    bolOnShipmentLoaded: boolean;
+    coaOnQaApproval: boolean;
+    invoiceOnBilled: boolean;
+  };
+}
+
+export const INITIAL_EMAIL_SETTINGS: EmailSettings = {
+  id: 'settings',
+  enabled: true,
+  testMode: true,
+  testAddress: '', // user fills in via Email Center UI
+  fromName: 'Sucro Canada',
+  fromAddress: '', // server fills from env when blank
+  replyToAddress: '',
+  internalCc: [],
+  triggers: {
+    orderConfirmationOnConfirmed: false,
+    bolOnShipmentLoaded: false,
+    coaOnQaApproval: false,
+    invoiceOnBilled: false,
+  },
+};
+
 export const INITIAL_SUPPLY_CHAIN: SupplyChainComponent[] = [
   { id: 'SC-001', component: 'Ocean Freight', provider: 'Maersk', totalCostCad: 4500, weightPerLoadMt: 22 },
   { id: 'SC-002', component: 'Port Handling', provider: 'Port of Vancouver', totalCostCad: 850, weightPerLoadMt: 22 },

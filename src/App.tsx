@@ -50,7 +50,8 @@ import {
   FlaskConical,
   BarChart3,
   Landmark,
-  Zap
+  Zap,
+  Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -58,9 +59,11 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
+import { sendEmail, idempotencyKey } from './utils/sendEmail';
+import EmailCenterPage from './components/EmailCenterPage';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -233,6 +236,9 @@ export default function App() {
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
   const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>(INITIAL_SHIPPING_TERMS);
+  // Email Center — outbound transactional emails + settings (Resend-backed).
+  const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
   const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
   const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
@@ -1367,6 +1373,131 @@ export default function App() {
     }
   };
 
+  // Tiny HTML-escape so customer / order strings injected into the email
+  // body can't break out of the template.
+  const escapeHtml = (s: string): string =>
+    String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+
+  /**
+   * Send the order-confirmation PDF to the customer's customerServiceEmail
+   * via the Resend-backed /api/send-email endpoint. The full pipeline:
+   *   1. Generate the PDF in-browser (existing generateOrderConfirmationPdf).
+   *   2. Write a "sending" entry to emailLog so the operator can see the
+   *      attempt even if the request crashes mid-flight.
+   *   3. POST the base64 PDF + recipient + subject + HTML body to the API.
+   *   4. Patch the log row with the result (sent / failed + messageId).
+   * Respects EmailSettings.enabled and reroutes through testAddress when
+   * EmailSettings.testMode is on. Idempotency-keyed per order so retries
+   * surface as a second attempt on the same log row rather than a dupe.
+   */
+  const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
+    if (!emailSettings.enabled) {
+      setErrorBox('Email sending is disabled in the Email Center. Turn it on in Settings to send.');
+      return;
+    }
+    if (emailSettings.testMode && !emailSettings.testAddress) {
+      setErrorBox('Test mode is on but no test address is configured. Open Email Center → Settings and set a test address first.');
+      return;
+    }
+
+    const customer = customers.find(c => c.name === order.customer);
+    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    if (!recipientTo) {
+      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file. Add it to the customer record and try again.`);
+      return;
+    }
+    const carrier = carriers.find(c => c.name === order.carrier);
+    const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
+    const shipToLocation = order.shipToLocationId
+      ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId)
+      : undefined;
+
+    let blobUrl = '';
+    let filename = '';
+    let pdfBlob: Blob | undefined;
+    try {
+      const gen = generateOrderConfirmationPdf({ order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus });
+      blobUrl = gen.blobUrl;
+      filename = gen.filename;
+      pdfBlob = await fetch(blobUrl).then(r => r.blob());
+    } catch (e: any) {
+      setErrorBox('Failed to generate the PDF: ' + (e?.message || 'Unknown error'));
+      return;
+    }
+
+    const totalKg = (order.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
+    const subject = `Order Confirmation — BOL ${order.bolNumber || order.id}`;
+    const html = `
+      <p>Hello ${escapeHtml(order.customer || '')},</p>
+      <p>Please find attached the order confirmation for the order below.</p>
+      <table cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">
+        <tr><td><strong>BOL Number</strong></td><td>${escapeHtml(order.bolNumber || '—')}</td></tr>
+        <tr><td><strong>PO Number</strong></td><td>${escapeHtml(order.po || '—')}</td></tr>
+        <tr><td><strong>Product</strong></td><td>${escapeHtml(order.product || order.lineItems?.[0]?.productName || '—')}</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Shipment Date</strong></td><td>${escapeHtml(order.shipmentDate || '—')}</td></tr>
+        <tr><td><strong>Carrier</strong></td><td>${escapeHtml(order.carrier || '—')}</td></tr>
+      </table>
+      <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada Sales')}</p>
+    `.trim();
+
+    // 1. Write the queued log row first.
+    const logId = `EMAIL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const idemKey = idempotencyKey('order_confirmation', order.id);
+    const existing = emailLog.find(l => l.idempotencyKey === idemKey);
+    const attemptCount = (existing?.attemptCount ?? 0) + 1;
+    const initial: EmailLog = {
+      id: logId,
+      type: 'order_confirmation',
+      orderId: order.id,
+      customerName: order.customer || '',
+      recipientTo: [recipientTo],
+      recipientCc: emailSettings.internalCc.length ? [...emailSettings.internalCc] : undefined,
+      actualRecipientTo: emailSettings.testMode ? [emailSettings.testAddress] : [recipientTo],
+      subject,
+      attachmentFilename: filename,
+      attachmentSizeBytes: pdfBlob?.size,
+      status: 'sending',
+      idempotencyKey: idemKey,
+      attemptCount,
+      testMode: !!emailSettings.testMode,
+      triggeredBy: opts?.triggeredBy || 'manual',
+      triggeredByUser: user?.email || undefined,
+      createdAt: new Date().toISOString(),
+    };
+    setEmailLog(prev => [initial, ...prev]);
+
+    // 2. Send.
+    const result = await sendEmail({
+      to: [recipientTo],
+      cc: emailSettings.internalCc.length ? emailSettings.internalCc : undefined,
+      subject,
+      html,
+      attachment: pdfBlob,
+      attachmentFilename: filename,
+      testMode: !!emailSettings.testMode,
+      testAddress: emailSettings.testAddress,
+      fromName: emailSettings.fromName || undefined,
+    });
+
+    // 3. Patch the log row with the outcome.
+    setEmailLog(prev => prev.map(l => l.id === logId ? {
+      ...l,
+      status: result.success ? 'sent' : 'failed',
+      providerMessageId: result.messageId,
+      error: result.error,
+      sentAt: result.success ? new Date().toISOString() : l.sentAt,
+      actualRecipientTo: result.actualTo || l.actualRecipientTo,
+    } : l));
+
+    // Revoke the in-memory blob after a moment so the browser can release it.
+    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+
+    if (!result.success) {
+      setErrorBox(`Email failed: ${result.error || 'Unknown error'} — see Email Center for the log entry.`);
+    }
+  };
+
   const handleGenerateOrderConfirmation = (order: Order) => {
     setGeneratingOrderConfirmation(order.id);
     try {
@@ -1518,6 +1649,8 @@ export default function App() {
     qatemplates: JSON.stringify([]),
     customergroups: JSON.stringify([]),
     shippingterms: JSON.stringify(INITIAL_SHIPPING_TERMS),
+    emaillog: JSON.stringify([]),
+    emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
   });
 
   // Fetch initial data from Firestore
@@ -1779,6 +1912,15 @@ export default function App() {
         setShippingTermsList(data.shippingTerms as ShippingTerm[]);
         lastSyncedData.current.shippingterms = JSON.stringify(data.shippingTerms);
       }
+      if (data.emailLog?.length) {
+        setEmailLog(data.emailLog as EmailLog[]);
+        lastSyncedData.current.emaillog = JSON.stringify(data.emailLog);
+      }
+      if (data.emailSettings?.length) {
+        const settings = (data.emailSettings as EmailSettings[]).find(s => s.id === 'settings') || data.emailSettings[0] as EmailSettings;
+        setEmailSettings({ ...INITIAL_EMAIL_SETTINGS, ...settings });
+        lastSyncedData.current.emailsettings = JSON.stringify([settings]);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -1847,6 +1989,8 @@ export default function App() {
         { collection: COLLECTIONS.packagingFormats, key: 'packagingformats', data: packagingFormats },
         { collection: COLLECTIONS.namingFormulas, key: 'namingformulas', data: namingFormulas },
         { collection: COLLECTIONS.shippingTerms, key: 'shippingterms', data: shippingTermsList },
+        { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog },
+        { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
       ];
 
       try {
@@ -1872,7 +2016,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, lastSynced, user]);
 
   // One-time backfill: assign a uniform 6-digit productCode to every SKU and
   // mirror it onto every matching QAProduct. Existing codes are preserved.
@@ -3676,6 +3820,7 @@ export default function App() {
     { name: 'Transfers', icon: ArrowRightLeft },
     { name: 'Orders', icon: ShoppingCart },
     { name: 'Invoices', icon: FileText },
+    { name: 'Email Center', icon: Mail },
     { name: 'US #11 Market', icon: TrendingUp },
     { name: 'Products', icon: Package },
     { name: 'Conferences', icon: Users },
@@ -5581,19 +5726,15 @@ export default function App() {
                           {ord.status === 'Confirmed' ? (
                             <button
                               onClick={() => {
-                                // Find the shipment matching this order's BOL and open the edit modal
-                                const matchingShipment =
-                                  [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === ord.bolNumber) ||
-                                  null;
-                                if (matchingShipment) {
-                                  setEditingShipment(matchingShipment);
-                                  setPendingCompleteOrderId(ord.id);
-                                } else {
-                                  // No linked shipment found — complete & bill directly
-                                  completeAndBillOrder(ord.id);
-                                }
+                                // Per requirements: clicking Complete & Bill in
+                                // the orders table opens the order detail menu
+                                // rather than auto-billing. The user can choose
+                                // to actually complete & bill from the detail
+                                // card's own button.
+                                setViewingOrderCard({ ...ord });
                               }}
                               className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all cursor-pointer whitespace-nowrap"
+                              title="Open order details to review before completing & billing"
                             >
                               Complete & Bill
                             </button>
@@ -6084,6 +6225,16 @@ export default function App() {
           </div>
           </div>
         </div>
+      );
+    }
+
+    if (activePage === 'Email Center') {
+      return (
+        <EmailCenterPage
+          emailLog={emailLog}
+          emailSettings={emailSettings}
+          setEmailSettings={setEmailSettings}
+        />
       );
     }
 
@@ -8900,13 +9051,24 @@ export default function App() {
                 </div>
 
                 <div className="flex justify-between pt-4 border-t border-[#141414]/10">
-                  <button
-                    onClick={() => handleGenerateOrderConfirmation(viewingOrderCard)}
-                    disabled={generatingOrderConfirmation === viewingOrderCard.id}
-                    className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
-                  >
-                    <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Preview Order Confirmation'}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleGenerateOrderConfirmation(viewingOrderCard)}
+                      disabled={generatingOrderConfirmation === viewingOrderCard.id}
+                      className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
+                    >
+                      <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Preview Order Confirmation'}
+                    </button>
+                    {/* Send Order Confirmation via Resend — manual trigger; Phase 2 will
+                        wire the automation flag to fire this on status → Confirmed. */}
+                    <button
+                      onClick={() => sendOrderConfirmationEmail(viewingOrderCard, { triggeredBy: 'manual' })}
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      title="Email the order confirmation PDF to the customer's Customer Service email (Resend)"
+                    >
+                      <Mail size={14} /> Send Confirmation
+                    </button>
+                  </div>
                   <div className="flex gap-2">
                     <button onClick={() => setViewingOrderCard(null)}
                       className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
@@ -15328,6 +15490,15 @@ export default function App() {
                               }
                             } else {
                               setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Confirmed' } : o));
+                              // Auto-send on Confirmed is opt-in via Email
+                              // Center → Settings → Triggers. Phase 1 keeps
+                              // sends manual (button on the order detail card).
+                              if (emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
+                                const confirmedOrder = orders.find(o => o.id === pendingStatusChange.orderId);
+                                if (confirmedOrder) {
+                                  sendOrderConfirmationEmail({ ...confirmedOrder, status: 'Confirmed' }, { triggeredBy: 'automation' });
+                                }
+                              }
                             }
                             setShowOrderConfirmation(false);
                             setPendingStatusChange(null);
