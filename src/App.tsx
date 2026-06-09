@@ -59,7 +59,10 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
+import { generateBolPdf } from './bolPdf';
+import { generateCoaPdf } from './coaPdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
+import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
@@ -1379,31 +1382,105 @@ export default function App() {
     String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 
   /**
-   * Send the order-confirmation PDF to the customer's customerServiceEmail
-   * via the Resend-backed /api/send-email endpoint. The full pipeline:
-   *   1. Generate the PDF in-browser (existing generateOrderConfirmationPdf).
-   *   2. Write a "sending" entry to emailLog so the operator can see the
-   *      attempt even if the request crashes mid-flight.
-   *   3. POST the base64 PDF + recipient + subject + HTML body to the API.
-   *   4. Patch the log row with the result (sent / failed + messageId).
-   * Respects EmailSettings.enabled and reroutes through testAddress when
-   * EmailSettings.testMode is on. Idempotency-keyed per order so retries
-   * surface as a second attempt on the same log row rather than a dupe.
+   * Low-level email send. All three document senders (order confirmation,
+   * BOL, COA) share this pipeline:
+   *   1. Pre-flight checks: enabled, testMode + testAddress, recipient
+   *      address resolves.
+   *   2. Write a "sending" row to emailLog (visible immediately even if
+   *      the request crashes).
+   *   3. POST the PDF (base64) to /api/send-email.
+   *   4. Patch the log row with the outcome.
+   * Idempotency-keyed per (type, recordId) so retries land on the same
+   * log row instead of creating duplicates.
    */
-  const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
+  const runEmailSend = async (params: {
+    type: EmailDocumentType;
+    orderId?: string;
+    shipmentId?: string;
+    invoiceId?: string;
+    customerName: string;
+    recipientTo: string;
+    subject: string;
+    html: string;
+    pdfBlob: Blob;
+    filename: string;
+    idempotencyRecordId: string;
+    triggeredBy: 'automation' | 'manual' | 'retry';
+  }): Promise<{ success: boolean; error?: string }> => {
     if (!emailSettings.enabled) {
-      setErrorBox('Email sending is disabled in the Email Center. Turn it on in Settings to send.');
-      return;
+      return { success: false, error: 'Email sending is disabled in the Email Center.' };
     }
     if (emailSettings.testMode && !emailSettings.testAddress) {
-      setErrorBox('Test mode is on but no test address is configured. Open Email Center → Settings and set a test address first.');
-      return;
+      return { success: false, error: 'Test mode is on but no test address is configured.' };
+    }
+    if (!params.recipientTo) {
+      return { success: false, error: 'No recipient address resolved.' };
     }
 
+    const logId = `EMAIL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const idemKey = idempotencyKey(params.type, params.idempotencyRecordId);
+    const existing = emailLog.find(l => l.idempotencyKey === idemKey);
+    const attemptCount = (existing?.attemptCount ?? 0) + 1;
+    const initial: EmailLog = {
+      id: logId,
+      type: params.type,
+      orderId: params.orderId,
+      shipmentId: params.shipmentId,
+      invoiceId: params.invoiceId,
+      customerName: params.customerName,
+      recipientTo: [params.recipientTo],
+      recipientCc: emailSettings.internalCc.length ? [...emailSettings.internalCc] : undefined,
+      actualRecipientTo: emailSettings.testMode ? [emailSettings.testAddress] : [params.recipientTo],
+      subject: params.subject,
+      attachmentFilename: params.filename,
+      attachmentSizeBytes: params.pdfBlob.size,
+      status: 'sending',
+      idempotencyKey: idemKey,
+      attemptCount,
+      testMode: !!emailSettings.testMode,
+      triggeredBy: params.triggeredBy,
+      triggeredByUser: user?.email || undefined,
+      createdAt: new Date().toISOString(),
+    };
+    setEmailLog(prev => [initial, ...prev]);
+
+    const result = await sendEmail({
+      to: [params.recipientTo],
+      cc: emailSettings.internalCc.length ? emailSettings.internalCc : undefined,
+      subject: params.subject,
+      html: params.html,
+      attachment: params.pdfBlob,
+      attachmentFilename: params.filename,
+      testMode: !!emailSettings.testMode,
+      testAddress: emailSettings.testAddress,
+      fromName: emailSettings.fromName || undefined,
+      fromAddress: emailSettings.fromAddress?.trim() || undefined,
+      replyTo: emailSettings.replyToAddress?.trim() || undefined,
+    });
+
+    setEmailLog(prev => prev.map(l => l.id === logId ? {
+      ...l,
+      status: result.success ? 'sent' : 'failed',
+      providerMessageId: result.messageId,
+      error: result.error,
+      sentAt: result.success ? new Date().toISOString() : l.sentAt,
+      actualRecipientTo: result.actualTo || l.actualRecipientTo,
+    } : l));
+
+    return { success: result.success, error: result.error };
+  };
+
+  /**
+   * Generate the order-confirmation PDF and email it to the customer's
+   * customerServiceEmail via Resend. See runEmailSend for the shared
+   * pipeline; this just resolves the recipient, builds the message, and
+   * generates the PDF.
+   */
+  const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
     const recipientTo = (customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file. Add it to the customer record and try again.`);
+      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file.`);
       return;
     }
     const carrier = carriers.find(c => c.name === order.carrier);
@@ -1413,15 +1490,15 @@ export default function App() {
       : undefined;
 
     let blobUrl = '';
-    let filename = '';
-    let pdfBlob: Blob | undefined;
+    let pdfBlob: Blob;
+    let filename: string;
     try {
       const gen = generateOrderConfirmationPdf({ order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus });
       blobUrl = gen.blobUrl;
       filename = gen.filename;
       pdfBlob = await fetch(blobUrl).then(r => r.blob());
     } catch (e: any) {
-      setErrorBox('Failed to generate the PDF: ' + (e?.message || 'Unknown error'));
+      setErrorBox('Failed to generate the order confirmation PDF: ' + (e?.message || 'Unknown error'));
       return;
     }
 
@@ -1441,62 +1518,177 @@ export default function App() {
       <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada Sales')}</p>
     `.trim();
 
-    // 1. Write the queued log row first.
-    const logId = `EMAIL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const idemKey = idempotencyKey('order_confirmation', order.id);
-    const existing = emailLog.find(l => l.idempotencyKey === idemKey);
-    const attemptCount = (existing?.attemptCount ?? 0) + 1;
-    const initial: EmailLog = {
-      id: logId,
+    const result = await runEmailSend({
       type: 'order_confirmation',
       orderId: order.id,
       customerName: order.customer || '',
-      recipientTo: [recipientTo],
-      recipientCc: emailSettings.internalCc.length ? [...emailSettings.internalCc] : undefined,
-      actualRecipientTo: emailSettings.testMode ? [emailSettings.testAddress] : [recipientTo],
-      subject,
-      attachmentFilename: filename,
-      attachmentSizeBytes: pdfBlob?.size,
-      status: 'sending',
-      idempotencyKey: idemKey,
-      attemptCount,
-      testMode: !!emailSettings.testMode,
+      recipientTo,
+      subject, html,
+      pdfBlob, filename,
+      idempotencyRecordId: order.id,
       triggeredBy: opts?.triggeredBy || 'manual',
-      triggeredByUser: user?.email || undefined,
-      createdAt: new Date().toISOString(),
-    };
-    setEmailLog(prev => [initial, ...prev]);
-
-    // 2. Send.
-    const result = await sendEmail({
-      to: [recipientTo],
-      cc: emailSettings.internalCc.length ? emailSettings.internalCc : undefined,
-      subject,
-      html,
-      attachment: pdfBlob,
-      attachmentFilename: filename,
-      testMode: !!emailSettings.testMode,
-      testAddress: emailSettings.testAddress,
-      fromName: emailSettings.fromName || undefined,
-      fromAddress: emailSettings.fromAddress?.trim() || undefined,
-      replyTo: emailSettings.replyToAddress?.trim() || undefined,
     });
 
-    // 3. Patch the log row with the outcome.
-    setEmailLog(prev => prev.map(l => l.id === logId ? {
-      ...l,
-      status: result.success ? 'sent' : 'failed',
-      providerMessageId: result.messageId,
-      error: result.error,
-      sentAt: result.success ? new Date().toISOString() : l.sentAt,
-      actualRecipientTo: result.actualTo || l.actualRecipientTo,
-    } : l));
-
-    // Revoke the in-memory blob after a moment so the browser can release it.
     if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-
     if (!result.success) {
-      setErrorBox(`Email failed: ${result.error || 'Unknown error'} — see Email Center for the log entry.`);
+      setErrorBox(`Order confirmation email failed: ${result.error || 'Unknown error'} — see Email Center.`);
+    }
+  };
+
+  /** Resolve a shipment record for an order — falls back to a stub so the
+   *  BOL/COA generators can still produce a PDF for orders that haven't
+   *  had a shipment created yet. */
+  const shipmentForOrder = (order: Order): Shipment => {
+    const matched = [...hamiltonShipments, ...vancouverShipments].find(s => s.bol === order.bolNumber);
+    if (matched) return matched;
+    // Stub — mirrors what handleGenerateBol uses when no shipment is linked.
+    return {
+      id: `TMP-${order.id}`,
+      week: '',
+      date: order.shipmentDate || new Date().toISOString().split('T')[0],
+      day: '',
+      time: '',
+      bay: '',
+      customer: order.customer || '',
+      product: order.product || order.lineItems?.[0]?.productName || '',
+      po: order.po || '',
+      bol: order.bolNumber || '',
+      qty: (order.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0),
+      carrier: order.carrier || '',
+      arrive: '', start: '', out: '',
+      status: order.status,
+      contractNumber: order.contractNumber,
+      location: order.location,
+    };
+  };
+
+  /** Send the Bill of Lading PDF to the customer's customerServiceEmail. */
+  const sendBolEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
+    const customer = customers.find(c => c.name === order.customer);
+    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    if (!recipientTo) {
+      setErrorBox(`Cannot send BOL — ${order.customer || 'this customer'} has no Customer Service email on file.`);
+      return;
+    }
+    const shipment = shipmentForOrder(order);
+    const carrier = carriers.find(c => c.name === shipment.carrier);
+    const shipFromLoc = locations.find(l => l.name === (order.location || '') || l.locationCode === (order.location || ''));
+    const shipToLoc = order.shipToLocationId
+      ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId)
+      : undefined;
+
+    let blobUrl = '';
+    let pdfBlob: Blob;
+    let filename: string;
+    try {
+      const gen = generateBolPdf({
+        shipment, order, customer, carrier,
+        shipFromLocation: shipFromLoc,
+        shipToCustomer: customer,
+        shipToLocation: shipToLoc,
+        qaProducts,
+      });
+      blobUrl = gen.blobUrl;
+      filename = gen.filename;
+      pdfBlob = await fetch(blobUrl).then(r => r.blob());
+    } catch (e: any) {
+      setErrorBox('Failed to generate the BOL PDF: ' + (e?.message || 'Unknown error'));
+      return;
+    }
+
+    const totalKg = (order.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
+    const subject = `Bill of Lading — ${order.bolNumber || order.id}`;
+    const html = `
+      <p>Hello ${escapeHtml(order.customer || '')},</p>
+      <p>Please find attached the Bill of Lading for the shipment below.</p>
+      <table cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">
+        <tr><td><strong>BOL Number</strong></td><td>${escapeHtml(order.bolNumber || '—')}</td></tr>
+        <tr><td><strong>PO Number</strong></td><td>${escapeHtml(order.po || '—')}</td></tr>
+        <tr><td><strong>Product</strong></td><td>${escapeHtml(order.product || order.lineItems?.[0]?.productName || '—')}</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Shipment Date</strong></td><td>${escapeHtml(order.shipmentDate || '—')}</td></tr>
+        <tr><td><strong>Carrier</strong></td><td>${escapeHtml(order.carrier || '—')}</td></tr>
+      </table>
+      <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada Sales')}</p>
+    `.trim();
+
+    const result = await runEmailSend({
+      type: 'bol',
+      orderId: order.id,
+      shipmentId: shipment.id,
+      customerName: order.customer || '',
+      recipientTo,
+      subject, html,
+      pdfBlob, filename,
+      idempotencyRecordId: order.id,
+      triggeredBy: opts?.triggeredBy || 'manual',
+    });
+
+    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    if (!result.success) {
+      setErrorBox(`BOL email failed: ${result.error || 'Unknown error'} — see Email Center.`);
+    }
+  };
+
+  /** Send the Certificate of Analysis PDF. Routed to the customer's
+   *  qaContractEmail when set (the contact your QA team established with
+   *  the customer's quality dept), falling back to customerServiceEmail. */
+  const sendCoaEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
+    const customer = customers.find(c => c.name === order.customer);
+    const recipientTo = ((customer?.qaContractEmail || customer?.customerServiceEmail) || '').trim();
+    if (!recipientTo) {
+      setErrorBox(`Cannot send COA — ${order.customer || 'this customer'} has no QA Contract / Customer Service email on file.`);
+      return;
+    }
+    const shipment = shipmentForOrder(order);
+    const shipFromLoc = locations.find(l => l.name === (order.location || '') || l.locationCode === (order.location || ''));
+
+    let blobUrl = '';
+    let pdfBlob: Blob;
+    let filename: string;
+    try {
+      const gen = generateCoaPdf({
+        shipment, order, customer,
+        shipFromLocation: shipFromLoc,
+        lotCodes, qaProducts,
+      });
+      blobUrl = gen.blobUrl;
+      filename = gen.filename;
+      pdfBlob = await fetch(blobUrl).then(r => r.blob());
+    } catch (e: any) {
+      setErrorBox('Failed to generate the COA PDF: ' + (e?.message || 'Unknown error'));
+      return;
+    }
+
+    const subject = `Certificate of Analysis — ${order.bolNumber || order.id}`;
+    const html = `
+      <p>Hello ${escapeHtml(order.customer || '')},</p>
+      <p>Please find attached the Certificate of Analysis for the shipment below.</p>
+      <table cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">
+        <tr><td><strong>BOL Number</strong></td><td>${escapeHtml(order.bolNumber || '—')}</td></tr>
+        <tr><td><strong>Product</strong></td><td>${escapeHtml(order.product || order.lineItems?.[0]?.productName || '—')}</td></tr>
+        <tr><td><strong>Lot #</strong></td><td>${escapeHtml((shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : [])).join(', ') || '—')}</td></tr>
+        <tr><td><strong>Shipment Date</strong></td><td>${escapeHtml(order.shipmentDate || '—')}</td></tr>
+      </table>
+      <p>Please review the attached analysis and contact us if you have any questions.</p>
+      <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada Quality Assurance')}</p>
+    `.trim();
+
+    const result = await runEmailSend({
+      type: 'coa',
+      orderId: order.id,
+      shipmentId: shipment.id,
+      customerName: order.customer || '',
+      recipientTo,
+      subject, html,
+      pdfBlob, filename,
+      idempotencyRecordId: order.id,
+      triggeredBy: opts?.triggeredBy || 'manual',
+    });
+
+    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    if (!result.success) {
+      setErrorBox(`COA email failed: ${result.error || 'Unknown error'} — see Email Center.`);
     }
   };
 
@@ -2701,6 +2893,21 @@ export default function App() {
           }
           return c;
         }));
+      }
+    }
+
+    // Auto-send BOL + COA emails when their respective trigger toggles
+    // are on (Email Center → Settings → Triggers). Sends are fire-and-
+    // forget — completeAndBillOrder doesn't await them so the UI stays
+    // responsive. Each send writes its own emailLog entry; failures land
+    // in the log with the error message rather than blocking the bill.
+    if (emailSettings.enabled) {
+      const completedOrder: Order = { ...order, status: 'Completed' };
+      if (emailSettings.triggers.bolOnCompletedAndBilled) {
+        sendBolEmail(completedOrder, { triggeredBy: 'automation' });
+      }
+      if (emailSettings.triggers.coaOnCompletedAndBilled) {
+        sendCoaEmail(completedOrder, { triggeredBy: 'automation' });
       }
     }
   };
@@ -9061,14 +9268,30 @@ export default function App() {
                     >
                       <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Preview Order Confirmation'}
                     </button>
-                    {/* Send Order Confirmation via Resend — manual trigger; Phase 2 will
-                        wire the automation flag to fire this on status → Confirmed. */}
+                    {/* Manual email triggers — order confirmation, BOL, COA.
+                        Each routes through the same Resend pipeline and shows
+                        up in Email Center. Auto-versions of BOL + COA fire
+                        on Complete & Bill when the triggers are enabled. */}
                     <button
                       onClick={() => sendOrderConfirmationEmail(viewingOrderCard, { triggeredBy: 'manual' })}
                       className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
-                      title="Email the order confirmation PDF to the customer's Customer Service email (Resend)"
+                      title="Email the order confirmation PDF to the customer's Customer Service email"
                     >
                       <Mail size={14} /> Send Confirmation
+                    </button>
+                    <button
+                      onClick={() => sendBolEmail(viewingOrderCard, { triggeredBy: 'manual' })}
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      title="Email the BOL PDF to the customer's Customer Service email"
+                    >
+                      <Mail size={14} /> Send BOL
+                    </button>
+                    <button
+                      onClick={() => sendCoaEmail(viewingOrderCard, { triggeredBy: 'manual' })}
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      title="Email the Certificate of Analysis PDF (uses QA Contract email when available, otherwise Customer Service)"
+                    >
+                      <Mail size={14} /> Send COA
                     </button>
                   </div>
                   <div className="flex gap-2">

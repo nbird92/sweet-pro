@@ -195,12 +195,37 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 />
               </Field>
               <div className="border-t border-[#141414]/20 pt-4">
-                <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Auto-send triggers (Phase 2 — disabled now)</div>
-                <div className="space-y-2 opacity-70">
-                  <ToggleRow label="Order confirmation when status → Confirmed" description="" checked={emailSettings.triggers.orderConfirmationOnConfirmed} onChange={v => setTriggers({ orderConfirmationOnConfirmed: v })} compact disabled />
-                  <ToggleRow label="BOL when shipment → Loaded / Out" description="" checked={emailSettings.triggers.bolOnShipmentLoaded} onChange={v => setTriggers({ bolOnShipmentLoaded: v })} compact disabled />
-                  <ToggleRow label="COA after QA approval" description="" checked={emailSettings.triggers.coaOnQaApproval} onChange={v => setTriggers({ coaOnQaApproval: v })} compact disabled />
-                  <ToggleRow label="Invoice when status → Billed" description="" checked={emailSettings.triggers.invoiceOnBilled} onChange={v => setTriggers({ invoiceOnBilled: v })} compact disabled />
+                <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Auto-send triggers</div>
+                <div className="space-y-2">
+                  <ToggleRow
+                    label="Order confirmation when status → Confirmed"
+                    description="Sent to customer.customerServiceEmail. Phase 2 — wiring exists, flip on when ready."
+                    checked={emailSettings.triggers.orderConfirmationOnConfirmed}
+                    onChange={v => setTriggers({ orderConfirmationOnConfirmed: v })}
+                    compact
+                  />
+                  <ToggleRow
+                    label="Bill of Lading on Complete &amp; Bill"
+                    description="When an order is completed and billed, email the BOL PDF to customer.customerServiceEmail."
+                    checked={emailSettings.triggers.bolOnCompletedAndBilled}
+                    onChange={v => setTriggers({ bolOnCompletedAndBilled: v })}
+                    compact
+                  />
+                  <ToggleRow
+                    label="Certificate of Analysis on Complete &amp; Bill"
+                    description="Same trigger as BOL. Routed to customer.qaContractEmail when set, otherwise customerServiceEmail."
+                    checked={emailSettings.triggers.coaOnCompletedAndBilled}
+                    onChange={v => setTriggers({ coaOnCompletedAndBilled: v })}
+                    compact
+                  />
+                  <ToggleRow
+                    label="Invoice when status → Billed"
+                    description="Phase 2 — not implemented yet."
+                    checked={emailSettings.triggers.invoiceOnBilled}
+                    onChange={v => setTriggers({ invoiceOnBilled: v })}
+                    compact
+                    disabled
+                  />
                 </div>
               </div>
             </div>

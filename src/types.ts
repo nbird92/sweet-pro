@@ -455,11 +455,15 @@ export interface EmailSettings {
   replyToAddress?: string;
   /** Always BCC these on every send (internal audit trail). */
   internalCc: string[];
-  /** Per-event auto-send toggles. Off by default in Phase 1 — manual sends only. */
+  /** Per-event auto-send toggles. Off by default — operator turns each on
+   *  from the Email Center once they're comfortable with the test sends. */
   triggers: {
     orderConfirmationOnConfirmed: boolean;
-    bolOnShipmentLoaded: boolean;
-    coaOnQaApproval: boolean;
+    /** BOL emailed when the linked order is Completed & Billed. */
+    bolOnCompletedAndBilled: boolean;
+    /** Certificate of Analysis emailed when the linked order is Completed
+     *  & Billed. Lot codes from the shipment drive the spec values. */
+    coaOnCompletedAndBilled: boolean;
     invoiceOnBilled: boolean;
   };
 }
@@ -475,8 +479,8 @@ export const INITIAL_EMAIL_SETTINGS: EmailSettings = {
   internalCc: [],
   triggers: {
     orderConfirmationOnConfirmed: false,
-    bolOnShipmentLoaded: false,
-    coaOnQaApproval: false,
+    bolOnCompletedAndBilled: false,
+    coaOnCompletedAndBilled: false,
     invoiceOnBilled: false,
   },
 };
