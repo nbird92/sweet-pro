@@ -181,8 +181,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               <Field label="From name" hint="Shown to the recipient as the sender's name.">
                 <input value={emailSettings.fromName} onChange={e => setSettings({ fromName: e.target.value })} className="w-full border border-[#141414] bg-[#F5F5F5] p-2 text-sm" />
               </Field>
-              <Field label="From address" hint="Leave blank to use the server-side default. When set, overrides the env-var default (must still be a verified Resend sender).">
-                <input value={emailSettings.fromAddress || ''} onChange={e => setSettings({ fromAddress: e.target.value })} placeholder="(server default)" className="w-full border border-[#141414] bg-[#F5F5F5] p-2 text-sm" />
+              <Field label="From address" hint="Overrides the server's EMAIL_FROM_ADDRESS env var. Leave blank to fall back to that env var (or Resend's onboarding@resend.dev tester if no env var is set). MUST be a verified sender on your Resend account — unverified domains are rejected with a validation_error.">
+                <input value={emailSettings.fromAddress || ''} onChange={e => setSettings({ fromAddress: e.target.value })} placeholder="onboarding@resend.dev" className="w-full border border-[#141414] bg-[#F5F5F5] p-2 text-sm" />
               </Field>
               <Field label="Reply-to address" hint="Where customer replies land. Leave blank to default to the From address.">
                 <input value={emailSettings.replyToAddress || ''} onChange={e => setSettings({ replyToAddress: e.target.value })} className="w-full border border-[#141414] bg-[#F5F5F5] p-2 text-sm" />

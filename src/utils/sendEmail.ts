@@ -28,6 +28,11 @@ export interface SendEmailRequest {
   testMode?: boolean;
   testAddress?: string;
   fromName?: string;
+  /** When set, overrides the server's EMAIL_FROM_ADDRESS env var. Must still
+   *  be a verified sender on the Resend account, or Resend will reject. */
+  fromAddress?: string;
+  /** When set, customer replies route here instead of the From address. */
+  replyTo?: string;
 }
 
 export interface SendEmailResponse {
@@ -86,6 +91,8 @@ export async function sendEmail(req: SendEmailRequest): Promise<SendEmailRespons
         testMode: req.testMode === true,
         testAddress: req.testAddress,
         fromName: req.fromName,
+        fromAddress: req.fromAddress,
+        replyTo: req.replyTo,
       }),
     });
     const body = await res.json().catch(() => ({} as any));

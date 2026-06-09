@@ -78,6 +78,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     testMode,
     testAddress,
     fromName,
+    fromAddress,
+    replyTo,
   } = req.body || {};
 
   if (!Array.isArray(to) || to.length === 0) {
@@ -104,24 +106,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     actualSubject = `[TEST → ${to.join(', ')}] ${subject}`;
   }
 
-  const fromAddress = (process.env.EMAIL_FROM_ADDRESS || DEFAULT_FROM_ADDRESS).trim();
+  // Resolution order for the sender address (highest priority first):
+  //   1. fromAddress from the request body (Email Center → Settings)
+  //   2. EMAIL_FROM_ADDRESS env var (Vercel project setting)
+  //   3. onboarding@resend.dev (Resend's tester address — always works)
+  // Whichever we land on must be a verified Resend sender or Resend will
+  // reject with a domain-not-verified validation_error.
+  const clientFrom = typeof fromAddress === 'string' && fromAddress.trim() ? fromAddress.trim() : '';
+  const envFrom = (process.env.EMAIL_FROM_ADDRESS || '').trim();
+  const resolvedFrom = clientFrom || envFrom || DEFAULT_FROM_ADDRESS;
   const from = fromName
-    ? `${fromName} <${fromAddress}>`
-    : fromAddress;
+    ? `${fromName} <${resolvedFrom}>`
+    : resolvedFrom;
 
   try {
     const resend = new Resend(apiKey);
     const attachments = attachmentBase64 && attachmentFilename
       ? [{ filename: attachmentFilename, content: attachmentBase64 }]
       : undefined;
-    const result = await resend.emails.send({
+    const sendBody: any = {
       from,
       to: actualTo,
       cc: actualCc,
       subject: actualSubject,
       html,
       attachments,
-    } as any);
+    };
+    if (typeof replyTo === 'string' && replyTo.trim()) sendBody.replyTo = replyTo.trim();
+    const result = await resend.emails.send(sendBody);
     if (result.error) {
       return res.status(502).json({
         success: false,

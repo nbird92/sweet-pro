@@ -1478,6 +1478,8 @@ export default function App() {
       testMode: !!emailSettings.testMode,
       testAddress: emailSettings.testAddress,
       fromName: emailSettings.fromName || undefined,
+      fromAddress: emailSettings.fromAddress?.trim() || undefined,
+      replyTo: emailSettings.replyToAddress?.trim() || undefined,
     });
 
     // 3. Patch the log row with the outcome.
