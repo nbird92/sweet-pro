@@ -9409,10 +9409,10 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('order').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden transition-all flex flex-col ${getModalState('order').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-4">
                   <h3 className="text-xs font-bold uppercase tracking-widest">Order Details</h3>
                   <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
@@ -9429,7 +9429,7 @@ export default function App() {
                       without scrolling back up in a long order. */}
                 </div>
               </div>
-              <div className="p-6 space-y-5">
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
                 {/* Order-level fields */}
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
@@ -9530,8 +9530,11 @@ export default function App() {
                     </table>
                   )}
                 </div>
-
-                <div className="flex justify-between pt-4 border-t border-[#141414]/10">
+              </div>
+              {/* Sticky footer — action buttons live at the bottom of the
+                  modal regardless of how much the content scrolls. Same
+                  pattern used by the Return Order detail modal. */}
+              <div className="shrink-0 border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-between items-center gap-2">
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleGenerateOrderConfirmation(viewingOrderCard)}
@@ -9715,7 +9718,6 @@ export default function App() {
                       Close
                     </button>
                   </div>
-                </div>
               </div>
             </motion.div>
           </div>

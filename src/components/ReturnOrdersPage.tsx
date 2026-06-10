@@ -156,26 +156,31 @@ export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete
                   <td className="p-3 text-xs">{r.date || '—'}</td>
                   <td className="p-3 text-xs font-mono font-bold">${(r.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="p-3" onClick={e => e.stopPropagation()}>
-                    {/* Inline status dropdown styled like the pill.
-                        Completed orders are locked (no rolling back a credit).
-                        Cancel goes through a confirm in the parent handler. */}
+                    {/* Inline status dropdown styled like the pill, with a
+                        visible ▾ chevron so the operator can tell it's
+                        interactive. Completed orders are locked (no
+                        rolling back a credit). Cancel goes through a confirm
+                        in the parent handler. */}
                     {r.status === 'Completed' ? (
-                      <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-green-100 text-green-700">{r.status}</span>
+                      <span className="inline-block px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-green-100 text-green-700">{r.status}</span>
                     ) : (
-                      <select
-                        value={r.status}
-                        onChange={(e) => onStatusChange(r.id, e.target.value as ReturnOrder['status'])}
-                        className={`appearance-none px-2 py-0.5 rounded-full font-bold uppercase text-[8px] border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#141414]/30 ${
-                          r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
-                          r.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
-                          'bg-amber-100 text-amber-700'
-                        }`}
-                        title="Change return order status"
-                      >
-                        <option value="Open">Open</option>
-                        <option value="Confirmed">Confirmed</option>
-                        <option value="Cancelled">Cancelled</option>
-                      </select>
+                      <div className={`inline-flex items-center rounded-full pl-2 pr-1 py-0.5 cursor-pointer hover:ring-2 hover:ring-[#141414]/30 ${
+                        r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                        r.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        <select
+                          value={r.status}
+                          onChange={(e) => onStatusChange(r.id, e.target.value as ReturnOrder['status'])}
+                          className="appearance-none bg-transparent font-bold uppercase text-[8px] border-0 cursor-pointer focus:outline-none pr-1 m-0"
+                          title="Change return order status"
+                        >
+                          <option value="Open">Open</option>
+                          <option value="Confirmed">Confirmed</option>
+                          <option value="Cancelled">Cancelled</option>
+                        </select>
+                        <span className="text-[8px] font-bold opacity-70 select-none">▾</span>
+                      </div>
                     )}
                   </td>
                   <td className="p-3 text-xs" onClick={e => e.stopPropagation()}>
