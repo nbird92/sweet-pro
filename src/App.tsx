@@ -66,6 +66,8 @@ import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
+import DataTable from './components/DataTable';
+import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
@@ -241,6 +243,12 @@ export default function App() {
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
   const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>(INITIAL_SHIPPING_TERMS);
+  // DetailModal state for the standardized Shipping Terms table.
+  const [shippingTermDraft, setShippingTermDraft] = useState<ShippingTerm | null>(null);
+  const [shippingTermMode, setShippingTermMode] = useState<'view' | 'edit' | 'add'>('view');
+  // DetailModal state for the standardized Fuel Surcharges table.
+  const [fuelSurchargeDraft, setFuelSurchargeDraft] = useState<FuelSurcharge | null>(null);
+  const [fuelSurchargeMode, setFuelSurchargeMode] = useState<'view' | 'edit' | 'add'>('view');
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -7743,160 +7751,48 @@ export default function App() {
             </div>
           </div>
 
-          {/* Fuel Surcharge Table */}
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold uppercase tracking-widest">Fuel Surcharges</h3>
-              <button
-                onClick={() => {
-                  const id = `FS-${Date.now()}`;
-                  setFuelSurcharges([...fuelSurcharges, { id, carrierCode: '', carrier: '', surchargePercent: 0, startDate: '', endDate: '' }]);
-                }}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add Surcharge
-              </button>
-            </div>
+          {/* Fuel Surcharges — standardized table (DataTable + DetailModal). */}
+          <DataTable<FuelSurcharge>
+            title="Fuel Surcharges"
+            columns={[
+              { key: 'carrierCode', label: 'Carrier Code', mono: true, widthClass: 'w-32' },
+              { key: 'carrier', label: 'Carrier', bold: true },
+              {
+                key: 'surchargePercent',
+                label: 'Fuel Surcharge (%)',
+                align: 'right',
+                mono: true,
+                render: (fs) => `${(fs.surchargePercent || 0).toFixed(2)}%`,
+                sortValue: (fs) => fs.surchargePercent || 0,
+              },
+              { key: 'startDate', label: 'Start Date' },
+              { key: 'endDate', label: 'End Date' },
+            ]}
+            rows={fuelSurcharges}
+            getRowKey={(fs) => fs.id}
+            onRowClick={(fs) => { setFuelSurchargeDraft({ ...fs }); setFuelSurchargeMode('view'); }}
+            onAdd={() => { setFuelSurchargeDraft({ id: `FS-${Date.now()}`, carrierCode: '', carrier: '', surchargePercent: 0, startDate: '', endDate: '' }); setFuelSurchargeMode('add'); }}
+            addLabel="Add Surcharge"
+            emptyMessage="No fuel surcharges added yet."
+            defaultSortKey="carrier"
+          />
 
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                    <th className="p-4 border-r border-[#141414]/10">Carrier Code</th>
-                    <th className="p-4 border-r border-[#141414]/10">Carrier</th>
-                    <th className="p-4 border-r border-[#141414]/10">Fuel Surcharge (%)</th>
-                    <th className="p-4 border-r border-[#141414]/10">Start Date</th>
-                    <th className="p-4 border-r border-[#141414]/10">End Date</th>
-                    <th className="p-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {fuelSurcharges.map(fs => (
-                    <tr key={fs.id} className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-4 text-xs font-mono border-r border-[#141414]/10">
-                        <input
-                          type="text"
-                          value={fs.carrierCode}
-                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, carrierCode: e.target.value } : f))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="Code"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <select
-                          value={fs.carrier}
-                          onChange={(e) => {
-                            const sel = carriers.find(c => c.name === e.target.value);
-                            setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, carrier: e.target.value, carrierCode: sel?.carrierNumber || f.carrierCode } : f));
-                          }}
-                          className="w-full bg-transparent focus:outline-none"
-                        >
-                          <option value="">Select Carrier</option>
-                          {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </select>
-                      </td>
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
-                        <input
-                          type="text" inputMode="decimal"
-                          value={fs.surchargePercent || ''}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, surchargePercent: parseFloat(e.target.value) || 0 } : f))}
-                          className="w-full bg-transparent focus:outline-none"
-                          placeholder="0.0"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input
-                          type="date"
-                          value={fs.startDate || ''}
-                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, startDate: e.target.value } : f))}
-                          className="w-full bg-transparent focus:outline-none"
-                        />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        <input
-                          type="date"
-                          value={fs.endDate || ''}
-                          onChange={(e) => setFuelSurcharges(fuelSurcharges.map(f => f.id === fs.id ? { ...f, endDate: e.target.value } : f))}
-                          className="w-full bg-transparent focus:outline-none"
-                        />
-                      </td>
-                      <td className="p-4 text-xs">
-                        <button onClick={() => setFuelSurcharges(fuelSurcharges.filter(f => f.id !== fs.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {fuelSurcharges.length === 0 && (
-                    <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No fuel surcharges added yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Shipping Terms Table — populates the Customer Quote shipping-terms dropdown */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Shipping Terms</h3>
-              <button
-                onClick={() => setShippingTermsList([...shippingTermsList, { id: `ST-${Date.now()}`, name: '', description: '' }])}
-                className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
-              >
-                <Plus size={12} /> Add Term
-              </button>
-            </div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                  <th className="p-4 border-r border-[#141414]/10 w-48">Name</th>
-                  <th className="p-4 border-r border-[#141414]/10">Description</th>
-                  <th className="p-4 w-24">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {shippingTermsList.map(term => (
-                  <tr key={term.id} className="hover:bg-[#F9F9F9] transition-colors">
-                    <td className="p-3 border-r border-[#141414]/10">
-                      <input
-                        type="text"
-                        value={term.name}
-                        onChange={(e) => setShippingTermsList(prev => prev.map(t => t.id === term.id ? { ...t, name: e.target.value } : t))}
-                        placeholder="e.g. FOB"
-                        className="w-full bg-transparent text-xs font-bold uppercase focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
-                      />
-                    </td>
-                    <td className="p-3 border-r border-[#141414]/10">
-                      <input
-                        type="text"
-                        value={term.description}
-                        onChange={(e) => setShippingTermsList(prev => prev.map(t => t.id === term.id ? { ...t, description: e.target.value } : t))}
-                        placeholder="Description / Incoterm meaning"
-                        className="w-full bg-transparent text-xs focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
-                      />
-                    </td>
-                    <td className="p-3">
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Delete shipping term "${term.name || term.id}"?`)) {
-                            setShippingTermsList(prev => prev.filter(t => t.id !== term.id));
-                          }
-                        }}
-                        className="p-1 hover:bg-red-100 text-red-700 transition-all"
-                        title="Delete term"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {shippingTermsList.length === 0 && (
-                  <tr><td colSpan={3} className="p-8 text-center text-xs opacity-50 italic">No shipping terms defined. Click "Add Term" to add one — it'll appear in the Customer Quote dropdown.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          {/* Shipping Terms — standardized table (DataTable + DetailModal pattern).
+              Populates the Customer Quote shipping-terms dropdown. */}
+          <DataTable<ShippingTerm>
+            title="Shipping Terms"
+            columns={[
+              { key: 'name', label: 'Name', bold: true, mono: false, widthClass: 'w-48' },
+              { key: 'description', label: 'Description' },
+            ]}
+            rows={shippingTermsList}
+            getRowKey={(t) => t.id}
+            onRowClick={(t) => { setShippingTermDraft({ ...t }); setShippingTermMode('view'); }}
+            onAdd={() => { setShippingTermDraft({ id: `ST-${Date.now()}`, name: '', description: '' }); setShippingTermMode('add'); }}
+            addLabel="Add Term"
+            emptyMessage='No shipping terms defined. Click "Add Term" — it will appear in the Customer Quote dropdown.'
+            defaultSortKey="name"
+          />
 
           {/* CHEP Pallets Inventory */}
           <div className="space-y-4">
@@ -10026,6 +9922,161 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* ============================================================
+            FUEL SURCHARGES — standardized DetailModal
+            ============================================================ */}
+        <DetailModal
+          tableName="Fuel Surcharges"
+          isOpen={!!fuelSurchargeDraft}
+          mode={fuelSurchargeMode}
+          onClose={() => setFuelSurchargeDraft(null)}
+          onEdit={() => setFuelSurchargeMode('edit')}
+          onSave={() => {
+            if (!fuelSurchargeDraft) return;
+            if (!fuelSurchargeDraft.carrier.trim()) {
+              setErrorBox('Carrier is required.');
+              return;
+            }
+            if (fuelSurchargeMode === 'add') {
+              setFuelSurcharges(prev => [...prev, fuelSurchargeDraft]);
+            } else {
+              setFuelSurcharges(prev => prev.map(f => f.id === fuelSurchargeDraft.id ? fuelSurchargeDraft : f));
+            }
+            setFuelSurchargeDraft(null);
+          }}
+          onDelete={fuelSurchargeMode === 'add' ? undefined : () => {
+            if (!fuelSurchargeDraft) return;
+            setFuelSurcharges(prev => prev.filter(f => f.id !== fuelSurchargeDraft.id));
+            setFuelSurchargeDraft(null);
+          }}
+          deleteConfirmMessage={fuelSurchargeDraft ? `Delete fuel surcharge for "${fuelSurchargeDraft.carrier || fuelSurchargeDraft.id}"?` : undefined}
+          saveDisabled={!fuelSurchargeDraft?.carrier.trim()}
+        >
+          {fuelSurchargeDraft && (
+            fuelSurchargeMode === 'view' ? (
+              <>
+                <DetailRow label="Carrier Code" value={fuelSurchargeDraft.carrierCode} mono />
+                <DetailRow label="Carrier" value={fuelSurchargeDraft.carrier} bold />
+                <DetailRow label="Surcharge" value={`${(fuelSurchargeDraft.surchargePercent || 0).toFixed(2)}%`} mono />
+                <DetailRow label="Start Date" value={fuelSurchargeDraft.startDate} />
+                <DetailRow label="End Date" value={fuelSurchargeDraft.endDate} />
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <DetailField label="Carrier" required>
+                  <select
+                    value={fuelSurchargeDraft.carrier}
+                    onChange={(e) => {
+                      const sel = carriers.find(c => c.name === e.target.value);
+                      setFuelSurchargeDraft(d => d ? { ...d, carrier: e.target.value, carrierCode: sel?.carrierNumber || d.carrierCode } : d);
+                    }}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  >
+                    <option value="">Select Carrier</option>
+                    {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                </DetailField>
+                <DetailField label="Carrier Code" hint="Auto-populates when you pick the carrier above.">
+                  <input
+                    type="text"
+                    value={fuelSurchargeDraft.carrierCode}
+                    onChange={(e) => setFuelSurchargeDraft(d => d ? { ...d, carrierCode: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                  />
+                </DetailField>
+                <DetailField label="Fuel Surcharge (%)" required>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={fuelSurchargeDraft.surchargePercent || ''}
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => setFuelSurchargeDraft(d => d ? { ...d, surchargePercent: parseFloat(e.target.value) || 0 } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                  />
+                </DetailField>
+                <DetailField label="Start Date">
+                  <input
+                    type="date"
+                    value={fuelSurchargeDraft.startDate || ''}
+                    onChange={(e) => setFuelSurchargeDraft(d => d ? { ...d, startDate: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  />
+                </DetailField>
+                <DetailField label="End Date">
+                  <input
+                    type="date"
+                    value={fuelSurchargeDraft.endDate || ''}
+                    onChange={(e) => setFuelSurchargeDraft(d => d ? { ...d, endDate: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  />
+                </DetailField>
+              </div>
+            )
+          )}
+        </DetailModal>
+
+        {/* ============================================================
+            SHIPPING TERMS — standardized DetailModal
+            ============================================================ */}
+        <DetailModal
+          tableName="Shipping Terms"
+          isOpen={!!shippingTermDraft}
+          mode={shippingTermMode}
+          onClose={() => { setShippingTermDraft(null); }}
+          onEdit={() => setShippingTermMode('edit')}
+          onSave={() => {
+            if (!shippingTermDraft) return;
+            if (!shippingTermDraft.name.trim()) {
+              setErrorBox('Shipping term Name is required.');
+              return;
+            }
+            if (shippingTermMode === 'add') {
+              setShippingTermsList(prev => [...prev, shippingTermDraft]);
+            } else {
+              setShippingTermsList(prev => prev.map(t => t.id === shippingTermDraft.id ? shippingTermDraft : t));
+            }
+            setShippingTermDraft(null);
+          }}
+          onDelete={shippingTermMode === 'add' ? undefined : () => {
+            if (!shippingTermDraft) return;
+            setShippingTermsList(prev => prev.filter(t => t.id !== shippingTermDraft.id));
+            setShippingTermDraft(null);
+          }}
+          deleteConfirmMessage={shippingTermDraft ? `Delete shipping term "${shippingTermDraft.name || shippingTermDraft.id}"? This cannot be undone.` : undefined}
+          saveDisabled={!shippingTermDraft?.name.trim()}
+        >
+          {shippingTermDraft && (
+            shippingTermMode === 'view' ? (
+              <>
+                <DetailRow label="Name" value={shippingTermDraft.name} bold />
+                <DetailRow label="Description" value={shippingTermDraft.description} />
+                <DetailRow label="ID" value={shippingTermDraft.id} mono />
+              </>
+            ) : (
+              <>
+                <DetailField label="Name" required hint="Short code shown in the dropdown — e.g. FOB, DAP, FCA.">
+                  <input
+                    type="text"
+                    value={shippingTermDraft.name}
+                    onChange={(e) => setShippingTermDraft(d => d ? { ...d, name: e.target.value } : d)}
+                    placeholder="e.g. FOB"
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-bold uppercase outline-none focus:bg-white"
+                  />
+                </DetailField>
+                <DetailField label="Description" hint="Shown next to the code in the Customer Quote dropdown.">
+                  <input
+                    type="text"
+                    value={shippingTermDraft.description}
+                    onChange={(e) => setShippingTermDraft(d => d ? { ...d, description: e.target.value } : d)}
+                    placeholder="Free On Board — seller delivers to port..."
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  />
+                </DetailField>
+              </>
+            )
+          )}
+        </DetailModal>
 
         {/* ============================================================
             RETURN ORDER DETAILS / DRILLDOWN MODAL
