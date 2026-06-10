@@ -26,11 +26,14 @@ interface Props {
   onSendEmail: (returnOrder: ReturnOrder) => void;
   onReturnAndBill: (returnOrder: ReturnOrder) => void;
   onViewDetails: (returnOrder: ReturnOrder) => void;
+  /** Change a return-order's status from the inline pill dropdown.
+   *  Cancel is gated behind a window.confirm in the parent. */
+  onStatusChange: (returnOrderId: string, newStatus: ReturnOrder['status']) => void;
 }
 
 type SortKey = keyof Pick<ReturnOrder, 'bolNumber' | 'originalBolNumber' | 'customer' | 'product' | 'po' | 'date' | 'amount' | 'status'>;
 
-export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete, onPreview, onSendEmail, onReturnAndBill, onViewDetails }: Props) {
+export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete, onPreview, onSendEmail, onReturnAndBill, onViewDetails, onStatusChange }: Props) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -152,13 +155,28 @@ export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete
                   <td className="p-3 text-xs font-mono">{r.po || '—'}</td>
                   <td className="p-3 text-xs">{r.date || '—'}</td>
                   <td className="p-3 text-xs font-mono font-bold">${(r.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="p-3">
-                    <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
-                      r.status === 'Completed' ? 'bg-green-100 text-green-700' :
-                      r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
-                      r.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
-                      'bg-amber-100 text-amber-700'
-                    }`}>{r.status}</span>
+                  <td className="p-3" onClick={e => e.stopPropagation()}>
+                    {/* Inline status dropdown styled like the pill.
+                        Completed orders are locked (no rolling back a credit).
+                        Cancel goes through a confirm in the parent handler. */}
+                    {r.status === 'Completed' ? (
+                      <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-green-100 text-green-700">{r.status}</span>
+                    ) : (
+                      <select
+                        value={r.status}
+                        onChange={(e) => onStatusChange(r.id, e.target.value as ReturnOrder['status'])}
+                        className={`appearance-none px-2 py-0.5 rounded-full font-bold uppercase text-[8px] border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#141414]/30 ${
+                          r.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                          r.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                          'bg-amber-100 text-amber-700'
+                        }`}
+                        title="Change return order status"
+                      >
+                        <option value="Open">Open</option>
+                        <option value="Confirmed">Confirmed</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                    )}
                   </td>
                   <td className="p-3 text-xs" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1">

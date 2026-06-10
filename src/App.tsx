@@ -6701,6 +6701,18 @@ export default function App() {
           onSendEmail={(r) => sendReturnOrderConfirmationEmail(r, { triggeredBy: 'manual' })}
           onReturnAndBill={(r) => setReturnAndBillConfirm(r)}
           onViewDetails={(r) => setViewingReturnOrderCard(r)}
+          onStatusChange={(id, newStatus) => {
+            // Cancel is destructive — gate it behind a confirm so the operator
+            // can't flip it accidentally. Open / Confirmed are reversible so
+            // they switch immediately.
+            if (newStatus === 'Cancelled') {
+              const r = returnOrders.find(x => x.id === id);
+              if (!window.confirm(`Cancel return order ${r?.bolNumber || id}? You can still re-open it from this dropdown later, but any sent confirmation emails will reference the original status.`)) {
+                return;
+              }
+            }
+            setReturnOrders(prev => prev.map(r => r.id === id ? { ...r, status: newStatus } : r));
+          }}
         />
       );
     }
