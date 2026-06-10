@@ -311,6 +311,9 @@ export default function App() {
   // New Order Modal State
   const [orderCustomerId, setOrderCustomerId] = useState('');
   const [orderPO, setOrderPO] = useState('');
+  // Split number for the order — required when no contract is selected on
+  // the line items. Editable in both add and edit flows.
+  const [orderSplitNumber, setOrderSplitNumber] = useState('');
   const [orderShipmentDate, setOrderShipmentDate] = useState('');
   const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
@@ -14981,20 +14984,28 @@ export default function App() {
                       />
                     </div>
                   </div>
-                  {editingOrder && (
-                    <div className="grid grid-cols-3 gap-6">
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Split Number</label>
-                        <input
-                          type="text"
-                          value={editingOrder.splitNumber || ''}
-                          onChange={(e) => setEditingOrder({ ...editingOrder, splitNumber: e.target.value })}
-                          placeholder="e.g. S-001"
-                          className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
-                        />
-                      </div>
+                  {/* Split Number — visible in both add and edit modes. An
+                      order must carry either a Contract Number (on a line item)
+                      OR a Split Number; the save handler rejects orders that
+                      have neither. */}
+                  <div className="grid grid-cols-3 gap-6">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Split Number {(() => {
+                        const lineItemHasContract = orderLineItems.some(li => (li.contractNumber || '').trim());
+                        return lineItemHasContract ? '(optional — contract is set)' : <span className="text-red-600">*</span>;
+                      })()}</label>
+                      <input
+                        type="text"
+                        value={editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber}
+                        onChange={(e) => {
+                          if (editingOrder) setEditingOrder({ ...editingOrder, splitNumber: e.target.value });
+                          else setOrderSplitNumber(e.target.value);
+                        }}
+                        placeholder="e.g. S04280.G01"
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      />
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 {/* Add Line Item Section */}
@@ -15354,6 +15365,14 @@ export default function App() {
                       }
                       const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                       const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
+                      // Hard rule: an order must carry either a contract number
+                      // (on at least one line item) OR a split number. We catch
+                      // both create + edit flows here.
+                      const splitValue = editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber;
+                      if (contractNumbers.length === 0 && !splitValue.trim()) {
+                        setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number. Set one of those fields before saving.');
+                        return;
+                      }
 
                       // Location: user-entered takes priority; fall back to first contract's origin
                       const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
@@ -15399,6 +15418,7 @@ export default function App() {
                           location: resolvedLocation,
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
+                          splitNumber: orderSplitNumber.trim() || undefined,
                         };
                         setOrders([...orders, newOrder]);
                       }
@@ -15407,6 +15427,7 @@ export default function App() {
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
+                      setOrderSplitNumber('');
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');
@@ -15428,6 +15449,11 @@ export default function App() {
                         }
                         const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                         const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
+                        // Same hard rule as the Save button — Contract OR Split required.
+                        if (contractNumbers.length === 0 && !orderSplitNumber.trim()) {
+                          setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number.');
+                          return;
+                        }
                         const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
                         const resolvedLocation = orderLocation || firstContract?.origin || '';
                         const newOrder: Order = {
@@ -15448,6 +15474,7 @@ export default function App() {
                           location: resolvedLocation,
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
+                          splitNumber: orderSplitNumber.trim() || undefined,
                         };
                         setOrders([...orders, newOrder]);
                         setIsAddingOrder(false);
@@ -15455,6 +15482,7 @@ export default function App() {
                         setOrderLineItems([]);
                         setOrderCustomerId('');
                         setOrderPO('');
+                        setOrderSplitNumber('');
                         setOrderShipmentDate('');
                         setOrderDeliveryDate('');
                         setOrderCarrier('Customer Pick Up');
@@ -15473,6 +15501,7 @@ export default function App() {
                       setOrderLineItems([]);
                       setOrderCustomerId('');
                       setOrderPO('');
+                      setOrderSplitNumber('');
                       setOrderShipmentDate('');
                       setOrderDeliveryDate('');
                       setOrderCarrier('Customer Pick Up');

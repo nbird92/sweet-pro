@@ -2649,7 +2649,17 @@ export default function QualityAssurancePage({
               {/* Header */}
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
-                  Product QA: {displayData.skuName || displayData.productFormat || '—'}
+                  {/* Title uses the resolved Product Name (same value as the
+                      Product Name (Auto) row in Product Details). Falls back
+                      to skuName / productFormat when no naming rule resolves. */}
+                  Product QA: {(() => {
+                    const resolved = resolveProductName(namingFormulas, displayData, { sugarTypes, productGroups });
+                    if (resolved && resolved.trim()) return resolved;
+                    if (displayData.productFormat && displayData.sugarType) {
+                      return `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`;
+                    }
+                    return displayData.skuName || displayData.productFormat || '—';
+                  })()}
                 </h3>
                 <div className="flex items-center gap-1">
                   <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
@@ -3484,7 +3494,14 @@ export default function QualityAssurancePage({
               onClick={() => setProductModalMinimized(false)}
               className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]"
             >
-              <Maximize2 size={12} /> Product QA: {selectedProduct.skuName || selectedProduct.productFormat || '—'}
+              <Maximize2 size={12} /> Product QA: {(() => {
+                const resolved = resolveProductName(namingFormulas, selectedProduct, { sugarTypes, productGroups });
+                if (resolved && resolved.trim()) return resolved;
+                if (selectedProduct.productFormat && selectedProduct.sugarType) {
+                  return `${selectedProduct.netWeightKg ? `${selectedProduct.netWeightKg}kg ` : ''}${selectedProduct.productFormat} ${selectedProduct.sugarType} ${selectedProduct.category} ${selectedProduct.maxColor || 0}`;
+                }
+                return selectedProduct.skuName || selectedProduct.productFormat || '—';
+              })()}
             </button>
           </div>
         )}
