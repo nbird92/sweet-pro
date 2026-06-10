@@ -44,6 +44,7 @@ export const COLLECTIONS = {
   shippingTerms: 'shippingTerms',
   emailLog: 'emailLog',
   emailSettings: 'emailSettings',
+  returnOrders: 'returnOrders',
 } as const;
 
 // Fetch all documents from a collection (one-time read)

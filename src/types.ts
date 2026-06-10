@@ -383,6 +383,47 @@ export interface Order {
   shipToLocationId?: string; // references ShipToLocation.id under the order's customer
 }
 
+/* ====================================================================== */
+/* Return Orders — track product being returned after it has shipped.     */
+/* Mirrors the Order shape so the existing UI patterns translate.         */
+/* BOL numbers always start with "R" followed by 6 digits (R000001+).     */
+/* ====================================================================== */
+export interface ReturnOrder {
+  id: string;
+  /** Return BOL number: "R000123". Generated server-side on save. */
+  bolNumber: string;
+  /** BOL of the original outbound shipment this return is against. */
+  originalBolNumber: string;
+  /** Link to the invoice the line items / pricing came from. */
+  originalInvoiceId?: string;
+  customer: string;
+  product: string;
+  contractNumber?: string;
+  po: string;
+  /** ISO yyyy-mm-dd; when the return order was created. */
+  date: string;
+  /** ISO date when the product is expected to ship back. */
+  shipmentDate?: string;
+  /** ISO date the goods are expected to arrive at the return location. */
+  deliveryDate?: string;
+  /** Statuses mirror Order so the order detail card can render either type. */
+  status: 'Open' | 'Confirmed' | 'Cancelled' | 'Completed';
+  /** Line items copied from the source invoice / order. */
+  lineItems: OrderLineItem[];
+  /** Credit amount (positive number; sign-flip happens at invoice creation). */
+  amount: number;
+  carrier?: string;
+  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  location?: string;
+  splitNumber?: string;
+  currency?: string;
+  palletType?: 'CHEP' | 'One Way' | '';
+  hidden?: boolean;
+  shipToLocationId?: string;
+  /** Free-text reason — required when the return order is created. */
+  reasonForReturn: string;
+}
+
 export const INITIAL_CARRIERS: Carrier[] = [
   { id: 'CARR-001', carrierNumber: '1001', name: 'FastTruck', contactEmail: 'ops@fasttruck.com', contactPhone: '555-0101', defaultLocationCode: '100' },
   { id: 'CARR-002', carrierNumber: '1002', name: 'WestLogistics', contactEmail: 'dispatch@westlog.com', contactPhone: '555-0102', defaultLocationCode: '200' },
@@ -410,7 +451,7 @@ export const INITIAL_SHIPPING_TERMS: ShippingTerm[] = [
 /* COAs, invoices) + their audit log. Powered by Resend.                  */
 /* ====================================================================== */
 
-export type EmailDocumentType = 'order_confirmation' | 'bol' | 'coa' | 'invoice';
+export type EmailDocumentType = 'order_confirmation' | 'bol' | 'coa' | 'invoice' | 'return_order_confirmation';
 export type EmailStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'bounced';
 
 export interface EmailLog {
@@ -889,7 +930,7 @@ export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];
 export interface QATemplate {
   id: string;
   name: string;
-  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Order Confirmation' | 'Other';
+  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Order Confirmation' | 'Return Order Confirmation' | 'Other';
   googleSheetUrl: string;
   description?: string;
   createdAt: string;

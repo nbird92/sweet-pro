@@ -51,7 +51,8 @@ import {
   BarChart3,
   Landmark,
   Zap,
-  Mail
+  Mail,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -64,9 +65,10 @@ import { generateCoaPdf } from './coaPdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
+import ReturnOrdersPage from './components/ReturnOrdersPage';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -1642,6 +1644,201 @@ export default function App() {
     }
   };
 
+  /* ──────────────────────────────────────────────────────────────────── */
+  /*  RETURN ORDERS — helpers, send, return-and-bill                       */
+  /* ──────────────────────────────────────────────────────────────────── */
+
+  /** Generate the next R-prefixed BOL number, e.g. "R000007". Scans every
+   *  existing return order + every regular order (so a return can't collide
+   *  with an R-prefixed manual outbound BOL) and increments. */
+  const generateReturnBolNumber = (): string => {
+    const candidates: string[] = [
+      ...returnOrders.map(r => r.bolNumber || ''),
+      ...orders.map(o => o.bolNumber || ''),
+      ...invoices.map(i => i.bolNumber || ''),
+    ];
+    let max = 0;
+    for (const b of candidates) {
+      const m = /^R(\d{1,6})$/.exec((b || '').trim());
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+    const next = max + 1;
+    return `R${String(next).padStart(6, '0')}`;
+  };
+
+  /** Build a draft return order from an existing invoice (or fallback order).
+   *  Copies line items, pricing, qty, contract, etc. — caller fills in the
+   *  reason and any overrides before saving. */
+  const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
+    const linkedOrder = orders.find(o => o.bolNumber === inv.bolNumber);
+    return {
+      id: `RTN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      bolNumber: '', // assigned on save via generateReturnBolNumber
+      originalBolNumber: inv.bolNumber || '',
+      originalInvoiceId: inv.id,
+      customer: inv.customer || '',
+      product: inv.product || '',
+      contractNumber: inv.contractNumber || linkedOrder?.contractNumber || '',
+      po: inv.po || '',
+      date: new Date().toISOString().split('T')[0],
+      shipmentDate: '',
+      deliveryDate: '',
+      status: 'Open',
+      lineItems: (inv.lineItems || linkedOrder?.lineItems || []).map(li => ({
+        ...li,
+        id: `LI-RTN-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      })),
+      amount: inv.amount || 0,
+      carrier: inv.carrier || linkedOrder?.carrier || '',
+      shippingTerms: (inv.shippingTerms as any) || linkedOrder?.shippingTerms || '',
+      location: inv.location || linkedOrder?.location || '',
+      splitNumber: inv.splitNo || linkedOrder?.splitNumber || '',
+      currency: linkedOrder?.currency || 'CAD',
+      palletType: linkedOrder?.palletType || '',
+      shipToLocationId: linkedOrder?.shipToLocationId,
+      reasonForReturn: '',
+    };
+  };
+
+  /** Preview the Return Order Confirmation PDF in the pdfPreview modal. */
+  const handlePreviewReturnOrderConfirmation = (returnOrder: ReturnOrder) => {
+    try {
+      const customer = customers.find(c => c.name === returnOrder.customer);
+      const carrier = carriers.find(c => c.name === returnOrder.carrier);
+      const shipperLocation = locations.find(l => l.name === returnOrder.location || l.locationCode === returnOrder.location);
+      const shipToLocation = returnOrder.shipToLocationId
+        ? customer?.shipToLocations?.find(l => l.id === returnOrder.shipToLocationId)
+        : undefined;
+      // The return-order shape matches Order closely; pass it through the
+      // generator with documentType='return_order_confirmation' so the title
+      // / reason / original-BOL adaptations kick in.
+      const { blobUrl, filename } = generateOrderConfirmationPdf({
+        order: returnOrder as unknown as Order,
+        customer, carrier, shipperLocation, shipToLocation,
+        qaProducts, skus,
+        documentType: 'return_order_confirmation',
+        reasonForReturn: returnOrder.reasonForReturn,
+        originalBolNumber: returnOrder.originalBolNumber,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Return Order Confirmation' });
+    } catch (e: any) {
+      console.error('Generate return-order confirmation failed:', e);
+      setErrorBox('Failed to generate Return Order Confirmation: ' + (e?.message || 'Unknown error'));
+    }
+  };
+
+  /** Email the Return Order Confirmation PDF to customerServiceEmail. */
+  const sendReturnOrderConfirmationEmail = async (returnOrder: ReturnOrder, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
+    const customer = customers.find(c => c.name === returnOrder.customer);
+    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    if (!recipientTo) {
+      setErrorBox(`Cannot send — ${returnOrder.customer || 'this customer'} has no Customer Service email on file.`);
+      return;
+    }
+    const carrier = carriers.find(c => c.name === returnOrder.carrier);
+    const shipperLocation = locations.find(l => l.name === returnOrder.location || l.locationCode === returnOrder.location);
+    const shipToLocation = returnOrder.shipToLocationId
+      ? customer?.shipToLocations?.find(l => l.id === returnOrder.shipToLocationId)
+      : undefined;
+
+    let blobUrl = '';
+    let pdfBlob: Blob;
+    let filename: string;
+    try {
+      const gen = generateOrderConfirmationPdf({
+        order: returnOrder as unknown as Order,
+        customer, carrier, shipperLocation, shipToLocation,
+        qaProducts, skus,
+        documentType: 'return_order_confirmation',
+        reasonForReturn: returnOrder.reasonForReturn,
+        originalBolNumber: returnOrder.originalBolNumber,
+      });
+      blobUrl = gen.blobUrl;
+      filename = gen.filename;
+      pdfBlob = await fetch(blobUrl).then(r => r.blob());
+    } catch (e: any) {
+      setErrorBox('Failed to generate the return-order PDF: ' + (e?.message || 'Unknown error'));
+      return;
+    }
+
+    const totalKg = (returnOrder.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
+    const subject = `Return Order Confirmation — ${returnOrder.bolNumber || returnOrder.id} (Original ${returnOrder.originalBolNumber || '—'})`;
+    const html = `
+      <p>Hello ${escapeHtml(returnOrder.customer || '')},</p>
+      <p>Please find attached the Return Order Confirmation for the return below.</p>
+      <table cellspacing="0" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;">
+        <tr><td><strong>Return BOL</strong></td><td>${escapeHtml(returnOrder.bolNumber || '—')}</td></tr>
+        <tr><td><strong>Original BOL</strong></td><td>${escapeHtml(returnOrder.originalBolNumber || '—')}</td></tr>
+        <tr><td><strong>PO Number</strong></td><td>${escapeHtml(returnOrder.po || '—')}</td></tr>
+        <tr><td><strong>Product</strong></td><td>${escapeHtml(returnOrder.product || returnOrder.lineItems?.[0]?.productName || '—')}</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Reason for Return</strong></td><td>${escapeHtml(returnOrder.reasonForReturn || '—')}</td></tr>
+      </table>
+      <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada')}</p>
+    `.trim();
+
+    const result = await runEmailSend({
+      type: 'return_order_confirmation',
+      orderId: returnOrder.id,
+      customerName: returnOrder.customer || '',
+      recipientTo,
+      subject, html,
+      pdfBlob, filename,
+      idempotencyRecordId: returnOrder.id,
+      triggeredBy: opts?.triggeredBy || 'manual',
+    });
+
+    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    if (!result.success) {
+      setErrorBox(`Return order confirmation email failed: ${result.error || 'Unknown error'} — see Email Center.`);
+    }
+  };
+
+  /** Complete a return order: assign the R-BOL, flip status to Completed,
+   *  and post a NEGATIVE invoice referencing the original. */
+  const returnAndBillOrder = (returnOrderId: string) => {
+    const ro = returnOrders.find(r => r.id === returnOrderId);
+    if (!ro) return;
+    if (ro.status === 'Completed') return;
+
+    // 1. Assign R-BOL if it doesn't already have one.
+    const bol = ro.bolNumber && /^R\d{6}$/.test(ro.bolNumber) ? ro.bolNumber : generateReturnBolNumber();
+    const totalWeightMT = ro.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+
+    // 2. Update the return order — Completed, with the final BOL.
+    setReturnOrders(prev => prev.map(r => r.id === returnOrderId ? { ...r, bolNumber: bol, status: 'Completed' } : r));
+
+    // 3. Create the credit invoice. We post a NEGATIVE amount so finance
+    //    can offset the original sale. Tagged with status "Credit" so it's
+    //    clear in the invoices table.
+    const creditAmount = -Math.abs(ro.amount || 0);
+    const creditInvoiceId = `INV-RTN-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const creditInvoice: Invoice = {
+      id: creditInvoiceId,
+      bolNumber: bol,
+      customer: ro.customer,
+      product: ro.product || ro.lineItems.map(li => li.productName).join(', '),
+      po: ro.po,
+      qty: totalWeightMT,
+      carrier: ro.carrier || '',
+      amount: creditAmount,
+      shipmentId: ro.id,
+      date: new Date().toISOString().split('T')[0],
+      status: 'Credit',
+      lineItems: ro.lineItems,
+      shippingTerms: ro.shippingTerms || '',
+      location: ro.location || '',
+      contractNumber: ro.contractNumber || '',
+    };
+    setInvoices(prev => prev.some(i => i.shipmentId === ro.id && i.status === 'Credit') ? prev : [...prev, creditInvoice]);
+
+    // 4. Fire the confirmation email automatically when its trigger is on.
+    if (emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
+      sendReturnOrderConfirmationEmail({ ...ro, bolNumber: bol, status: 'Completed' }, { triggeredBy: 'automation' });
+    }
+  };
+
   /** Send the Certificate of Analysis PDF. Routed to the customer's
    *  qaContractEmail when set (the contact your QA team established with
    *  the customer's quality dept), falling back to customerServiceEmail. */
@@ -1823,6 +2020,23 @@ export default function App() {
   // Confirm + summary popup shown before Complete & Bill actually runs.
   // Holds the order being confirmed; null hides the dialog.
   const [completeAndBillConfirm, setCompleteAndBillConfirm] = useState<Order | null>(null);
+
+  // Return Orders ----------------------------------------------------------
+  const [returnOrders, setReturnOrders] = useState<ReturnOrder[]>([]);
+  // Add / Edit modal state. When isAddingReturnOrder is true the modal opens
+  // in "add" mode; when editingReturnOrder is non-null it opens in edit mode.
+  const [isAddingReturnOrder, setIsAddingReturnOrder] = useState(false);
+  const [editingReturnOrder, setEditingReturnOrder] = useState<ReturnOrder | null>(null);
+  // Buffer used by the add/edit modal — populated when the user picks a
+  // source BOL from the search list. We snapshot the invoice/order line
+  // items so subsequent line-item edits don't ripple back into source data.
+  const [returnOrderDraft, setReturnOrderDraft] = useState<ReturnOrder | null>(null);
+  // Free-text BOL/customer/product search inside the add modal.
+  const [returnOrderBolSearch, setReturnOrderBolSearch] = useState('');
+  // Confirm dialog for Return & Bill — same pattern as Complete & Bill.
+  const [returnAndBillConfirm, setReturnAndBillConfirm] = useState<ReturnOrder | null>(null);
+  // PDF preview state for return-order confirmation document.
+  const [viewingReturnOrderCard, setViewingReturnOrderCard] = useState<ReturnOrder | null>(null);
   const [editingCarrier, setEditingCarrier] = useState<Carrier | null>(null);
   const [isAddingShipment, setIsAddingShipment] = useState(false);
   const [editingAppointmentSchedule, setEditingAppointmentSchedule] = useState<Location | null>(null);
@@ -1860,6 +2074,7 @@ export default function App() {
     shippingterms: JSON.stringify(INITIAL_SHIPPING_TERMS),
     emaillog: JSON.stringify([]),
     emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
+    returnorders: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -2130,6 +2345,10 @@ export default function App() {
         setEmailSettings({ ...INITIAL_EMAIL_SETTINGS, ...settings });
         lastSyncedData.current.emailsettings = JSON.stringify([settings]);
       }
+      if (data.returnOrders?.length) {
+        setReturnOrders(data.returnOrders as ReturnOrder[]);
+        lastSyncedData.current.returnorders = JSON.stringify(data.returnOrders);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -2200,6 +2419,7 @@ export default function App() {
         { collection: COLLECTIONS.shippingTerms, key: 'shippingterms', data: shippingTermsList },
         { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog },
         { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
+        { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
       ];
 
       try {
@@ -2225,7 +2445,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, lastSynced, user]);
 
   // One-time backfill: assign a uniform 6-digit productCode to every SKU and
   // mirror it onto every matching QAProduct. Existing codes are preserved.
@@ -4044,6 +4264,7 @@ export default function App() {
     { name: 'Transfers', icon: ArrowRightLeft },
     { name: 'Orders', icon: ShoppingCart },
     { name: 'Invoices', icon: FileText },
+    { name: 'Return Orders', icon: RotateCcw },
     { name: 'Email Center', icon: Mail },
     { name: 'US #11 Market', icon: TrendingUp },
     { name: 'Products', icon: Package },
@@ -6458,6 +6679,25 @@ export default function App() {
           emailLog={emailLog}
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
+        />
+      );
+    }
+
+    if (activePage === 'Return Orders') {
+      return (
+        <ReturnOrdersPage
+          returnOrders={returnOrders}
+          onAdd={() => {
+            setReturnOrderDraft(null);
+            setReturnOrderBolSearch('');
+            setIsAddingReturnOrder(true);
+          }}
+          onEdit={(r) => { setEditingReturnOrder(r); setReturnOrderDraft({ ...r }); }}
+          onDelete={(id) => setReturnOrders(prev => prev.filter(r => r.id !== id))}
+          onPreview={handlePreviewReturnOrderConfirmation}
+          onSendEmail={(r) => sendReturnOrderConfirmationEmail(r, { triggeredBy: 'manual' })}
+          onReturnAndBill={(r) => setReturnAndBillConfirm(r)}
+          onViewDetails={(r) => setViewingReturnOrderCard(r)}
         />
       );
     }
@@ -9524,6 +9764,317 @@ export default function App() {
         {/* Complete & Bill confirmation modal — shows an order summary so the
             operator can sanity-check before billing. Triggered from the
             Complete & Bill button in the order detail card. */}
+        {/* ============================================================
+            ADD / EDIT RETURN ORDER MODAL
+            ============================================================ */}
+        {(isAddingReturnOrder || editingReturnOrder) && (() => {
+          const isEditing = !!editingReturnOrder;
+          // BOL search runs against invoices first (so we can copy line items
+          // + pricing), falling back to bare orders when no invoice exists.
+          const searchTerm = returnOrderBolSearch.trim().toLowerCase();
+          const invoiceMatches = !isEditing && searchTerm
+            ? invoices.filter(inv =>
+                (inv.bolNumber || '').toLowerCase().includes(searchTerm) ||
+                (inv.customer  || '').toLowerCase().includes(searchTerm) ||
+                (inv.product   || '').toLowerCase().includes(searchTerm) ||
+                (inv.po        || '').toLowerCase().includes(searchTerm)
+              ).slice(0, 50)
+            : [];
+          const draft = returnOrderDraft;
+          const setDraft = (patch: Partial<ReturnOrder>) =>
+            setReturnOrderDraft(prev => prev ? { ...prev, ...patch } : prev);
+          const canSave = !!draft && !!draft.originalBolNumber && !!draft.customer && !!draft.reasonForReturn?.trim();
+          const close = () => {
+            setIsAddingReturnOrder(false);
+            setEditingReturnOrder(null);
+            setReturnOrderDraft(null);
+            setReturnOrderBolSearch('');
+          };
+          const save = () => {
+            if (!draft) return;
+            const final: ReturnOrder = {
+              ...draft,
+              bolNumber: draft.bolNumber && /^R\d{6}$/.test(draft.bolNumber) ? draft.bolNumber : generateReturnBolNumber(),
+            };
+            if (isEditing) {
+              setReturnOrders(prev => prev.map(r => r.id === final.id ? final : r));
+            } else {
+              setReturnOrders(prev => [...prev, final]);
+            }
+            close();
+          };
+          return (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={close}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full max-h-[92vh] overflow-y-auto"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><RotateCcw size={14} /> {isEditing ? `Edit Return Order ${draft?.bolNumber || ''}` : 'New Return Order'}</h3>
+                  <button onClick={close} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+
+                <div className="p-6 space-y-5">
+                  {/* Step 1: BOL search (add mode only) */}
+                  {!isEditing && (
+                    <div className="space-y-2">
+                      <div className="text-[10px] uppercase font-bold opacity-50">Step 1 — Find the original BOL</div>
+                      <input
+                        type="text"
+                        value={returnOrderBolSearch}
+                        onChange={e => setReturnOrderBolSearch(e.target.value)}
+                        placeholder="Search by BOL #, Customer, Product, or PO"
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                      />
+                      {searchTerm && (
+                        <div className="border border-[#141414]/30 max-h-64 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
+                              <tr>
+                                <th className="p-2 text-left">BOL</th>
+                                <th className="p-2 text-left">Customer</th>
+                                <th className="p-2 text-left">Product</th>
+                                <th className="p-2 text-left">PO</th>
+                                <th className="p-2 text-right">Amount</th>
+                                <th className="p-2"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#141414]/10">
+                              {invoiceMatches.length === 0 && (
+                                <tr><td colSpan={6} className="p-3 text-center italic opacity-50">No invoices match — try a different search.</td></tr>
+                              )}
+                              {invoiceMatches.map(inv => (
+                                <tr key={inv.id} className="hover:bg-[#F9F9F9]">
+                                  <td className="p-2 font-mono font-bold">{inv.bolNumber}</td>
+                                  <td className="p-2">{inv.customer}</td>
+                                  <td className="p-2">{inv.product}</td>
+                                  <td className="p-2 font-mono">{inv.po || '—'}</td>
+                                  <td className="p-2 text-right font-mono">${(inv.amount || 0).toFixed(2)}</td>
+                                  <td className="p-2">
+                                    <button
+                                      onClick={() => setReturnOrderDraft(buildReturnOrderDraftFromInvoice(inv))}
+                                      className="px-2 py-1 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800"
+                                    >Use</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Step 2: Draft details */}
+                  {draft && (
+                    <div className="space-y-4">
+                      <div className="text-[10px] uppercase font-bold opacity-50">{isEditing ? 'Details' : 'Step 2 — Confirm details + reason'}</div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <Labeled label="Return BOL">
+                          <div className="font-mono font-bold p-2 bg-[#F5F5F5] border border-[#141414]/20">{draft.bolNumber || `(assigned on save — next: ${generateReturnBolNumber()})`}</div>
+                        </Labeled>
+                        <Labeled label="Original BOL">
+                          <input type="text" value={draft.originalBolNumber} onChange={e => setDraft({ originalBolNumber: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono outline-none" />
+                        </Labeled>
+                        <Labeled label="Customer">
+                          <input type="text" value={draft.customer} onChange={e => setDraft({ customer: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                        </Labeled>
+                        <Labeled label="Product">
+                          <input type="text" value={draft.product} onChange={e => setDraft({ product: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                        </Labeled>
+                        <Labeled label="PO #">
+                          <input type="text" value={draft.po} onChange={e => setDraft({ po: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono outline-none" />
+                        </Labeled>
+                        <Labeled label="Contract #">
+                          <input type="text" value={draft.contractNumber || ''} onChange={e => setDraft({ contractNumber: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono outline-none" />
+                        </Labeled>
+                        <Labeled label="Carrier">
+                          <input type="text" value={draft.carrier || ''} onChange={e => setDraft({ carrier: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                        </Labeled>
+                        <Labeled label="Shipment Date (when goods return)">
+                          <input type="date" value={draft.shipmentDate || ''} onChange={e => setDraft({ shipmentDate: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                        </Labeled>
+                        <Labeled label="Delivery Date (back at our location)">
+                          <input type="date" value={draft.deliveryDate || ''} onChange={e => setDraft({ deliveryDate: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
+                        </Labeled>
+                        <Labeled label="Credit Amount">
+                          <input type="number" step="0.01" value={draft.amount} onChange={e => setDraft({ amount: parseFloat(e.target.value) || 0 })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono outline-none" />
+                        </Labeled>
+                      </div>
+
+                      {/* Reason for return — required */}
+                      <Labeled label="Reason for Return *">
+                        <textarea
+                          value={draft.reasonForReturn}
+                          onChange={e => setDraft({ reasonForReturn: e.target.value })}
+                          placeholder="e.g. Product damaged in transit, out of spec, wrong product shipped..."
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none min-h-[80px] resize-y"
+                        />
+                      </Labeled>
+
+                      {/* Copied line items */}
+                      <div className="border border-[#141414]/30">
+                        <div className="bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] uppercase font-bold tracking-widest">Line Items (copied from source)</div>
+                        <table className="w-full text-xs">
+                          <thead className="bg-[#F5F5F5]">
+                            <tr>
+                              <th className="p-2 text-left">Product</th>
+                              <th className="p-2 text-right">Qty</th>
+                              <th className="p-2 text-right">Net Weight / Unit (kg)</th>
+                              <th className="p-2 text-right">Total Weight (MT)</th>
+                              <th className="p-2 text-right">Line Amount</th>
+                              <th className="p-2 text-left">Contract</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#141414]/10">
+                            {draft.lineItems.map(li => (
+                              <tr key={li.id}>
+                                <td className="p-2">{li.productDisplayName || li.productName}</td>
+                                <td className="p-2 text-right font-mono">{li.qty}</td>
+                                <td className="p-2 text-right font-mono">{li.netWeightPerUnit}</td>
+                                <td className="p-2 text-right font-mono">{(li.totalWeight || 0).toFixed(3)}</td>
+                                <td className="p-2 text-right font-mono">{li.lineAmount ? `$${li.lineAmount.toFixed(2)}` : '—'}</td>
+                                <td className="p-2 font-mono">{li.contractNumber || '—'}</td>
+                              </tr>
+                            ))}
+                            {draft.lineItems.length === 0 && (
+                              <tr><td colSpan={6} className="p-3 text-center italic opacity-50">No line items copied.</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex justify-end gap-2">
+                  <button onClick={close} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                  <button
+                    onClick={save}
+                    disabled={!canSave}
+                    className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                  >
+                    {isEditing ? 'Save Changes' : 'Create Return Order'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+
+        {/* ============================================================
+            RETURN & BILL CONFIRM MODAL
+            ============================================================ */}
+        {returnAndBillConfirm && (() => {
+          const ro = returnAndBillConfirm;
+          const totalKg = ro.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
+          const cust = customers.find(c => c.name === ro.customer);
+          const shipTo = ro.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === ro.shipToLocationId)?.name : '';
+          return (
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setReturnAndBillConfirm(null)}>
+              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="bg-emerald-700 text-white px-6 py-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={16} /> Confirm Return &amp; Bill</h3>
+                  <button onClick={() => setReturnAndBillConfirm(null)} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+                <div className="p-6 space-y-5">
+                  <p className="text-sm">You are about to <strong>complete</strong> this return order, assign the R-BOL, and create a <strong>credit invoice</strong>. Review the summary below before confirming.</p>
+                  <div className="border border-[#141414]/20 bg-[#F5F5F5]">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-[10px] uppercase font-bold tracking-widest">Return Summary</div>
+                    <table className="w-full text-sm"><tbody className="divide-y divide-[#141414]/10">
+                      <SummaryRow label="Return BOL" value={ro.bolNumber || `(${generateReturnBolNumber()} — assigned now)`} mono />
+                      <SummaryRow label="Original BOL" value={ro.originalBolNumber || '—'} mono />
+                      <SummaryRow label="Customer" value={ro.customer || '—'} bold />
+                      <SummaryRow label="Ship To" value={shipTo || '—'} />
+                      <SummaryRow label="PO Number" value={ro.po || '—'} mono />
+                      <SummaryRow label="Contract #" value={ro.contractNumber || '—'} mono />
+                      <SummaryRow label="Product(s)" value={ro.product || '—'} />
+                      <SummaryRow label="Total Weight" value={`${totalKg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg`} mono />
+                      <SummaryRow label="Reason" value={ro.reasonForReturn || '—'} />
+                      <SummaryRow label="Credit Amount" value={`-$${Math.abs(ro.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${ro.currency || 'CAD'}`} bold />
+                    </tbody></table>
+                  </div>
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex justify-end gap-2">
+                  <button onClick={() => setReturnAndBillConfirm(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white">Cancel</button>
+                  <button
+                    onClick={() => { returnAndBillOrder(ro.id); setReturnAndBillConfirm(null); }}
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase hover:bg-emerald-700 flex items-center gap-2"
+                  >
+                    <CheckCircle2 size={14} /> Confirm — Return &amp; Bill
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+
+        {/* ============================================================
+            RETURN ORDER DETAILS / DRILLDOWN MODAL
+            ============================================================ */}
+        {viewingReturnOrderCard && (() => {
+          const ro = viewingReturnOrderCard;
+          const totalKg = ro.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
+          return (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setViewingReturnOrderCard(null)}>
+              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full h-full max-w-full max-h-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+                    <RotateCcw size={14} /> Return Order {ro.bolNumber}
+                    <span className={`ml-2 px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
+                      ro.status === 'Completed' ? 'bg-green-100 text-green-700' :
+                      ro.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                      ro.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>{ro.status}</span>
+                  </h3>
+                  {/* No close button in header — anchored to bottom-right per the rest of the app */}
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  <div className="grid grid-cols-4 gap-4">
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Return BOL</div><div className="text-sm font-bold font-mono">{ro.bolNumber}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Original BOL</div><div className="text-sm font-mono">{ro.originalBolNumber || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Customer</div><div className="text-sm font-bold">{ro.customer}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">PO #</div><div className="text-sm font-mono">{ro.po || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Product</div><div className="text-sm">{ro.product}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Contract #</div><div className="text-sm font-mono">{ro.contractNumber || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Total Weight</div><div className="text-sm font-bold">{totalKg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Credit Amount</div><div className="text-sm font-bold">${(ro.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {ro.currency || 'CAD'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Shipment Date</div><div className="text-sm">{ro.shipmentDate || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Delivery Date</div><div className="text-sm">{ro.deliveryDate || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Carrier</div><div className="text-sm">{ro.carrier || '—'}</div></div>
+                    <div><div className="text-[10px] uppercase font-bold opacity-60 mb-1">Created</div><div className="text-sm">{ro.date || '—'}</div></div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase font-bold opacity-60 mb-1">Reason for Return</div>
+                    <div className="text-sm p-3 border border-[#141414]/20 bg-[#F5F5F5]">{ro.reasonForReturn || '—'}</div>
+                  </div>
+                </div>
+                <div className="border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-between items-center gap-2">
+                  <div className="flex gap-2">
+                    <button onClick={() => handlePreviewReturnOrderConfirmation(ro)} className="px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all">
+                      <FileText size={14} /> Preview Return Order Confirmation
+                    </button>
+                    <button onClick={() => sendReturnOrderConfirmationEmail(ro, { triggeredBy: 'manual' })} className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all">
+                      <Mail size={14} /> Send Confirmation
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setEditingReturnOrder(ro); setReturnOrderDraft({ ...ro }); setViewingReturnOrderCard(null); }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80">Edit</button>
+                    {ro.status !== 'Completed' && ro.status !== 'Cancelled' && (
+                      <button onClick={() => { setReturnAndBillConfirm(ro); setViewingReturnOrderCard(null); }} className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase hover:bg-emerald-700 flex items-center gap-2">
+                        <CheckCircle2 size={14} /> Return &amp; Bill
+                      </button>
+                    )}
+                    <button onClick={() => setViewingReturnOrderCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-white">Close</button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+
         {completeAndBillConfirm && (() => {
           const ord = completeAndBillConfirm;
           const cust = customers.find(c => c.name === ord.customer);
@@ -16806,6 +17357,16 @@ function SearchInput({ value, onChange, placeholder }: { value: string, onChange
         placeholder={placeholder}
         className="block w-full pl-10 pr-3 py-2 border border-[#141414] bg-white text-xs font-bold uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-[#141414]/20 transition-all shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]"
       />
+    </div>
+  );
+}
+
+/** Labelled form field used in the Add/Edit Return Order modal. */
+function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
+      {children}
     </div>
   );
 }

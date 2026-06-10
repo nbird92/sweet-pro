@@ -10,6 +10,16 @@ interface GenerateOrderConfirmationParams {
   shipToLocation?: ShipToLocation;
   qaProducts: QAProduct[];
   skus: SKU[];
+  /** When 'return_order_confirmation' the title is "Return Order
+   *  Confirmation" and an extra "Reason for Return" field is rendered.
+   *  Defaults to 'order_confirmation' so existing callers are unaffected. */
+  documentType?: 'order_confirmation' | 'return_order_confirmation';
+  /** Free-text reason rendered under the order info row. Required when
+   *  documentType === 'return_order_confirmation'. */
+  reasonForReturn?: string;
+  /** BOL of the original outbound shipment this return references — shown
+   *  next to the new return BOL number for cross-reference. */
+  originalBolNumber?: string;
 }
 
 // Colors
@@ -61,7 +71,11 @@ export function generateOrderConfirmationPdf({
   shipToLocation,
   qaProducts,
   skus,
+  documentType,
+  reasonForReturn,
+  originalBolNumber,
 }: GenerateOrderConfirmationParams): { blobUrl: string; filename: string } {
+  const isReturn = documentType === 'return_order_confirmation';
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const contentWidth = pageWidth - 28; // 14mm margins
@@ -72,8 +86,9 @@ export function generateOrderConfirmationPdf({
   // ─── HEADER ───
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(22);
+  doc.setTextColor(isReturn ? RED : BLACK);
+  doc.text(isReturn ? 'Return Order Confirmation' : 'Order Confirmation', leftCol, 20);
   doc.setTextColor(BLACK);
-  doc.text('Order Confirmation', leftCol, 20);
 
   // Sucro Canada branding (right side)
   doc.setFontSize(16);
@@ -91,12 +106,21 @@ export function generateOrderConfirmationPdf({
   let y = 32;
 
   // ─── ORDER INFO ROW ───
-  const orderFields = [
-    { label: 'Order Entry Date', value: order.date || '' },
-    { label: 'Customer PO #', value: order.po || '' },
-    { label: 'Pick Up Date', value: order.shipmentDate || '' },
-    { label: 'Delivery Date', value: order.deliveryDate || '' },
-  ];
+  // For Return Order Confirmations we also show the new return BOL and the
+  // original (outbound) BOL so the document is self-contained.
+  const orderFields = isReturn
+    ? [
+        { label: 'Return BOL #', value: order.bolNumber || '' },
+        { label: 'Original BOL #', value: originalBolNumber || '' },
+        { label: 'Customer PO #', value: order.po || '' },
+        { label: 'Return Pick Up', value: order.shipmentDate || '' },
+      ]
+    : [
+        { label: 'Order Entry Date', value: order.date || '' },
+        { label: 'Customer PO #', value: order.po || '' },
+        { label: 'Pick Up Date', value: order.shipmentDate || '' },
+        { label: 'Delivery Date', value: order.deliveryDate || '' },
+      ];
 
   const fieldWidth = contentWidth / 4;
   orderFields.forEach((f, i) => {
@@ -114,6 +138,28 @@ export function generateOrderConfirmationPdf({
   });
 
   y += 14;
+
+  // ─── REASON FOR RETURN ───
+  // Only rendered on the return-order variant. Sits between the order info
+  // row and the Consignee section so it's impossible to miss.
+  if (isReturn) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(RED);
+    doc.text('REASON FOR RETURN', leftCol + 2, y);
+    doc.setTextColor(BLACK);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const reason = reasonForReturn || '—';
+    // Wrap long reasons into multiple lines (up to 3 lines, ~80 chars each).
+    const lines = doc.splitTextToSize(reason, contentWidth - 4) as string[];
+    const shown = lines.slice(0, 3);
+    shown.forEach((line, idx) => doc.text(line, leftCol + 2, y + 5.5 + idx * 5));
+    const blockH = 7 + shown.length * 5;
+    doc.setDrawColor(200, 200, 200);
+    doc.rect(leftCol, y - 3.5, contentWidth, blockH);
+    y += blockH + 1;
+  }
 
   // ─── CONSIGNEE & CARRIER ───
   // Left: Consignee
@@ -281,7 +327,7 @@ export function generateOrderConfirmationPdf({
   doc.rect(rightCol + 30, y - 4, halfWidth - 32, 7);
 
   // ─── RETURN BLOB URL + FILENAME ───
-  const filename = `Order_Confirmation_${order.bolNumber || 'draft'}_${order.customer?.replace(/[^a-zA-Z0-9]/g, '_') || 'customer'}.pdf`;
+  const filename = `${isReturn ? 'Return_Order_Confirmation' : 'Order_Confirmation'}_${order.bolNumber || 'draft'}_${order.customer?.replace(/[^a-zA-Z0-9]/g, '_') || 'customer'}.pdf`;
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
   return { blobUrl, filename };
