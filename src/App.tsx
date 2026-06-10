@@ -9169,7 +9169,9 @@ export default function App() {
                 <div className="flex items-center gap-1">
                   <button onClick={() => setModalMinimized('order', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
                   <button onClick={() => setModalMaximized('order', !getModalState('order').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('order').maximized ? 'Restore' : 'Maximize'}>{getModalState('order').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setViewingOrderCard(null); resetModalState('order'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  {/* Close button removed from the header per user request — it's now
+                      anchored to the bottom-right of the modal so it's reachable
+                      without scrolling back up in a long order. */}
                 </div>
               </div>
               <div className="p-6 space-y-5">
@@ -9310,8 +9312,8 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => setViewingOrderCard(null)}
-                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
+                    {/* Close moved to the rightmost position at the end of this row,
+                        so it lives in the very bottom-right corner of the modal. */}
                     {/* Preview BOL — always available so users can review the BOL before completing */}
                     <button
                       onClick={() => {
@@ -9449,6 +9451,14 @@ export default function App() {
                         setViewingOrderCard(null);
                       }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Edit Order</button>
                     )}
+                    {/* Close — anchored to the rightmost slot of the footer
+                        so it's always the bottom-right corner of the modal. */}
+                    <button
+                      onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}
+                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    >
+                      Close
+                    </button>
                   </div>
                 </div>
               </div>

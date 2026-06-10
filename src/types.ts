@@ -662,6 +662,13 @@ export interface QAProduct {
   billOfMaterials?: BOMItem[];
   sugarType?: string; // e.g. Granulated, Liquid, Icing, Brown, Yellow
   productFormat?: string; // Format field (e.g. Bulk, Bagged, Tote, Liquid)
+  // Packaging hierarchy — only meaningful when productGroup === 'Packaged'.
+  // A selling unit is what the end-customer buys (e.g. a 1 kg retail bag);
+  // a case pack groups multiple selling units for shipping (e.g. 12 × 1 kg = 12 kg case).
+  casePackQuantity?: number;   // selling units per case
+  casePackKg?: number;         // total kg per case pack
+  sellingUnitQuantity?: number; // selling units per shippable unit (carton / bundle)
+  sellingUnitKg?: number;      // kg per selling unit
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];

@@ -2474,6 +2474,58 @@ export default function QualityAssurancePage({
                     </div>
                   </div>
 
+                  {/* Packaged-only fields — Case Pack + Selling Unit details.
+                      Only rendered when Product Group is "Packaged" since case-pack /
+                      selling-unit hierarchy is specific to packaged retail SKUs. */}
+                  {newProductData.productGroup === 'Packaged' && (
+                    <div className="grid grid-cols-4 gap-4 pt-3 border-t border-[#141414]/10">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack Qty</label>
+                        <input
+                          type="number"
+                          value={newProductData.casePackQuantity || ''}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNewProductData(prev => ({ ...prev, casePackQuantity: parseFloat(e.target.value) || 0 }))}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="Units per case"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack (kg)</label>
+                        <input
+                          type="number"
+                          value={newProductData.casePackKg || ''}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNewProductData(prev => ({ ...prev, casePackKg: parseFloat(e.target.value) || 0 }))}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="Total kg / case"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit Qty</label>
+                        <input
+                          type="number"
+                          value={newProductData.sellingUnitQuantity || ''}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNewProductData(prev => ({ ...prev, sellingUnitQuantity: parseFloat(e.target.value) || 0 }))}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="Selling units"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit (kg)</label>
+                        <input
+                          type="number"
+                          value={newProductData.sellingUnitKg || ''}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setNewProductData(prev => ({ ...prev, sellingUnitKg: parseFloat(e.target.value) || 0 }))}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="kg per selling unit"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Locked calculated fields */}
                   <div className="grid grid-cols-2 gap-4 pt-3 border-t border-[#141414]/10">
                     <div>
@@ -2597,7 +2649,7 @@ export default function QualityAssurancePage({
               {/* Header */}
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
-                  Product QA: {displayData.productFormat || displayData.skuName}
+                  Product QA: {displayData.skuName || displayData.productFormat || '—'}
                 </h3>
                 <div className="flex items-center gap-1">
                   <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
@@ -2680,6 +2732,51 @@ export default function QualityAssurancePage({
                         })()}</div>
                       </div>
                     </div>
+                    {/* Packaged-only edit fields — only shown when Product Group is "Packaged" */}
+                    {editData?.productGroup === 'Packaged' && (
+                      <div className="grid grid-cols-4 gap-4 pt-3 border-t border-[#141414]/10">
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack Qty</label>
+                          <input
+                            type="number"
+                            value={editData?.casePackQuantity || ''}
+                            onChange={(e) => setEditData(prev => prev ? { ...prev, casePackQuantity: parseFloat(e.target.value) || 0 } : prev)}
+                            className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                            placeholder="Units per case"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack (kg)</label>
+                          <input
+                            type="number"
+                            value={editData?.casePackKg || ''}
+                            onChange={(e) => setEditData(prev => prev ? { ...prev, casePackKg: parseFloat(e.target.value) || 0 } : prev)}
+                            className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                            placeholder="Total kg / case"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit Qty</label>
+                          <input
+                            type="number"
+                            value={editData?.sellingUnitQuantity || ''}
+                            onChange={(e) => setEditData(prev => prev ? { ...prev, sellingUnitQuantity: parseFloat(e.target.value) || 0 } : prev)}
+                            className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                            placeholder="Selling units"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit (kg)</label>
+                          <input
+                            type="number"
+                            value={editData?.sellingUnitKg || ''}
+                            onChange={(e) => setEditData(prev => prev ? { ...prev, sellingUnitKg: parseFloat(e.target.value) || 0 } : prev)}
+                            className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                            placeholder="kg per selling unit"
+                          />
+                        </div>
+                      </div>
+                    )}
                     {/* Locked calculated fields */}
                     <div className="pt-3 border-t border-[#141414]/10">
                       <div>
@@ -2730,6 +2827,15 @@ export default function QualityAssurancePage({
                         })()}
                       </div></div>
                     </div>
+                    {/* Packaged-only view rows */}
+                    {displayData.productGroup === 'Packaged' && (
+                      <div className="grid grid-cols-4 gap-4 pt-3 border-t border-[#141414]/10">
+                        <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack Qty</div><div className="text-xs font-bold">{displayData.casePackQuantity ?? '—'}</div></div>
+                        <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Case Pack (kg)</div><div className="text-xs font-bold">{displayData.casePackKg ?? '—'}</div></div>
+                        <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit Qty</div><div className="text-xs font-bold">{displayData.sellingUnitQuantity ?? '—'}</div></div>
+                        <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Selling Unit (kg)</div><div className="text-xs font-bold">{displayData.sellingUnitKg ?? '—'}</div></div>
+                      </div>
+                    )}
                     </>
                   )}
                 </div>
@@ -3378,7 +3484,7 @@ export default function QualityAssurancePage({
               onClick={() => setProductModalMinimized(false)}
               className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]"
             >
-              <Maximize2 size={12} /> Product QA: {selectedProduct.productFormat || selectedProduct.skuName}
+              <Maximize2 size={12} /> Product QA: {selectedProduct.skuName || selectedProduct.productFormat || '—'}
             </button>
           </div>
         )}
