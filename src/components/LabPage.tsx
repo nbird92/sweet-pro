@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Edit2, AlertCircle, Search, Upload, Download, FlaskConical, ShieldAlert } from 'lucide-react';
+import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface LabPageProps {
@@ -65,7 +66,6 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const [filterSugarType, setFilterSugarType] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
   const [formData, setFormData] = useState({ ...EMPTY_FORM });
   const [showShipmentPicker, setShowShipmentPicker] = useState(false);
@@ -356,7 +356,6 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
 
   const handleDelete = (id: string) => {
     onUpdateLotCodes(lotCodes.filter(lc => lc.id !== id));
-    setDeleteConfirmId(null);
   };
 
   const handleSelectShipment = (s: Shipment) => {
@@ -438,66 +437,38 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       </PageBanner>
     <div className="p-6 space-y-4">
 
-      {/* Lot Code Testing Log Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4">
-          <h3 className="text-xs font-bold uppercase tracking-widest">Lot Code Testing Log</h3>
-        </div>
-
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-3 border-r border-[#141414]/10 min-w-[120px]">Lot #</th>
-              <th className="p-3 border-r border-[#141414]/10">Date</th>
-              <th className="p-3 border-r border-[#141414]/10">BOL #</th>
-              <th className="p-3 border-r border-[#141414]/10">Tank #</th>
-              <th className="p-3 border-r border-[#141414]/10">Sugar Type</th>
-              <th className="p-3 border-r border-[#141414]/10">Brix</th>
-              <th className="p-3 border-r border-[#141414]/10">PH</th>
-              <th className="p-3 border-r border-[#141414]/10">Color</th>
-              <th className="p-3 border-r border-[#141414]/10">Temp °C</th>
-              <th className="p-3 border-r border-[#141414]/10">Invert</th>
-              <th className="p-3 border-r border-[#141414]/10">Flavour/Odour OK</th>
-              <th className="p-3 border-r border-[#141414]/10">Tester</th>
-              <th className="p-3 border-r border-[#141414]/10">Notes</th>
-              <th className="p-3 border-r border-[#141414]/10">Weekly Verification</th>
-              <th className="p-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {filtered.length === 0 ? (
-              <tr><td colSpan={15} className="p-8 text-center text-xs opacity-50">No lot codes recorded yet.</td></tr>
-            ) : filtered.map(lc => (
-              <tr key={lc.id} className="hover:bg-[#F9F9F9] transition-colors">
-                <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10 min-w-[120px]">{lc.lotNumber}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.date || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{lc.bolNumber || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.tankNumber || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.sugarType || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.brix || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.ph || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.color || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.temperature || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.invert || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.flavourOdourOk || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.testerName || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10 max-w-[150px] truncate" title={lc.notes}>{lc.notes || '—'}</td>
-                <td className="p-3 text-xs border-r border-[#141414]/10">{lc.weeklyVerification || '—'}</td>
-                <td className="p-3 text-xs">
-                  <div className="flex gap-1">
-                    <button onClick={() => openEdit(lc)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit">
-                      <Edit2 size={13} />
-                    </button>
-                    <button onClick={() => setDeleteConfirmId(lc.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete">
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Lot Code Testing Log — standardized DataTable. The Add button stays
+          in the PageBanner (alongside Template / Import / Clear All) so the
+          DataTable header has no onAdd. Row click opens the existing edit
+          modal; Delete now lives in the modal footer instead of inline rows. */}
+      <DataTable<LotCode>
+        title="Lot Code Testing Log"
+        columns={[
+          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+          { key: 'date', label: 'Date' },
+          { key: 'bolNumber', label: 'BOL #', mono: true },
+          { key: 'tankNumber', label: 'Tank #' },
+          { key: 'sugarType', label: 'Sugar Type' },
+          { key: 'brix', label: 'Brix' },
+          { key: 'ph', label: 'PH' },
+          { key: 'color', label: 'Color' },
+          { key: 'temperature', label: 'Temp °C' },
+          { key: 'invert', label: 'Invert' },
+          { key: 'flavourOdourOk', label: 'Flavour/Odour OK' },
+          { key: 'testerName', label: 'Tester' },
+          {
+            key: 'notes', label: 'Notes',
+            render: (lc) => <span title={lc.notes} className="block max-w-[150px] truncate">{lc.notes || '—'}</span>,
+          },
+          { key: 'weeklyVerification', label: 'Weekly Verification' },
+        ]}
+        rows={filtered}
+        getRowKey={(lc) => lc.id}
+        onRowClick={(lc) => openEdit(lc)}
+        emptyMessage="No lot codes recorded yet."
+        defaultSortKey="date"
+        defaultSortDir="desc"
+      />
 
       {/* Add / Edit Lot Code Modal */}
       <AnimatePresence>
@@ -725,6 +696,20 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none min-h-[80px] resize-y" placeholder="Additional notes..." />
                 </div>
                 <div className="flex gap-4 pt-4">
+                  {editingLot && (
+                    <button
+                      onClick={() => {
+                        if (!editingLot) return;
+                        if (window.confirm(`Delete lot code "${editingLot.lotNumber}"? This cannot be undone.`)) {
+                          handleDelete(editingLot.id);
+                          setEditingLot(null);
+                        }
+                      }}
+                      className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  )}
                   <button onClick={handleSave} disabled={!formData.lotNumber || formData.lotNumber.includes('?')}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50">
                     {editingLot ? 'Save Changes' : 'Add Lot Code'}
@@ -910,37 +895,6 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         )}
       </AnimatePresence>
 
-      {/* Delete Lot Code Confirmation */}
-      <AnimatePresence>
-        {deleteConfirmId && (
-          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
-                <AlertCircle size={20} className="text-red-400" />
-                <h3 className="text-xs font-bold uppercase tracking-widest">Confirm Delete</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete lot code <span className="font-bold font-mono">{lotCodes.find(lc => lc.id === deleteConfirmId)?.lotNumber}</span>? This action cannot be undone.</p>
-                <div className="flex gap-4">
-                  <button onClick={() => handleDelete(deleteConfirmId)}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all">
-                    Yes, Delete
-                  </button>
-                  <button onClick={() => setDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
     </div>
   );
