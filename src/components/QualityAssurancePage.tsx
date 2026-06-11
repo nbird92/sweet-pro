@@ -730,7 +730,6 @@ export default function QualityAssurancePage({
                 <SortHeader label="Location" sortKey="location" />
                 <SortHeader label="Net Weight (KG)" sortKey="netWeightKg" />
                 <SortHeader label="Gross Weight (KG)" sortKey="grossWeightKg" />
-                <th className="p-4">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
@@ -782,20 +781,12 @@ export default function QualityAssurancePage({
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
                     <td className="p-4 text-xs border-r border-[#141414]/10">{p.netWeightKg ?? '-'}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.grossWeightKg ?? '-'}</td>
-                    <td className="p-4">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(p.id); }}
-                        className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
+                    <td className="p-4 text-xs">{p.grossWeightKg ?? '-'}</td>
                   </tr>
                 );
               }) : (
                 <tr>
-                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={12}>
+                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={11}>
                     No products added yet. Click "Add Product" to get started.
                   </td>
                 </tr>
@@ -3474,6 +3465,19 @@ export default function QualityAssurancePage({
                     </>
                   ) : (
                     <>
+                      {/* Delete moved here from the table's old Actions column —
+                          routes through the existing delete-confirm dialog. */}
+                      <button
+                        onClick={() => {
+                          if (selectedProduct) {
+                            setDeleteConfirmId(selectedProduct.id);
+                            closeDetail();
+                          }
+                        }}
+                        className="px-6 py-4 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center-safe justify-center gap-2"
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
                       <button
                         onClick={() => setIsEditing(true)}
                         className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all"
