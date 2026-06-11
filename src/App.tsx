@@ -249,6 +249,9 @@ export default function App() {
   // DetailModal state for the standardized Fuel Surcharges table.
   const [fuelSurchargeDraft, setFuelSurchargeDraft] = useState<FuelSurcharge | null>(null);
   const [fuelSurchargeMode, setFuelSurchargeMode] = useState<'view' | 'edit' | 'add'>('view');
+  // DetailModal state for the standardized CHEP Pallets Inventory table.
+  const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
+  const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -7583,172 +7586,103 @@ export default function App() {
             </table>
           </div>
           
-          <div className="space-y-4">
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Vancouver Supply Chain</h3>
-                <button 
-                  onClick={() => setIsAddingSupplyChain(true)}
-                  className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-                >
-                  <Plus size={12} /> Add Component
-                </button>
-              </div>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                    <th className="p-4 border-r border-[#141414]/10">Component</th>
-                    <th className="p-4 border-r border-[#141414]/10">Carrier</th>
-                    <th className="p-4 border-r border-[#141414]/10">Total Cost (CAD)</th>
-                    <th className="p-4 border-r border-[#141414]/10">Weight / Load (MT)</th>
-                    <th className="p-4 border-r border-[#141414]/10">Cost / MT</th>
-                    <th className="p-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {supplyChain.map(item => {
-                    const costPerMt = item.totalCostCad / (item.weightPerLoadMt || 1);
-                    return (
-                      <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{item.component}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{item.provider}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">CAD ${item.totalCostCad.toLocaleString()}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{item.weightPerLoadMt}</td>
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">CAD ${costPerMt.toFixed(2)}</td>
-                        <td className="p-4 text-xs flex items-center gap-2">
-                          <button onClick={() => setEditingSupplyChain(item)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                            <Edit2 size={14} />
-                          </button>
-                          <button 
-                            onClick={() => setSupplyChain(supplyChain.filter(sc => sc.id !== item.id))} 
-                            className="p-1 hover:bg-red-500 hover:text-white transition-all"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-[#F5F5F5] font-black border-t border-[#141414]">
-                    <td colSpan={4} className="p-4 text-xs uppercase tracking-widest text-right border-r border-[#141414]/10">Total Supply Chain Cost / MT</td>
-                    <td colSpan={2} className="p-4 text-sm text-indigo-600">CAD ${totalCostPerMt.toFixed(2)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
+          {/* Vancouver Supply Chain — standardized table. Row click opens the
+              existing edit modal (retitled to the Detail convention); delete
+              moved into that modal behind a confirm. */}
+          <DataTable<SupplyChainComponent>
+            title="Vancouver Supply Chain"
+            columns={[
+              { key: 'component', label: 'Component', bold: true },
+              { key: 'provider', label: 'Carrier' },
+              {
+                key: 'totalCostCad', label: 'Total Cost (CAD)', align: 'right', mono: true,
+                render: (i) => `CAD $${i.totalCostCad.toLocaleString()}`,
+                sortValue: (i) => i.totalCostCad,
+              },
+              { key: 'weightPerLoadMt', label: 'Weight / Load (MT)', align: 'right', mono: true },
+              {
+                key: 'costPerMt', label: 'Cost / MT', align: 'right', mono: true, bold: true,
+                render: (i) => `CAD $${(i.totalCostCad / (i.weightPerLoadMt || 1)).toFixed(2)}`,
+                sortValue: (i) => i.totalCostCad / (i.weightPerLoadMt || 1),
+              },
+            ]}
+            rows={supplyChain}
+            getRowKey={(i) => i.id}
+            onRowClick={(i) => setEditingSupplyChain(i)}
+            onAdd={() => setIsAddingSupplyChain(true)}
+            addLabel="Add Component"
+            emptyMessage="No supply chain components added yet."
+            footer={
+              <tr className="bg-[#F5F5F5] font-black border-t border-[#141414]">
+                <td colSpan={4} className="p-4 text-xs uppercase tracking-widest text-right border-r border-[#141414]/10">Total Supply Chain Cost / MT</td>
+                <td className="p-4 text-sm text-indigo-600 text-right">CAD ${totalCostPerMt.toFixed(2)}</td>
+              </tr>
+            }
+          />
 
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold uppercase tracking-widest">Carriers</h3>
-              <button 
-                onClick={() => {
-                  setEditingCarrier({ id: '', carrierNumber: '', name: '', contactEmail: '', contactPhone: '', notes: '', defaultLocationCode: '' });
-                  setIsAddingCarrier(true);
-                }}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add Carrier
-              </button>
-            </div>
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                    <th className="p-4 border-r border-[#141414]/10">Carrier #</th>
-                    <th className="p-4 border-r border-[#141414]/10">Name</th>
-                    <th className="p-4 border-r border-[#141414]/10">Default Location</th>
-                    <th className="p-4 border-r border-[#141414]/10">Contact Email</th>
-                    <th className="p-4 border-r border-[#141414]/10">Contact Phone</th>
-                    <th className="p-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {carriers.map(carrier => {
-                    const carrierLoc = locations.find(l => l.locationCode === carrier.defaultLocationCode);
-                    return (
-                    <tr key={carrier.id} className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{carrier.carrierNumber}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.name}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">
-                        {carrierLoc ? `${carrierLoc.locationCode} — ${carrierLoc.name}` : carrier.defaultLocationCode || '—'}
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactEmail}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{carrier.contactPhone}</td>
-                      <td className="p-4 text-xs flex items-center gap-2">
-                        <button onClick={() => { setIsAddingCarrier(false); setEditingCarrier(carrier); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => setCarriers(carriers.filter(c => c.id !== carrier.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          {/* Carriers — standardized table. Row click opens the existing
+              add/edit carrier modal (retitled to the Detail convention);
+              delete moved into that modal behind a confirm. */}
+          <DataTable<Carrier>
+            title="Carriers"
+            columns={[
+              { key: 'carrierNumber', label: 'Carrier #', bold: true, mono: true, widthClass: 'w-28' },
+              { key: 'name', label: 'Name', bold: true },
+              {
+                key: 'defaultLocationCode', label: 'Default Location',
+                render: (c) => {
+                  const loc = locations.find(l => l.locationCode === c.defaultLocationCode);
+                  return loc ? `${loc.locationCode} — ${loc.name}` : (c.defaultLocationCode || '—');
+                },
+              },
+              { key: 'contactEmail', label: 'Contact Email' },
+              { key: 'contactPhone', label: 'Contact Phone' },
+            ]}
+            rows={carriers}
+            getRowKey={(c) => c.id}
+            onRowClick={(c) => { setIsAddingCarrier(false); setEditingCarrier(c); }}
+            onAdd={() => {
+              setEditingCarrier({ id: '', carrierNumber: '', name: '', contactEmail: '', contactPhone: '', notes: '', defaultLocationCode: '' });
+              setIsAddingCarrier(true);
+            }}
+            addLabel="Add Carrier"
+            emptyMessage="No carriers added yet."
+            defaultSortKey="name"
+          />
 
+          {/* Freight Rates — standardized table. Search box kept above the
+              table (same global searchTerm wiring as before). Row click opens
+              the existing freight-rate edit modal. */}
           <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold uppercase tracking-widest">Freight Rates</h3>
-              <button 
-                onClick={addFreightRate}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add Rate
-              </button>
-            </div>
-
-            <SearchInput 
-              value={searchTerm} 
-              onChange={setSearchTerm} 
-              placeholder="Search freight rates by origin, destination, provider or type..." 
+            <SearchInput
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Search freight rates by origin, destination, provider or type..."
             />
-
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                    <SortableHeader label="Location" sortKey="origin" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Destination" sortKey="destination" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Type" sortKey="freightType" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Carrier" sortKey="provider" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Cost (CAD)" sortKey="cost" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="MT / Load" sortKey="mtPerLoad" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
-                    <th className="p-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {getSortedAndFilteredData<FreightRate>(freightRates, ['origin', 'destination', 'provider', 'freightType']).map(rate => (
-                    <tr key={rate.id} className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-4 text-xs font-bold">{rate.origin}</td>
-                      <td className="p-4 text-xs">{rate.destination}</td>
-                      <td className="p-4 text-xs">{rate.freightType}</td>
-                      <td className="p-4 text-xs">{rate.provider}</td>
-                      <td className="p-4 text-xs font-bold">{rate.cost.toLocaleString()}</td>
-                      <td className="p-4 text-xs">{rate.mtPerLoad}</td>
-                      <td className="p-4 text-xs">{rate.startDate || '—'}</td>
-                      <td className="p-4 text-xs">{rate.endDate || '—'}</td>
-                      <td className="p-4 text-xs flex items-center gap-2">
-                        <button onClick={() => setEditingFreightRate(rate)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => deleteFreightRate(rate.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable<FreightRate>
+              title="Freight Rates"
+              columns={[
+                { key: 'origin', label: 'Location', bold: true },
+                { key: 'destination', label: 'Destination' },
+                { key: 'freightType', label: 'Type' },
+                { key: 'provider', label: 'Carrier' },
+                {
+                  key: 'cost', label: 'Cost (CAD)', align: 'right', mono: true, bold: true,
+                  render: (r) => r.cost.toLocaleString(),
+                  sortValue: (r) => r.cost,
+                },
+                { key: 'mtPerLoad', label: 'MT / Load', align: 'right', mono: true },
+                { key: 'startDate', label: 'Start Date' },
+                { key: 'endDate', label: 'End Date' },
+              ]}
+              rows={getSortedAndFilteredData<FreightRate>(freightRates, ['origin', 'destination', 'provider', 'freightType'])}
+              getRowKey={(r) => r.id}
+              onRowClick={(r) => setEditingFreightRate(r)}
+              onAdd={addFreightRate}
+              addLabel="Add Rate"
+              emptyMessage="No freight rates match."
+              defaultSortKey="origin"
+            />
           </div>
 
           {/* Fuel Surcharges — standardized table (DataTable + DetailModal). */}
@@ -7796,27 +7730,6 @@ export default function App() {
 
           {/* CHEP Pallets Inventory */}
           <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold uppercase tracking-widest">CHEP Pallets Inventory</h3>
-              <button
-                onClick={() => {
-                  const id = `CHEP-${Date.now()}`;
-                  setChepPalletMovements(prev => [...prev, {
-                    id,
-                    date: new Date().toISOString().split('T')[0],
-                    location: locations[0]?.name || 'Hamilton',
-                    type: 'in' as const,
-                    quantity: 0,
-                    reference: 'Manual Add',
-                    notes: '',
-                  }]);
-                }}
-                className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
-              >
-                <Plus size={12} /> Add Pallets
-              </button>
-            </div>
-
             {/* Location Summary */}
             {(() => {
               const balanceByLocation: Record<string, number> = {};
@@ -7840,60 +7753,42 @@ export default function App() {
               );
             })()}
 
-            {/* Movements Table */}
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Date</th>
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Type</th>
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Quantity</th>
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Reference</th>
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Notes</th>
-                    <th className="p-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {[...chepPalletMovements].sort((a, b) => b.date.localeCompare(a.date)).map(m => (
-                    <tr key={m.id} className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
-                        <input type="date" value={m.date} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, date: e.target.value } : x))} className="bg-transparent focus:outline-none" />
-                      </td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
-                        <select value={m.location} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, location: e.target.value } : x))} className="bg-transparent focus:outline-none">
-                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                        </select>
-                      </td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
-                        {m.type === 'in' ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[8px] uppercase">IN</span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold text-[8px] uppercase">OUT</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
-                        <input type="text" inputMode="numeric" value={m.quantity || ''} onFocus={(e) => e.target.select()} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, quantity: parseInt(e.target.value) || 0 } : x))} className="w-16 bg-transparent focus:outline-none" />
-                      </td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
-                        <input type="text" value={m.reference} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, reference: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Reference" />
-                      </td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
-                        <input type="text" value={m.notes || ''} onChange={(e) => setChepPalletMovements(prev => prev.map(x => x.id === m.id ? { ...x, notes: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Notes" />
-                      </td>
-                      <td className="p-3 text-xs">
-                        <button onClick={() => setChepPalletMovements(prev => prev.filter(x => x.id !== m.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {chepPalletMovements.length === 0 && (
-                    <tr><td colSpan={7} className="p-8 text-center text-xs opacity-50 italic">No CHEP pallet movements recorded yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            {/* CHEP Pallets Inventory — standardized table. */}
+            <DataTable<ChepPalletMovement>
+              title="CHEP Pallets Inventory"
+              columns={[
+                { key: 'date', label: 'Date', mono: true },
+                { key: 'location', label: 'Location', bold: true },
+                {
+                  key: 'type', label: 'Type',
+                  render: (m) => m.type === 'in'
+                    ? <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold text-[8px] uppercase">IN</span>
+                    : <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold text-[8px] uppercase">OUT</span>,
+                },
+                { key: 'quantity', label: 'Quantity', align: 'right', mono: true, bold: true },
+                { key: 'reference', label: 'Reference' },
+                { key: 'notes', label: 'Notes' },
+              ]}
+              rows={chepPalletMovements}
+              getRowKey={(m) => m.id}
+              onRowClick={(m) => { setChepDraft({ ...m }); setChepMode('view'); }}
+              onAdd={() => {
+                setChepDraft({
+                  id: `CHEP-${Date.now()}`,
+                  date: new Date().toISOString().split('T')[0],
+                  location: locations[0]?.name || 'Hamilton',
+                  type: 'in',
+                  quantity: 0,
+                  reference: 'Manual Add',
+                  notes: '',
+                });
+                setChepMode('add');
+              }}
+              addLabel="Add Pallets"
+              emptyMessage="No CHEP pallet movements recorded yet."
+              defaultSortKey="date"
+              defaultSortDir="desc"
+            />
           </div>
 
           </div>
@@ -9924,6 +9819,76 @@ export default function App() {
         })()}
 
         {/* ============================================================
+            CHEP PALLETS INVENTORY — standardized DetailModal
+            ============================================================ */}
+        <DetailModal
+          tableName="CHEP Pallets Inventory"
+          isOpen={!!chepDraft}
+          mode={chepMode}
+          onClose={() => setChepDraft(null)}
+          onEdit={() => setChepMode('edit')}
+          onSave={() => {
+            if (!chepDraft) return;
+            if (!chepDraft.location || chepDraft.quantity <= 0) {
+              setErrorBox('Location and a positive Quantity are required.');
+              return;
+            }
+            if (chepMode === 'add') {
+              setChepPalletMovements(prev => [...prev, chepDraft]);
+            } else {
+              setChepPalletMovements(prev => prev.map(m => m.id === chepDraft.id ? chepDraft : m));
+            }
+            setChepDraft(null);
+          }}
+          onDelete={chepMode === 'add' ? undefined : () => {
+            if (!chepDraft) return;
+            setChepPalletMovements(prev => prev.filter(m => m.id !== chepDraft.id));
+            setChepDraft(null);
+          }}
+          deleteConfirmMessage={chepDraft ? `Delete this ${chepDraft.type === 'in' ? 'IN' : 'OUT'} movement of ${chepDraft.quantity} pallets at ${chepDraft.location}?` : undefined}
+          saveDisabled={!chepDraft?.location || (chepDraft?.quantity || 0) <= 0}
+        >
+          {chepDraft && (
+            chepMode === 'view' ? (
+              <>
+                <DetailRow label="Date" value={chepDraft.date} mono />
+                <DetailRow label="Location" value={chepDraft.location} bold />
+                <DetailRow label="Type" value={chepDraft.type === 'in' ? 'IN (received)' : 'OUT (shipped)'} />
+                <DetailRow label="Quantity" value={String(chepDraft.quantity)} mono bold />
+                <DetailRow label="Reference" value={chepDraft.reference} />
+                <DetailRow label="Notes" value={chepDraft.notes} />
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <DetailField label="Date" required>
+                  <input type="date" value={chepDraft.date} onChange={(e) => setChepDraft(d => d ? { ...d, date: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
+                </DetailField>
+                <DetailField label="Location" required>
+                  <select value={chepDraft.location} onChange={(e) => setChepDraft(d => d ? { ...d, location: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white">
+                    {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                  </select>
+                </DetailField>
+                <DetailField label="Type" required>
+                  <select value={chepDraft.type} onChange={(e) => setChepDraft(d => d ? { ...d, type: e.target.value as 'in' | 'out' } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white">
+                    <option value="in">IN (received)</option>
+                    <option value="out">OUT (shipped)</option>
+                  </select>
+                </DetailField>
+                <DetailField label="Quantity" required>
+                  <input type="number" value={chepDraft.quantity || ''} onFocus={(e) => e.target.select()} onChange={(e) => setChepDraft(d => d ? { ...d, quantity: parseInt(e.target.value) || 0 } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white" />
+                </DetailField>
+                <DetailField label="Reference">
+                  <input type="text" value={chepDraft.reference} onChange={(e) => setChepDraft(d => d ? { ...d, reference: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
+                </DetailField>
+                <DetailField label="Notes">
+                  <input type="text" value={chepDraft.notes || ''} onChange={(e) => setChepDraft(d => d ? { ...d, notes: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
+                </DetailField>
+              </div>
+            )
+          )}
+        </DetailModal>
+
+        {/* ============================================================
             FUEL SURCHARGES — standardized DetailModal
             ============================================================ */}
         <DetailModal
@@ -10243,7 +10208,7 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{isAddingCarrier ? 'Add Carrier' : 'Edit Carrier'}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">{isAddingCarrier ? 'New Carrier' : 'Carriers Detail'}</h3>
                 <button onClick={() => { setIsAddingCarrier(false); setEditingCarrier(null); }} className="hover:rotate-90 transition-transform"><X size={18} /></button>
               </div>
               <div className="p-6 space-y-4">
@@ -10303,6 +10268,22 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4 border-t border-[#141414]/10">
+                  {/* Delete lives in the modal (standard pattern) — only for
+                      existing carriers, never in add mode. */}
+                  {!isAddingCarrier && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Delete carrier "${editingCarrier.name || editingCarrier.id}"? This cannot be undone.`)) {
+                          setCarriers(prev => prev.filter(c => c.id !== editingCarrier.id));
+                          setIsAddingCarrier(false);
+                          setEditingCarrier(null);
+                        }
+                      }}
+                      className="px-5 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       if (!editingCarrier.name) { alert('Please enter a carrier name'); return; }
@@ -12935,7 +12916,7 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Freight Rate</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Freight Rates Detail</h3>
                 <button onClick={() => setEditingFreightRate(null)} className="hover:opacity-70">
                   <X size={18} />
                 </button>
@@ -13030,6 +13011,17 @@ export default function App() {
                 <div className="flex gap-4 pt-4">
                   <button
                     onClick={() => {
+                      if (window.confirm(`Delete freight rate ${editingFreightRate.origin} → ${editingFreightRate.destination}? This cannot be undone.`)) {
+                        deleteFreightRate(editingFreightRate.id);
+                        setEditingFreightRate(null);
+                      }
+                    }}
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                  <button
+                    onClick={() => {
                       setFreightRates(freightRates.map(f => f.id === editingFreightRate.id ? editingFreightRate : f));
                       setEditingFreightRate(null);
                     }}
@@ -13037,7 +13029,7 @@ export default function App() {
                   >
                     Save Changes
                   </button>
-                  <button 
+                  <button
                     onClick={() => setEditingFreightRate(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -14388,7 +14380,7 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Freight Rate: {editingFreightRate.id}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Freight Rates Detail</h3>
                 <button onClick={() => setEditingFreightRate(null)} className="hover:opacity-70">
                   <X size={18} />
                 </button>
@@ -14463,7 +14455,18 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete freight rate ${editingFreightRate.origin} → ${editingFreightRate.destination}? This cannot be undone.`)) {
+                        deleteFreightRate(editingFreightRate.id);
+                        setEditingFreightRate(null);
+                      }
+                    }}
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                  <button
                     onClick={() => {
                       setFreightRates(freightRates.map(f => f.id === editingFreightRate.id ? editingFreightRate : f));
                       setEditingFreightRate(null);
@@ -14472,7 +14475,7 @@ export default function App() {
                   >
                     Save Changes
                   </button>
-                  <button 
+                  <button
                     onClick={() => setEditingFreightRate(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
@@ -14571,7 +14574,7 @@ export default function App() {
               className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Supply Chain Component: {editingSupplyChain.id}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Vancouver Supply Chain Detail</h3>
                 <button onClick={() => setEditingSupplyChain(null)} className="hover:opacity-70">
                   <X size={18} />
                 </button>
@@ -14623,7 +14626,21 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button 
+                  {/* Delete moved here from the old table Actions column —
+                      standard pattern: destructive actions live in the modal
+                      behind a confirm. */}
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete supply chain component "${editingSupplyChain.component}"? This cannot be undone.`)) {
+                        setSupplyChain(supplyChain.filter(sc => sc.id !== editingSupplyChain.id));
+                        setEditingSupplyChain(null);
+                      }
+                    }}
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                  <button
                     onClick={() => {
                       setSupplyChain(supplyChain.map(s => s.id === editingSupplyChain.id ? editingSupplyChain : s));
                       setEditingSupplyChain(null);
@@ -14632,7 +14649,7 @@ export default function App() {
                   >
                     Save Changes
                   </button>
-                  <button 
+                  <button
                     onClick={() => setEditingSupplyChain(null)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >

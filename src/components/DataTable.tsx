@@ -60,6 +60,9 @@ interface DataTableProps<T> {
   /** Optional default sort key + direction. */
   defaultSortKey?: string;
   defaultSortDir?: 'asc' | 'desc';
+  /** Optional footer row(s) — rendered inside <tfoot>. Caller supplies the
+   *  full <tr>...</tr> markup so totals rows keep their custom styling. */
+  footer?: React.ReactNode;
 }
 
 export default function DataTable<T>({
@@ -74,6 +77,7 @@ export default function DataTable<T>({
   emptyMessage = 'No records yet.',
   defaultSortKey,
   defaultSortDir = 'asc',
+  footer,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey || null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir);
@@ -171,6 +175,7 @@ export default function DataTable<T>({
             </tr>
           )}
         </tbody>
+        {footer && <tfoot>{footer}</tfoot>}
       </table>
     </div>
   );
