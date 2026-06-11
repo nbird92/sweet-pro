@@ -51,7 +51,6 @@ import {
   BarChart3,
   Landmark,
   Zap,
-  Mail,
   RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -68,8 +67,6 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { generateBolPdf } from './bolPdf';
-import { generateCoaPdf } from './coaPdf';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
@@ -112,6 +109,10 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
   newLeadFollowUp: Record<string, { date: string; description: string; infoSent: string }>;
   setNewLeadFollowUp: React.Dispatch<React.SetStateAction<Record<string, { date: string; description: string; infoSent: string }>>>;
 }) {
+  const activeLocations = React.useMemo(
+    () => locations.filter(l => l.active !== false),
+    [locations]
+  );
   return (
     <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
@@ -3144,21 +3145,6 @@ export default function App() {
         }));
       }
     }
-
-    // Auto-send BOL + COA emails when their respective trigger toggles
-    // are on (Email Center → Settings → Triggers). Sends are fire-and-
-    // forget — completeAndBillOrder doesn't await them so the UI stays
-    // responsive. Each send writes its own emailLog entry; failures land
-    // in the log with the error message rather than blocking the bill.
-    if (emailSettings.enabled) {
-      const completedOrder: Order = { ...order, status: 'Completed' };
-      if (emailSettings.triggers.bolOnCompletedAndBilled) {
-        sendBolEmail(completedOrder, { triggeredBy: 'automation' });
-      }
-      if (emailSettings.triggers.coaOnCompletedAndBilled) {
-        sendCoaEmail(completedOrder, { triggeredBy: 'automation' });
-      }
-    }
   };
 
   const completeAndBillOrder = (orderId: string) => {
@@ -3241,6 +3227,21 @@ export default function App() {
         }
         return c;
       }));
+    }
+
+    // Auto-send BOL + COA emails when their respective trigger toggles
+    // are on (Email Center → Settings → Triggers). Sends are fire-and-
+    // forget — completeAndBillOrder doesn't await them so the UI stays
+    // responsive. Each send writes its own emailLog entry; failures land
+    // in the log with the error message rather than blocking the bill.
+    if (emailSettings.enabled) {
+      const completedOrder: Order = { ...order, status: 'Completed' };
+      if (emailSettings.triggers.bolOnCompletedAndBilled) {
+        sendBolEmail(completedOrder, { triggeredBy: 'automation' });
+      }
+      if (emailSettings.triggers.coaOnCompletedAndBilled) {
+        sendCoaEmail(completedOrder, { triggeredBy: 'automation' });
+      }
     }
   };
 

@@ -21,6 +21,7 @@ const TYPE_LABELS: Record<EmailDocumentType, string> = {
   bol: 'Bill of Lading',
   coa: 'Certificate of Analysis',
   invoice: 'Invoice',
+  return_order_confirmation: 'Return Order Confirmation',
 };
 
 const STATUS_STYLES: Record<EmailStatus, string> = {
