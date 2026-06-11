@@ -5,6 +5,8 @@ import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image,
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
+import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface QualityAssurancePageProps {
@@ -219,33 +221,27 @@ export default function QualityAssurancePage({
   const [templateForm, setTemplateForm] = useState<{ name: string; type: QATemplate['type']; googleSheetUrl: string; description: string }>({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
   const [deleteTemplateConfirmId, setDeleteTemplateConfirmId] = useState<string | null>(null);
 
-  // Packaging Format state
-  const [showPackagingFormatModal, setShowPackagingFormatModal] = useState(false);
-  const [editingPackagingFormat, setEditingPackagingFormat] = useState<PackagingFormat | null>(null);
-  const [packagingFormatForm, setPackagingFormatForm] = useState<{ name: string; code: string; description: string; packagingLine: string; location: string }>({ name: '', code: '', description: '', packagingLine: '', location: '' });
-  const [deletePackagingFormatConfirmId, setDeletePackagingFormatConfirmId] = useState<string | null>(null);
+  // Packaging Format detail-modal state (DataTable + DetailModal standard).
+  const [pkgFormatDraft, setPkgFormatDraft] = useState<PackagingFormat | null>(null);
+  const [pkgFormatMode, setPkgFormatMode] = useState<'view' | 'edit' | 'add'>('view');
 
-  // Naming Formula state
-  const [showNamingFormulaModal, setShowNamingFormulaModal] = useState(false);
-  const [editingNamingFormula, setEditingNamingFormula] = useState<NamingFormula | null>(null);
-  const [namingFormulaForm, setNamingFormulaForm] = useState<{ type: 'Product Name' | 'Short Form'; name: string; condition: string; formula: string; description: string; priority: number; tokens: FormulaToken[] }>({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50, tokens: [] });
-  const [deleteNamingFormulaConfirmId, setDeleteNamingFormulaConfirmId] = useState<string | null>(null);
+  // Naming Formula detail-modal state (DataTable + DetailModal standard).
+  // The detailed token-builder UI (picker, drag-drop, preview) stays inside
+  // the modal — only the shell + delete dialog change.
+  const [namingFormulaDraft, setNamingFormulaDraft] = useState<NamingFormula | null>(null);
+  const [namingFormulaMode, setNamingFormulaMode] = useState<'view' | 'edit' | 'add'>('view');
   const [draggedTokenIdx, setDraggedTokenIdx] = useState<number | null>(null);
   const [tokenPickerCategory, setTokenPickerCategory] = useState<string>('field');
   const [tokenPickerValue, setTokenPickerValue] = useState<string>('');
   const [literalText, setLiteralText] = useState<string>('');
 
-  // Product Group modal state
-  const [showProductGroupModal, setShowProductGroupModal] = useState(false);
-  const [editingProductGroup, setEditingProductGroup] = useState<ProductGroup | null>(null);
-  const [productGroupForm, setProductGroupForm] = useState<{ name: string; bolCode: string; color: string }>({ name: '', bolCode: '', color: '#E4E3E0' });
-  const [deleteProductGroupConfirmId, setDeleteProductGroupConfirmId] = useState<string | null>(null);
+  // Product Group detail-modal state (DataTable + DetailModal standard).
+  const [productGroupDraft, setProductGroupDraft] = useState<ProductGroup | null>(null);
+  const [productGroupMode, setProductGroupMode] = useState<'view' | 'edit' | 'add'>('view');
 
-  // Sugar Type modal state
-  const [showSugarTypeModal, setShowSugarTypeModal] = useState(false);
-  const [editingSugarType, setEditingSugarType] = useState<SugarType | null>(null);
-  const [sugarTypeForm, setSugarTypeForm] = useState<{ name: string; abbreviation: string }>({ name: '', abbreviation: '' });
-  const [deleteSugarTypeConfirmId, setDeleteSugarTypeConfirmId] = useState<string | null>(null);
+  // Sugar Type detail-modal state (DataTable + DetailModal standard).
+  const [sugarTypeDraft, setSugarTypeDraft] = useState<SugarType | null>(null);
+  const [sugarTypeMode, setSugarTypeMode] = useState<'view' | 'edit' | 'add'>('view');
 
   const openLocationDetail = (loc: Location) => {
     setSelectedLocation(loc);
@@ -864,1009 +860,653 @@ export default function QualityAssurancePage({
         </table>
       </div>
 
-      {/* Packaging Formats Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest">Packaging Formats</h3>
-            <span className="text-[10px] opacity-60">{packagingFormats.length} formats</span>
-          </div>
-          <button
-            onClick={() => {
-              setEditingPackagingFormat(null);
-              setPackagingFormatForm({ name: '', code: '', description: '', packagingLine: '', location: locations[0]?.name || '' });
-              setShowPackagingFormatModal(true);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            <Plus size={12} /> Add Packaging Format
-          </button>
-        </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-4 border-r border-[#141414]/10">Code</th>
-              <th className="p-4 border-r border-[#141414]/10">Name</th>
-              <th className="p-4 border-r border-[#141414]/10">Description</th>
-              <th className="p-4 border-r border-[#141414]/10">Packaging Line</th>
-              <th className="p-4 border-r border-[#141414]/10">Location</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {packagingFormats.map(pf => (
-              <tr key={pf.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{pf.code || '—'}</td>
-                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pf.name}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{pf.description || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{pf.packagingLine || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">{pf.location || '—'}</td>
-                <td className="p-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingPackagingFormat(pf);
-                        setPackagingFormatForm({
-                          name: pf.name,
-                          code: pf.code || '',
-                          description: pf.description,
-                          packagingLine: pf.packagingLine,
-                          location: pf.location,
-                        });
-                        setShowPackagingFormatModal(true);
-                      }}
-                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
-                      title="Edit packaging format"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setDeletePackagingFormatConfirmId(pf.id)}
-                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete packaging format"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {packagingFormats.length === 0 && (
-              <tr><td colSpan={6} className="p-12 text-center text-xs opacity-50 italic">No packaging formats added yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {/* Packaging Formats — standardized DataTable + DetailModal. */}
+      <DataTable<PackagingFormat>
+        title="Packaging Formats"
+        columns={[
+          { key: 'code', label: 'Code', mono: true, bold: true, widthClass: 'w-32' },
+          { key: 'name', label: 'Name', bold: true },
+          { key: 'description', label: 'Description' },
+          { key: 'packagingLine', label: 'Packaging Line' },
+          { key: 'location', label: 'Location' },
+        ]}
+        rows={packagingFormats}
+        getRowKey={(pf) => pf.id}
+        onRowClick={(pf) => { setPkgFormatDraft({ ...pf }); setPkgFormatMode('view'); }}
+        onAdd={() => {
+          setPkgFormatDraft({
+            id: `PF-${Date.now()}`,
+            name: '',
+            code: '',
+            description: '',
+            packagingLine: '',
+            location: locations[0]?.name || '',
+          });
+          setPkgFormatMode('add');
+        }}
+        addLabel="Add Packaging Format"
+        emptyMessage="No packaging formats added yet."
+        defaultSortKey="name"
+      />
 
-      {/* Add/Edit Packaging Format Modal */}
-      <AnimatePresence>
-        {showPackagingFormatModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowPackagingFormatModal(false)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{editingPackagingFormat ? 'Edit Packaging Format' : 'Add Packaging Format'}</h3>
-                <button onClick={() => setShowPackagingFormatModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Code</label>
+      <DetailModal
+        tableName="Packaging Formats"
+        isOpen={!!pkgFormatDraft}
+        mode={pkgFormatMode}
+        onClose={() => setPkgFormatDraft(null)}
+        onEdit={() => setPkgFormatMode('edit')}
+        onSave={() => {
+          if (!pkgFormatDraft) return;
+          if (!pkgFormatDraft.name.trim()) return;
+          if (pkgFormatMode === 'add') {
+            onUpdatePackagingFormats([...packagingFormats, pkgFormatDraft]);
+          } else {
+            onUpdatePackagingFormats(packagingFormats.map(pf => pf.id === pkgFormatDraft.id ? pkgFormatDraft : pf));
+          }
+          setPkgFormatDraft(null);
+        }}
+        onDelete={pkgFormatMode === 'add' ? undefined : () => {
+          if (!pkgFormatDraft) return;
+          onUpdatePackagingFormats(packagingFormats.filter(pf => pf.id !== pkgFormatDraft.id));
+          setPkgFormatDraft(null);
+        }}
+        deleteConfirmMessage={pkgFormatDraft ? `Delete packaging format "${pkgFormatDraft.name || pkgFormatDraft.id}"? This cannot be undone.` : undefined}
+        saveDisabled={!pkgFormatDraft?.name.trim()}
+      >
+        {pkgFormatDraft && (
+          pkgFormatMode === 'view' ? (
+            <>
+              <DetailRow label="Code" value={pkgFormatDraft.code} mono bold />
+              <DetailRow label="Name" value={pkgFormatDraft.name} bold />
+              <DetailRow label="Description" value={pkgFormatDraft.description} />
+              <DetailRow label="Packaging Line" value={pkgFormatDraft.packagingLine} />
+              <DetailRow label="Location" value={pkgFormatDraft.location} />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <DetailField label="Code">
+                  <input
+                    value={pkgFormatDraft.code}
+                    onChange={(e) => setPkgFormatDraft(d => d ? { ...d, code: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                    placeholder="e.g. BAG, TOT"
+                  />
+                </DetailField>
+                <div className="col-span-2">
+                  <DetailField label="Name" required>
                     <input
-                      value={packagingFormatForm.code}
-                      onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, code: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white transition-colors"
-                      placeholder="e.g. BAG, TOT"
-                    />
-                  </div>
-                  <div className="col-span-2 space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
-                    <input
-                      value={packagingFormatForm.name}
-                      onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, name: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                      value={pkgFormatDraft.name}
+                      onChange={(e) => setPkgFormatDraft(d => d ? { ...d, name: e.target.value } : d)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                       placeholder="e.g. Bulk Bag, 25kg Bag, Tote"
                     />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
-                  <textarea
-                    value={packagingFormatForm.description}
-                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, description: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white transition-colors"
-                    placeholder="Describe this packaging format"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Packaging Line</label>
-                  <input
-                    value={packagingFormatForm.packagingLine}
-                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, packagingLine: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="e.g. Line 1, Line 2"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
-                  <select
-                    value={packagingFormatForm.location}
-                    onChange={(e) => setPackagingFormatForm({ ...packagingFormatForm, location: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                  >
-                    <option value="">Select Location</option>
-                    {locations.filter(l => l.active !== false).map(loc => (
-                      <option key={loc.id} value={loc.name}>{loc.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      if (!packagingFormatForm.name.trim()) return;
-                      if (editingPackagingFormat) {
-                        onUpdatePackagingFormats(packagingFormats.map(pf => pf.id === editingPackagingFormat.id ? {
-                          ...editingPackagingFormat,
-                          name: packagingFormatForm.name,
-                          code: packagingFormatForm.code,
-                          description: packagingFormatForm.description,
-                          packagingLine: packagingFormatForm.packagingLine,
-                          location: packagingFormatForm.location,
-                        } : pf));
-                      } else {
-                        const newFormat: PackagingFormat = {
-                          id: `PF-${Date.now()}`,
-                          name: packagingFormatForm.name,
-                          code: packagingFormatForm.code,
-                          description: packagingFormatForm.description,
-                          packagingLine: packagingFormatForm.packagingLine,
-                          location: packagingFormatForm.location,
-                        };
-                        onUpdatePackagingFormats([...packagingFormats, newFormat]);
-                      }
-                      setShowPackagingFormatModal(false);
-                      setEditingPackagingFormat(null);
-                    }}
-                    disabled={!packagingFormatForm.name.trim()}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
-                  >
-                    {editingPackagingFormat ? 'Save Changes' : 'Add Format'}
-                  </button>
-                  <button
-                    onClick={() => setShowPackagingFormatModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
+                  </DetailField>
                 </div>
               </div>
-            </motion.div>
-          </div>
+              <DetailField label="Description">
+                <textarea
+                  value={pkgFormatDraft.description}
+                  onChange={(e) => setPkgFormatDraft(d => d ? { ...d, description: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white"
+                  placeholder="Describe this packaging format"
+                />
+              </DetailField>
+              <DetailField label="Packaging Line">
+                <input
+                  value={pkgFormatDraft.packagingLine}
+                  onChange={(e) => setPkgFormatDraft(d => d ? { ...d, packagingLine: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  placeholder="e.g. Line 1, Line 2"
+                />
+              </DetailField>
+              <DetailField label="Location">
+                <select
+                  value={pkgFormatDraft.location}
+                  onChange={(e) => setPkgFormatDraft(d => d ? { ...d, location: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                >
+                  <option value="">Select Location</option>
+                  {locations.filter(l => l.active !== false).map(loc => (
+                    <option key={loc.id} value={loc.name}>{loc.name}</option>
+                  ))}
+                </select>
+              </DetailField>
+            </div>
+          )
         )}
-      </AnimatePresence>
+      </DetailModal>
 
-      {/* Delete Packaging Format Confirmation Modal */}
-      <AnimatePresence>
-        {deletePackagingFormatConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeletePackagingFormatConfirmId(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Delete Packaging Format</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete this packaging format? This cannot be undone.</p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      onUpdatePackagingFormats(packagingFormats.filter(pf => pf.id !== deletePackagingFormatConfirmId));
-                      setDeletePackagingFormatConfirmId(null);
-                    }}
-                    className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setDeletePackagingFormatConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* Naming Formulas — standardized DataTable + DetailModal. */}
+      <DataTable<NamingFormula>
+        title="Naming Formulas"
+        columns={[
+          {
+            key: 'type', label: 'Type', widthClass: 'w-32',
+            render: (nf) => (
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                nf.type === 'Product Name' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+              }`}>{nf.type}</span>
+            ),
+            sortValue: (nf) => nf.type,
+          },
+          { key: 'name', label: 'Name', bold: true },
+          { key: 'condition', label: 'Condition', mono: true },
+          { key: 'formula', label: 'Formula', mono: true },
+          { key: 'priority', label: 'Priority', align: 'center', bold: true, mono: true, widthClass: 'w-20' },
+          { key: 'description', label: 'Description' },
+        ]}
+        rows={namingFormulas}
+        getRowKey={(nf) => nf.id}
+        onRowClick={(nf) => {
+          setNamingFormulaDraft({ ...nf, tokens: nf.tokens ? [...nf.tokens] : [] });
+          setNamingFormulaMode('view');
+          setTokenPickerCategory('field');
+          setTokenPickerValue('');
+          setLiteralText('');
+        }}
+        onAdd={() => {
+          setNamingFormulaDraft({
+            id: `NF-${Date.now()}`,
+            type: 'Short Form',
+            name: '',
+            condition: 'Default',
+            formula: '',
+            description: '',
+            priority: 50,
+            tokens: [],
+          });
+          setNamingFormulaMode('add');
+          setTokenPickerCategory('field');
+          setTokenPickerValue('');
+          setLiteralText('');
+        }}
+        addLabel="Add Naming Formula"
+        emptyMessage="No naming formulas added yet."
+        defaultSortKey="priority"
+      />
 
-      {/* Naming Formulas Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest">Naming Formulas</h3>
-            <span className="text-[10px] opacity-60">{namingFormulas.length} rules</span>
-          </div>
-          <button
-            onClick={() => {
-              setEditingNamingFormula(null);
-              setNamingFormulaForm({ type: 'Short Form', name: '', condition: 'Default', formula: '', description: '', priority: 50, tokens: [] });
-              setTokenPickerCategory('field');
-              setTokenPickerValue('');
-              setLiteralText('');
-              setShowNamingFormulaModal(true);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            <Plus size={12} /> Add Naming Formula
-          </button>
-        </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-4 border-r border-[#141414]/10">Type</th>
-              <th className="p-4 border-r border-[#141414]/10">Name</th>
-              <th className="p-4 border-r border-[#141414]/10">Condition</th>
-              <th className="p-4 border-r border-[#141414]/10">Formula</th>
-              <th className="p-4 border-r border-[#141414]/10">Priority</th>
-              <th className="p-4 border-r border-[#141414]/10">Description</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {[...namingFormulas].sort((a, b) => a.type.localeCompare(b.type) || a.priority - b.priority).map(nf => (
-              <tr key={nf.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                <td className="p-4 text-xs border-r border-[#141414]/10">
+      {/* Naming Formula DetailModal — formula token builder lives inside.
+          The token-builder is too specialized for the basic Detail layout, so
+          we drop it in as-is with view/edit branching. */}
+      <DetailModal
+        tableName="Naming Formulas"
+        isOpen={!!namingFormulaDraft}
+        mode={namingFormulaMode}
+        onClose={() => setNamingFormulaDraft(null)}
+        onEdit={() => setNamingFormulaMode('edit')}
+        onSave={() => {
+          if (!namingFormulaDraft) return;
+          if (!namingFormulaDraft.name.trim() || (namingFormulaDraft.tokens || []).length === 0) return;
+          const computedFormula = tokensToFormulaString(namingFormulaDraft.tokens || []);
+          const final: NamingFormula = { ...namingFormulaDraft, formula: computedFormula };
+          if (namingFormulaMode === 'add') {
+            onUpdateNamingFormulas([...namingFormulas, final]);
+          } else {
+            onUpdateNamingFormulas(namingFormulas.map(nf => nf.id === final.id ? final : nf));
+          }
+          setNamingFormulaDraft(null);
+        }}
+        onDelete={namingFormulaMode === 'add' ? undefined : () => {
+          if (!namingFormulaDraft) return;
+          onUpdateNamingFormulas(namingFormulas.filter(nf => nf.id !== namingFormulaDraft.id));
+          setNamingFormulaDraft(null);
+        }}
+        deleteConfirmMessage={namingFormulaDraft ? `Delete naming formula "${namingFormulaDraft.name || namingFormulaDraft.id}"? This cannot be undone.` : undefined}
+        saveDisabled={!namingFormulaDraft?.name.trim() || (namingFormulaDraft?.tokens || []).length === 0}
+      >
+        {namingFormulaDraft && (
+          namingFormulaMode === 'view' ? (
+            <>
+              <DetailRow
+                label="Type"
+                value={
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                    nf.type === 'Product Name' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
-                  }`}>{nf.type}</span>
-                </td>
-                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{nf.name}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{nf.condition}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 font-mono">{nf.formula}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 text-center font-bold">{nf.priority}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-70">{nf.description || '—'}</td>
-                <td className="p-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingNamingFormula(nf);
-                        setNamingFormulaForm({
-                          type: nf.type,
-                          name: nf.name,
-                          condition: nf.condition,
-                          formula: nf.formula,
-                          description: nf.description || '',
-                          priority: nf.priority,
-                          tokens: nf.tokens || [],
-                        });
-                        setTokenPickerCategory('field');
-                        setTokenPickerValue('');
-                        setLiteralText('');
-                        setShowNamingFormulaModal(true);
-                      }}
-                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
-                      title="Edit naming formula"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setDeleteNamingFormulaConfirmId(nf.id)}
-                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete naming formula"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {namingFormulas.length === 0 && (
-              <tr><td colSpan={7} className="p-12 text-center text-xs opacity-50 italic">No naming formulas added yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add/Edit Naming Formula Modal */}
-      <AnimatePresence>
-        {showNamingFormulaModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowNamingFormulaModal(false)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{editingNamingFormula ? 'Edit Naming Formula' : 'Add Naming Formula'}</h3>
-                <button onClick={() => setShowNamingFormulaModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                    namingFormulaDraft.type === 'Product Name' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+                  }`}>{namingFormulaDraft.type}</span>
+                }
+              />
+              <DetailRow label="Name" value={namingFormulaDraft.name} bold />
+              <DetailRow label="Condition" value={namingFormulaDraft.condition} mono />
+              <DetailRow label="Formula" value={namingFormulaDraft.formula} mono />
+              <DetailRow label="Priority" value={namingFormulaDraft.priority} bold mono />
+              <DetailRow label="Description" value={namingFormulaDraft.description} />
+              <DetailRow
+                label="Preview"
+                value={
+                  <span className="font-mono font-bold">
+                    {(namingFormulaDraft.tokens || []).length > 0 ? tokensToPreview(namingFormulaDraft.tokens || []) : '—'}
+                  </span>
+                }
+              />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <DetailField label="Type" required>
+                  <select
+                    value={namingFormulaDraft.type}
+                    onChange={(e) => setNamingFormulaDraft(d => d ? { ...d, type: e.target.value as 'Product Name' | 'Short Form' } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  >
+                    <option value="Short Form">Short Form</option>
+                    <option value="Product Name">Product Name</option>
+                  </select>
+                </DetailField>
+                <DetailField label="Priority" hint="Lower = applied first.">
+                  <input
+                    type="number"
+                    value={namingFormulaDraft.priority}
+                    onChange={(e) => setNamingFormulaDraft(d => d ? { ...d, priority: parseInt(e.target.value) || 0 } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  />
+                </DetailField>
               </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Type *</label>
+              <DetailField label="Name" required>
+                <input
+                  value={namingFormulaDraft.name}
+                  onChange={(e) => setNamingFormulaDraft(d => d ? { ...d, name: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  placeholder="e.g. Default Short Form, Bulk Short Form"
+                />
+              </DetailField>
+              <DetailField label="Condition">
+                <input
+                  value={namingFormulaDraft.condition}
+                  onChange={(e) => setNamingFormulaDraft(d => d ? { ...d, condition: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                  placeholder="e.g. Default, Product Group = Bulk, Sugar Type = Molasses"
+                />
+              </DetailField>
+              <DetailField label="Formula Builder" required>
+                {/* Token picker */}
+                <div className="bg-[#F5F5F5] border border-[#141414]/30 p-3 space-y-2">
+                  <div className="flex gap-2 items-center">
                     <select
-                      value={namingFormulaForm.type}
-                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, type: e.target.value as 'Product Name' | 'Short Form' })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
+                      value={tokenPickerCategory}
+                      onChange={(e) => { setTokenPickerCategory(e.target.value); setTokenPickerValue(''); }}
+                      className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
                     >
-                      <option value="Short Form">Short Form</option>
-                      <option value="Product Name">Product Name</option>
+                      <option value="field">Product Field</option>
+                      <option value="productGroup">Product Group Name</option>
+                      <option value="productGroupCode">Product Group BOL Code</option>
+                      <option value="sugarType">Sugar Type Name</option>
+                      <option value="sugarTypeAbbr">Sugar Type Abbreviation</option>
+                      <option value="literal">Literal Text</option>
                     </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Priority</label>
-                    <input
-                      type="number"
-                      value={namingFormulaForm.priority}
-                      onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, priority: parseInt(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                      placeholder="Lower = applied first"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Name *</label>
-                  <input
-                    value={namingFormulaForm.name}
-                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, name: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="e.g. Default Short Form, Bulk Short Form"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Condition</label>
-                  <input
-                    value={namingFormulaForm.condition}
-                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, condition: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors font-mono"
-                    placeholder="e.g. Default, Product Group = Bulk, Sugar Type = Molasses"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Formula Builder *</label>
-
-                  {/* Token picker */}
-                  <div className="bg-[#F5F5F5] border border-[#141414]/30 p-3 space-y-2">
-                    <div className="flex gap-2 items-center">
+                    {tokenPickerCategory === 'field' && (
                       <select
-                        value={tokenPickerCategory}
-                        onChange={(e) => { setTokenPickerCategory(e.target.value); setTokenPickerValue(''); }}
+                        value={tokenPickerValue}
+                        onChange={(e) => setTokenPickerValue(e.target.value)}
                         className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
                       >
-                        <option value="field">Product Field</option>
-                        <option value="productGroup">Product Group Name</option>
-                        <option value="productGroupCode">Product Group BOL Code</option>
-                        <option value="sugarType">Sugar Type Name</option>
-                        <option value="sugarTypeAbbr">Sugar Type Abbreviation</option>
-                        <option value="literal">Literal Text</option>
+                        <option value="">Select Field...</option>
+                        <option value="productFormat">Product Format</option>
+                        <option value="productGroup">Product Group</option>
+                        <option value="category">Conv./Organic</option>
+                        <option value="coChar">C/B Character</option>
+                        <option value="sugarType">Sugar Type</option>
+                        <option value="sugarTypeAbbreviation">Sugar Type Abbreviation</option>
+                        <option value="productGroupBolCode">Product Group BOL Code</option>
+                        <option value="location">Location</option>
+                        <option value="netWeightKg">Net Weight (KG)</option>
+                        <option value="grossWeightKg">Gross Weight (KG)</option>
+                        <option value="maxColor">Max Color</option>
                       </select>
-                      {tokenPickerCategory === 'field' && (
-                        <select
-                          value={tokenPickerValue}
-                          onChange={(e) => setTokenPickerValue(e.target.value)}
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        >
-                          <option value="">Select Field...</option>
-                          <option value="productFormat">Product Format</option>
-                          <option value="productGroup">Product Group</option>
-                          <option value="category">Conv./Organic</option>
-                          <option value="coChar">C/B Character</option>
-                          <option value="sugarType">Sugar Type</option>
-                          <option value="sugarTypeAbbreviation">Sugar Type Abbreviation</option>
-                          <option value="productGroupBolCode">Product Group BOL Code</option>
-                          <option value="location">Location</option>
-                          <option value="netWeightKg">Net Weight (KG)</option>
-                          <option value="grossWeightKg">Gross Weight (KG)</option>
-                          <option value="maxColor">Max Color</option>
-                        </select>
-                      )}
-                      {tokenPickerCategory === 'productGroup' && (
-                        <select
-                          value={tokenPickerValue}
-                          onChange={(e) => setTokenPickerValue(e.target.value)}
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        >
-                          <option value="">Select Group...</option>
-                          {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
-                        </select>
-                      )}
-                      {tokenPickerCategory === 'productGroupCode' && (
-                        <select
-                          value={tokenPickerValue}
-                          onChange={(e) => setTokenPickerValue(e.target.value)}
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        >
-                          <option value="">Select Code...</option>
-                          {productGroups.map(pg => <option key={pg.id} value={pg.bolCode}>{pg.name} → {pg.bolCode}</option>)}
-                        </select>
-                      )}
-                      {tokenPickerCategory === 'sugarType' && (
-                        <select
-                          value={tokenPickerValue}
-                          onChange={(e) => setTokenPickerValue(e.target.value)}
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        >
-                          <option value="">Select Type...</option>
-                          {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
-                        </select>
-                      )}
-                      {tokenPickerCategory === 'sugarTypeAbbr' && (
-                        <select
-                          value={tokenPickerValue}
-                          onChange={(e) => setTokenPickerValue(e.target.value)}
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        >
-                          <option value="">Select Abbreviation...</option>
-                          {sugarTypes.map(st => <option key={st.id} value={st.abbreviation}>{st.name} → {st.abbreviation}</option>)}
-                        </select>
-                      )}
-                      {tokenPickerCategory === 'literal' && (
-                        <input
-                          value={literalText}
-                          onChange={(e) => setLiteralText(e.target.value)}
-                          placeholder='e.g. "kg ", " ", "MOL"'
-                          className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          let newToken: FormulaToken | null = null;
-                          const id = `tk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                          if (tokenPickerCategory === 'field' && tokenPickerValue) {
-                            const labelMap: Record<string, string> = {
-                              productFormat: 'Product Format',
-                              productGroup: 'Product Group',
-                              category: 'Conv./Organic',
-                              coChar: 'C/B Character',
-                              sugarType: 'Sugar Type',
-                              sugarTypeAbbreviation: 'Sugar Type Abbreviation',
-                              productGroupBolCode: 'Product Group BOL Code',
-                              location: 'Location',
-                              netWeightKg: 'Net Weight (KG)',
-                              grossWeightKg: 'Gross Weight (KG)',
-                              maxColor: 'Max Color',
-                            };
-                            newToken = { id, type: 'field', value: tokenPickerValue, label: labelMap[tokenPickerValue] || tokenPickerValue };
-                          } else if (tokenPickerCategory === 'productGroup' && tokenPickerValue) {
-                            newToken = { id, type: 'productGroup', value: tokenPickerValue, label: `Group: ${tokenPickerValue}` };
-                          } else if (tokenPickerCategory === 'productGroupCode' && tokenPickerValue) {
-                            newToken = { id, type: 'productGroupCode', value: tokenPickerValue, label: `Code: ${tokenPickerValue}` };
-                          } else if (tokenPickerCategory === 'sugarType' && tokenPickerValue) {
-                            newToken = { id, type: 'sugarType', value: tokenPickerValue, label: `Type: ${tokenPickerValue}` };
-                          } else if (tokenPickerCategory === 'sugarTypeAbbr' && tokenPickerValue) {
-                            newToken = { id, type: 'sugarTypeAbbr', value: tokenPickerValue, label: `Abbr: ${tokenPickerValue}` };
-                          } else if (tokenPickerCategory === 'literal' && literalText) {
-                            newToken = { id, type: 'literal', value: literalText, label: `"${literalText}"` };
-                          }
-                          if (newToken) {
-                            setNamingFormulaForm({ ...namingFormulaForm, tokens: [...namingFormulaForm.tokens, newToken] });
-                            setTokenPickerValue('');
-                            setLiteralText('');
-                          }
-                        }}
-                        className="bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1"
+                    )}
+                    {tokenPickerCategory === 'productGroup' && (
+                      <select
+                        value={tokenPickerValue}
+                        onChange={(e) => setTokenPickerValue(e.target.value)}
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
                       >
-                        <Plus size={12} /> Add
-                      </button>
-                    </div>
+                        <option value="">Select Group...</option>
+                        {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                      </select>
+                    )}
+                    {tokenPickerCategory === 'productGroupCode' && (
+                      <select
+                        value={tokenPickerValue}
+                        onChange={(e) => setTokenPickerValue(e.target.value)}
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
+                      >
+                        <option value="">Select Code...</option>
+                        {productGroups.map(pg => <option key={pg.id} value={pg.bolCode}>{pg.name} → {pg.bolCode}</option>)}
+                      </select>
+                    )}
+                    {tokenPickerCategory === 'sugarType' && (
+                      <select
+                        value={tokenPickerValue}
+                        onChange={(e) => setTokenPickerValue(e.target.value)}
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
+                      >
+                        <option value="">Select Type...</option>
+                        {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+                      </select>
+                    )}
+                    {tokenPickerCategory === 'sugarTypeAbbr' && (
+                      <select
+                        value={tokenPickerValue}
+                        onChange={(e) => setTokenPickerValue(e.target.value)}
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
+                      >
+                        <option value="">Select Abbreviation...</option>
+                        {sugarTypes.map(st => <option key={st.id} value={st.abbreviation}>{st.name} → {st.abbreviation}</option>)}
+                      </select>
+                    )}
+                    {tokenPickerCategory === 'literal' && (
+                      <input
+                        value={literalText}
+                        onChange={(e) => setLiteralText(e.target.value)}
+                        placeholder='e.g. "kg ", " ", "MOL"'
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none flex-1"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        let newToken: FormulaToken | null = null;
+                        const id = `tk-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                        if (tokenPickerCategory === 'field' && tokenPickerValue) {
+                          const labelMap: Record<string, string> = {
+                            productFormat: 'Product Format',
+                            productGroup: 'Product Group',
+                            category: 'Conv./Organic',
+                            coChar: 'C/B Character',
+                            sugarType: 'Sugar Type',
+                            sugarTypeAbbreviation: 'Sugar Type Abbreviation',
+                            productGroupBolCode: 'Product Group BOL Code',
+                            location: 'Location',
+                            netWeightKg: 'Net Weight (KG)',
+                            grossWeightKg: 'Gross Weight (KG)',
+                            maxColor: 'Max Color',
+                          };
+                          newToken = { id, type: 'field', value: tokenPickerValue, label: labelMap[tokenPickerValue] || tokenPickerValue };
+                        } else if (tokenPickerCategory === 'productGroup' && tokenPickerValue) {
+                          newToken = { id, type: 'productGroup', value: tokenPickerValue, label: `Group: ${tokenPickerValue}` };
+                        } else if (tokenPickerCategory === 'productGroupCode' && tokenPickerValue) {
+                          newToken = { id, type: 'productGroupCode', value: tokenPickerValue, label: `Code: ${tokenPickerValue}` };
+                        } else if (tokenPickerCategory === 'sugarType' && tokenPickerValue) {
+                          newToken = { id, type: 'sugarType', value: tokenPickerValue, label: `Type: ${tokenPickerValue}` };
+                        } else if (tokenPickerCategory === 'sugarTypeAbbr' && tokenPickerValue) {
+                          newToken = { id, type: 'sugarTypeAbbr', value: tokenPickerValue, label: `Abbr: ${tokenPickerValue}` };
+                        } else if (tokenPickerCategory === 'literal' && literalText) {
+                          newToken = { id, type: 'literal', value: literalText, label: `"${literalText}"` };
+                        }
+                        if (newToken) {
+                          setNamingFormulaDraft(d => d ? { ...d, tokens: [...(d.tokens || []), newToken!] } : d);
+                          setTokenPickerValue('');
+                          setLiteralText('');
+                        }
+                      }}
+                      className="bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1"
+                    >
+                      <Plus size={12} /> Add
+                    </button>
                   </div>
+                </div>
 
-                  {/* Token list with drag-and-drop */}
-                  <div className="bg-white border border-[#141414]/30 p-3 min-h-[60px]">
-                    <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Formula Components (drag to reorder)</div>
-                    {namingFormulaForm.tokens.length === 0 ? (
-                      <div className="text-xs opacity-40 italic py-2">No components yet. Use the picker above to add fields, text, or values.</div>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {namingFormulaForm.tokens.map((token, idx) => (
-                          <div
-                            key={token.id}
-                            draggable
-                            onDragStart={() => setDraggedTokenIdx(idx)}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              if (draggedTokenIdx === null || draggedTokenIdx === idx) return;
-                              const newTokens = [...namingFormulaForm.tokens];
+                {/* Token list with drag-and-drop */}
+                <div className="bg-white border border-[#141414]/30 p-3 min-h-[60px] mt-2">
+                  <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Formula Components (drag to reorder)</div>
+                  {(namingFormulaDraft.tokens || []).length === 0 ? (
+                    <div className="text-xs opacity-40 italic py-2">No components yet. Use the picker above to add fields, text, or values.</div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {(namingFormulaDraft.tokens || []).map((token, idx) => (
+                        <div
+                          key={token.id}
+                          draggable
+                          onDragStart={() => setDraggedTokenIdx(idx)}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (draggedTokenIdx === null || draggedTokenIdx === idx) return;
+                            setNamingFormulaDraft(d => {
+                              if (!d) return d;
+                              const newTokens = [...(d.tokens || [])];
                               const [moved] = newTokens.splice(draggedTokenIdx, 1);
                               newTokens.splice(idx, 0, moved);
-                              setNamingFormulaForm({ ...namingFormulaForm, tokens: newTokens });
-                              setDraggedTokenIdx(null);
-                            }}
-                            onDragEnd={() => setDraggedTokenIdx(null)}
-                            className={`flex items-center gap-2 px-2 py-1 border border-[#141414] cursor-move transition-all ${
-                              draggedTokenIdx === idx ? 'opacity-30' : 'opacity-100'
-                            } ${
-                              token.type === 'literal' ? 'bg-amber-50' :
-                              token.type === 'field' ? 'bg-blue-50' :
-                              token.type === 'productGroup' || token.type === 'productGroupCode' ? 'bg-emerald-50' :
-                              'bg-purple-50'
-                            }`}
+                              return { ...d, tokens: newTokens };
+                            });
+                            setDraggedTokenIdx(null);
+                          }}
+                          onDragEnd={() => setDraggedTokenIdx(null)}
+                          className={`flex items-center gap-2 px-2 py-1 border border-[#141414] cursor-move transition-all ${
+                            draggedTokenIdx === idx ? 'opacity-30' : 'opacity-100'
+                          } ${
+                            token.type === 'literal' ? 'bg-amber-50' :
+                            token.type === 'field' ? 'bg-blue-50' :
+                            token.type === 'productGroup' || token.type === 'productGroupCode' ? 'bg-emerald-50' :
+                            'bg-purple-50'
+                          }`}
+                        >
+                          <span className="text-[10px] opacity-40">≡</span>
+                          <span className="text-xs font-bold">{token.label}</span>
+                          <button
+                            type="button"
+                            onClick={() => setNamingFormulaDraft(d => d ? { ...d, tokens: (d.tokens || []).filter(t => t.id !== token.id) } : d)}
+                            className="text-red-500 hover:text-red-700"
                           >
-                            <span className="text-[10px] opacity-40">≡</span>
-                            <span className="text-xs font-bold">{token.label}</span>
-                            <button
-                              type="button"
-                              onClick={() => setNamingFormulaForm({ ...namingFormulaForm, tokens: namingFormulaForm.tokens.filter(t => t.id !== token.id) })}
-                              className="text-red-500 hover:text-red-700"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Preview */}
-                  <div className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-3">
-                    <div className="text-[10px] uppercase font-bold opacity-60 mb-1">Preview (with sample values)</div>
-                    <div className="text-sm font-mono font-bold">
-                      {namingFormulaForm.tokens.length > 0 ? tokensToPreview(namingFormulaForm.tokens) : <span className="opacity-40">—</span>}
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                    <div className="text-[9px] opacity-50 mt-2 font-mono">
-                      Formula: {namingFormulaForm.tokens.length > 0 ? tokensToFormulaString(namingFormulaForm.tokens) : '—'}
-                    </div>
+                  )}
+                </div>
+
+                {/* Preview */}
+                <div className="bg-[#141414] text-[#E4E3E0] border border-[#141414] p-3 mt-2">
+                  <div className="text-[10px] uppercase font-bold opacity-60 mb-1">Preview (with sample values)</div>
+                  <div className="text-sm font-mono font-bold">
+                    {(namingFormulaDraft.tokens || []).length > 0 ? tokensToPreview(namingFormulaDraft.tokens || []) : <span className="opacity-40">—</span>}
+                  </div>
+                  <div className="text-[9px] opacity-50 mt-2 font-mono">
+                    Formula: {(namingFormulaDraft.tokens || []).length > 0 ? tokensToFormulaString(namingFormulaDraft.tokens || []) : '—'}
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
-                  <textarea
-                    value={namingFormulaForm.description}
-                    onChange={(e) => setNamingFormulaForm({ ...namingFormulaForm, description: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white transition-colors"
-                    placeholder="Explain when this rule applies"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      if (!namingFormulaForm.name.trim() || namingFormulaForm.tokens.length === 0) return;
-                      const computedFormula = tokensToFormulaString(namingFormulaForm.tokens);
-                      if (editingNamingFormula) {
-                        onUpdateNamingFormulas(namingFormulas.map(nf => nf.id === editingNamingFormula.id ? {
-                          ...editingNamingFormula,
-                          type: namingFormulaForm.type,
-                          name: namingFormulaForm.name,
-                          condition: namingFormulaForm.condition,
-                          formula: computedFormula,
-                          tokens: namingFormulaForm.tokens,
-                          description: namingFormulaForm.description,
-                          priority: namingFormulaForm.priority,
-                        } : nf));
-                      } else {
-                        const newFormula: NamingFormula = {
-                          id: `NF-${Date.now()}`,
-                          type: namingFormulaForm.type,
-                          name: namingFormulaForm.name,
-                          condition: namingFormulaForm.condition,
-                          formula: computedFormula,
-                          tokens: namingFormulaForm.tokens,
-                          description: namingFormulaForm.description,
-                          priority: namingFormulaForm.priority,
-                        };
-                        onUpdateNamingFormulas([...namingFormulas, newFormula]);
-                      }
-                      setShowNamingFormulaModal(false);
-                      setEditingNamingFormula(null);
-                    }}
-                    disabled={!namingFormulaForm.name.trim() || namingFormulaForm.tokens.length === 0}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
-                  >
-                    {editingNamingFormula ? 'Save Changes' : 'Add Formula'}
-                  </button>
-                  <button
-                    onClick={() => setShowNamingFormulaModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
+              </DetailField>
+              <DetailField label="Description">
+                <textarea
+                  value={namingFormulaDraft.description || ''}
+                  onChange={(e) => setNamingFormulaDraft(d => d ? { ...d, description: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white"
+                  placeholder="Explain when this rule applies"
+                />
+              </DetailField>
+            </div>
+          )
         )}
-      </AnimatePresence>
+      </DetailModal>
 
-      {/* Delete Naming Formula Confirmation Modal */}
-      <AnimatePresence>
-        {deleteNamingFormulaConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteNamingFormulaConfirmId(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Delete Naming Formula</h3>
+      {/* Product Groups — standardized DataTable + DetailModal. */}
+      <DataTable<ProductGroup>
+        title="Product Groups"
+        columns={[
+          { key: 'name', label: 'Group Name', bold: true },
+          { key: 'bolCode', label: 'BOL Code', mono: true, bold: true, widthClass: 'w-32' },
+          {
+            key: 'color',
+            label: 'Color',
+            sortValue: (pg) => pg.color,
+            render: (pg) => (
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 border border-[#141414]/20" style={{ backgroundColor: pg.color }} />
+                <span className="text-[10px] opacity-50 font-mono">{pg.color}</span>
               </div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete this naming formula rule? This cannot be undone.</p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => {
-                      onUpdateNamingFormulas(namingFormulas.filter(nf => nf.id !== deleteNamingFormulaConfirmId));
-                      setDeleteNamingFormulaConfirmId(null);
-                    }}
-                    className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setDeleteNamingFormulaConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            ),
+          },
+        ]}
+        rows={productGroups}
+        getRowKey={(pg) => pg.id}
+        onRowClick={(pg) => { setProductGroupDraft({ ...pg }); setProductGroupMode('view'); }}
+        onAdd={() => { setProductGroupDraft({ id: `PG-${Date.now()}`, name: '', bolCode: '', color: '#E4E3E0' }); setProductGroupMode('add'); }}
+        addLabel="Add Product Group"
+        emptyMessage="No product groups added yet."
+        defaultSortKey="name"
+      />
 
-      {/* Product Groups Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest">Product Groups</h3>
-            <span className="text-[10px] opacity-60">{productGroups.length} groups</span>
-          </div>
-          <button
-            onClick={() => {
-              setEditingProductGroup(null);
-              setProductGroupForm({ name: '', bolCode: '', color: '#E4E3E0' });
-              setShowProductGroupModal(true);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            <Plus size={12} /> Add Product Group
-          </button>
-        </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-4 border-r border-[#141414]/10">Group Name</th>
-              <th className="p-4 border-r border-[#141414]/10">BOL Code</th>
-              <th className="p-4 border-r border-[#141414]/10">Color</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {productGroups.map(pg => (
-              <tr key={pg.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{pg.name}</td>
-                <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{pg.bolCode || '—'}</td>
-                <td className="p-4 text-xs border-r border-[#141414]/10">
+      <DetailModal
+        tableName="Product Groups"
+        isOpen={!!productGroupDraft}
+        mode={productGroupMode}
+        onClose={() => setProductGroupDraft(null)}
+        onEdit={() => setProductGroupMode('edit')}
+        onSave={() => {
+          if (!productGroupDraft) return;
+          if (!productGroupDraft.name.trim()) return;
+          if (productGroupMode === 'add') {
+            onUpdateProductGroups([...productGroups, productGroupDraft]);
+          } else {
+            onUpdateProductGroups(productGroups.map(pg => pg.id === productGroupDraft.id ? productGroupDraft : pg));
+          }
+          setProductGroupDraft(null);
+        }}
+        onDelete={productGroupMode === 'add' ? undefined : () => {
+          if (!productGroupDraft) return;
+          onUpdateProductGroups(productGroups.filter(pg => pg.id !== productGroupDraft.id));
+          setProductGroupDraft(null);
+        }}
+        deleteConfirmMessage={productGroupDraft ? `Delete product group "${productGroupDraft.name || productGroupDraft.id}"? This cannot be undone.` : undefined}
+        saveDisabled={!productGroupDraft?.name.trim()}
+      >
+        {productGroupDraft && (
+          productGroupMode === 'view' ? (
+            <>
+              <DetailRow label="Group Name" value={productGroupDraft.name} bold />
+              <DetailRow label="BOL Code" value={productGroupDraft.bolCode} mono bold />
+              <DetailRow
+                label="Color"
+                value={
                   <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border border-[#141414]/20" style={{ backgroundColor: pg.color }} />
-                    <span className="text-[10px] opacity-50">{pg.color}</span>
+                    <div className="w-5 h-5 border border-[#141414]/20" style={{ backgroundColor: productGroupDraft.color }} />
+                    <span className="font-mono">{productGroupDraft.color}</span>
                   </div>
-                </td>
-                <td className="p-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingProductGroup(pg);
-                        setProductGroupForm({ name: pg.name, bolCode: pg.bolCode, color: pg.color });
-                        setShowProductGroupModal(true);
-                      }}
-                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
-                      title="Edit product group"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setDeleteProductGroupConfirmId(pg.id)}
-                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete product group"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {productGroups.length === 0 && (
-              <tr><td colSpan={4} className="p-12 text-center text-xs opacity-50 italic">No product groups added yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add/Edit Product Group Modal */}
-      <AnimatePresence>
-        {showProductGroupModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowProductGroupModal(false)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{editingProductGroup ? 'Edit Product Group' : 'Add Product Group'}</h3>
-                <button onClick={() => setShowProductGroupModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Group Name *</label>
+                }
+              />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <DetailField label="Group Name" required>
+                <input
+                  value={productGroupDraft.name}
+                  onChange={(e) => setProductGroupDraft(d => d ? { ...d, name: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  placeholder="e.g. Bulk, Bagged, Tote"
+                />
+              </DetailField>
+              <DetailField label="BOL Code" hint="Single-letter prefix used in BOL numbers (e.g., B for Bulk, L for Liquid).">
+                <input
+                  value={productGroupDraft.bolCode || ''}
+                  onChange={(e) => setProductGroupDraft(d => d ? { ...d, bolCode: e.target.value.toUpperCase().slice(0, 1) } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                  placeholder="e.g. B, P, T, L"
+                  maxLength={1}
+                />
+              </DetailField>
+              <DetailField label="Color">
+                <div className="flex items-center gap-2">
                   <input
-                    value={productGroupForm.name}
-                    onChange={(e) => setProductGroupForm({ ...productGroupForm, name: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="e.g. Bulk, Bagged, Tote"
+                    type="color"
+                    value={productGroupDraft.color}
+                    onChange={(e) => setProductGroupDraft(d => d ? { ...d, color: e.target.value } : d)}
+                    className="w-12 h-10 border border-[#141414] cursor-pointer"
+                  />
+                  <input
+                    value={productGroupDraft.color}
+                    onChange={(e) => setProductGroupDraft(d => d ? { ...d, color: e.target.value } : d)}
+                    className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">BOL Code</label>
-                  <input
-                    value={productGroupForm.bolCode}
-                    onChange={(e) => setProductGroupForm({ ...productGroupForm, bolCode: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors font-mono"
-                    placeholder="e.g. B, P, T, L"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Color</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={productGroupForm.color}
-                      onChange={(e) => setProductGroupForm({ ...productGroupForm, color: e.target.value })}
-                      className="w-12 h-10 border border-[#141414] cursor-pointer"
-                    />
-                    <input
-                      value={productGroupForm.color}
-                      onChange={(e) => setProductGroupForm({ ...productGroupForm, color: e.target.value })}
-                      className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none font-mono"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      if (!productGroupForm.name.trim()) return;
-                      if (editingProductGroup) {
-                        onUpdateProductGroups(productGroups.map(pg => pg.id === editingProductGroup.id ? {
-                          ...editingProductGroup,
-                          name: productGroupForm.name,
-                          bolCode: productGroupForm.bolCode,
-                          color: productGroupForm.color,
-                        } : pg));
-                      } else {
-                        const newPG: ProductGroup = {
-                          id: `PG-${Date.now()}`,
-                          name: productGroupForm.name,
-                          bolCode: productGroupForm.bolCode,
-                          color: productGroupForm.color,
-                        };
-                        onUpdateProductGroups([...productGroups, newPG]);
-                      }
-                      setShowProductGroupModal(false);
-                      setEditingProductGroup(null);
-                    }}
-                    disabled={!productGroupForm.name.trim()}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
-                  >
-                    {editingProductGroup ? 'Save Changes' : 'Add Group'}
-                  </button>
-                  <button
-                    onClick={() => setShowProductGroupModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
+              </DetailField>
+            </div>
+          )
         )}
-      </AnimatePresence>
+      </DetailModal>
 
-      {/* Delete Product Group Confirmation */}
-      <AnimatePresence>
-        {deleteProductGroupConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteProductGroupConfirmId(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4"><h3 className="text-xs font-bold uppercase tracking-widest">Delete Product Group</h3></div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete this product group? This cannot be undone.</p>
-                <div className="flex gap-3">
-                  <button onClick={() => { onUpdateProductGroups(productGroups.filter(pg => pg.id !== deleteProductGroupConfirmId)); setDeleteProductGroupConfirmId(null); }} className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all">Delete</button>
-                  <button onClick={() => setDeleteProductGroupConfirmId(null)} className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Cancel</button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
+      {/* Sugar Types — standardized DataTable + DetailModal. */}
+      <DataTable<SugarType>
+        title="Sugar Types"
+        columns={[
+          { key: 'name', label: 'Sugar Type', bold: true },
+          { key: 'abbreviation', label: 'Abbreviation', mono: true, bold: true },
+          {
+            key: 'productCount',
+            label: 'Products',
+            align: 'right',
+            mono: true,
+            render: (st) => qaProducts.filter(q => q.sugarType === st.name).length,
+            sortValue: (st) => qaProducts.filter(q => q.sugarType === st.name).length,
+          },
+        ]}
+        rows={sugarTypes}
+        getRowKey={(st) => st.id}
+        onRowClick={(st) => { setSugarTypeDraft({ ...st }); setSugarTypeMode('view'); }}
+        onAdd={() => { setSugarTypeDraft({ id: `ST-${Date.now()}`, name: '', abbreviation: '' }); setSugarTypeMode('add'); }}
+        addLabel="Add Sugar Type"
+        emptyMessage="No sugar types added yet."
+        defaultSortKey="name"
+      />
+
+      <DetailModal
+        tableName="Sugar Types"
+        isOpen={!!sugarTypeDraft}
+        mode={sugarTypeMode}
+        onClose={() => setSugarTypeDraft(null)}
+        onEdit={() => setSugarTypeMode('edit')}
+        onSave={() => {
+          if (!sugarTypeDraft) return;
+          if (!sugarTypeDraft.name.trim()) return;
+          if (sugarTypeMode === 'add') {
+            onUpdateSugarTypes([...sugarTypes, sugarTypeDraft]);
+          } else {
+            onUpdateSugarTypes(sugarTypes.map(st => st.id === sugarTypeDraft.id ? sugarTypeDraft : st));
+          }
+          setSugarTypeDraft(null);
+        }}
+        onDelete={sugarTypeMode === 'add' ? undefined : () => {
+          if (!sugarTypeDraft) return;
+          onUpdateSugarTypes(sugarTypes.filter(st => st.id !== sugarTypeDraft.id));
+          setSugarTypeDraft(null);
+        }}
+        deleteConfirmMessage={sugarTypeDraft ? `Delete sugar type "${sugarTypeDraft.name || sugarTypeDraft.id}"? This cannot be undone.` : undefined}
+        saveDisabled={!sugarTypeDraft?.name.trim()}
+      >
+        {sugarTypeDraft && (
+          sugarTypeMode === 'view' ? (
+            <>
+              <DetailRow label="Sugar Type" value={sugarTypeDraft.name} bold />
+              <DetailRow label="Abbreviation" value={sugarTypeDraft.abbreviation} mono bold />
+              <DetailRow
+                label="Products"
+                value={qaProducts.filter(q => q.sugarType === sugarTypeDraft.name).length}
+                mono
+              />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <DetailField label="Sugar Type Name" required>
+                <input
+                  value={sugarTypeDraft.name}
+                  onChange={(e) => setSugarTypeDraft(d => d ? { ...d, name: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  placeholder="e.g. Granulated, Liquid, Brown"
+                />
+              </DetailField>
+              <DetailField label="Abbreviation" hint="Short code used in product shortform (e.g., GC for Granulated).">
+                <input
+                  value={sugarTypeDraft.abbreviation}
+                  onChange={(e) => setSugarTypeDraft(d => d ? { ...d, abbreviation: e.target.value.toUpperCase().slice(0, 4) } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                  placeholder="e.g. GC, LC, BR"
+                  maxLength={4}
+                />
+              </DetailField>
+            </div>
+          )
         )}
-      </AnimatePresence>
-
-      {/* Sugar Types Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <h3 className="text-xs font-bold uppercase tracking-widest">Sugar Types</h3>
-            <span className="text-[10px] opacity-60">{sugarTypes.length} types</span>
-          </div>
-          <button
-            onClick={() => {
-              setEditingSugarType(null);
-              setSugarTypeForm({ name: '', abbreviation: '' });
-              setShowSugarTypeModal(true);
-            }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
-          >
-            <Plus size={12} /> Add Sugar Type
-          </button>
-        </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-4 border-r border-[#141414]/10">Sugar Type</th>
-              <th className="p-4 border-r border-[#141414]/10">Abbreviation</th>
-              <th className="p-4 border-r border-[#141414]/10">Products</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {sugarTypes.map(st => {
-              const productCount = qaProducts.filter(q => q.sugarType === st.name).length;
-              return (
-                <tr key={st.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{st.name}</td>
-                  <td className="p-4 text-xs font-mono font-bold border-r border-[#141414]/10">{st.abbreviation}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{productCount}</td>
-                  <td className="p-4 text-xs">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          setEditingSugarType(st);
-                          setSugarTypeForm({ name: st.name, abbreviation: st.abbreviation });
-                          setShowSugarTypeModal(true);
-                        }}
-                        className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
-                        title="Edit sugar type"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                      <button
-                        onClick={() => setDeleteSugarTypeConfirmId(st.id)}
-                        className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Delete sugar type"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {sugarTypes.length === 0 && (
-              <tr><td colSpan={4} className="p-12 text-center text-xs opacity-50 italic">No sugar types added yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add/Edit Sugar Type Modal */}
-      <AnimatePresence>
-        {showSugarTypeModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowSugarTypeModal(false)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{editingSugarType ? 'Edit Sugar Type' : 'Add Sugar Type'}</h3>
-                <button onClick={() => setShowSugarTypeModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Sugar Type Name *</label>
-                  <input
-                    value={sugarTypeForm.name}
-                    onChange={(e) => setSugarTypeForm({ ...sugarTypeForm, name: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors"
-                    placeholder="e.g. Granulated, Liquid, Brown"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">Abbreviation</label>
-                  <input
-                    value={sugarTypeForm.abbreviation}
-                    onChange={(e) => setSugarTypeForm({ ...sugarTypeForm, abbreviation: e.target.value })}
-                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white transition-colors font-mono"
-                    placeholder="e.g. GC, LC, BR"
-                  />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      if (!sugarTypeForm.name.trim()) return;
-                      if (editingSugarType) {
-                        onUpdateSugarTypes(sugarTypes.map(st => st.id === editingSugarType.id ? {
-                          ...editingSugarType,
-                          name: sugarTypeForm.name,
-                          abbreviation: sugarTypeForm.abbreviation,
-                        } : st));
-                      } else {
-                        const newST: SugarType = {
-                          id: `ST-${Date.now()}`,
-                          name: sugarTypeForm.name,
-                          abbreviation: sugarTypeForm.abbreviation,
-                        };
-                        onUpdateSugarTypes([...sugarTypes, newST]);
-                      }
-                      setShowSugarTypeModal(false);
-                      setEditingSugarType(null);
-                    }}
-                    disabled={!sugarTypeForm.name.trim()}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
-                  >
-                    {editingSugarType ? 'Save Changes' : 'Add Type'}
-                  </button>
-                  <button
-                    onClick={() => setShowSugarTypeModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Delete Sugar Type Confirmation */}
-      <AnimatePresence>
-        {deleteSugarTypeConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteSugarTypeConfirmId(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4"><h3 className="text-xs font-bold uppercase tracking-widest">Delete Sugar Type</h3></div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete this sugar type? This cannot be undone.</p>
-                <div className="flex gap-3">
-                  <button onClick={() => { onUpdateSugarTypes(sugarTypes.filter(st => st.id !== deleteSugarTypeConfirmId)); setDeleteSugarTypeConfirmId(null); }} className="flex-1 py-3 bg-red-500 text-white text-xs font-bold uppercase hover:bg-red-600 transition-all">Delete</button>
-                  <button onClick={() => setDeleteSugarTypeConfirmId(null)} className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Cancel</button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      </DetailModal>
 
       {/* Templates Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
