@@ -3383,10 +3383,11 @@ export default function App() {
   }, [activePage]);
 
   const [customerDeleteConfirmId, setCustomerDeleteConfirmId] = useState<string | null>(null);
-  const [editingCustomerGroup, setEditingCustomerGroup] = useState<CustomerGroup | null>(null);
-  const [isAddingCustomerGroup, setIsAddingCustomerGroup] = useState(false);
-  const [newCustomerGroup, setNewCustomerGroup] = useState<CustomerGroup>({ id: '', groupCode: '', name: '', notes: '' });
-  const [customerGroupDeleteConfirmId, setCustomerGroupDeleteConfirmId] = useState<string | null>(null);
+  // Customer Group detail-modal state (DataTable + DetailModal standard).
+  // Replaces the legacy editingCustomerGroup / isAddingCustomerGroup /
+  // newCustomerGroup / customerGroupDeleteConfirmId quad.
+  const [customerGroupDraft, setCustomerGroupDraft] = useState<CustomerGroup | null>(null);
+  const [customerGroupMode, setCustomerGroupMode] = useState<'view' | 'edit' | 'add'>('view');
   const [customerGroupSearch, setCustomerGroupSearch] = useState('');
   const deleteCustomer = (id: string) => {
     setCustomers(customers.filter(c => c.id !== id));
@@ -5025,119 +5026,92 @@ export default function App() {
 
           <div className="p-6 space-y-4">
 
-          {/* ── Customer Groups ── */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden mb-6">
-            <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Users size={16} />
-                <h3 className="text-[10px] font-bold uppercase tracking-widest">Customer Groups</h3>
-                <span className="text-[10px] bg-white/10 px-2 py-0.5 font-mono">{customerGroups.length}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    // Auto-assign all groups: for each group, find customers whose name contains the group name
-                    let updated = [...customers];
-                    let totalAssigned = 0;
-                    for (const g of customerGroups) {
-                      const keyword = g.name.toLowerCase().trim();
-                      if (!keyword) continue;
-                      for (let i = 0; i < updated.length; i++) {
-                        const c = updated[i];
-                        if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
-                          updated[i] = { ...c, customerGroupId: g.id };
-                          totalAssigned++;
-                        }
+          {/* ── Customer Groups ── standardized DataTable + DetailModal.
+              Auto-Assign All lives just above the table (no extra slot in the
+              DataTable banner). Inline search stays when there are >6 groups. */}
+          <div className="space-y-2 mb-6">
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  // Auto-assign across all groups: for each group, sweep ungrouped
+                  // customers whose name contains the group name.
+                  let updated = [...customers];
+                  let totalAssigned = 0;
+                  for (const g of customerGroups) {
+                    const keyword = g.name.toLowerCase().trim();
+                    if (!keyword) continue;
+                    for (let i = 0; i < updated.length; i++) {
+                      const c = updated[i];
+                      if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
+                        updated[i] = { ...c, customerGroupId: g.id };
+                        totalAssigned++;
                       }
                     }
-                    if (totalAssigned > 0) {
-                      setCustomers(updated);
-                    }
-                  }}
-                  className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
-                  title="Auto-assign ungrouped customers to groups by matching customer name to group name"
-                >
-                  <Zap size={12} /> Auto-Assign All
-                </button>
-                <button
-                  onClick={() => {
-                    const maxNum = customerGroups.reduce((mx, g) => {
-                      const n = parseInt(g.groupCode || '0', 10);
-                      return n > mx ? n : mx;
-                    }, 0);
-                    const nextCode = String(maxNum + 1).padStart(3, '0');
-                    setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
-                    setIsAddingCustomerGroup(true);
-                  }}
-                  className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
-                >
-                  <Plus size={12} /> Add Group
-                </button>
-              </div>
+                  }
+                  if (totalAssigned > 0) {
+                    setCustomers(updated);
+                  }
+                }}
+                className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all whitespace-nowrap"
+                title="Auto-assign ungrouped customers to groups by matching customer name to group name"
+              >
+                <Zap size={12} /> Auto-Assign All
+              </button>
             </div>
             {customerGroups.length > 6 && (
-              <div className="px-4 pt-3">
-                <input
-                  type="text"
-                  value={customerGroupSearch}
-                  onChange={(e) => setCustomerGroupSearch(e.target.value)}
-                  placeholder="Search customer groups..."
-                  className="w-full bg-[#F5F5F5] border border-[#141414]/20 px-3 py-2 text-xs focus:bg-white transition-colors outline-none"
-                />
-              </div>
+              <input
+                type="text"
+                value={customerGroupSearch}
+                onChange={(e) => setCustomerGroupSearch(e.target.value)}
+                placeholder="Search customer groups..."
+                className="w-full bg-white border border-[#141414] px-3 py-2 text-xs focus:bg-white transition-colors outline-none"
+              />
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest text-[#141414]/60 font-bold">
-                    <th className="p-3 border-b border-[#141414]/10">Group Code</th>
-                    <th className="p-3 border-b border-[#141414]/10">Group Name</th>
-                    <th className="p-3 border-b border-[#141414]/10">Customers</th>
-                    <th className="p-3 border-b border-[#141414]/10">Notes</th>
-                    <th className="p-3 border-b border-[#141414]/10 w-24">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {customerGroups.length === 0 && (
-                    <tr><td colSpan={5} className="p-4 text-center text-xs opacity-40 italic">No customer groups yet. Click "Add Group" to create one.</td></tr>
-                  )}
-                  {customerGroups
-                    .filter(g => {
-                      if (!customerGroupSearch) return true;
-                      const s = customerGroupSearch.toLowerCase();
-                      return g.groupCode.toLowerCase().includes(s) || g.name.toLowerCase().includes(s);
-                    })
-                    .map(g => {
-                      const membersCount = customers.filter(c => c.customerGroupId === g.id).length;
-                      const memberNames = customers.filter(c => c.customerGroupId === g.id).map(c => c.name).join(', ');
-                      return (
-                        <tr key={g.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                          <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{g.groupCode}</td>
-                          <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{g.name}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">
-                            {membersCount > 0 ? (
-                              <span title={memberNames}>
-                                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-[8px] uppercase rounded-full">{membersCount} customer{membersCount > 1 ? 's' : ''}</span>
-                              </span>
-                            ) : (
-                              <span className="text-[10px] opacity-40">None</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10 max-w-[200px] truncate">{g.notes || '—'}</td>
-                          <td className="p-3 text-xs flex items-center gap-1">
-                            <button onClick={() => setEditingCustomerGroup({ ...g })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Group">
-                              <Edit2 size={14} />
-                            </button>
-                            <button onClick={() => setCustomerGroupDeleteConfirmId(g.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Group">
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
-            </div>
+            <DataTable<CustomerGroup>
+              title="Customer Groups"
+              icon={<Users size={14} />}
+              columns={[
+                { key: 'groupCode', label: 'Group Code', mono: true, bold: true, widthClass: 'w-32' },
+                { key: 'name', label: 'Group Name', bold: true },
+                {
+                  key: 'members', label: 'Customers',
+                  sortValue: (g) => customers.filter(c => c.customerGroupId === g.id).length,
+                  render: (g) => {
+                    const memberNames = customers.filter(c => c.customerGroupId === g.id).map(c => c.name);
+                    return memberNames.length > 0 ? (
+                      <span title={memberNames.join(', ')} className="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-[8px] uppercase rounded-full">
+                        {memberNames.length} customer{memberNames.length > 1 ? 's' : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] opacity-40">None</span>
+                    );
+                  },
+                },
+                {
+                  key: 'notes', label: 'Notes',
+                  render: (g) => <span className="block max-w-[200px] truncate">{g.notes || '—'}</span>,
+                },
+              ]}
+              rows={customerGroups.filter(g => {
+                if (!customerGroupSearch) return true;
+                const s = customerGroupSearch.toLowerCase();
+                return g.groupCode.toLowerCase().includes(s) || g.name.toLowerCase().includes(s);
+              })}
+              getRowKey={(g) => g.id}
+              onRowClick={(g) => { setCustomerGroupDraft({ ...g }); setCustomerGroupMode('view'); }}
+              onAdd={() => {
+                const maxNum = customerGroups.reduce((mx, g) => {
+                  const n = parseInt(g.groupCode || '0', 10);
+                  return n > mx ? n : mx;
+                }, 0);
+                const nextCode = String(maxNum + 1).padStart(3, '0');
+                setCustomerGroupDraft({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                setCustomerGroupMode('add');
+              }}
+              addLabel="Add Group"
+              emptyMessage='No customer groups yet. Click "Add Group" to create one.'
+              defaultSortKey="groupCode"
+            />
           </div>
 
           <SearchInput
@@ -5177,8 +5151,8 @@ export default function App() {
                                 return n > mx ? n : mx;
                               }, 0);
                               const nextCode = String(maxNum + 1).padStart(3, '0');
-                              setNewCustomerGroup({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
-                              setIsAddingCustomerGroup(true);
+                              setCustomerGroupDraft({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                              setCustomerGroupMode('add');
                             } else {
                               updateCustomer(c.id, 'customerGroupId' as keyof Customer, val || undefined);
                             }
@@ -16034,241 +16008,198 @@ export default function App() {
           </div>
         )}
 
-        {/* Add Customer Group Modal */}
-        {isAddingCustomerGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingCustomerGroup(false)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Add Customer Group</h3>
-                <button onClick={() => setIsAddingCustomerGroup(false)} className="hover:opacity-70"><X size={18} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Group Code</label>
-                    <input type="text" value={newCustomerGroup.groupCode} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, groupCode: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" placeholder="e.g. 001" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
-                    <input type="text" value={newCustomerGroup.name} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, name: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" placeholder="e.g. Costco Group" />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
-                  <textarea value={newCustomerGroup.notes || ''} onChange={(e) => setNewCustomerGroup({ ...newCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" placeholder="Optional notes..." />
-                </div>
-                {/* Auto-detect preview */}
-                {newCustomerGroup.name.trim() && (() => {
-                  const keyword = newCustomerGroup.name.toLowerCase().trim();
-                  const matches = customers.filter(c => !c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword));
-                  return matches.length > 0 ? (
-                    <div className="border border-indigo-200 bg-indigo-50 p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] uppercase font-bold text-indigo-600 flex items-center gap-1"><Zap size={10} /> Auto-detect: {matches.length} matching customer{matches.length > 1 ? 's' : ''}</span>
-                      </div>
-                      <div className="divide-y divide-indigo-100 max-h-32 overflow-y-auto">
-                        {matches.map(c => (
-                          <div key={c.id} className="py-1 text-xs">
-                            <span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-indigo-500 italic">These ungrouped customers will be auto-assigned on save.</p>
-                    </div>
-                  ) : null;
-                })()}
-                <div className="flex gap-4 pt-2">
-                  <button
-                    onClick={() => {
-                      if (!newCustomerGroup.name) return;
-                      // Save the group
-                      setCustomerGroups([...customerGroups, newCustomerGroup]);
-                      // Auto-assign matching customers
-                      const keyword = newCustomerGroup.name.toLowerCase().trim();
-                      if (keyword) {
-                        setCustomers(customers.map(c => {
-                          if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
-                            return { ...c, customerGroupId: newCustomerGroup.id };
-                          }
-                          return c;
-                        }));
-                      }
-                      setIsAddingCustomerGroup(false);
-                    }}
-                    disabled={!newCustomerGroup.name}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
-                  >
-                    Save Group
-                  </button>
-                  <button onClick={() => setIsAddingCustomerGroup(false)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Edit Customer Group Modal */}
-        {editingCustomerGroup && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setEditingCustomerGroup(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer Group: {editingCustomerGroup.groupCode}</h3>
-                <button onClick={() => setEditingCustomerGroup(null)} className="hover:opacity-70"><X size={18} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Group Code</label>
-                    <input type="text" value={editingCustomerGroup.groupCode} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, groupCode: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Group Name</label>
-                    <input type="text" value={editingCustomerGroup.name} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, name: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none" />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
-                  <textarea value={editingCustomerGroup.notes || ''} onChange={(e) => setEditingCustomerGroup({ ...editingCustomerGroup, notes: e.target.value })} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none focus:bg-white transition-colors outline-none" />
-                </div>
-                {/* Add customer to group */}
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Add Customer to Group</label>
-                  <div className="flex gap-2">
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        const selectedId = e.target.value;
-                        if (selectedId) {
-                          setCustomers(customers.map(cu => cu.id === selectedId ? { ...cu, customerGroupId: editingCustomerGroup.id } : cu));
-                        }
-                      }}
-                      className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="">— Select a customer to add —</option>
-                      {customers
-                        .filter(cu => cu.customerGroupId !== editingCustomerGroup.id)
-                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                        .map(cu => (
-                          <option key={cu.id} value={cu.id}>
-                            {cu.customerNumber ? `${cu.customerNumber} — ` : ''}{cu.name}{cu.defaultLocation ? ` (${cu.defaultLocation})` : ''}
-                          </option>
-                        ))
-                      }
-                    </select>
-                    <button
-                      onClick={() => {
-                        const keyword = editingCustomerGroup.name.toLowerCase().trim();
-                        if (!keyword) return;
-                        const matches = customers.filter(c => c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword));
-                        if (matches.length > 0) {
-                          setCustomers(customers.map(c => {
-                            if (c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword)) {
-                              return { ...c, customerGroupId: editingCustomerGroup.id };
-                            }
-                            return c;
-                          }));
-                        }
-                      }}
-                      className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-opacity-80 transition-all whitespace-nowrap"
-                      title={`Auto-assign all customers whose name contains "${editingCustomerGroup.name}"`}
-                    >
-                      <Zap size={12} /> Auto-Detect
-                    </button>
-                  </div>
-                  {(() => {
-                    const keyword = editingCustomerGroup.name.toLowerCase().trim();
-                    if (!keyword) return null;
-                    const potentialMatches = customers.filter(c => c.customerGroupId !== editingCustomerGroup.id && c.name && c.name.toLowerCase().includes(keyword));
-                    if (potentialMatches.length === 0) return null;
-                    return (
-                      <div className="mt-1 text-[10px] text-indigo-600">
-                        <Zap size={10} className="inline mr-1" />
-                        Auto-detect would add {potentialMatches.length} customer{potentialMatches.length > 1 ? 's' : ''}: {potentialMatches.map(c => c.name).join(', ')}
-                      </div>
-                    );
-                  })()}
-                </div>
-                {/* Members list */}
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Group Members</label>
-                  <div className="border border-[#141414]/10 divide-y divide-[#141414]/10">
-                    {customers.filter(c => c.customerGroupId === editingCustomerGroup.id).length === 0 ? (
-                      <div className="p-3 text-xs opacity-40 italic">No customers assigned to this group yet.</div>
-                    ) : (
-                      customers.filter(c => c.customerGroupId === editingCustomerGroup.id).map(c => (
-                        <div key={c.id} className="p-2 px-3 text-xs flex items-center justify-between">
-                          <span><span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span></span>
-                          <button onClick={() => setCustomers(customers.map(cu => cu.id === c.id ? { ...cu, customerGroupId: undefined } : cu))} className="text-[8px] uppercase font-bold text-red-500 hover:text-red-700">Remove</button>
+        {/* ============================================================
+            CUSTOMER GROUPS — standardized DetailModal
+            ============================================================ */}
+        <DetailModal
+          tableName="Customer Groups"
+          icon={<Users size={14} />}
+          isOpen={!!customerGroupDraft}
+          mode={customerGroupMode}
+          onClose={() => setCustomerGroupDraft(null)}
+          onEdit={() => setCustomerGroupMode('edit')}
+          onSave={() => {
+            if (!customerGroupDraft) return;
+            if (!customerGroupDraft.name.trim()) return;
+            if (customerGroupMode === 'add') {
+              setCustomerGroups([...customerGroups, customerGroupDraft]);
+              // Auto-assign ungrouped customers whose name matches the new group.
+              const keyword = customerGroupDraft.name.toLowerCase().trim();
+              if (keyword) {
+                setCustomers(customers.map(c => {
+                  if (!c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword)) {
+                    return { ...c, customerGroupId: customerGroupDraft.id };
+                  }
+                  return c;
+                }));
+              }
+            } else {
+              setCustomerGroups(customerGroups.map(g => g.id === customerGroupDraft.id ? customerGroupDraft : g));
+            }
+            setCustomerGroupDraft(null);
+          }}
+          onDelete={customerGroupMode === 'add' ? undefined : () => {
+            if (!customerGroupDraft) return;
+            setCustomers(customers.map(c => c.customerGroupId === customerGroupDraft.id ? { ...c, customerGroupId: undefined } : c));
+            setCustomerGroups(customerGroups.filter(g => g.id !== customerGroupDraft.id));
+            setCustomerGroupDraft(null);
+          }}
+          deleteConfirmMessage={customerGroupDraft ? `Delete customer group "${customerGroupDraft.name || customerGroupDraft.id}"? Customers in this group will be unassigned.` : undefined}
+          saveDisabled={!customerGroupDraft?.name.trim()}
+        >
+          {customerGroupDraft && (() => {
+            const members = customers.filter(c => c.customerGroupId === customerGroupDraft.id);
+            const keyword = customerGroupDraft.name.toLowerCase().trim();
+            const ungroupedMatches = keyword
+              ? customers.filter(c => !c.customerGroupId && c.name && c.name.toLowerCase().includes(keyword))
+              : [];
+            const potentialMatches = keyword
+              ? customers.filter(c => c.customerGroupId !== customerGroupDraft.id && c.name && c.name.toLowerCase().includes(keyword))
+              : [];
+            if (customerGroupMode === 'view') {
+              return (
+                <>
+                  <DetailRow label="Group Code" value={customerGroupDraft.groupCode} mono bold />
+                  <DetailRow label="Group Name" value={customerGroupDraft.name} bold />
+                  <DetailRow label="Notes" value={customerGroupDraft.notes} />
+                  <DetailRow
+                    label="Members"
+                    value={
+                      members.length === 0 ? (
+                        <span className="opacity-40 italic">No customers assigned to this group yet.</span>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {members.map(c => (
+                            <div key={c.id}>
+                              <span className="font-mono font-bold">{c.customerNumber}</span> — {c.name}{c.defaultLocation ? <span className="opacity-50"> ({c.defaultLocation})</span> : null}
+                            </div>
+                          ))}
                         </div>
-                      ))
-                    )}
+                      )
+                    }
+                  />
+                </>
+              );
+            }
+            return (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <DetailField label="Group Code">
+                    <input
+                      type="text"
+                      value={customerGroupDraft.groupCode}
+                      onChange={(e) => setCustomerGroupDraft(d => d ? { ...d, groupCode: e.target.value } : d)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                      placeholder="e.g. 001"
+                    />
+                  </DetailField>
+                  <DetailField label="Group Name" required>
+                    <input
+                      type="text"
+                      value={customerGroupDraft.name}
+                      onChange={(e) => setCustomerGroupDraft(d => d ? { ...d, name: e.target.value } : d)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      placeholder="e.g. Costco Group"
+                    />
+                  </DetailField>
+                </div>
+                <DetailField label="Notes">
+                  <textarea
+                    value={customerGroupDraft.notes || ''}
+                    onChange={(e) => setCustomerGroupDraft(d => d ? { ...d, notes: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white"
+                    placeholder="Optional notes..."
+                  />
+                </DetailField>
+                {/* Add-mode auto-detect preview — flags ungrouped matches that
+                    will sweep in when Save fires. */}
+                {customerGroupMode === 'add' && ungroupedMatches.length > 0 && (
+                  <div className="border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+                    <span className="text-[10px] uppercase font-bold text-indigo-600 flex items-center gap-1">
+                      <Zap size={10} /> Auto-detect: {ungroupedMatches.length} matching customer{ungroupedMatches.length > 1 ? 's' : ''}
+                    </span>
+                    <div className="divide-y divide-indigo-100 max-h-32 overflow-y-auto">
+                      {ungroupedMatches.map(c => (
+                        <div key={c.id} className="py-1 text-xs">
+                          <span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-indigo-500 italic">These ungrouped customers will be auto-assigned on save.</p>
                   </div>
-                </div>
-                <div className="flex gap-4 pt-2">
-                  <button
-                    onClick={() => {
-                      setCustomerGroups(customerGroups.map(g => g.id === editingCustomerGroup.id ? editingCustomerGroup : g));
-                      setEditingCustomerGroup(null);
-                    }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
-                  >
-                    Save Changes
-                  </button>
-                  <button onClick={() => setEditingCustomerGroup(null)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-                </div>
+                )}
+                {/* Edit-mode membership management — add by dropdown, auto-detect,
+                    or remove a member from the list. */}
+                {customerGroupMode === 'edit' && (
+                  <>
+                    <DetailField label="Add Customer to Group">
+                      <div className="flex gap-2">
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            if (selectedId) {
+                              setCustomers(customers.map(cu => cu.id === selectedId ? { ...cu, customerGroupId: customerGroupDraft.id } : cu));
+                            }
+                          }}
+                          className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                        >
+                          <option value="">— Select a customer to add —</option>
+                          {customers
+                            .filter(cu => cu.customerGroupId !== customerGroupDraft.id)
+                            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                            .map(cu => (
+                              <option key={cu.id} value={cu.id}>
+                                {cu.customerNumber ? `${cu.customerNumber} — ` : ''}{cu.name}{cu.defaultLocation ? ` (${cu.defaultLocation})` : ''}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          onClick={() => {
+                            if (!keyword) return;
+                            const matches = customers.filter(c => c.customerGroupId !== customerGroupDraft.id && c.name && c.name.toLowerCase().includes(keyword));
+                            if (matches.length > 0) {
+                              setCustomers(customers.map(c => {
+                                if (c.customerGroupId !== customerGroupDraft.id && c.name && c.name.toLowerCase().includes(keyword)) {
+                                  return { ...c, customerGroupId: customerGroupDraft.id };
+                                }
+                                return c;
+                              }));
+                            }
+                          }}
+                          className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-opacity-80 transition-all whitespace-nowrap"
+                          title={`Auto-assign all customers whose name contains "${customerGroupDraft.name}"`}
+                        >
+                          <Zap size={12} /> Auto-Detect
+                        </button>
+                      </div>
+                      {potentialMatches.length > 0 && (
+                        <div className="mt-1 text-[10px] text-indigo-600">
+                          <Zap size={10} className="inline mr-1" />
+                          Auto-detect would add {potentialMatches.length} customer{potentialMatches.length > 1 ? 's' : ''}: {potentialMatches.map(c => c.name).join(', ')}
+                        </div>
+                      )}
+                    </DetailField>
+                    <DetailField label="Group Members">
+                      <div className="border border-[#141414]/10 divide-y divide-[#141414]/10">
+                        {members.length === 0 ? (
+                          <div className="p-3 text-xs opacity-40 italic">No customers assigned to this group yet.</div>
+                        ) : (
+                          members.map(c => (
+                            <div key={c.id} className="p-2 px-3 text-xs flex items-center justify-between">
+                              <span><span className="font-mono font-bold">{c.customerNumber}</span> — {c.name} <span className="opacity-50">({c.defaultLocation})</span></span>
+                              <button onClick={() => setCustomers(customers.map(cu => cu.id === c.id ? { ...cu, customerGroupId: undefined } : cu))} className="text-[8px] uppercase font-bold text-red-500 hover:text-red-700">Remove</button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </DetailField>
+                  </>
+                )}
               </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Delete Customer Group Confirmation */}
-        {customerGroupDeleteConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setCustomerGroupDeleteConfirmId(null)}>
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-md w-full overflow-hidden"
-            >
-              <div className="bg-red-600 text-white p-4"><h3 className="text-xs font-bold uppercase tracking-widest">Delete Customer Group</h3></div>
-              <div className="p-6 space-y-4">
-                <p className="text-sm">Are you sure you want to delete <span className="font-bold">{customerGroups.find(g => g.id === customerGroupDeleteConfirmId)?.name || customerGroupDeleteConfirmId}</span>? Customers in this group will be unassigned.</p>
-                <div className="flex gap-4">
-                  <button
-                    onClick={() => {
-                      // Unassign customers from this group
-                      setCustomers(customers.map(c => c.customerGroupId === customerGroupDeleteConfirmId ? { ...c, customerGroupId: undefined } : c));
-                      setCustomerGroups(customerGroups.filter(g => g.id !== customerGroupDeleteConfirmId));
-                      setCustomerGroupDeleteConfirmId(null);
-                    }}
-                    className="flex-1 py-3 bg-red-600 text-white font-bold text-xs uppercase hover:bg-red-700 transition-all"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setCustomerGroupDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
+            );
+          })()}
+        </DetailModal>
 
         {/* Order Delete Confirmation Dialog */}
         {orderDeleteConfirmId && (
