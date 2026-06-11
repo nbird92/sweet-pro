@@ -1903,12 +1903,26 @@ export default function QualityAssurancePage({
               <th className="p-4">Description</th>
               <th className="p-4">Google Sheet</th>
               <th className="p-4">Last Updated</th>
-              <th className="p-4">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
+            {/* Standard pattern: row click opens the Templates Detail modal;
+                edit / delete live inside it. No Actions column. */}
             {qaTemplates.map(template => (
-              <tr key={template.id} className="hover:bg-[#F9F9F9] transition-colors group">
+              <tr
+                key={template.id}
+                onClick={() => {
+                  setEditingTemplate(template);
+                  setTemplateForm({
+                    name: template.name,
+                    type: template.type,
+                    googleSheetUrl: template.googleSheetUrl,
+                    description: template.description || '',
+                  });
+                  setShowTemplateModal(true);
+                }}
+                className="hover:bg-[#F9F9F9] transition-colors cursor-pointer"
+              >
                 <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{template.name}</td>
                 <td className="p-4 text-xs border-r border-[#141414]/10">
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
@@ -1916,6 +1930,7 @@ export default function QualityAssurancePage({
                     template.type === 'Certificate of Analysis' ? 'bg-emerald-100 text-emerald-700' :
                     template.type === 'Packing List' ? 'bg-amber-100 text-amber-700' :
                     template.type === 'Order Confirmation' ? 'bg-purple-100 text-purple-700' :
+                    template.type === 'Return Order Confirmation' ? 'bg-rose-100 text-rose-700' :
                     'bg-gray-100 text-gray-700'
                   }`}>{template.type}</span>
                 </td>
@@ -1933,38 +1948,11 @@ export default function QualityAssurancePage({
                     </a>
                   ) : '—'}
                 </td>
-                <td className="p-4 text-xs border-r border-[#141414]/10 opacity-60">{template.updatedAt ? new Date(template.updatedAt).toLocaleDateString() : '—'}</td>
-                <td className="p-4 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingTemplate(template);
-                        setTemplateForm({
-                          name: template.name,
-                          type: template.type,
-                          googleSheetUrl: template.googleSheetUrl,
-                          description: template.description || '',
-                        });
-                        setShowTemplateModal(true);
-                      }}
-                      className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors opacity-0 group-hover:opacity-100"
-                      title="Edit template"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setDeleteTemplateConfirmId(template.id)}
-                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete template"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
+                <td className="p-4 text-xs opacity-60">{template.updatedAt ? new Date(template.updatedAt).toLocaleDateString() : '—'}</td>
               </tr>
             ))}
             {qaTemplates.length === 0 && (
-              <tr><td colSpan={6} className="p-12 text-center text-xs opacity-50 italic">No templates added yet. Add a Bill of Lading, Certificate of Analysis, or Packing List template.</td></tr>
+              <tr><td colSpan={5} className="p-12 text-center text-xs opacity-50 italic">No templates added yet. Add a Bill of Lading, Certificate of Analysis, or Packing List template.</td></tr>
             )}
           </tbody>
         </table>
@@ -1982,7 +1970,7 @@ export default function QualityAssurancePage({
               className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">{editingTemplate ? 'Edit Template' : 'Add Template'}</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">{editingTemplate ? 'Templates Detail' : 'New Template'}</h3>
                 <button onClick={() => setShowTemplateModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
               </div>
               <div className="p-6 space-y-4">
@@ -2007,6 +1995,7 @@ export default function QualityAssurancePage({
                     <option value="Certificate of Analysis">Certificate of Analysis</option>
                     <option value="Packing List">Packing List</option>
                     <option value="Order Confirmation">Order Confirmation</option>
+                    <option value="Return Order Confirmation">Return Order Confirmation</option>
                     <option value="Other">Other</option>
                   </select>
                 </div>
@@ -2031,7 +2020,23 @@ export default function QualityAssurancePage({
                     className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                   />
                 </div>
-                <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+                <div className="flex justify-between gap-2 pt-4 border-t border-[#141414]/10">
+                  <div>
+                    {/* Delete moved into the modal (standard pattern). Reuses
+                        the existing delete-confirm dialog. */}
+                    {editingTemplate && (
+                      <button
+                        onClick={() => {
+                          setShowTemplateModal(false);
+                          setDeleteTemplateConfirmId(editingTemplate.id);
+                        }}
+                        className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                      >
+                        <Trash2 size={14} /> Delete
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
                   <button
                     onClick={() => setShowTemplateModal(false)}
                     className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
@@ -2071,6 +2076,7 @@ export default function QualityAssurancePage({
                   >
                     {editingTemplate ? 'Save Changes' : 'Add Template'}
                   </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
