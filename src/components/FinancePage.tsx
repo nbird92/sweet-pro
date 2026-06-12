@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { FiscalYear, FiscalQuarter, FiscalPeriod } from '../types';
-import { X, Edit2, Trash2, Plus, ChevronDown, ChevronUp, Save, Calendar, Landmark } from 'lucide-react';
+import { X, Trash2, Plus, ChevronDown, ChevronUp, Save, Calendar, Landmark } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface FinancePageProps {
@@ -90,13 +91,6 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
     setShowModal(true);
   };
 
-  // Delete
-  const handleDelete = (index: number) => {
-    if (!confirm('Are you sure you want to delete this fiscal year?')) return;
-    const updated = [...fiscalYears];
-    updated.splice(index, 1);
-    onUpdateFiscalYears(updated);
-  };
 
   // Save
   const handleSave = () => {
@@ -208,62 +202,26 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
       </PageBanner>
     <main className="flex-1 p-6 overflow-auto">
 
-      {/* Fiscal Years Table */}
-      {fiscalYears.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 border border-dashed border-gray-300 bg-gray-50">
-          <p>No fiscal years configured. Create one to get started!</p>
-        </div>
-      ) : (
-        <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                <th className="p-3 border-r border-[#E4E3E0]/20">Name</th>
-                <th className="p-3 border-r border-[#E4E3E0]/20">Start Date</th>
-                <th className="p-3 border-r border-[#E4E3E0]/20">End Date</th>
-                <th className="p-3 border-r border-[#E4E3E0]/20">Budget Lock Date</th>
-                <th className="p-3 border-r border-[#E4E3E0]/20"># Quarters</th>
-                <th className="p-3 border-r border-[#E4E3E0]/20"># Periods</th>
-                <th className="p-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#141414]/10">
-              {fiscalYears.map((fy, index) => (
-                <tr
-                  key={fy.id}
-                  className="hover:bg-[#F5F5F5] transition-colors cursor-pointer"
-                  onClick={() => handleEdit(index)}
-                >
-                  <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{fy.name}</td>
-                  <td className="p-3 text-xs border-r border-[#141414]/10">{fy.startDate}</td>
-                  <td className="p-3 text-xs border-r border-[#141414]/10">{fy.endDate}</td>
-                  <td className="p-3 text-xs border-r border-[#141414]/10">{fy.budgetLockDate}</td>
-                  <td className="p-3 text-xs border-r border-[#141414]/10">{fy.quarters.length}</td>
-                  <td className="p-3 text-xs border-r border-[#141414]/10">{fy.periods.length}</td>
-                  <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleEdit(index)}
-                        className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                        title="Edit"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(index)}
-                        className="p-1 hover:bg-red-500 hover:text-white transition-all"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Fiscal Years — standardized DataTable. Row click opens the existing
+          edit modal (which holds the nested Quarter / Period editors); Delete
+          lives in that modal's footer. Add Fiscal Year stays in the PageBanner. */}
+      <DataTable<FiscalYear>
+        title="Fiscal Years"
+        icon={<Landmark size={14} />}
+        columns={[
+          { key: 'name', label: 'Name', bold: true },
+          { key: 'startDate', label: 'Start Date' },
+          { key: 'endDate', label: 'End Date' },
+          { key: 'budgetLockDate', label: 'Budget Lock Date', render: (fy) => fy.budgetLockDate || '—' },
+          { key: 'numQuarters', label: '# Quarters', align: 'right', mono: true, sortValue: (fy) => (fy.quarters || []).length, render: (fy) => (fy.quarters || []).length },
+          { key: 'numPeriods', label: '# Periods', align: 'right', mono: true, sortValue: (fy) => (fy.periods || []).length, render: (fy) => (fy.periods || []).length },
+        ]}
+        rows={fiscalYears}
+        getRowKey={(fy) => fy.id}
+        onRowClick={(fy) => handleEdit(fiscalYears.indexOf(fy))}
+        emptyMessage="No fiscal years configured. Click “Add Fiscal Year” to create one."
+        defaultSortKey="name"
+      />
 
       {/* Modal */}
       <AnimatePresence>
@@ -502,19 +460,37 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                 </div>
 
                 {/* ====== FOOTER BUTTONS ====== */}
-                <div className="flex gap-2 justify-end pt-4 border-t">
-                  <button
-                    onClick={() => setShowModal(false)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSave}
-                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
-                  >
-                    <Save size={14} /> Save
-                  </button>
+                <div className="flex gap-2 items-center pt-4 border-t">
+                  {/* Delete moved here from the table's old Actions column. */}
+                  {editingIndex !== null && (
+                    <button
+                      onClick={() => {
+                        if (editingIndex === null) return;
+                        if (!confirm('Delete this fiscal year? This cannot be undone.')) return;
+                        const updated = [...fiscalYears];
+                        updated.splice(editingIndex, 1);
+                        onUpdateFiscalYears(updated);
+                        setShowModal(false);
+                      }}
+                      className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    >
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  )}
+                  <div className="flex gap-2 justify-end ml-auto">
+                    <button
+                      onClick={() => setShowModal(false)}
+                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSave}
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                    >
+                      <Save size={14} /> Save
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
