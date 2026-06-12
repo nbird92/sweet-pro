@@ -253,6 +253,9 @@ export default function App() {
   // DetailModal state for the standardized CHEP Pallets Inventory table.
   const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
   const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
+  // DetailModal state for the standardized Vendors table.
+  const [vendorDraft, setVendorDraft] = useState<Vendor | null>(null);
+  const [vendorMode, setVendorMode] = useState<'view' | 'edit' | 'add'>('view');
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -6738,10 +6741,7 @@ export default function App() {
               <Truck size={12} /> Sync Carriers as Vendors
             </button>
             <button
-              onClick={() => {
-                const id = `VEND-${Date.now()}`;
-                setVendors(prev => [...prev, { id, vendorNumber: '', name: '', category: 'operations' }]);
-              }}
+              onClick={() => { setVendorDraft({ id: `VEND-${Date.now()}`, vendorNumber: '', name: '', category: 'operations' }); setVendorMode('add'); }}
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Vendor
@@ -6751,41 +6751,98 @@ export default function App() {
 
           <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search vendors by number, name or category..." />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                  <SortableHeader label="Vendor No." sortKey="vendorNumber" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Category" sortKey="category" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-4 border-r border-[#141414]/10">Email</th>
-                  <th className="p-4 border-r border-[#141414]/10">Phone</th>
-                  <th className="p-4 border-r border-[#141414]/10">Payment Terms</th>
-                  <th className="p-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {getSortedAndFilteredData<Vendor>(vendors, ['vendorNumber', 'name', 'category']).map(v => (
-                  <tr key={v.id} className="hover:bg-[#F9F9F9] transition-colors">
-                    <td className="p-4 text-xs font-mono border-r border-[#141414]/10">
-                      <input type="text" value={v.vendorNumber} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, vendorNumber: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Vendor #" />
-                    </td>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">
-                      <input type="text" value={v.name} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, name: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Vendor Name" />
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <select value={v.category} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, category: e.target.value } : x))} className="w-full bg-transparent focus:outline-none">
-                        {departmentCategories.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+          {/* Vendors — standardized DataTable + DetailModal. Replaces the old
+              fully-inline-editable table (every cell an input) + trash column. */}
+          <DataTable<Vendor>
+            title="Vendors"
+            icon={<Briefcase size={14} />}
+            columns={[
+              { key: 'vendorNumber', label: 'Vendor No.', mono: true, render: (v) => v.vendorNumber || '—' },
+              { key: 'name', label: 'Name', bold: true },
+              { key: 'category', label: 'Category', render: (v) => v.category ? v.category.charAt(0).toUpperCase() + v.category.slice(1) : '—' },
+              { key: 'contactEmail', label: 'Email', render: (v) => v.contactEmail || '—' },
+              { key: 'contactPhone', label: 'Phone', render: (v) => v.contactPhone || '—' },
+              { key: 'paymentTerms', label: 'Payment Terms', render: (v) => v.paymentTerms || '—' },
+            ]}
+            rows={getSortedAndFilteredData<Vendor>(vendors, ['vendorNumber', 'name', 'category'])}
+            getRowKey={(v) => v.id}
+            onRowClick={(v) => { setVendorDraft({ ...v }); setVendorMode('view'); }}
+            emptyMessage='No vendors added yet. Use "Add Vendor" or "Sync Carriers as Vendors".'
+            defaultSortKey="name"
+          />
+
+          <DetailModal
+            tableName="Vendors"
+            icon={<Briefcase size={14} />}
+            isOpen={!!vendorDraft}
+            mode={vendorMode}
+            onClose={() => setVendorDraft(null)}
+            onEdit={() => setVendorMode('edit')}
+            onSave={() => {
+              if (!vendorDraft) return;
+              if (!vendorDraft.name.trim()) return;
+              if (vendorMode === 'add') {
+                setVendors(prev => [...prev, vendorDraft]);
+              } else {
+                setVendors(prev => prev.map(x => x.id === vendorDraft.id ? vendorDraft : x));
+              }
+              setVendorDraft(null);
+            }}
+            onDelete={vendorMode === 'add' ? undefined : () => {
+              if (!vendorDraft) return;
+              setVendors(prev => prev.filter(x => x.id !== vendorDraft.id));
+              setVendorDraft(null);
+            }}
+            deleteConfirmMessage={vendorDraft ? `Delete vendor "${vendorDraft.name || vendorDraft.id}"? This cannot be undone.` : undefined}
+            saveDisabled={!vendorDraft?.name.trim()}
+          >
+            {vendorDraft && (
+              vendorMode === 'view' ? (
+                <>
+                  <DetailRow label="Vendor No." value={vendorDraft.vendorNumber} mono />
+                  <DetailRow label="Name" value={vendorDraft.name} bold />
+                  <DetailRow label="Category" value={vendorDraft.category ? vendorDraft.category.charAt(0).toUpperCase() + vendorDraft.category.slice(1) : '—'} />
+                  <DetailRow label="Contact Email" value={vendorDraft.contactEmail} />
+                  <DetailRow label="Contact Phone" value={vendorDraft.contactPhone} />
+                  <DetailRow label="Payment Terms" value={vendorDraft.paymentTerms} />
+                  <DetailRow label="Notes" value={vendorDraft.notes} />
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <DetailField label="Vendor No.">
+                      <input
+                        type="text"
+                        value={vendorDraft.vendorNumber}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, vendorNumber: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                        placeholder="Vendor #"
+                      />
+                    </DetailField>
+                    <DetailField label="Name" required>
+                      <input
+                        type="text"
+                        value={vendorDraft.name}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, name: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                        placeholder="Vendor Name"
+                      />
+                    </DetailField>
+                    <DetailField label="Category">
+                      <select
+                        value={vendorDraft.category}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, category: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      >
+                        {departmentCategories.map(dep => <option key={dep} value={dep}>{dep.charAt(0).toUpperCase() + dep.slice(1)}</option>)}
                       </select>
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <input type="email" value={v.contactEmail || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactEmail: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Email" />
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <input type="text" value={v.contactPhone || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, contactPhone: e.target.value } : x))} className="w-full bg-transparent focus:outline-none" placeholder="Phone" />
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">
-                      <select value={v.paymentTerms || ''} onChange={(e) => setVendors(vendors.map(x => x.id === v.id ? { ...x, paymentTerms: e.target.value || undefined } : x))} className="w-full bg-transparent focus:outline-none">
+                    </DetailField>
+                    <DetailField label="Payment Terms">
+                      <select
+                        value={vendorDraft.paymentTerms || ''}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, paymentTerms: e.target.value || undefined } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      >
                         <option value="">Select...</option>
                         <option value="Net 15">Net 15</option>
                         <option value="Net 30">Net 30</option>
@@ -6793,20 +6850,38 @@ export default function App() {
                         <option value="Net 90">Net 90</option>
                         <option value="2% / Net 15">2% / Net 15</option>
                       </select>
-                    </td>
-                    <td className="p-4 text-xs">
-                      <button onClick={() => setVendors(vendors.filter(x => x.id !== v.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {vendors.length === 0 && (
-                  <tr><td colSpan={7} className="p-8 text-center text-xs opacity-50 italic">No vendors added yet. Click "Sync Carriers as Vendors" to auto-add carriers.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                    </DetailField>
+                    <DetailField label="Contact Email">
+                      <input
+                        type="email"
+                        value={vendorDraft.contactEmail || ''}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, contactEmail: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                        placeholder="email@vendor.com"
+                      />
+                    </DetailField>
+                    <DetailField label="Contact Phone">
+                      <input
+                        type="text"
+                        value={vendorDraft.contactPhone || ''}
+                        onChange={(e) => setVendorDraft(d => d ? { ...d, contactPhone: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                        placeholder="+1 (555) 000-0000"
+                      />
+                    </DetailField>
+                  </div>
+                  <DetailField label="Notes">
+                    <textarea
+                      value={vendorDraft.notes || ''}
+                      onChange={(e) => setVendorDraft(d => d ? { ...d, notes: e.target.value } : d)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white"
+                      placeholder="Optional notes..."
+                    />
+                  </DetailField>
+                </div>
+              )
+            )}
+          </DetailModal>
           </div>
         </div>
       );
