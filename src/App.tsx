@@ -3915,6 +3915,120 @@ export default function App() {
     return entries;
   };
 
+  // Validate + add (or update) the in-progress Add Order line item. Extracted
+  // from the inline button so the Add/Update Item action can live in the
+  // section header instead of a table column.
+  const submitOrderLineItem = () => {
+    if (!newLineItem.productName || newLineItem.qty <= 0) {
+      setErrorBox('Please select a product and enter a quantity');
+      return;
+    }
+    // Look up the product in skus, then fall back to qaProducts (orphan QA rows)
+    let product = skus.find(s => s.name === newLineItem.productName);
+    if (!product) {
+      const orphan = qaProducts.find(q => q.skuName === newLineItem.productName);
+      if (orphan) {
+        product = {
+          id: orphan.skuId,
+          name: orphan.skuName,
+          productGroup: orphan.productGroup,
+          category: orphan.category,
+          netWeight: orphan.netWeightKg || 0,
+          brix: 99.9,
+          premiumCadMt: 0,
+          netWeightKg: orphan.netWeightKg,
+          grossWeightKg: orphan.grossWeightKg,
+          maxColor: orphan.maxColor,
+          location: orphan.location,
+          sugarType: orphan.sugarType,
+          productFormat: orphan.productFormat,
+        };
+      }
+    }
+    if (!product) {
+      setErrorBox(`Product "${newLineItem.productName}" not found in catalog`);
+      return;
+    }
+    const netWeightKg = product.netWeightKg || product.netWeight;
+    const totalWeightKg = newLineItem.qty * netWeightKg;
+    const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
+    // Contract is optional. When provided, validate product fit and volume.
+    let mtAmount = 0;
+    let unitAmount = 0;
+    let lineAmount = 0;
+    if (newLineItem.contractNumber) {
+      const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
+      if (!contract) { setErrorBox('Contract not found'); return; }
+      // Validate product against contract lines if contract has lines
+      if (contract.contractLines && contract.contractLines.length > 0) {
+        const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
+        if (!matchingLine) {
+          setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
+          return;
+        }
+      }
+      // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
+      const existingWeightOnContract = orderLineItems
+        .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
+        .reduce((sum, li) => sum + li.totalWeight, 0);
+      const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
+      if (totalWeight > outstanding) {
+        const overage = totalWeight - outstanding;
+        const proceed = window.confirm(
+          `⚠ Contract volume warning\n\n`
+          + `Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, but this item requires ${totalWeight.toFixed(2)} MT.\n\n`
+          + `Adding this line item will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
+          + `Are you sure you want to proceed?`
+        );
+        if (!proceed) return;
+      }
+      // Use contract line price if available, otherwise use contract finalPrice
+      const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
+      mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
+      unitAmount = mtAmount * netWeightKg / 1000;
+      lineAmount = totalWeight * mtAmount;
+    }
+    // If no contract, pricing fields remain 0 (caller may fill them later)
+
+    if (editingLineItemIdx !== null) {
+      // Update existing line item
+      const updatedLineItem: OrderLineItem = {
+        ...orderLineItems[editingLineItemIdx],
+        productName: newLineItem.productName,
+        productDisplayName: newLineItem.productDisplayName || undefined,
+        productKey: newLineItem.productKey || undefined,
+        qty: newLineItem.qty,
+        contractNumber: newLineItem.contractNumber,
+        netWeightPerUnit: netWeightKg / 1000,
+        totalWeight,
+        unitAmount,
+        mtAmount,
+        lineAmount
+      };
+      const updatedItems = [...orderLineItems];
+      updatedItems[editingLineItemIdx] = updatedLineItem;
+      setOrderLineItems(updatedItems);
+      setEditingLineItemIdx(null);
+    } else {
+      // Add new line item
+      const lineItem: OrderLineItem = {
+        id: `LINEITEM-${Date.now()}-${Math.random()}`,
+        productName: newLineItem.productName,
+        productDisplayName: newLineItem.productDisplayName || undefined,
+        productKey: newLineItem.productKey || undefined,
+        qty: newLineItem.qty,
+        contractNumber: newLineItem.contractNumber,
+        netWeightPerUnit: netWeightKg / 1000,
+        totalWeight,
+        unitAmount,
+        mtAmount,
+        lineAmount
+      };
+      setOrderLineItems([...orderLineItems, lineItem]);
+    }
+    setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+  };
+
   const getNextCustomerNumber = (existingCustomers: Customer[]): string => {
     let maxNum = 0;
     existingCustomers.forEach(c => {
@@ -14979,7 +15093,28 @@ export default function App() {
                 {/* Line Items & Contract Details — table layout: one header row,
                     one input row. Split Number sits beside Contract #. */}
                 <div className="border border-[#141414]/20 p-6 bg-[#F9F9F9]">
-                  <h4 className="text-xs font-bold uppercase tracking-widest mb-4">Line Items & Contract Details</h4>
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xs font-bold uppercase tracking-widest">Line Items & Contract Details</h4>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={submitOrderLineItem}
+                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                      >
+                        <Plus size={12} /> {editingLineItemIdx !== null ? 'Update Item' : 'Add Item'}
+                      </button>
+                      {editingLineItemIdx !== null && (
+                        <button
+                          onClick={() => {
+                            setEditingLineItemIdx(null);
+                            setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+                          }}
+                          className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <div className="border border-[#141414]">
                     <table className="w-full text-left border-collapse">
                       <thead className="bg-[#141414] text-[#E4E3E0]">
@@ -14994,7 +15129,6 @@ export default function App() {
                           <th className="p-3">Shipping Terms</th>
                           <th className="p-3">Location (Origin)</th>
                           <th className="p-3">Pallet Type</th>
-                          <th className="p-3"></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -15015,7 +15149,7 @@ export default function App() {
                               }}
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
-                              <option value="">Select Product</option>
+                              <option value="">Select</option>
                               {buildOrderProductOptions(newLineItem.productName).map(opt => (
                                 <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                               ))}
@@ -15036,7 +15170,7 @@ export default function App() {
                               onChange={(e) => setNewLineItem({...newLineItem, contractNumber: e.target.value})}
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
-                              <option value="">No Contract</option>
+                              <option value="">Select</option>
                               {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                             </select>
                           </td>
@@ -15058,7 +15192,7 @@ export default function App() {
                               onChange={(e) => setOrderShippingTerms(e.target.value as any)}
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
-                              <option value="">Select Terms</option>
+                              <option value="">Select</option>
                               <option value="FOB">FOB</option>
                               <option value="DAP">DAP</option>
                               <option value="DDP">DDP</option>
@@ -15073,9 +15207,9 @@ export default function App() {
                             >
                               <option value="">{(() => {
                                 const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
-                                if (contractNums.length === 0) return 'Select Location (optional)';
+                                if (contractNums.length === 0) return 'Select';
                                 const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
-                                return c?.origin ? `Auto: ${c.origin}` : 'Select Location';
+                                return c?.origin ? `Auto: ${c.origin}` : 'Select';
                               })()}</option>
                               {activeLocations.map(loc => (
                                 <option key={loc.id} value={loc.name}>{loc.name}</option>
@@ -15090,136 +15224,6 @@ export default function App() {
                                 const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
                                 return c?.palletType || '—';
                               })()}
-                            </div>
-                          </td>
-                          <td className="p-2">
-                            <div className="flex items-end gap-2">
-                      <button
-                        onClick={() => {
-                          if (!newLineItem.productName || newLineItem.qty <= 0) {
-                            setErrorBox('Please select a product and enter a quantity');
-                            return;
-                          }
-                          // Look up the product in skus, then fall back to qaProducts (orphan QA rows)
-                          let product = skus.find(s => s.name === newLineItem.productName);
-                          if (!product) {
-                            const orphan = qaProducts.find(q => q.skuName === newLineItem.productName);
-                            if (orphan) {
-                              product = {
-                                id: orphan.skuId,
-                                name: orphan.skuName,
-                                productGroup: orphan.productGroup,
-                                category: orphan.category,
-                                netWeight: orphan.netWeightKg || 0,
-                                brix: 99.9,
-                                premiumCadMt: 0,
-                                netWeightKg: orphan.netWeightKg,
-                                grossWeightKg: orphan.grossWeightKg,
-                                maxColor: orphan.maxColor,
-                                location: orphan.location,
-                                sugarType: orphan.sugarType,
-                                productFormat: orphan.productFormat,
-                              };
-                            }
-                          }
-                          if (!product) {
-                            setErrorBox(`Product "${newLineItem.productName}" not found in catalog`);
-                            return;
-                          }
-                          const netWeightKg = product.netWeightKg || product.netWeight;
-                          const totalWeightKg = newLineItem.qty * netWeightKg;
-                          const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
-                          // Contract is optional. When provided, validate product fit and volume.
-                          let mtAmount = 0;
-                          let unitAmount = 0;
-                          let lineAmount = 0;
-                          if (newLineItem.contractNumber) {
-                            const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
-                            if (!contract) { setErrorBox('Contract not found'); return; }
-                            // Validate product against contract lines if contract has lines
-                            if (contract.contractLines && contract.contractLines.length > 0) {
-                              const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
-                              if (!matchingLine) {
-                                setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
-                                return;
-                              }
-                            }
-                            // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
-                            const existingWeightOnContract = orderLineItems
-                              .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
-                              .reduce((sum, li) => sum + li.totalWeight, 0);
-                            const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
-                            if (totalWeight > outstanding) {
-                              const overage = totalWeight - outstanding;
-                              const proceed = window.confirm(
-                                `⚠ Contract volume warning\n\n`
-                                + `Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, but this item requires ${totalWeight.toFixed(2)} MT.\n\n`
-                                + `Adding this line item will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
-                                + `Are you sure you want to proceed?`
-                              );
-                              if (!proceed) return;
-                            }
-                            // Use contract line price if available, otherwise use contract finalPrice
-                            const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
-                            mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
-                            unitAmount = mtAmount * netWeightKg / 1000;
-                            lineAmount = totalWeight * mtAmount;
-                          }
-                          // If no contract, pricing fields remain 0 (caller may fill them later)
-
-                          if (editingLineItemIdx !== null) {
-                            // Update existing line item
-                            const updatedLineItem: OrderLineItem = {
-                              ...orderLineItems[editingLineItemIdx],
-                              productName: newLineItem.productName,
-                              productDisplayName: newLineItem.productDisplayName || undefined,
-                              productKey: newLineItem.productKey || undefined,
-                              qty: newLineItem.qty,
-                              contractNumber: newLineItem.contractNumber,
-                              netWeightPerUnit: netWeightKg / 1000,
-                              totalWeight,
-                              unitAmount,
-                              mtAmount,
-                              lineAmount
-                            };
-                            const updatedItems = [...orderLineItems];
-                            updatedItems[editingLineItemIdx] = updatedLineItem;
-                            setOrderLineItems(updatedItems);
-                            setEditingLineItemIdx(null);
-                          } else {
-                            // Add new line item
-                            const lineItem: OrderLineItem = {
-                              id: `LINEITEM-${Date.now()}-${Math.random()}`,
-                              productName: newLineItem.productName,
-                              productDisplayName: newLineItem.productDisplayName || undefined,
-                              productKey: newLineItem.productKey || undefined,
-                              qty: newLineItem.qty,
-                              contractNumber: newLineItem.contractNumber,
-                              netWeightPerUnit: netWeightKg / 1000,
-                              totalWeight,
-                              unitAmount,
-                              mtAmount,
-                              lineAmount
-                            };
-                            setOrderLineItems([...orderLineItems, lineItem]);
-                          }
-                          setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
-                        }}
-                        className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
-                      >
-                        {editingLineItemIdx !== null ? 'Update Item' : 'Add Item'}
-                      </button>
-                      {editingLineItemIdx !== null && (
-                        <button
-                          onClick={() => {
-                            setEditingLineItemIdx(null);
-                            setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
-                          }}
-                          className="py-2 px-4 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                        >
-                          Cancel
-                        </button>
-                      )}
                             </div>
                           </td>
                         </tr>
