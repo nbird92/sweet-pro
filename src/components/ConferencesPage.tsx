@@ -3,6 +3,7 @@ import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDeta
 import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface ConferencesPageProps {
@@ -783,51 +784,50 @@ export default function ConferencesPage({
     <main className="flex-1 p-6 overflow-auto">
       <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search conferences by name or location..." />
 
+      {/* Conferences — standardized DataTable. Row click drills into the
+          conference detail view (which has its own Edit / Delete buttons), so
+          the per-row Actions column is gone. Add Conference stays in the
+          PageBanner. */}
       <div className="mt-6">
-        {filteredConferences.length === 0 ? (
-          <div className="text-center py-12 text-gray-500"><p>No conferences found. Create one to get started!</p></div>
-        ) : (
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Conference</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Dates</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Location</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Attendees</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Meetings</th>
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Status</th>
-                  <th className="p-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {filteredConferences.map(conference => (
-                  <tr key={conference.id} className="hover:bg-[#F5F5F5] transition-colors cursor-pointer group" onClick={() => setSelectedConference(conference)}>
-                    <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{conference.name}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{new Date(conference.startDate).toLocaleDateString()} - {new Date(conference.endDate).toLocaleDateString()}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10"><span className="flex items-center gap-1"><MapPin size={10} /> {conference.location || '—'}</span></td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10"><span className="flex items-center gap-1"><Users size={10} /> {(conference.attendees || []).length}</span></td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10"><span className="flex items-center gap-1"><Clock size={10} /> {(conference.meetings || []).length}</span></td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">
-                      <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
-                        (conference.status || 'Planned') === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
-                        (conference.status || 'Planned') === 'In Progress' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
-                      }`}>{conference.status || 'Planned'}</span>
-                    </td>
-                    <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => { setEditingConference({ ...conference }); setShowEditConferenceModal(true); }}
-                          className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
-                        <button onClick={() => handleDeleteConference(conference.id)}
-                          className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <DataTable<Conference>
+          title="Conferences"
+          icon={<MapPin size={14} />}
+          columns={[
+            { key: 'name', label: 'Conference', bold: true },
+            {
+              key: 'dates', label: 'Dates', sortable: false,
+              render: (c) => `${new Date(c.startDate).toLocaleDateString()} - ${new Date(c.endDate).toLocaleDateString()}`,
+            },
+            {
+              key: 'location', label: 'Location',
+              render: (c) => <span className="flex items-center gap-1"><MapPin size={10} /> {c.location || '—'}</span>,
+            },
+            {
+              key: 'attendees', label: 'Attendees', align: 'right',
+              sortValue: (c) => (c.attendees || []).length,
+              render: (c) => <span className="flex items-center gap-1 justify-end"><Users size={10} /> {(c.attendees || []).length}</span>,
+            },
+            {
+              key: 'meetings', label: 'Meetings', align: 'right',
+              sortValue: (c) => (c.meetings || []).length,
+              render: (c) => <span className="flex items-center gap-1 justify-end"><Clock size={10} /> {(c.meetings || []).length}</span>,
+            },
+            {
+              key: 'status', label: 'Status', sortValue: (c) => c.status || 'Planned',
+              render: (c) => (
+                <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
+                  (c.status || 'Planned') === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                  (c.status || 'Planned') === 'In Progress' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                }`}>{c.status || 'Planned'}</span>
+              ),
+            },
+          ]}
+          rows={filteredConferences}
+          getRowKey={(c) => c.id}
+          onRowClick={(c) => setSelectedConference(c)}
+          emptyMessage="No conferences found. Click “Add Conference” to create one."
+          defaultSortKey="name"
+        />
       </div>
 
       <AnimatePresence>
