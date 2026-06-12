@@ -4064,11 +4064,6 @@ export default function App() {
     setActivePage('Contracts');
   };
 
-  const updateCustomer = (id: string, field: keyof Customer, value: any) => {
-    setCustomers(customers.map(c => c.id === id ? { ...c, [field]: value } : c));
-  };
-
-
   const calculations = useMemo(() => {
     const mtToCwt = 22.0462;
     const fx = config.fxRate || 1;
@@ -5120,198 +5115,46 @@ export default function App() {
             placeholder="Search customers by name, default location or ID..."
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-4 border-r border-[#141414]/10">Group</th>
-                  <SortableHeader label="Customer Name" sortKey="name" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Default Location" sortKey="defaultLocation" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Default Margin" sortKey="defaultMargin" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Payment Terms" sortKey="defaultPaymentTerms" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-4 border-r border-[#141414]/10">Salesperson</th>
-                  <th className="p-4 border-r border-[#141414]/10">Default Carrier</th>
-                  <th className="p-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]">
-                {filteredCustomers.map(c => (
-                  <React.Fragment key={c.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setEditingCustomer(c)}>
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{c.customerNumber || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={c.customerGroupId || ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (val === '__new__') {
-                              const maxNum = customerGroups.reduce((mx, g) => {
-                                const n = parseInt(g.groupCode || '0', 10);
-                                return n > mx ? n : mx;
-                              }, 0);
-                              const nextCode = String(maxNum + 1).padStart(3, '0');
-                              setCustomerGroupDraft({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
-                              setCustomerGroupMode('add');
-                            } else {
-                              updateCustomer(c.id, 'customerGroupId' as keyof Customer, val || undefined);
-                            }
-                          }}
-                          className="w-full bg-transparent border border-[#141414]/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-[#141414]/30 cursor-pointer hover:border-[#141414]/30 transition-colors"
-                        >
-                          <option value="">No Group</option>
-                          {customerGroups.map(g => (
-                            <option key={g.id} value={g.id}>{g.groupCode} — {g.name}</option>
-                          ))}
-                          <option value="__new__">＋ New Group</option>
-                        </select>
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.name}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultLocation}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{c.defaultMargin}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultPaymentTerms || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.salespersonId ? people.find(p => p.id === c.salespersonId)?.name || 'Unknown' : '-'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{c.defaultCarrierCode || '-'}</td>
-                      <td className="p-4 text-xs flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => toggleRow(c.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
-                          {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                        <button onClick={() => setEditingCustomer(c)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit Customer">
-                          <Edit2 size={14} />
-                        </button>
-                        <button onClick={() => setCustomerDeleteConfirmId(c.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete Customer">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                    <AnimatePresence>
-                      {expandedRows.has(c.id) && (
-                        <tr>
-                          <td colSpan={9} className="p-0">
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                            >
-                              <div className="p-6 grid grid-cols-2 gap-6">
-                                <div className="space-y-4">
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
-                                    <select
-                                      value={c.customerGroupId || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'customerGroupId' as keyof Customer, e.target.value || undefined)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                    >
-                                      <option value="">No Group</option>
-                                      {customerGroups.map(g => (
-                                        <option key={g.id} value={g.id}>
-                                          {g.groupCode} — {g.name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
-                                    <select
-                                      value={c.salespersonId || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'salespersonId', e.target.value || undefined)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                    >
-                                      <option value="">Select a salesperson</option>
-                                      {people.filter(p => p.department === 'sales').map(p => (
-                                        <option key={p.id} value={p.id}>
-                                          {p.name} ({p.salespersonNumber})
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Default Carrier Code</label>
-                                    <select
-                                      value={c.defaultCarrierCode || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'defaultCarrierCode', e.target.value || undefined)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                    >
-                                      <option value="">Select a carrier</option>
-                                      {carriers.map(carrier => (
-                                        <option key={carrier.id} value={carrier.carrierNumber}>
-                                          {carrier.name} ({carrier.carrierNumber})
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
-                                    <input
-                                      type="email"
-                                      value={c.contactEmail || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'contactEmail', e.target.value)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                      placeholder="email@example.com"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Contact Phone</label>
-                                    <input
-                                      type="text"
-                                      value={c.contactPhone || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'contactPhone', e.target.value)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                      placeholder="+1 (555) 000-0000"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">QA Contract Email</label>
-                                    <input
-                                      type="email"
-                                      value={c.qaContractEmail || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'qaContractEmail', e.target.value)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                      placeholder="qa@customer.com"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Sales Contact Email</label>
-                                    <input
-                                      type="email"
-                                      value={c.salesContactEmail || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'salesContactEmail', e.target.value)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                      placeholder="sales@customer.com"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
-                                    <input
-                                      type="email"
-                                      value={c.customerServiceEmail || ''}
-                                      onChange={(e) => updateCustomer(c.id, 'customerServiceEmail', e.target.value)}
-                                      className="w-full bg-white border border-[#141414]/20 p-2 text-xs"
-                                      placeholder="service@customer.com"
-                                    />
-                                  </div>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
-                                  <textarea
-                                    value={c.notes || ''}
-                                    onChange={(e) => updateCustomer(c.id, 'notes', e.target.value)}
-                                    className="w-full bg-white border border-[#141414]/20 p-2 text-xs h-24 resize-none"
-                                    placeholder="Add customer specific notes here..."
-                                  />
-                                </div>
-                              </div>
-                            </motion.div>
-                          </td>
-                        </tr>
-                      )}
-                    </AnimatePresence>
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Customers — standardized DataTable. Rows open the existing Edit
+              Customer modal (a maximize/minimize window holding the full field
+              set + the Ship-To editor). The old expandable inline-edit panel is
+              gone: every field it edited (group, salesperson, carrier, the four
+              emails, notes) also lives in that modal, so no field access is lost
+              — edits just commit on "Save Changes" now instead of live. The
+              inline Group quick-assign dropdown is likewise dropped (assign a
+              group from the edit modal or via the Customer Groups table). Add
+              Customer stays in the PageBanner alongside Template / Import / CSV;
+              Delete moves into the edit modal footer. */}
+          <DataTable<Customer>
+            title="Customers"
+            icon={<Users size={14} />}
+            columns={[
+              { key: 'customerNumber', label: 'Cust No.', bold: true, render: (c) => c.customerNumber || '—' },
+              {
+                key: 'group', label: 'Group',
+                sortValue: (c) => customerGroups.find(g => g.id === c.customerGroupId)?.name || '',
+                render: (c) => {
+                  const g = customerGroups.find(g => g.id === c.customerGroupId);
+                  return g ? `${g.groupCode} — ${g.name}` : <span className="opacity-40">No Group</span>;
+                },
+              },
+              { key: 'name', label: 'Customer Name', bold: true },
+              { key: 'defaultLocation', label: 'Default Location' },
+              { key: 'defaultMargin', label: 'Default Margin', align: 'right', mono: true, bold: true },
+              { key: 'defaultPaymentTerms', label: 'Payment Terms', render: (c) => c.defaultPaymentTerms || '—' },
+              {
+                key: 'salespersonId', label: 'Salesperson',
+                sortValue: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '',
+                render: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '-',
+              },
+              { key: 'defaultCarrierCode', label: 'Default Carrier', render: (c) => c.defaultCarrierCode || '-' },
+            ]}
+            rows={filteredCustomers}
+            getRowKey={(c) => c.id}
+            onRowClick={(c) => setEditingCustomer(c)}
+            emptyMessage="No customers found."
+            defaultSortKey="customerNumber"
+          />
           </div>
         </div>
       );
@@ -13750,7 +13593,23 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
                     <select
                       value={editingCustomer.customerGroupId || ''}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, customerGroupId: e.target.value || undefined })}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '__new__') {
+                          // Inline "+ New Group" shortcut — opens the Customer Groups
+                          // add modal on top of this one (z-[500] > z-[100]). After
+                          // creating the group the user returns here and selects it.
+                          const maxNum = customerGroups.reduce((mx, g) => {
+                            const n = parseInt(g.groupCode || '0', 10);
+                            return n > mx ? n : mx;
+                          }, 0);
+                          const nextCode = String(maxNum + 1).padStart(3, '0');
+                          setCustomerGroupDraft({ id: `CG-${nextCode}`, groupCode: nextCode, name: '', notes: '' });
+                          setCustomerGroupMode('add');
+                        } else {
+                          setEditingCustomer({ ...editingCustomer, customerGroupId: val || undefined });
+                        }
+                      }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">No Group</option>
@@ -13759,6 +13618,7 @@ export default function App() {
                           {g.groupCode} — {g.name}
                         </option>
                       ))}
+                      <option value="__new__">＋ New Group</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -14107,6 +13967,22 @@ export default function App() {
                   />
                 </div>
                 <div className="flex gap-4 pt-4">
+                  {/* Delete moved here from the table's old Actions column —
+                      closes this window and opens the existing styled
+                      customerDeleteConfirmId dialog (which runs deleteCustomer). */}
+                  <button
+                    onClick={() => {
+                      const id = editingCustomer.id;
+                      setEditingCustomer(null);
+                      setShowShipToForm(false);
+                      setEditingShipTo(null);
+                      resetModalState('customer');
+                      setCustomerDeleteConfirmId(id);
+                    }}
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
                   <button
                     onClick={() => {
                       setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
