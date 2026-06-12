@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 import type {
   FiscalYear,
@@ -872,97 +873,39 @@ export default function SalesForecastPage({
         </div>
       </div>
 
-      {/* ── Customer Forecast Table ───────────────────────────────────────── */}
-      <div>
-        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-widest">
-            Customer {typeLabel}
-          </h2>
-          <div className="flex items-center gap-2 bg-[#2a2a2a] border border-[#E4E3E0]/20 px-3 py-1.5">
-            <Search size={12} className="opacity-50" />
-            <input
-              type="text"
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-              placeholder="Search customers..."
-              className="bg-transparent text-[#E4E3E0] text-xs focus:outline-none w-48 placeholder:text-[#E4E3E0]/40"
-            />
-            {customerSearch && <button onClick={() => setCustomerSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
-          </div>
+      {/* ── Customer Forecast — standardized DataTable. Row click opens the
+          forecast-entry modal; the Edit/Delete Actions column is gone (Delete
+          now lives in that modal's header). The customer search box is kept
+          above the table. ── */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 bg-white border border-[#141414] px-3 py-2">
+          <Search size={12} className="opacity-50" />
+          <input
+            type="text"
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            placeholder="Search customers..."
+            className="flex-1 bg-transparent text-xs focus:outline-none placeholder:opacity-40"
+          />
+          {customerSearch && <button onClick={() => setCustomerSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
         </div>
-        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-gray-50 border-b border-[#141414]">
-                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  <SortHeader label="Customer No." sortKey="customerNumber" current={customerSort} onToggle={toggleCustomerSort} />
-                </th>
-                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  <SortHeader label="Customer Name" sortKey="customerName" current={customerSort} onToggle={toggleCustomerSort} />
-                </th>
-                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  <SortHeader label="Location" sortKey="location" current={customerSort} onToggle={toggleCustomerSort} />
-                </th>
-                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  <div className="flex justify-end"><SortHeader label={`Annual ${typeLabel} (MT)`} sortKey="annual" current={customerSort} onToggle={toggleCustomerSort} /></div>
-                </th>
-                <th className="text-center px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedCustomerForecasts.map((cf) => {
-                const annual = getAnnualWithActuals(cf);
-                return (
-                  <tr
-                    key={cf.customerId}
-                    className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => openCustomerModal(cf.customerId)}
-                  >
-                    <td className="px-4 py-2 font-mono">{cf.customerNumber || '—'}</td>
-                    <td className="px-4 py-2 font-medium">{cf.customerName}</td>
-                    <td className="px-4 py-2">{locationName(cf.location)}</td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
-                    </td>
-                    <td className="px-4 py-2 text-center">
-                      <div className="flex items-center-safe justify-center gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openCustomerModal(cf.customerId);
-                          }}
-                          className="p-1 hover:bg-gray-200 transition-all"
-                          title={`Edit ${typeLabel}`}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteForecast(cf.customerId);
-                          }}
-                          className="p-1 hover:bg-red-100 text-red-600 transition-all"
-                          title={`Delete ${typeLabel}`}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {sortedCustomerForecasts.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                    No customers found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable<CustomerForecast>
+          title={`Customer ${typeLabel}`}
+          columns={[
+            { key: 'customerNumber', label: 'Customer No.', mono: true, render: (cf) => cf.customerNumber || '—' },
+            { key: 'customerName', label: 'Customer Name', bold: true },
+            { key: 'location', label: 'Location', render: (cf) => locationName(cf.location) },
+            {
+              key: 'annual', label: `Annual ${typeLabel} (MT)`, align: 'right', mono: true, bold: true,
+              sortValue: (cf) => getAnnualWithActuals(cf),
+              render: (cf) => getAnnualWithActuals(cf).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+          ]}
+          rows={sortedCustomerForecasts}
+          getRowKey={(cf) => cf.customerId}
+          onRowClick={(cf) => openCustomerModal(cf.customerId)}
+          emptyMessage="No customers found."
+        />
       </div>
 
       {/* ── Product Forecast Table ────────────────────────────────────────── */}
@@ -1184,15 +1127,31 @@ export default function SalesForecastPage({
                   {editingCf.lines.length > 0 ? 'Edit' : 'Add'} Customer {typeLabel} &mdash;{' '}
                   {editingCf.customerName}
                 </h3>
-                <button
-                  onClick={() => {
-                    setCustomerModalOpen(false);
-                    setEditingCustomerId(null);
-                  }}
-                  className="p-1 hover:bg-white/20 transition-all"
-                >
-                  <X size={16} />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* Delete moved here from the table's old Actions column. */}
+                  {editingCf.lines.length > 0 && (
+                    <button
+                      onClick={() => {
+                        handleDeleteForecast(editingCf.customerId);
+                        setCustomerModalOpen(false);
+                        setEditingCustomerId(null);
+                      }}
+                      className="px-3 py-1 border border-red-400 text-red-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-all"
+                      title={`Delete ${typeLabel}`}
+                    >
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setCustomerModalOpen(false);
+                      setEditingCustomerId(null);
+                    }}
+                    className="p-1 hover:bg-white/20 transition-all"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               {/* Modal Toolbar */}
