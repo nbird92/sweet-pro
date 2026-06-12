@@ -3839,8 +3839,8 @@ export default function App() {
   // The label is the rendered Product Name (from the Naming Formula rules,
   // e.g. "20kg Bagged Granulated Conventional 45"). Falls back to the SKU's
   // stored name, then productFormat, then id so an option is always selectable.
-  const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string }> => {
-    const entries: Array<{ value: string; label: string; key: string }> = [];
+  const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string; location: string }> => {
+    const entries: Array<{ value: string; label: string; key: string; location: string }> = [];
     const seenValues = new Set<string>();
 
     // Render the catalog Product Name for a SKU + QA pair, using the same
@@ -3880,7 +3880,7 @@ export default function App() {
       };
       const value = synthetic.name;
       const label = renderProductName(synthetic, qa);
-      entries.push({ value, label, key: qa.id });
+      entries.push({ value, label, key: qa.id, location: synthetic.location || '' });
       if (value) seenValues.add(value);
     }
 
@@ -3892,7 +3892,7 @@ export default function App() {
       const value = (s.name && s.name.trim()) || s.id;
       // Use the rendered Product Name from the naming formula rules
       const label = renderProductName(s, null);
-      entries.push({ value, label, key: s.id });
+      entries.push({ value, label, key: s.id, location: s.location || '' });
       if (value) seenValues.add(value);
     }
 
@@ -3904,6 +3904,7 @@ export default function App() {
         value: currentValue,
         label: currentValue,
         key: `_ghost-${currentValue}`,
+        location: '',
       });
     }
 
@@ -15064,7 +15065,7 @@ export default function App() {
                       >
                         <option value="">Select Product</option>
                         {buildOrderProductOptions(newLineItem.productName).map(opt => (
-                          <option key={opt.key} value={opt.key}>{opt.label}</option>
+                          <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                         ))}
                       </select>
                     </div>
@@ -15577,7 +15578,7 @@ export default function App() {
                           >
                             <option value="">Select Product</option>
                             {buildOrderProductOptions(batchOrder.product).map(opt => (
-                              <option key={opt.key} value={opt.value}>{opt.label}</option>
+                              <option key={opt.key} value={opt.value}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                             ))}
                           </select>
                         </div>
