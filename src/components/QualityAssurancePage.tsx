@@ -2313,6 +2313,16 @@ export default function QualityAssurancePage({
                     <>
                     <div className="grid grid-cols-3 gap-4">
                       <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Number</label>
+                        <input
+                          type="text"
+                          value={editData?.productCode || ''}
+                          onChange={(e) => setEditData(prev => prev ? { ...prev, productCode: e.target.value || undefined } : prev)}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs font-mono outline-none"
+                          placeholder="e.g. 000001"
+                        />
+                      </div>
+                      <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format</label>
                         <select
                           value={editData?.productFormat || ''}
@@ -2941,6 +2951,7 @@ export default function QualityAssurancePage({
                             <th className="p-2">Unit</th>
                             <th className="p-2">Supplier</th>
                             <th className="p-2">Cost/Unit</th>
+                            <th className="p-2">Shrinkage</th>
                             <th className="p-2">Notes</th>
                             {isEditing && <th className="p-2">Actions</th>}
                           </tr>
@@ -2963,6 +2974,7 @@ export default function QualityAssurancePage({
                               <td className="p-2 text-xs">{item.unit}</td>
                               <td className="p-2 text-xs">{item.supplier || '—'}</td>
                               <td className="p-2 text-xs font-mono">{item.costPerUnit ? `${item.currency || 'CAD'} $${item.costPerUnit.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-xs font-mono">{item.shrinkage != null && item.shrinkage !== 0 ? `${item.shrinkage}%` : '—'}</td>
                               <td className="p-2 text-xs italic opacity-60">{item.notes || '—'}</td>
                               {isEditing && (
                                 <td className="p-2 text-xs">
@@ -2986,7 +2998,7 @@ export default function QualityAssurancePage({
                               <td className="p-2 text-xs font-mono">
                                 CAD ${displayData.billOfMaterials.reduce((sum, b) => sum + (b.costPerUnit || 0) * b.quantity, 0).toFixed(2)}
                               </td>
-                              <td colSpan={isEditing ? 2 : 1}></td>
+                              <td colSpan={isEditing ? 3 : 2}></td>
                             </tr>
                           </tfoot>
                         )}
@@ -3054,6 +3066,10 @@ export default function QualityAssurancePage({
                             <option value="CAD">CAD</option>
                             <option value="USD">USD</option>
                           </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Shrinkage (%)</label>
+                          <input type="number" step="0.01" value={editingBomItem.shrinkage ?? ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, shrinkage: e.target.value === '' ? undefined : parseFloat(e.target.value) || 0 })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="0" />
                         </div>
                         <div>
                           <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Notes</label>

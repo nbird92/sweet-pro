@@ -5021,10 +5021,57 @@ export default function App() {
 
           <div className="p-6 space-y-4">
 
+          <SearchInput
+            value={searchTerm}
+            onChange={setSearchTerm}
+            placeholder="Search customers by name, default location or ID..."
+          />
+
+          {/* Customers — standardized DataTable. Rows open the existing Edit
+              Customer modal (a maximize/minimize window holding the full field
+              set + the Ship-To editor). The old expandable inline-edit panel is
+              gone: every field it edited (group, salesperson, carrier, the four
+              emails, notes) also lives in that modal, so no field access is lost
+              — edits just commit on "Save Changes" now instead of live. The
+              inline Group quick-assign dropdown is likewise dropped (assign a
+              group from the edit modal or via the Customer Groups table). Add
+              Customer stays in the PageBanner alongside Template / Import / CSV;
+              Delete moves into the edit modal footer. */}
+          <DataTable<Customer>
+            title="Customers"
+            icon={<Users size={14} />}
+            columns={[
+              { key: 'customerNumber', label: 'Cust No.', bold: true, render: (c) => c.customerNumber || '—' },
+              {
+                key: 'group', label: 'Group',
+                sortValue: (c) => customerGroups.find(g => g.id === c.customerGroupId)?.name || '',
+                render: (c) => {
+                  const g = customerGroups.find(g => g.id === c.customerGroupId);
+                  return g ? `${g.groupCode} — ${g.name}` : <span className="opacity-40">No Group</span>;
+                },
+              },
+              { key: 'name', label: 'Customer Name', bold: true },
+              { key: 'defaultLocation', label: 'Default Location' },
+              { key: 'defaultMargin', label: 'Default Margin', align: 'right', mono: true, bold: true },
+              { key: 'defaultPaymentTerms', label: 'Payment Terms', render: (c) => c.defaultPaymentTerms || '—' },
+              {
+                key: 'salespersonId', label: 'Salesperson',
+                sortValue: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '',
+                render: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '-',
+              },
+              { key: 'defaultCarrierCode', label: 'Default Carrier', render: (c) => c.defaultCarrierCode || '-' },
+            ]}
+            rows={filteredCustomers}
+            getRowKey={(c) => c.id}
+            onRowClick={(c) => setEditingCustomer(c)}
+            emptyMessage="No customers found."
+            defaultSortKey="customerNumber"
+          />
+
           {/* ── Customer Groups ── standardized DataTable + DetailModal.
-              Auto-Assign All lives just above the table (no extra slot in the
-              DataTable banner). Inline search stays when there are >6 groups. */}
-          <div className="space-y-2 mb-6">
+              Sits below the Customers table. Auto-Assign All lives just above
+              the table; inline search stays when there are >6 groups. */}
+          <div className="space-y-2 mt-6">
             <div className="flex justify-end">
               <button
                 onClick={() => {
@@ -5108,53 +5155,6 @@ export default function App() {
               defaultSortKey="groupCode"
             />
           </div>
-
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search customers by name, default location or ID..."
-          />
-
-          {/* Customers — standardized DataTable. Rows open the existing Edit
-              Customer modal (a maximize/minimize window holding the full field
-              set + the Ship-To editor). The old expandable inline-edit panel is
-              gone: every field it edited (group, salesperson, carrier, the four
-              emails, notes) also lives in that modal, so no field access is lost
-              — edits just commit on "Save Changes" now instead of live. The
-              inline Group quick-assign dropdown is likewise dropped (assign a
-              group from the edit modal or via the Customer Groups table). Add
-              Customer stays in the PageBanner alongside Template / Import / CSV;
-              Delete moves into the edit modal footer. */}
-          <DataTable<Customer>
-            title="Customers"
-            icon={<Users size={14} />}
-            columns={[
-              { key: 'customerNumber', label: 'Cust No.', bold: true, render: (c) => c.customerNumber || '—' },
-              {
-                key: 'group', label: 'Group',
-                sortValue: (c) => customerGroups.find(g => g.id === c.customerGroupId)?.name || '',
-                render: (c) => {
-                  const g = customerGroups.find(g => g.id === c.customerGroupId);
-                  return g ? `${g.groupCode} — ${g.name}` : <span className="opacity-40">No Group</span>;
-                },
-              },
-              { key: 'name', label: 'Customer Name', bold: true },
-              { key: 'defaultLocation', label: 'Default Location' },
-              { key: 'defaultMargin', label: 'Default Margin', align: 'right', mono: true, bold: true },
-              { key: 'defaultPaymentTerms', label: 'Payment Terms', render: (c) => c.defaultPaymentTerms || '—' },
-              {
-                key: 'salespersonId', label: 'Salesperson',
-                sortValue: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '',
-                render: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '-',
-              },
-              { key: 'defaultCarrierCode', label: 'Default Carrier', render: (c) => c.defaultCarrierCode || '-' },
-            ]}
-            rows={filteredCustomers}
-            getRowKey={(c) => c.id}
-            onRowClick={(c) => setEditingCustomer(c)}
-            emptyMessage="No customers found."
-            defaultSortKey="customerNumber"
-          />
           </div>
         </div>
       );
@@ -6605,6 +6605,7 @@ export default function App() {
             if (!existingSku) {
               const newSkuFromQA: SKU = {
                 id: product.skuId,
+                productCode: product.productCode,
                 name: product.skuName || product.productFormat || '',
                 productGroup: product.productGroup,
                 category: product.category,
@@ -6626,6 +6627,7 @@ export default function App() {
             // Mirror QA changes to the corresponding SKU so the Products page stays in sync
             setSkus(prev => prev.map(s => s.id === updated.skuId ? {
               ...s,
+              productCode: updated.productCode ?? s.productCode,
               name: updated.skuName || s.name,
               productGroup: updated.productGroup,
               category: updated.category,

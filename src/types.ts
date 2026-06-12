@@ -667,6 +667,7 @@ export interface BOMItem {
   supplier?: string;
   costPerUnit?: number;
   currency?: 'CAD' | 'USD';
+  shrinkage?: number; // % material loss during production
   notes?: string;
 }
 
