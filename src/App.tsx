@@ -14983,23 +14983,23 @@ export default function App() {
                   <div className="overflow-x-auto">
                     <table className="w-full border-collapse">
                       <thead>
-                        <tr className="text-left text-[10px] uppercase font-bold opacity-60 border-b border-[#141414]/10">
-                          <th className="p-2 min-w-[200px]">Product</th>
-                          <th className="p-2 w-24">QTY (units)</th>
-                          <th className="p-2 min-w-[150px]">Contract #</th>
-                          <th className="p-2 min-w-[150px]">Split Number {(() => {
+                        <tr className="text-left text-[10px] uppercase font-bold opacity-60">
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[200px]">Product</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 w-24">QTY (units)</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Contract #</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Split Number {(() => {
                             const lineItemHasContract = orderLineItems.some(li => (li.contractNumber || '').trim());
                             return lineItemHasContract ? '(opt.)' : <span className="text-red-600">*</span>;
                           })()}</th>
-                          <th className="p-2 min-w-[120px]">Shipping Terms</th>
-                          <th className="p-2 min-w-[150px]">Location (Origin)</th>
-                          <th className="p-2 min-w-[110px]">Pallet Type</th>
-                          <th className="p-2"></th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[120px]">Shipping Terms</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Location (Origin)</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[110px]">Pallet Type</th>
+                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2"></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr className="align-top">
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <select
                               value={newLineItem.productKey}
                               onChange={(e) => {
@@ -15013,7 +15013,7 @@ export default function App() {
                                   productDisplayName: picked?.label || '',
                                 });
                               }}
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             >
                               <option value="">Select Product</option>
                               {buildOrderProductOptions(newLineItem.productName).map(opt => (
@@ -15021,26 +15021,26 @@ export default function App() {
                               ))}
                             </select>
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <input
                               type="text" inputMode="decimal"
                               value={newLineItem.qty || ""}
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => setNewLineItem({...newLineItem, qty: parseFloat(e.target.value) || 0})}
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <select
                               value={newLineItem.contractNumber}
                               onChange={(e) => setNewLineItem({...newLineItem, contractNumber: e.target.value})}
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             >
                               <option value="">No Contract</option>
                               {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                             </select>
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <input
                               type="text"
                               value={editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber}
@@ -15049,14 +15049,14 @@ export default function App() {
                                 else setOrderSplitNumber(e.target.value);
                               }}
                               placeholder="e.g. S04280.G01"
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             />
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <select
                               value={orderShippingTerms}
                               onChange={(e) => setOrderShippingTerms(e.target.value as any)}
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             >
                               <option value="">Select Terms</option>
                               <option value="FOB">FOB</option>
@@ -15065,11 +15065,11 @@ export default function App() {
                               <option value="FCA">FCA</option>
                             </select>
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-0">
                             <select
                               value={orderLocation}
                               onChange={(e) => setOrderLocation(e.target.value)}
-                              className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
                             >
                               <option value="">{(() => {
                                 const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
@@ -15082,8 +15082,8 @@ export default function App() {
                               ))}
                             </select>
                           </td>
-                          <td className="p-2">
-                            <div className="w-full bg-white border border-[#141414]/30 p-2 text-xs text-[#141414]/70">
+                          <td className="border border-[#141414]/20 p-0">
+                            <div className="w-full bg-white p-2 text-xs text-[#141414]/70">
                               {(() => {
                                 const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
                                 if (contractNums.length === 0) return 'From contract';
@@ -15092,7 +15092,7 @@ export default function App() {
                               })()}
                             </div>
                           </td>
-                          <td className="p-2">
+                          <td className="border border-[#141414]/20 p-1">
                             <div className="flex items-end gap-2">
                       <button
                         onClick={() => {
@@ -15618,16 +15618,26 @@ export default function App() {
                           <h4 className="text-xs font-black uppercase tracking-widest">Order Entries</h4>
                           <button
                             onClick={() => {
-                              // Auto-fill carrier from customer default if available
-                              const selectedCust = customers.find(c => c.name === batchOrder.customer);
-                              let defaultCarrierName = 'Customer Pick Up';
-                              if (selectedCust?.defaultCarrierCode) {
-                                const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
-                                if (dc) defaultCarrierName = dc.name;
+                              // Copy the previous entry into the new row so repeated
+                              // info (dates, qty, carrier, PO) doesn't have to be
+                              // re-keyed when batching multiple orders. Falls back to
+                              // sensible defaults when there is no previous entry.
+                              const last = batchOrder.entries[batchOrder.entries.length - 1];
+                              let newEntry;
+                              if (last) {
+                                newEntry = { ...last };
+                              } else {
+                                const selectedCust = customers.find(c => c.name === batchOrder.customer);
+                                let defaultCarrierName = 'Customer Pick Up';
+                                if (selectedCust?.defaultCarrierCode) {
+                                  const dc = carriers.find(c => c.carrierNumber === selectedCust.defaultCarrierCode || c.name === selectedCust.defaultCarrierCode);
+                                  if (dc) defaultCarrierName = dc.name;
+                                }
+                                newEntry = { shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: defaultCarrierName, amount: 0 };
                               }
                               setBatchOrder({
                                 ...batchOrder,
-                                entries: [...batchOrder.entries, { shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: defaultCarrierName, amount: 0 }]
+                                entries: [...batchOrder.entries, newEntry]
                               });
                             }}
                             className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
