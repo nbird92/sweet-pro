@@ -259,6 +259,9 @@ export default function App() {
   // Read-only detail modal for the standardized Products (SKUs) table.
   // Products are edited on the QA page, so this is view-only.
   const [skuDetail, setSkuDetail] = useState<SKU | null>(null);
+  // Detail modal for the standardized Locations table (Supply Chain page).
+  // Core fields are read-only (edited on QA), but bays stay editable here.
+  const [locationDetail, setLocationDetail] = useState<Location | null>(null);
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -7364,97 +7367,97 @@ export default function App() {
           />
           <div className="p-6 space-y-8">
 
-          {/* Locations Table (read-only except bays & appointment schedule — edit locations in QA page) */}
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
-              <span className="text-[10px] opacity-50 italic">Manage locations in QA page</span>
-            </div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                  <th className="p-4 border-r border-[#141414]/10">Code</th>
-                  <th className="p-4 border-r border-[#141414]/10">Name</th>
-                  <th className="p-4 border-r border-[#141414]/10">Address</th>
-                  <th className="p-4 border-r border-[#141414]/10">City</th>
-                  <th className="p-4 border-r border-[#141414]/10">Province</th>
-                  <th className="p-4 border-r border-[#141414]/10">Postal Code</th>
-                  <th className="p-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {locations.map(loc => (
-                  <React.Fragment key={loc.id}>
-                    <tr className="hover:bg-[#F9F9F9] transition-colors">
-                      <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
-                      <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
-                      <td className="p-4 text-xs flex gap-2">
-                        <button onClick={() => setEditingAppointmentSchedule({...loc})} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Set Appointment Schedule">
-                          <Clock size={14} />
-                        </button>
-                        <button onClick={() => toggleRow(loc.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                          {expandedRows.has(loc.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                      </td>
-                    </tr>
-                    <AnimatePresence>
-                      {expandedRows.has(loc.id) && (
-                        <tr>
-                          <td colSpan={7} className="p-0">
-                            <motion.div 
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                            >
-                              <div className="p-6 space-y-4">
-                                <div className="flex justify-between items-center">
-                                  <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
-                                  <button 
-                                    onClick={() => setLocations(locations.map(l => l.id === loc.id ? { ...l, bays: [...l.bays, ''] } : l))}
-                                    className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
-                                  >
-                                    <Plus size={10} /> Add Bay
-                                  </button>
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                                  {loc.bays.map((bay, idx) => (
-                                    <div key={idx} className="flex gap-2">
-                                      <input 
-                                        type="text" 
-                                        value={bay} 
-                                        onChange={(e) => setLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b) } : l))}
-                                        className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
-                                        placeholder={`Bay ${idx + 1} Name`}
-                                      />
-                                      <button 
-                                        onClick={() => setLocations(locations.map(l => l.id === loc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
-                                        className="p-2 hover:bg-red-500 hover:text-white transition-all"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  ))}
-                                  {loc.bays.length === 0 && (
-                                    <div className="col-span-full text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
-                                  )}
-                                </div>
-                              </div>
-                            </motion.div>
-                          </td>
-                        </tr>
+          {/* Locations — standardized DataTable. Core fields are read-only
+              (locations are managed on the QA page). Row click opens a detail
+              modal holding the read-only fields, the appointment-schedule
+              button, and the still-editable Bays list. */}
+          <DataTable<Location>
+            title="Locations"
+            icon={<Globe size={14} />}
+            columns={[
+              { key: 'locationCode', label: 'Code', mono: true, bold: true, widthClass: 'w-20', render: (l) => l.locationCode || '—' },
+              { key: 'name', label: 'Name', bold: true, render: (l) => l.name || '—' },
+              { key: 'address', label: 'Address', render: (l) => l.address || '—' },
+              { key: 'city', label: 'City', render: (l) => l.city || '—' },
+              { key: 'province', label: 'Province', render: (l) => l.province || '—' },
+              { key: 'postalCode', label: 'Postal Code', render: (l) => l.postalCode || '—' },
+              {
+                key: 'bays', label: 'Bays', align: 'right', sortable: false,
+                render: (l) => <span className="font-mono">{l.bays?.length || 0}</span>,
+              },
+            ]}
+            rows={locations}
+            getRowKey={(l) => l.id}
+            onRowClick={(l) => setLocationDetail(l)}
+            emptyMessage="No locations yet. Add locations on the Quality Assurance page."
+            defaultSortKey="name"
+          />
+
+          <DetailModal
+            tableName="Locations"
+            icon={<Globe size={14} />}
+            isOpen={!!locationDetail}
+            mode="view"
+            onClose={() => setLocationDetail(null)}
+          >
+            {locationDetail && (() => {
+              // Read the live record so bay edits reflect immediately.
+              const liveLoc = locations.find(l => l.id === locationDetail.id) || locationDetail;
+              return (
+                <div className="space-y-5">
+                  <DetailRow label="Code" value={liveLoc.locationCode} mono bold />
+                  <DetailRow label="Name" value={liveLoc.name} bold />
+                  <DetailRow label="Address" value={liveLoc.address} />
+                  <DetailRow label="City" value={liveLoc.city} />
+                  <DetailRow label="Province" value={liveLoc.province} />
+                  <DetailRow label="Postal Code" value={liveLoc.postalCode} />
+                  <div className="pt-1">
+                    <button
+                      onClick={() => setEditingAppointmentSchedule({ ...liveLoc })}
+                      className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    >
+                      <Clock size={12} /> Appointment Schedule
+                    </button>
+                  </div>
+                  <div className="space-y-3 pt-2 border-t border-[#141414]/10">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
+                      <button
+                        onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: [...l.bays, ''] } : l))}
+                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
+                      >
+                        <Plus size={10} /> Add Bay
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      {liveLoc.bays.map((bay, idx) => (
+                        <div key={idx} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={bay}
+                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b) } : l))}
+                            className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
+                            placeholder={`Bay ${idx + 1} Name`}
+                          />
+                          <button
+                            onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
+                            className="p-2 hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      {liveLoc.bays.length === 0 && (
+                        <div className="col-span-full text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
                       )}
-                    </AnimatePresence>
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          
+                    </div>
+                  </div>
+                  <div className="text-[10px] opacity-40 italic">Manage location details on the Quality Assurance page.</div>
+                </div>
+              );
+            })()}
+          </DetailModal>
+
           {/* Vancouver Supply Chain — standardized table. Row click opens the
               existing edit modal (retitled to the Detail convention); delete
               moved into that modal behind a confirm. */}
