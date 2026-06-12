@@ -256,6 +256,9 @@ export default function App() {
   // DetailModal state for the standardized Vendors table.
   const [vendorDraft, setVendorDraft] = useState<Vendor | null>(null);
   const [vendorMode, setVendorMode] = useState<'view' | 'edit' | 'add'>('view');
+  // Read-only detail modal for the standardized Products (SKUs) table.
+  // Products are edited on the QA page, so this is view-only.
+  const [skuDetail, setSkuDetail] = useState<SKU | null>(null);
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -6175,6 +6178,42 @@ export default function App() {
       const filteredSkus = getSortedAndFilteredData<SKU>(skus, ['name', 'productGroup', 'id', 'location']);
       const filteredProductGroups = getSortedAndFilteredData<ProductGroup>(productGroups, ['name', 'id']);
 
+      // Enrich each SKU with the computed display values the table shows
+      // (product name, shortform, packaging format, sugar type, group color)
+      // so the standardized DataTable can render + sort them. The table is
+      // read-only — products are edited on the Quality Assurance page.
+      const enrichedSkus = filteredSkus.map(s => {
+        const pg = productGroups.find(g => g.name === s.productGroup);
+        const qaMatch = qaProducts.find(q => q.skuId === s.id);
+        const productFormat = qaMatch?.productFormat || s.productFormat || '—';
+        const sugarType = qaMatch?.sugarType || s.sugarType || '—';
+        const netWt = s.netWeightKg || s.netWeight;
+        const productAttrs = buildProductAttrs(s, qaMatch || null);
+        let shortform = resolveShortFormRule(namingFormulas, productAttrs, { sugarTypes, productGroups }) || '';
+        if (!shortform.trim()) {
+          shortform = '—';
+          if (sugarType === 'Molasses') {
+            shortform = 'MOL';
+          } else {
+            const st = sugarTypes.find(t => t.name === sugarType);
+            if (st) {
+              const co = s.category === 'Conventional' ? 'C' : 'B';
+              if (s.productGroup === 'Bulk') {
+                shortform = `${st.abbreviation}${co}${s.maxColor}`;
+              } else {
+                const wt = netWt ? `${netWt}kg ` : '';
+                shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
+              }
+            }
+          }
+        }
+        const productName = productToName(s) || ((productFormat !== '—' && sugarType !== '—')
+          ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
+          : '—');
+        return { ...s, _pgColor: pg?.color as string | undefined, _productFormat: productFormat, _sugarType: sugarType, _netWt: netWt, _shortform: shortform, _productName: productName };
+      });
+      type EnrichedSku = typeof enrichedSkus[number];
+
       const productExportSheets = (): SheetSpec[] => [
         {
           sheetName: 'Products',
@@ -6249,260 +6288,210 @@ export default function App() {
             This table is read-only. Product changes can only be made on the <span className="font-bold">Quality Assurance</span> page.
           </div>
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Prod No." sortKey="productCode" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product Name" sortKey="productName" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Packaging Format" sortKey="productFormat" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product Group" sortKey="productGroup" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Sugar Type" sortKey="sugarType" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Shortform" sortKey="shortform" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Conv./Organic" sortKey="category" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Max Color" sortKey="maxColor" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Net Weight (KG)" sortKey="netWeightKg" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Gross Weight (KG)" sortKey="grossWeightKg" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-4">View</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]">
-                {filteredSkus.map(s => {
-                  const pg = productGroups.find(g => g.name === s.productGroup);
-                  const qaMatch = qaProducts.find(q => q.skuId === s.id);
-                  const productFormat = qaMatch?.productFormat || s.productFormat || '—';
-                  const sugarType = qaMatch?.sugarType || s.sugarType || '—';
-                  const netWt = s.netWeightKg || s.netWeight;
-                  // Try user-defined naming-formula rules first; fall back to hardcoded logic
-                  const productAttrs = buildProductAttrs(s, qaMatch || null);
-                  let shortform = resolveShortFormRule(namingFormulas, productAttrs, { sugarTypes, productGroups }) || '';
-                  if (!shortform.trim()) {
-                    shortform = '—';
-                    if (sugarType === 'Molasses') {
-                      shortform = 'MOL';
-                    } else {
-                      const st = sugarTypes.find(t => t.name === sugarType);
-                      if (st) {
-                        const co = s.category === 'Conventional' ? 'C' : 'B';
-                        if (s.productGroup === 'Bulk') {
-                          shortform = `${st.abbreviation}${co}${s.maxColor}`;
-                        } else {
-                          const wt = netWt ? `${netWt}kg ` : '';
-                          shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
-                        }
-                      }
-                    }
-                  }
-                  const productName = productToName(s) || ((productFormat !== '—' && sugarType !== '—')
-                    ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
-                    : '—');
-                  return (
-                    <React.Fragment key={s.id}>
-                      <tr className="hover:bg-[#F9F9F9] transition-colors group" style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}>
-                        <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10">{s.productCode || '—'}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{productName}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{productFormat}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">
-                          <span className="px-2 py-0.5 border border-[#141414]/10 text-[10px] font-bold" style={{ backgroundColor: pg?.color }}>
-                            {s.productGroup}
-                          </span>
-                        </td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{sugarType}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{shortform}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.category}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.maxColor}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.location}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{s.netWeightKg || s.netWeight}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.grossWeightKg || '-'}</td>
-                        <td className="p-4 text-xs flex items-center gap-2">
-                          <button onClick={() => toggleRow(s.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="View Details">
-                            {expandedRows.has(s.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                          </button>
-                        </td>
-                      </tr>
-                      <AnimatePresence>
-                        {expandedRows.has(s.id) && (
-                          <tr>
-                            <td colSpan={12} className="p-0">
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                              >
-                                {(() => {
-                                  const qaP = qaProducts.find(q => q.skuId === s.id);
-                                  return (
-                                    <div className="p-6 space-y-6">
-                                      {/* Row 1: Basic product info */}
-                                      <div className="grid grid-cols-2 gap-6">
-                                        <div className="space-y-4">
-                                          <div className="grid grid-cols-2 gap-4">
-                                            <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (KG)</label>
-                                              <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
-                                            </div>
-                                            <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (KG)</label>
-                                              <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
-                                            </div>
-                                            <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                                              <div className="text-xs font-bold">{s.maxColor}</div>
-                                            </div>
-                                            <div className="space-y-1">
-                                              <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                                              <div className="text-xs font-bold">{s.brix}</div>
-                                            </div>
-                                          </div>
-                                          <div className="space-y-1">
-                                            <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                                            <div className="text-xs font-bold">${s.premiumCadMt}</div>
-                                          </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                          <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
-                                          <div className="text-xs opacity-70 whitespace-pre-wrap">{s.description || 'No description provided.'}</div>
-                                        </div>
-                                      </div>
+          {/* Products — standardized read-only DataTable. Rows open a view-only
+              DetailModal (no Edit/Delete: products are edited on the QA page).
+              Replaces the old expandable-row detail panel. */}
+          <DataTable<EnrichedSku>
+            title="Products"
+            icon={<Package size={14} />}
+            columns={[
+              { key: 'productCode', label: 'Prod No.', mono: true, bold: true, render: (s) => s.productCode || '—' },
+              { key: 'productName', label: 'Product Name', bold: true, sortValue: (s) => s._productName, render: (s) => s._productName },
+              { key: 'productFormat', label: 'Packaging Format', sortValue: (s) => s._productFormat, render: (s) => s._productFormat },
+              {
+                key: 'productGroup', label: 'Product Group',
+                render: (s) => (
+                  <span className="px-2 py-0.5 border border-[#141414]/10 text-[10px] font-bold" style={{ backgroundColor: s._pgColor }}>
+                    {s.productGroup}
+                  </span>
+                ),
+              },
+              { key: 'sugarType', label: 'Sugar Type', bold: true, sortValue: (s) => s._sugarType, render: (s) => s._sugarType },
+              { key: 'shortform', label: 'Shortform', mono: true, bold: true, sortValue: (s) => s._shortform, render: (s) => s._shortform },
+              { key: 'category', label: 'Conv./Organic', bold: true },
+              { key: 'maxColor', label: 'Max Color', bold: true, align: 'right' },
+              { key: 'location', label: 'Location' },
+              { key: 'netWeightKg', label: 'Net Weight (KG)', bold: true, align: 'right', sortValue: (s) => s._netWt || 0, render: (s) => s._netWt },
+              { key: 'grossWeightKg', label: 'Gross Weight (KG)', align: 'right', render: (s) => s.grossWeightKg || '-' },
+            ]}
+            rows={enrichedSkus}
+            getRowKey={(s) => s.id}
+            onRowClick={(s) => setSkuDetail(s)}
+            emptyMessage="No products yet. Add products on the Quality Assurance page."
+            defaultSortKey="productName"
+          />
 
-                                      {/* Row 2: QA Specifications */}
-                                      {qaP && qaP.specifications && (
-                                        <div className="space-y-2">
-                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Specifications</h4>
-                                          <div className="grid grid-cols-6 gap-3">
-                                            {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
-                                              <div key={spec} className="space-y-0.5">
-                                                <label className="text-[10px] uppercase font-bold opacity-40">{spec}</label>
-                                                <div className="text-xs font-bold">{qaP.specifications[spec] || '-'}</div>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
+          {/* Read-only product detail (view mode only). */}
+          <DetailModal
+            tableName="Products"
+            icon={<Package size={14} />}
+            isOpen={!!skuDetail}
+            mode="view"
+            onClose={() => setSkuDetail(null)}
+          >
+            {skuDetail && (() => {
+              const s = skuDetail;
+              const qaP = qaProducts.find(q => q.skuId === s.id);
+              return (
+                <div className="space-y-6">
+                  {/* Row 1: Basic product info */}
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (KG)</label>
+                          <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (KG)</label>
+                          <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
+                          <div className="text-xs font-bold">{s.maxColor}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
+                          <div className="text-xs font-bold">{s.brix}</div>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
+                        <div className="text-xs font-bold">${s.premiumCadMt}</div>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
+                      <div className="text-xs opacity-70 whitespace-pre-wrap">{s.description || 'No description provided.'}</div>
+                    </div>
+                  </div>
 
-                                      {/* Row 3: Ti-Hi / Pallet Config */}
-                                      {qaP && (qaP.ti || qaP.hi) && (
-                                        <div className="space-y-2">
-                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Pallet Configuration</h4>
-                                          <div className="grid grid-cols-3 gap-3">
-                                            <div className="space-y-0.5">
-                                              <label className="text-[10px] uppercase font-bold opacity-40">Ti</label>
-                                              <div className="text-xs font-bold">{qaP.ti || '-'}</div>
-                                            </div>
-                                            <div className="space-y-0.5">
-                                              <label className="text-[10px] uppercase font-bold opacity-40">Hi</label>
-                                              <div className="text-xs font-bold">{qaP.hi || '-'}</div>
-                                            </div>
-                                            <div className="space-y-0.5">
-                                              <label className="text-[10px] uppercase font-bold opacity-40">Units per Pallet</label>
-                                              <div className="text-xs font-bold">{qaP.unitsPerPallet || '-'}</div>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      )}
+                  {/* Row 2: QA Specifications */}
+                  {qaP && qaP.specifications && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Specifications</h4>
+                      <div className="grid grid-cols-6 gap-3">
+                        {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
+                          <div key={spec} className="space-y-0.5">
+                            <label className="text-[10px] uppercase font-bold opacity-40">{spec}</label>
+                            <div className="text-xs font-bold">{qaP.specifications[spec] || '-'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-                                      {/* Row 4: Spec Sheets & Certificates */}
-                                      {qaP && ((qaP.specSheets && qaP.specSheets.length > 0) || (qaP.certificates && qaP.certificates.length > 0)) && (
-                                        <div className="grid grid-cols-2 gap-6">
-                                          {/* Spec Sheets */}
-                                          <div className="space-y-2">
-                                            <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Spec Sheets</h4>
-                                            {qaP.specSheets && qaP.specSheets.length > 0 ? (
-                                              <div className="space-y-1.5">
-                                                {qaP.specSheets.map((doc: QADocument) => (
-                                                  <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                      <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
-                                                      <span className="text-xs font-bold truncate">{doc.filename}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                                      <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
-                                                        <Download size={12} />
-                                                      </a>
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            ) : (
-                                              <div className="text-xs opacity-40 italic">No spec sheets</div>
-                                            )}
-                                          </div>
+                  {/* Row 3: Ti-Hi / Pallet Config */}
+                  {qaP && (qaP.ti || qaP.hi) && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Pallet Configuration</h4>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="space-y-0.5">
+                          <label className="text-[10px] uppercase font-bold opacity-40">Ti</label>
+                          <div className="text-xs font-bold">{qaP.ti || '-'}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[10px] uppercase font-bold opacity-40">Hi</label>
+                          <div className="text-xs font-bold">{qaP.hi || '-'}</div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[10px] uppercase font-bold opacity-40">Units per Pallet</label>
+                          <div className="text-xs font-bold">{qaP.unitsPerPallet || '-'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                                          {/* Certificates */}
-                                          <div className="space-y-2">
-                                            <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Certificates</h4>
-                                            {qaP.certificates && qaP.certificates.length > 0 ? (
-                                              <div className="space-y-1.5">
-                                                {qaP.certificates.map((doc: QADocument) => (
-                                                  <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                      <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
-                                                      <span className="text-xs font-bold truncate">{doc.filename}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-1 flex-shrink-0">
-                                                      <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
-                                                        <Download size={12} />
-                                                      </a>
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                              </div>
-                                            ) : (
-                                              <div className="text-xs opacity-40 italic">No certificates</div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* Row 5: Packaging Pictures & Artwork */}
-                                      {qaP && ((qaP.packagingPictureUrls && qaP.packagingPictureUrls.length > 0) || qaP.artworkUrl || qaP.upcImageUrl) && (
-                                        <div className="space-y-2">
-                                          <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Images</h4>
-                                          <div className="flex gap-4 flex-wrap">
-                                            {qaP.packagingPictureUrls && qaP.packagingPictureUrls.map((url: string, idx: number) => (
-                                              <div key={idx} className="space-y-1">
-                                                <img src={url} alt={`Packaging ${idx + 1}`} className="w-24 h-24 object-cover border border-[#141414]/20" />
-                                                <div className="text-[9px] opacity-40 text-center">Packaging</div>
-                                              </div>
-                                            ))}
-                                            {qaP.artworkUrl && (
-                                              <div className="space-y-1">
-                                                <img src={qaP.artworkUrl} alt="Artwork" className="w-24 h-24 object-cover border border-[#141414]/20" />
-                                                <div className="text-[9px] opacity-40 text-center">Artwork</div>
-                                              </div>
-                                            )}
-                                            {qaP.upcImageUrl && (
-                                              <div className="space-y-1">
-                                                <img src={qaP.upcImageUrl} alt="UPC" className="w-24 h-24 object-cover border border-[#141414]/20" />
-                                                <div className="text-[9px] opacity-40 text-center">UPC</div>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* Link to QA page */}
-                                      {qaP && (
-                                        <div className="text-[10px] opacity-40 italic pt-2 border-t border-[#141414]/10">
-                                          To edit product details, spec sheets, certificates, or images, go to the Quality Assurance page.
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </motion.div>
-                            </td>
-                          </tr>
+                  {/* Row 4: Spec Sheets & Certificates */}
+                  {qaP && ((qaP.specSheets && qaP.specSheets.length > 0) || (qaP.certificates && qaP.certificates.length > 0)) && (
+                    <div className="grid grid-cols-2 gap-6">
+                      {/* Spec Sheets */}
+                      <div className="space-y-2">
+                        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Spec Sheets</h4>
+                        {qaP.specSheets && qaP.specSheets.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {qaP.specSheets.map((doc: QADocument) => (
+                              <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
+                                  <span className="text-xs font-bold truncate">{doc.filename}</span>
+                                </div>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                    <Download size={12} />
+                                  </a>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No spec sheets</div>
                         )}
-                      </AnimatePresence>
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+
+                      {/* Certificates */}
+                      <div className="space-y-2">
+                        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Certificates</h4>
+                        {qaP.certificates && qaP.certificates.length > 0 ? (
+                          <div className="space-y-1.5">
+                            {qaP.certificates.map((doc: QADocument) => (
+                              <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
+                                  <span className="text-xs font-bold truncate">{doc.filename}</span>
+                                </div>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                    <Download size={12} />
+                                  </a>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No certificates</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Row 5: Packaging Pictures & Artwork */}
+                  {qaP && ((qaP.packagingPictureUrls && qaP.packagingPictureUrls.length > 0) || qaP.artworkUrl || qaP.upcImageUrl) && (
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Images</h4>
+                      <div className="flex gap-4 flex-wrap">
+                        {qaP.packagingPictureUrls && qaP.packagingPictureUrls.map((url: string, idx: number) => (
+                          <div key={idx} className="space-y-1">
+                            <img src={url} alt={`Packaging ${idx + 1}`} className="w-24 h-24 object-cover border border-[#141414]/20" />
+                            <div className="text-[9px] opacity-40 text-center">Packaging</div>
+                          </div>
+                        ))}
+                        {qaP.artworkUrl && (
+                          <div className="space-y-1">
+                            <img src={qaP.artworkUrl} alt="Artwork" className="w-24 h-24 object-cover border border-[#141414]/20" />
+                            <div className="text-[9px] opacity-40 text-center">Artwork</div>
+                          </div>
+                        )}
+                        {qaP.upcImageUrl && (
+                          <div className="space-y-1">
+                            <img src={qaP.upcImageUrl} alt="UPC" className="w-24 h-24 object-cover border border-[#141414]/20" />
+                            <div className="text-[9px] opacity-40 text-center">UPC</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Link to QA page */}
+                  {qaP && (
+                    <div className="text-[10px] opacity-40 italic pt-2 border-t border-[#141414]/10">
+                      To edit product details, spec sheets, certificates, or images, go to the Quality Assurance page.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </DetailModal>
           </div>
         </div>
       );
