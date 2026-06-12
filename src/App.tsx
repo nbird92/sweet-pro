@@ -3063,6 +3063,35 @@ export default function App() {
     return `${prefix}${String(next).padStart(6, '0')}`;
   };
 
+  // Compute `count` sequential BOL numbers for a product — its product group's
+  // bolCode prefix, continuing the sequence past every existing order + invoice
+  // BOL. Used to preview/assign BOLs in the order + batch-order menus the moment
+  // items/entries are added, before anything is saved.
+  const computeBatchBolNumbers = (productName: string, count: number): string[] => {
+    if (!productName || count <= 0) return new Array(Math.max(0, count)).fill('');
+    const prodInfo = skus.find(s => s.name === productName);
+    const pg = productGroups.find(g => g.name === (prodInfo?.productGroup || 'Other'));
+    const prefix = pg?.bolCode || 'P';
+    const allBols = [
+      ...orders.map(o => o.bolNumber || ''),
+      ...invoices.map(inv => inv.bolNumber || ''),
+    ];
+    let maxCounter = 0;
+    for (const bol of allBols) {
+      if (!bol) continue;
+      if (/^[A-Z]\d{6}$/.test(bol) && bol[0] === prefix) {
+        maxCounter = Math.max(maxCounter, parseInt(bol.slice(1), 10) || 0);
+      } else if (bol.startsWith(prefix + '-')) {
+        const n = parseInt(bol.split('-').pop() || '', 10);
+        if (!isNaN(n)) maxCounter = Math.max(maxCounter, n);
+      } else if (/^[A-Z]\d+$/.test(bol) && bol[0] === prefix) {
+        const n = parseInt(bol.slice(1), 10);
+        if (!isNaN(n)) maxCounter = Math.max(maxCounter, n);
+      }
+    }
+    return Array.from({ length: count }, (_, i) => `${prefix}${String(maxCounter + i + 1).padStart(6, '0')}`);
+  };
+
   const updateShipmentStatus = (id: string, status: string) => {
     const allShipments = [...hamiltonShipments, ...vancouverShipments];
     const shipment = allShipments.find(s => s.id === id);
@@ -15235,8 +15264,14 @@ export default function App() {
                 {/* Line Items Table */}
                 {orderLineItems.length > 0 && (
                   <div className="border border-[#141414] overflow-hidden">
-                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
+                    <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center gap-3">
                       <h4 className="text-xs font-bold uppercase tracking-widest">Order Line Items</h4>
+                      {/* Next-in-sequence BOL for this order, from the line-item
+                          products. Recomputed live; the same value is written on
+                          save. */}
+                      <span className="text-[10px] uppercase font-bold tracking-widest opacity-80 whitespace-nowrap">
+                        BOL <span className="font-mono">{editingOrder ? (editingOrder.bolNumber || generateBOLNumber(orderLineItems)) : generateBOLNumber(orderLineItems)}</span>
+                      </span>
                     </div>
                     <table className="w-full text-left text-xs">
                       <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
@@ -15387,7 +15422,7 @@ export default function App() {
                       setOrderShipToId('');
                       setOrderCustomerNumberInput('');
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
                   >
                     {editingOrder ? 'Save Changes' : 'Create Order'}
                   </button>
@@ -15503,6 +15538,10 @@ export default function App() {
                   const totalWeightMT = totalWeightKg / 1000;
                   const mtRate = selectedContract ? selectedContract.finalPrice : 0;
                   const totalAmount = totalWeightMT * mtRate;
+                  // Next-in-sequence BOL number per entry (one order per entry),
+                  // based on the selected product. Shown live in the table and
+                  // written onto each order at save.
+                  const batchBols = computeBatchBolNumbers(batchOrder.product, batchOrder.entries.length);
 
                   return (
                     <>
@@ -15653,6 +15692,7 @@ export default function App() {
                           <table className="w-full text-left border-collapse">
                             <thead className="sticky top-0 bg-[#141414] text-[#E4E3E0] z-10">
                               <tr className="text-[10px] uppercase font-bold">
+                                <th className="p-3">BOL #</th>
                                 <th className="p-3">Shipment Date</th>
                                 <th className="p-3">Delivery Date</th>
                                 <th className="p-3">PO #</th>
@@ -15669,6 +15709,7 @@ export default function App() {
                                 const entryAmount = entryWeightMT * mtRate;
                                 return (
                                   <tr key={idx} className="hover:bg-[#F5F5F5] transition-colors">
+                                    <td className="p-2 text-xs font-mono font-bold whitespace-nowrap">{batchBols[idx] || '—'}</td>
                                     <td className="p-2">
                                       <input
                                         type="date"
@@ -15818,9 +15859,7 @@ export default function App() {
                               );
                               if (!proceed) return;
                             }
-                            // Generate unique BOL numbers for each entry in the batch
-                            const generatedBOLs: string[] = [];
-                            const newOrders: Order[] = batchOrder.entries.map((entry) => {
+                            const newOrders: Order[] = batchOrder.entries.map((entry, idx) => {
                               const entryWeightMT = entry.qty * (product.netWeightKg || product.netWeight) / 1000;
                               const entryAmount = entryWeightMT * mtRate;
                               const lineItem: OrderLineItem = {
@@ -15834,28 +15873,9 @@ export default function App() {
                                 mtAmount: mtRate,
                                 lineAmount: entryAmount
                               };
-                              // Determine BOL prefix from product group's bolCode
-                              const prodInfo = skus.find(s => s.name === lineItem.productName);
-                              const prodGroup = prodInfo?.productGroup || 'Other';
-                              const pg = productGroups.find(g => g.name === prodGroup);
-                              const bolPrefix = pg?.bolCode || 'P';
-                              // Combine existing BOLs with already-generated ones in this batch
-                              const allBOLs = [
-                                ...orders.map(o => o.bolNumber),
-                                ...generatedBOLs
-                              ];
-                              // Check new format (PREFIX + 6 digits)
-                              const newFormatBOLs = allBOLs
-                                .filter(bol => bol?.startsWith(bolPrefix) && /^[A-Z]\d{6}$/.test(bol))
-                                .map(bol => parseInt(bol.slice(1)) || 0);
-                              // Check legacy format (PREFIX-YEAR-COUNTER)
-                              const legacyBOLs = allBOLs
-                                .filter(bol => bol?.startsWith(bolPrefix + '-'))
-                                .map(bol => parseInt(bol.split('-')[2]) || 0);
-                              const maxCounter = Math.max(...newFormatBOLs, ...legacyBOLs, 0);
-                              const nextCounter = (maxCounter + 1).toString().padStart(6, '0');
-                              const bolNumber = `${bolPrefix}${nextCounter}`;
-                              generatedBOLs.push(bolNumber);
+                              // Use the same next-in-sequence BOL previewed in the
+                              // entries table; fall back to a fresh one if absent.
+                              const bolNumber = batchBols[idx] || generateBOLNumber([lineItem]);
 
                               return {
                                 id: `ORD-${Date.now()}-${Math.random()}`,
@@ -15886,7 +15906,7 @@ export default function App() {
                               entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: 'Customer Pick Up', amount: 0 }]
                             });
                           }}
-                          className="px-6 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
+                          className="px-6 py-3 bg-emerald-700 text-white text-xs font-bold uppercase hover:bg-emerald-800 transition-all shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
                         >
                           Add All Orders
                         </button>
