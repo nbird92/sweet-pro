@@ -5215,125 +5215,110 @@ export default function App() {
             placeholder="Search transfers by number, origin, destination, carrier, lot code..."
           />
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Transfer No." sortKey="transferNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[150px]" />
-                  <SortableHeader label="From" sortKey="from" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="To" sortKey="to" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Lot Code" sortKey="lotCode" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Amount (MT)" sortKey="amount" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Carrier" sortKey="carrier" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Legs</th>
-                  <SortableHeader label="Ship Date" sortKey="shipmentDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Arrival Date" sortKey="arrivalDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Appointment</th>
-                  <th className="p-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]">
-                {filteredTransfers.length === 0 && (
-                  <tr>
-                    <td colSpan={13} className="p-6 text-center text-xs font-bold opacity-40 italic">
-                      No transfers yet. Use "New Transfer" to create one.
-                    </td>
-                  </tr>
-                )}
-                {filteredTransfers.map(t => {
+          {/* Transfers — standardized DataTable. Rows open the existing Edit
+              Transfer modal (Delete now lives in that modal's footer). The
+              Status pill and the Pick-Up-Appointment control stay as inline
+              workflow actions in their columns (same intent as the Return
+              Orders inline status); each stops click propagation so it doesn't
+              also open the edit modal. */}
+          <DataTable<Transfer>
+            title="Inventory Transfers"
+            icon={<ArrowRightLeft size={14} />}
+            columns={[
+              { key: 'transferNumber', label: 'Transfer No.', bold: true, widthClass: 'min-w-[150px]' },
+              { key: 'from', label: 'From' },
+              { key: 'to', label: 'To' },
+              { key: 'product', label: 'Product', bold: true },
+              { key: 'lotCode', label: 'Lot Code', mono: true, render: (t) => t.lotCode || '—' },
+              { key: 'amount', label: 'Amount (MT)', align: 'right', bold: true },
+              { key: 'carrier', label: 'Carrier' },
+              {
+                key: 'legs', label: 'Legs', sortable: false,
+                render: (t) => t.legs && t.legs.length > 0 ? (
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase">{t.legs.length} Leg{t.legs.length > 1 ? 's' : ''}</span>
+                ) : (
+                  <span className="text-[10px] opacity-40">Direct</span>
+                ),
+              },
+              { key: 'shipmentDate', label: 'Ship Date' },
+              { key: 'arrivalDate', label: 'Arrival Date' },
+              {
+                key: 'status', label: 'Status', sortValue: (t) => t.status,
+                render: (t) => (
+                  <select
+                    value={t.status}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      const newStatus = e.target.value;
+                      setTransfers(transfers.map(tr => tr.id === t.id ? { ...tr, status: newStatus } : tr));
+                    }}
+                    className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
+                      t.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                      t.status === 'In Transit' ? 'bg-blue-100 text-blue-700' :
+                      t.status === 'Pending' ? 'bg-amber-100 text-amber-700' :
+                      t.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
+                      'bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="In Transit">In Transit</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Cancelled">Cancelled</option>
+                  </select>
+                ),
+              },
+              {
+                key: 'appointment', label: 'Appointment', sortable: false,
+                render: (t) => {
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
                   const transferShipment = allShipments.find(s => s.notes === `TRANSFER:${t.id}`);
-                  return (
-                  <tr key={t.id} className="hover:bg-[#F9F9F9] transition-colors group">
-                    <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[150px]">{t.transferNumber}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{t.from}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{t.to}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{t.product}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{t.lotCode || '—'}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{t.amount}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{t.carrier}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">
-                      {t.legs && t.legs.length > 0 ? (
-                        <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase">{t.legs.length} Leg{t.legs.length > 1 ? 's' : ''}</span>
-                      ) : (
-                        <span className="text-[10px] opacity-40">Direct</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{t.shipmentDate}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">{t.arrivalDate}</td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">
-                      <select
-                        value={t.status}
-                        onChange={(e) => {
-                          const newStatus = e.target.value;
-                          setTransfers(transfers.map(tr => tr.id === t.id ? { ...tr, status: newStatus } : tr));
-                        }}
-                        className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
-                          t.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
-                          t.status === 'In Transit' ? 'bg-blue-100 text-blue-700' :
-                          t.status === 'Pending' ? 'bg-amber-100 text-amber-700' :
-                          t.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
-                          'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        <option value="Pending">Pending</option>
-                        <option value="In Transit">In Transit</option>
-                        <option value="Completed">Completed</option>
-                        <option value="Cancelled">Cancelled</option>
-                      </select>
-                    </td>
-                    <td className="p-3 text-xs border-r border-[#141414]/10">
-                      {transferShipment ? (
-                        <select
-                          value="scheduled"
-                          onChange={(e) => {
-                            if (e.target.value === 'edit') {
-                              const loc = transferShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver';
-                              setShipmentCreationData({ location: loc, date: transferShipment.date, time: transferShipment.time, bay: transferShipment.bay, carrier: transferShipment.carrier, orderId: '', transferId: t.id });
-                              setIsCreatingTransferShipment(true);
-                              setIsCreatingShipments(true);
-                            } else if (e.target.value === 'delete') {
-                              setHamiltonShipments(hamiltonShipments.filter(s => s.notes !== `TRANSFER:${t.id}`));
-                              setVancouverShipments(vancouverShipments.filter(s => s.notes !== `TRANSFER:${t.id}`));
-                            }
-                          }}
-                          className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer bg-blue-100 text-blue-700"
-                        >
-                          <option value="scheduled">Scheduled</option>
-                          <option value="edit">Edit Pick Up Appointment</option>
-                          <option value="delete">Delete Pick Up Appointment</option>
-                        </select>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            const fromLoc = locations.find(l => l.name.toLowerCase().includes(t.from.toLowerCase()));
-                            const loc = fromLoc ? fromLoc.name : 'Hamilton';
-                            setShipmentCreationData({ location: loc, date: t.shipmentDate || '', time: '', bay: '', carrier: t.carrier || '', orderId: '', transferId: t.id });
-                            setIsCreatingTransferShipment(true);
-                            setIsCreatingShipments(true);
-                          }}
-                          className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
-                        >
-                          Create Pick Up Appointment
-                        </button>
-                      )}
-                    </td>
-                    <td className="p-3 text-xs flex items-center gap-1">
-                      <button onClick={() => { setEditingTransfer({...t}); setIsAddingTransfer(false); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                        <Edit2 size={14} />
-                      </button>
-                      <button onClick={() => setTransfers(transfers.filter(item => item.id !== t.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all">
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
+                  return transferShipment ? (
+                    <select
+                      value="scheduled"
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        if (e.target.value === 'edit') {
+                          const loc = transferShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver';
+                          setShipmentCreationData({ location: loc, date: transferShipment.date, time: transferShipment.time, bay: transferShipment.bay, carrier: transferShipment.carrier, orderId: '', transferId: t.id });
+                          setIsCreatingTransferShipment(true);
+                          setIsCreatingShipments(true);
+                        } else if (e.target.value === 'delete') {
+                          setHamiltonShipments(hamiltonShipments.filter(s => s.notes !== `TRANSFER:${t.id}`));
+                          setVancouverShipments(vancouverShipments.filter(s => s.notes !== `TRANSFER:${t.id}`));
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer bg-blue-100 text-blue-700"
+                    >
+                      <option value="scheduled">Scheduled</option>
+                      <option value="edit">Edit Pick Up Appointment</option>
+                      <option value="delete">Delete Pick Up Appointment</option>
+                    </select>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const fromLoc = locations.find(l => l.name.toLowerCase().includes(t.from.toLowerCase()));
+                        const loc = fromLoc ? fromLoc.name : 'Hamilton';
+                        setShipmentCreationData({ location: loc, date: t.shipmentDate || '', time: '', bay: '', carrier: t.carrier || '', orderId: '', transferId: t.id });
+                        setIsCreatingTransferShipment(true);
+                        setIsCreatingShipments(true);
+                      }}
+                      className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
+                    >
+                      Create Pick Up Appointment
+                    </button>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                },
+              },
+            ]}
+            rows={filteredTransfers}
+            getRowKey={(t) => t.id}
+            onRowClick={(t) => { setEditingTransfer({ ...t }); setIsAddingTransfer(false); }}
+            emptyMessage='No transfers yet. Use "New Transfer" to create one.'
+            defaultSortKey="transferNumber"
+          />
           </div>
         </div>
       );
@@ -17292,6 +17277,18 @@ export default function App() {
                 </div>
 
                 <div className="flex gap-4 pt-2">
+                  {/* Delete moved here from the table's old Actions column. */}
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete transfer ${editingTransfer.transferNumber}? This cannot be undone.`)) {
+                        setTransfers(transfers.filter(item => item.id !== editingTransfer.id));
+                        setEditingTransfer(null);
+                      }
+                    }}
+                    className="px-6 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
                   <button
                     onClick={() => {
                       // Recalculate totals from legs before saving
