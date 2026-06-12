@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Person } from '../types';
-import { Plus, X, Edit2, Trash2, Users } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { Plus, Users } from 'lucide-react';
 import PageBanner from './PageBanner';
+import DataTable from './DataTable';
+import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface PeoplePageProps {
@@ -30,71 +31,31 @@ function SearchInput({ value, onChange, placeholder }: SearchInputProps) {
   );
 }
 
+const departments = ['sales', 'operations', 'logistics', 'customer service', 'QA', 'trading'] as const;
+
+const emptyPerson = (): Person => ({
+  id: `PERSON-${Date.now()}`,
+  name: '',
+  email: '',
+  phone: '',
+  department: 'operations',
+  salespersonNumber: '',
+  notes: '',
+});
+
 export default function PeoplePage({
   people,
   onAddPerson,
   onUpdatePerson,
   onDeletePerson,
 }: PeoplePageProps) {
-  const [showAddPersonModal, setShowAddPersonModal] = useState(false);
-  const [showEditPersonModal, setShowEditPersonModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingPerson, setEditingPerson] = useState<Person | null>(null);
-  const [newPerson, setNewPerson] = useState<Partial<Person>>({
-    name: '',
-    email: '',
-    phone: '',
-    department: 'operations',
-    salespersonNumber: '',
-    notes: '',
-  });
+  // Standardized DataTable + DetailModal state (replaces the old separate
+  // Add/Edit modals + the row Actions column).
+  const [personDraft, setPersonDraft] = useState<Person | null>(null);
+  const [personMode, setPersonMode] = useState<'view' | 'edit' | 'add'>('view');
 
-  const departments = ['sales', 'operations', 'logistics', 'customer service', 'QA', 'trading'] as const;
-
-  const handleAddPerson = () => {
-    if (!newPerson.name || !newPerson.email || !newPerson.department) {
-      alert('Please fill in all required fields (Name, Email, Department)');
-      return;
-    }
-
-    const person: Person = {
-      id: `PERSON-${Date.now()}`,
-      name: newPerson.name!,
-      email: newPerson.email!,
-      phone: newPerson.phone || undefined,
-      department: newPerson.department!,
-      salespersonNumber: newPerson.salespersonNumber || undefined,
-      notes: newPerson.notes || undefined,
-    };
-
-    onAddPerson(person);
-    setShowAddPersonModal(false);
-    setNewPerson({
-      name: '',
-      email: '',
-      phone: '',
-      department: 'operations',
-      salespersonNumber: '',
-      notes: '',
-    });
-  };
-
-  const handleUpdatePerson = () => {
-    if (!editingPerson || !editingPerson.name || !editingPerson.email || !editingPerson.department) {
-      alert('Please fill in all required fields');
-      return;
-    }
-
-    onUpdatePerson(editingPerson);
-    setShowEditPersonModal(false);
-    setEditingPerson(null);
-  };
-
-  const handleDeletePerson = (personId: string) => {
-    if (confirm('Are you sure you want to delete this person?')) {
-      onDeletePerson(personId);
-    }
-  };
+  const canSave = !!personDraft && !!personDraft.name.trim() && !!personDraft.email.trim() && !!personDraft.department;
 
   const filteredPeople = people.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -116,6 +77,7 @@ export default function PeoplePage({
     ],
     rows: people as any[],
   }];
+
   return (
     <div>
       <PageBanner
@@ -126,17 +88,7 @@ export default function PeoplePage({
         exportFileName="People"
       >
         <button
-          onClick={() => {
-            setNewPerson({
-              name: '',
-              email: '',
-              phone: '',
-              department: 'operations',
-              salespersonNumber: '',
-              notes: '',
-            });
-            setShowAddPersonModal(true);
-          }}
+          onClick={() => { setPersonDraft(emptyPerson()); setPersonMode('add'); }}
           className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2"
         >
           <Plus size={12} /> Add Person
@@ -150,276 +102,125 @@ export default function PeoplePage({
         placeholder="Search by name, email, or department..."
       />
 
-      {/* People Table */}
-      <div className="mt-6 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-              <th className="p-4 border-r border-[#141414]/10">Name</th>
-              <th className="p-4 border-r border-[#141414]/10">Email</th>
-              <th className="p-4 border-r border-[#141414]/10">Phone</th>
-              <th className="p-4 border-r border-[#141414]/10">Department</th>
-              <th className="p-4 border-r border-[#141414]/10">Sales #</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]">
-            {filteredPeople.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-6 text-center text-gray-500">
-                  No people found
-                </td>
-              </tr>
-            ) : (
-              filteredPeople.map(person => (
-                <tr key={person.id} className="hover:bg-[#F9F9F9] transition-colors">
-                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{person.name}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{person.email}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{person.phone || '-'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10 uppercase">{person.department}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{person.salespersonNumber || '-'}</td>
-                  <td className="p-4 text-xs flex gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingPerson(person);
-                        setShowEditPersonModal(true);
-                      }}
-                      className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                    >
-                      <Edit2 size={14} />
-                    </button>
-                    <button
-                      onClick={() => handleDeletePerson(person.id)}
-                      className="p-1 hover:bg-red-500 hover:text-white transition-all"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      {/* People — standardized DataTable + DetailModal. */}
+      <div className="mt-6">
+        <DataTable<Person>
+          title="People"
+          icon={<Users size={14} />}
+          columns={[
+            { key: 'name', label: 'Name', bold: true },
+            { key: 'email', label: 'Email' },
+            { key: 'phone', label: 'Phone', render: (p) => p.phone || '-' },
+            { key: 'department', label: 'Department', render: (p) => <span className="uppercase">{p.department}</span> },
+            { key: 'salespersonNumber', label: 'Sales #', render: (p) => p.salespersonNumber || '-' },
+          ]}
+          rows={filteredPeople}
+          getRowKey={(p) => p.id}
+          onRowClick={(p) => { setPersonDraft({ ...p }); setPersonMode('view'); }}
+          emptyMessage="No people found."
+          defaultSortKey="name"
+        />
       </div>
 
-      {/* Add Person Modal */}
-      <AnimatePresence>
-        {showAddPersonModal && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Add New Person</h3>
-                <button
-                  onClick={() => setShowAddPersonModal(false)}
-                  className="p-1 hover:bg-white hover:text-[#141414] transition-all"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Name*</label>
+      <DetailModal
+        tableName="People"
+        icon={<Users size={14} />}
+        isOpen={!!personDraft}
+        mode={personMode}
+        onClose={() => setPersonDraft(null)}
+        onEdit={() => setPersonMode('edit')}
+        onSave={() => {
+          if (!personDraft || !canSave) return;
+          if (personMode === 'add') {
+            onAddPerson(personDraft);
+          } else {
+            onUpdatePerson(personDraft);
+          }
+          setPersonDraft(null);
+        }}
+        onDelete={personMode === 'add' ? undefined : () => {
+          if (!personDraft) return;
+          onDeletePerson(personDraft.id);
+          setPersonDraft(null);
+        }}
+        deleteConfirmMessage={personDraft ? `Delete ${personDraft.name || 'this person'}? This cannot be undone.` : undefined}
+        saveDisabled={!canSave}
+      >
+        {personDraft && (
+          personMode === 'view' ? (
+            <>
+              <DetailRow label="Name" value={personDraft.name} bold />
+              <DetailRow label="Email" value={personDraft.email} />
+              <DetailRow label="Phone" value={personDraft.phone} />
+              <DetailRow label="Department" value={<span className="uppercase">{personDraft.department}</span>} />
+              {personDraft.department === 'sales' && <DetailRow label="Sales Person Number" value={personDraft.salespersonNumber} />}
+              <DetailRow label="Notes" value={personDraft.notes} />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <DetailField label="Name" required>
                   <input
                     type="text"
-                    value={newPerson.name || ''}
-                    onChange={(e) => setNewPerson({ ...newPerson, name: e.target.value })}
+                    value={personDraft.name}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, name: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                     placeholder="Full Name"
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                   />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Email*</label>
+                </DetailField>
+                <DetailField label="Email" required>
                   <input
                     type="email"
-                    value={newPerson.email || ''}
-                    onChange={(e) => setNewPerson({ ...newPerson, email: e.target.value })}
+                    value={personDraft.email}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, email: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                     placeholder="Email Address"
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                   />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Phone</label>
+                </DetailField>
+                <DetailField label="Phone">
                   <input
                     type="tel"
-                    value={newPerson.phone || ''}
-                    onChange={(e) => setNewPerson({ ...newPerson, phone: e.target.value })}
+                    value={personDraft.phone || ''}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, phone: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                     placeholder="Phone Number"
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                   />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Department*</label>
+                </DetailField>
+                <DetailField label="Department" required>
                   <select
-                    value={newPerson.department || 'operations'}
-                    onChange={(e) => setNewPerson({ ...newPerson, department: e.target.value as any })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                    value={personDraft.department}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, department: e.target.value as Person['department'] } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                   >
                     {departments.map(dept => (
-                      <option key={dept} value={dept}>
-                        {dept.charAt(0).toUpperCase() + dept.slice(1)}
-                      </option>
+                      <option key={dept} value={dept}>{dept.charAt(0).toUpperCase() + dept.slice(1)}</option>
                     ))}
                   </select>
-                </div>
-
-                {newPerson.department === 'sales' && (
-                  <div>
-                    <label className="text-xs font-bold uppercase block mb-1">Sales Person Number</label>
+                </DetailField>
+                {personDraft.department === 'sales' && (
+                  <DetailField label="Sales Person Number">
                     <input
                       type="text"
-                      value={newPerson.salespersonNumber || ''}
-                      onChange={(e) => setNewPerson({ ...newPerson, salespersonNumber: e.target.value })}
+                      value={personDraft.salespersonNumber || ''}
+                      onChange={(e) => setPersonDraft(d => d ? { ...d, salespersonNumber: e.target.value } : d)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                       placeholder="e.g., SP-001"
-                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
                     />
-                  </div>
+                  </DetailField>
                 )}
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Notes</label>
-                  <textarea
-                    value={newPerson.notes || ''}
-                    onChange={(e) => setNewPerson({ ...newPerson, notes: e.target.value })}
-                    placeholder="Additional notes..."
-                    rows={3}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  />
-                </div>
-
-                <div className="flex gap-2 justify-end pt-4">
-                  <button
-                    onClick={() => setShowAddPersonModal(false)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleAddPerson}
-                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
-                  >
-                    Add Person
-                  </button>
-                </div>
               </div>
-            </motion.div>
-          </div>
+              <DetailField label="Notes">
+                <textarea
+                  value={personDraft.notes || ''}
+                  onChange={(e) => setPersonDraft(d => d ? { ...d, notes: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm h-20 resize-none outline-none focus:bg-white"
+                  placeholder="Additional notes..."
+                />
+              </DetailField>
+            </div>
+          )
         )}
-      </AnimatePresence>
-
-      {/* Edit Person Modal */}
-      <AnimatePresence>
-        {showEditPersonModal && editingPerson && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Edit Person</h3>
-                <button
-                  onClick={() => setShowEditPersonModal(false)}
-                  className="p-1 hover:bg-white hover:text-[#141414] transition-all"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Name*</label>
-                  <input
-                    type="text"
-                    value={editingPerson.name}
-                    onChange={(e) => setEditingPerson({ ...editingPerson, name: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Email*</label>
-                  <input
-                    type="email"
-                    value={editingPerson.email}
-                    onChange={(e) => setEditingPerson({ ...editingPerson, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Phone</label>
-                  <input
-                    type="tel"
-                    value={editingPerson.phone || ''}
-                    onChange={(e) => setEditingPerson({ ...editingPerson, phone: e.target.value })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Department*</label>
-                  <select
-                    value={editingPerson.department}
-                    onChange={(e) => setEditingPerson({ ...editingPerson, department: e.target.value as any })}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  >
-                    {departments.map(dept => (
-                      <option key={dept} value={dept}>
-                        {dept.charAt(0).toUpperCase() + dept.slice(1)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {editingPerson.department === 'sales' && (
-                  <div>
-                    <label className="text-xs font-bold uppercase block mb-1">Sales Person Number</label>
-                    <input
-                      type="text"
-                      value={editingPerson.salespersonNumber || ''}
-                      onChange={(e) => setEditingPerson({ ...editingPerson, salespersonNumber: e.target.value })}
-                      className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="text-xs font-bold uppercase block mb-1">Notes</label>
-                  <textarea
-                    value={editingPerson.notes || ''}
-                    onChange={(e) => setEditingPerson({ ...editingPerson, notes: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
-                  />
-                </div>
-
-                <div className="flex gap-2 justify-end pt-4">
-                  <button
-                    onClick={() => setShowEditPersonModal(false)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleUpdatePerson}
-                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
-                  >
-                    Update Person
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      </DetailModal>
     </main>
     </div>
   );
