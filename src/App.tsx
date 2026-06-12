@@ -14838,7 +14838,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-7xl w-full overflow-hidden my-8"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
@@ -14980,26 +14980,26 @@ export default function App() {
                     one input row. Split Number sits beside Contract #. */}
                 <div className="border border-[#141414]/20 p-6 bg-[#F9F9F9]">
                   <h4 className="text-xs font-bold uppercase tracking-widest mb-4">Line Items & Contract Details</h4>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead>
-                        <tr className="text-left text-[10px] uppercase font-bold opacity-60">
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[200px]">Product</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 w-24">QTY (units)</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Contract #</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Split Number {(() => {
+                  <div className="border border-[#141414]">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-[#141414] text-[#E4E3E0]">
+                        <tr className="text-[10px] uppercase font-bold">
+                          <th className="p-3">Product</th>
+                          <th className="p-3">QTY (units)</th>
+                          <th className="p-3">Contract #</th>
+                          <th className="p-3">Split Number {(() => {
                             const lineItemHasContract = orderLineItems.some(li => (li.contractNumber || '').trim());
-                            return lineItemHasContract ? '(opt.)' : <span className="text-red-600">*</span>;
+                            return lineItemHasContract ? '(opt.)' : <span className="text-red-400">*</span>;
                           })()}</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[120px]">Shipping Terms</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[150px]">Location (Origin)</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2 min-w-[110px]">Pallet Type</th>
-                          <th className="border border-[#141414]/20 bg-[#F5F5F5] p-2"></th>
+                          <th className="p-3">Shipping Terms</th>
+                          <th className="p-3">Location (Origin)</th>
+                          <th className="p-3">Pallet Type</th>
+                          <th className="p-3"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="align-top">
-                          <td className="border border-[#141414]/20 p-0">
+                        <tr className="align-top hover:bg-[#F5F5F5] transition-colors">
+                          <td className="p-2">
                             <select
                               value={newLineItem.productKey}
                               onChange={(e) => {
@@ -15013,7 +15013,7 @@ export default function App() {
                                   productDisplayName: picked?.label || '',
                                 });
                               }}
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">Select Product</option>
                               {buildOrderProductOptions(newLineItem.productName).map(opt => (
@@ -15021,26 +15021,26 @@ export default function App() {
                               ))}
                             </select>
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
+                          <td className="p-2">
                             <input
                               type="text" inputMode="decimal"
                               value={newLineItem.qty || ""}
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => setNewLineItem({...newLineItem, qty: parseFloat(e.target.value) || 0})}
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             />
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
+                          <td className="p-2">
                             <select
                               value={newLineItem.contractNumber}
                               onChange={(e) => setNewLineItem({...newLineItem, contractNumber: e.target.value})}
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">No Contract</option>
                               {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                             </select>
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
+                          <td className="p-2">
                             <input
                               type="text"
                               value={editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber}
@@ -15049,14 +15049,14 @@ export default function App() {
                                 else setOrderSplitNumber(e.target.value);
                               }}
                               placeholder="e.g. S04280.G01"
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             />
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
+                          <td className="p-2">
                             <select
                               value={orderShippingTerms}
                               onChange={(e) => setOrderShippingTerms(e.target.value as any)}
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">Select Terms</option>
                               <option value="FOB">FOB</option>
@@ -15065,11 +15065,11 @@ export default function App() {
                               <option value="FCA">FCA</option>
                             </select>
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
+                          <td className="p-2">
                             <select
                               value={orderLocation}
                               onChange={(e) => setOrderLocation(e.target.value)}
-                              className="w-full bg-white border-0 p-2 text-xs focus:outline-none focus:bg-[#F9F9F9]"
+                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">{(() => {
                                 const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
@@ -15082,8 +15082,8 @@ export default function App() {
                               ))}
                             </select>
                           </td>
-                          <td className="border border-[#141414]/20 p-0">
-                            <div className="w-full bg-white p-2 text-xs text-[#141414]/70">
+                          <td className="p-2">
+                            <div className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs text-[#141414]/70">
                               {(() => {
                                 const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
                                 if (contractNums.length === 0) return 'From contract';
@@ -15092,7 +15092,7 @@ export default function App() {
                               })()}
                             </div>
                           </td>
-                          <td className="border border-[#141414]/20 p-1">
+                          <td className="p-2">
                             <div className="flex items-end gap-2">
                       <button
                         onClick={() => {
@@ -15474,7 +15474,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-6xl w-full overflow-hidden my-8"
+              className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-7xl w-full overflow-hidden my-8"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Add Batch Orders</h3>
