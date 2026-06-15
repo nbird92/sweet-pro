@@ -9321,7 +9321,28 @@ export default function App() {
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Pallet Type</label>
                       <div className="text-sm">{viewingOrderCard.palletType || '—'}</div></div>
                   </div>
-                  {viewingOrderCard.lineItems.length > 0 && (
+                  {viewingOrderCard.lineItems.length > 0 && (() => {
+                    // Fill in any per-line numbers the saved order is missing from
+                    // the product (net weight) and the line's contract (price), so
+                    // the detail view is complete even for orders saved without
+                    // computed pricing.
+                    const rows = viewingOrderCard.lineItems.map(item => {
+                      const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
+                      const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
+                      const resolved = resolveProduct(item.productName);
+                      const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
+                      const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
+                      const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
+                      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
+                      const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
+                      const lineAmount = item.lineAmount || (totalWeight * mtAmount);
+                      const contractNumber = item.contractNumber || contract?.contractNumber || viewingOrderCard.contractNumber || '';
+                      return { item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
+                    });
+                    const totalQty = rows.reduce((s, r) => s + r.item.qty, 0);
+                    const totalWeightSum = rows.reduce((s, r) => s + r.totalWeight, 0);
+                    const totalLineAmount = rows.reduce((s, r) => s + r.lineAmount, 0);
+                    return (
                     <table className="w-full text-xs">
                       <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
                         <tr>
@@ -9336,33 +9357,34 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
-                        {viewingOrderCard.lineItems.map(item => (
+                        {rows.map(({ item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber }) => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{item.qty}</td>
-                            <td className="p-3">{item.netWeightPerUnit}</td>
-                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
-                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3">{item.mtAmount ? `$${item.mtAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3 font-mono">{item.contractNumber}</td>
+                            <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
+                            <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
+                            <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{mtAmount ? `$${mtAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{lineAmount ? `$${lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-mono">{contractNumber || '—'}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
                         <tr>
                           <td className="p-3 font-bold">Total</td>
-                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.reduce((s, i) => s + i.qty, 0)}</td>
+                          <td className="p-3 font-bold">{totalQty}</td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.reduce((s, i) => s + i.totalWeight, 0).toFixed(2)}</td>
+                          <td className="p-3 font-bold">{totalWeightSum.toFixed(2)}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{viewingOrderCard.lineItems.some(i => i.lineAmount) ? `$${viewingOrderCard.lineItems.reduce((s, i) => s + (i.lineAmount || 0), 0).toFixed(2)}` : '—'}</td>
+                          <td className="p-3 font-bold">{totalLineAmount ? `$${totalLineAmount.toFixed(2)}` : '—'}</td>
                           <td className="p-3"></td>
                         </tr>
                       </tfoot>
                     </table>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
               {/* Sticky footer — action buttons live at the bottom of the
@@ -15176,10 +15198,9 @@ export default function App() {
                           <th className="p-3">Product</th>
                           <th className="p-3">QTY (units)</th>
                           <th className="p-3">Contract #</th>
-                          <th className="p-3">Split Number {(() => {
-                            const lineItemHasContract = orderLineItems.some(li => (li.contractNumber || '').trim());
-                            return lineItemHasContract ? '(opt.)' : <span className="text-red-400">*</span>;
-                          })()}</th>
+                          {/* Split Number is only entered when editing an existing
+                              order — it isn't known when first creating one. */}
+                          {editingOrder && <th className="p-3">Split Number</th>}
                           <th className="p-3">Shipping Terms</th>
                           <th className="p-3">Location (Origin)</th>
                           <th className="p-3">Pallet Type</th>
@@ -15228,18 +15249,17 @@ export default function App() {
                               {filteredOrderContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
                             </select>
                           </td>
+                          {editingOrder && (
                           <td className="p-2">
                             <input
                               type="text"
-                              value={editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber}
-                              onChange={(e) => {
-                                if (editingOrder) setEditingOrder({ ...editingOrder, splitNumber: e.target.value });
-                                else setOrderSplitNumber(e.target.value);
-                              }}
+                              value={editingOrder.splitNumber || ''}
+                              onChange={(e) => setEditingOrder({ ...editingOrder, splitNumber: e.target.value })}
                               placeholder="e.g. S04280.G01"
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             />
                           </td>
+                          )}
                           <td className="p-2">
                             <select
                               value={orderShippingTerms}
@@ -15376,11 +15396,11 @@ export default function App() {
                       }
                       const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                       const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
-                      // Hard rule: an order must carry either a contract number
-                      // (on at least one line item) OR a split number. We catch
-                      // both create + edit flows here.
-                      const splitValue = editingOrder ? (editingOrder.splitNumber || '') : orderSplitNumber;
-                      if (contractNumbers.length === 0 && !splitValue.trim()) {
+                      // When editing, an order must carry a Contract Number (on a
+                      // line item) OR a Split Number. New orders are exempt — the
+                      // split isn't known yet and is filled in later from the order
+                      // details menu.
+                      if (editingOrder && contractNumbers.length === 0 && !(editingOrder.splitNumber || '').trim()) {
                         setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number. Set one of those fields before saving.');
                         return;
                       }
@@ -15460,11 +15480,8 @@ export default function App() {
                         }
                         const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
                         const contractNumbers = [...new Set(orderLineItems.map(li => li.contractNumber).filter(Boolean))];
-                        // Same hard rule as the Save button — Contract OR Split required.
-                        if (contractNumbers.length === 0 && !orderSplitNumber.trim()) {
-                          setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number.');
-                          return;
-                        }
+                        // New order — the split isn't known at creation, so it is
+                        // not required here; it's added later from the order details.
                         const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
                         const resolvedLocation = orderLocation || firstContract?.origin || '';
                         const newOrder: Order = {
