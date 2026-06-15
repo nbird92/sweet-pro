@@ -2561,17 +2561,15 @@ export default function App() {
       return;
     }
 
-    // Determine prefix for an order by looking at its line items' product groups
+    // Determine prefix for an order from its line items' product group BOL Codes
+    // (robust resolve via productKey, then name). Single group → that code;
+    // mixed → the first line item's code.
     const prefixForOrder = (o: Order): string => {
-      const groups = (o.lineItems || []).map(li => {
-        const sku = skus.find(s => s.name === li.productName);
-        return sku?.productGroup || 'Other';
-      });
+      const items = o.lineItems || [];
+      const groups = items.map(li => productGroupOf(li.productName, li.productKey) || 'Other');
       const unique = new Set(groups);
-      if (unique.size === 1) {
-        const pg = productGroups.find(g => g.name === [...unique][0]);
-        if (pg?.bolCode) return pg.bolCode;
-      }
+      if (unique.size === 1) return bolPrefixForGroup([...unique][0]);
+      if (items.length > 0) return bolPrefixForGroup(productGroupOf(items[0].productName, items[0].productKey));
       return 'P';
     };
 
@@ -3016,19 +3014,48 @@ export default function App() {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit' }).format(date);
   };
 
+  // Resolve a product's Product Group name as robustly as possible. The chosen
+  // catalog variant is most reliably identified by productKey (a QA product id,
+  // or a SKU id for unpaired SKUs); fall back to matching the stored product
+  // name against SKU names and QA skuNames. Returns null when nothing matches.
+  const productGroupOf = (productName?: string, productKey?: string): string | null => {
+    if (productKey) {
+      const qa = qaProducts.find(q => q.id === productKey);
+      if (qa?.productGroup) return qa.productGroup;
+      const sku = skus.find(s => s.id === productKey);
+      if (sku?.productGroup) return sku.productGroup;
+    }
+    if (productName) {
+      const sku = skus.find(s => s.name === productName);
+      if (sku?.productGroup) return sku.productGroup;
+      const qa = qaProducts.find(q => q.skuName === productName);
+      if (qa?.productGroup) return qa.productGroup;
+    }
+    return null;
+  };
+
+  // The BOL prefix (first character) for a Product Group, taken from the BOL
+  // Code column of the Product Groups table. Defaults to 'P' when unknown.
+  const bolPrefixForGroup = (groupName: string | null | undefined): string => {
+    if (!groupName) return 'P';
+    const pg = productGroups.find(g => g.name === groupName);
+    return pg?.bolCode || 'P';
+  };
+
   const generateBOLNumber = (lineItems: OrderLineItem[]): string => {
     // Determine prefix based on bolCode from product groups
-    const itemGroups = lineItems.map(item => {
-      const product = skus.find(s => s.name === item.productName);
-      return product?.productGroup || 'Other';
-    });
+    const itemGroups = lineItems.map(item =>
+      productGroupOf(item.productName, item.productKey) || 'Other'
+    );
 
+    // Prefix is the product group's BOL Code. Single-group order → that code;
+    // mixed-group order → the first line item's group code; empty → default.
     const uniqueGroups = new Set(itemGroups);
-    let prefix = 'P'; // Default for mixed or unknown
+    let prefix = 'P';
     if (uniqueGroups.size === 1) {
-      const groupName = [...uniqueGroups][0];
-      const pg = productGroups.find(g => g.name === groupName);
-      if (pg?.bolCode) prefix = pg.bolCode;
+      prefix = bolPrefixForGroup([...uniqueGroups][0]);
+    } else if (lineItems.length > 0) {
+      prefix = bolPrefixForGroup(productGroupOf(lineItems[0].productName, lineItems[0].productKey));
     }
 
     // Consider BOLs from BOTH orders AND invoices so sequences never collide.
@@ -3069,9 +3096,7 @@ export default function App() {
   // items/entries are added, before anything is saved.
   const computeBatchBolNumbers = (productName: string, count: number): string[] => {
     if (!productName || count <= 0) return new Array(Math.max(0, count)).fill('');
-    const prodInfo = skus.find(s => s.name === productName);
-    const pg = productGroups.find(g => g.name === (prodInfo?.productGroup || 'Other'));
-    const prefix = pg?.bolCode || 'P';
+    const prefix = bolPrefixForGroup(productGroupOf(productName));
     const allBols = [
       ...orders.map(o => o.bolNumber || ''),
       ...invoices.map(inv => inv.bolNumber || ''),
