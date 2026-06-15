@@ -3681,6 +3681,20 @@ export default function App() {
     return false;
   };
 
+  // Decide whether an invoice belongs to a contract. Invoices can reference the
+  // contract three ways, any of which counts:
+  //   1. contractNumber — which may be a comma-joined list ("A, B"), so split it,
+  //   2. splitNo whose contract prefix (digits stripped) is the contract number,
+  //   3. a line item's contractNumber (also possibly comma-joined).
+  const invoiceMatchesContract = (inv: Invoice, contractNumber: string): boolean => {
+    if (!contractNumber) return false;
+    const parts = (s: string | undefined) => (s || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (parts(inv.contractNumber).includes(contractNumber)) return true;
+    if (inv.splitNo && contractNumberFromSplit(inv.splitNo) === contractNumber) return true;
+    if ((inv.lineItems || []).some(li => parts(li.contractNumber).includes(contractNumber))) return true;
+    return false;
+  };
+
   // Find every active contract that matches a given customer. Contracts may
   // reference the customer by Customer.id, by Customer.customerNumber, or by
   // name (depending on how the contract was created / imported), so try all
@@ -8151,7 +8165,7 @@ export default function App() {
                         //     - inv.splitNo prefix (digits stripped) === c.contractNumber
                         //   Sum invoice.qty (MT) per match.
                         const invoicesOnContract = invoices.filter(inv =>
-                          inv.status !== 'Cancelled' && matchesContractByNumberOrSplit(inv.contractNumber, inv.splitNo, c.contractNumber)
+                          inv.status !== 'Cancelled' && invoiceMatchesContract(inv, c.contractNumber)
                         );
                         const volumeTakenComputed = invoicesOnContract
                           .reduce((sum, inv) => sum + (inv.qty || 0), 0);
@@ -14883,7 +14897,7 @@ export default function App() {
                 const [popupContract, popupFilter] = raw.includes(':') ? raw.split(':') : [raw, 'all'];
                 const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
                 const titleLabel = popupFilter === 'taken'
-                  ? 'Invoiced Orders'
+                  ? 'Invoices on Contract'
                   : popupFilter === 'onorder'
                   ? 'Orders on Contract (not yet invoiced)'
                   : 'Orders on Contract';
@@ -14898,6 +14912,61 @@ export default function App() {
                       <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
                     </div>
                     {(() => {
+                // Volume Taken link → list the invoices that used this contract
+                // directly (matched by the invoice's own contract number, split,
+                // or line-item contract numbers), independent of whether a
+                // matching order still exists.
+                if (popupFilter === 'taken') {
+                  const contractInvoices = invoices
+                    .filter(inv => inv.status !== 'Cancelled' && invoiceMatchesContract(inv, popupContract))
+                    .slice()
+                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+                  if (contractInvoices.length === 0) {
+                    return <div className="p-8 text-center text-xs opacity-50 italic">No invoices on this contract.</div>;
+                  }
+                  const invQty = contractInvoices.reduce((s, inv) => s + (inv.qty || 0), 0);
+                  const invAmount = contractInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+                  return (
+                    <table className="w-full text-xs">
+                      <thead className="bg-[#F5F5F5] border-b border-[#141414] text-[10px] uppercase tracking-widest">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">Invoice #</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">BOL</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">Customer</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">Product</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">PO</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">Date</th>
+                          <th className="px-3 py-2 text-right font-bold opacity-70">Qty (MT)</th>
+                          <th className="px-3 py-2 text-right font-bold opacity-70">Amount</th>
+                          <th className="px-3 py-2 text-left font-bold opacity-70">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#141414]/10">
+                        {contractInvoices.map(inv => (
+                          <tr key={inv.id} className="hover:bg-blue-50 cursor-pointer transition-colors" onClick={() => { setEditingInvoiceCard(inv); setContractOrdersPopup(null); }}>
+                            <td className="px-3 py-2 font-mono">{inv.invoiceNumber || '—'}</td>
+                            <td className="px-3 py-2 font-mono">{inv.bolNumber || '—'}</td>
+                            <td className="px-3 py-2">{inv.customer}</td>
+                            <td className="px-3 py-2">{inv.product}</td>
+                            <td className="px-3 py-2">{inv.po}</td>
+                            <td className="px-3 py-2">{inv.date}</td>
+                            <td className="px-3 py-2 text-right font-mono">{(inv.qty || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-mono">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-3 py-2">{inv.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-[#F5F5F5] border-t border-[#141414] font-bold">
+                        <tr>
+                          <td className="px-3 py-2" colSpan={6}>Total ({contractInvoices.length})</td>
+                          <td className="px-3 py-2 text-right font-mono">{invQty.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono">${invAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="px-3 py-2"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  );
+                }
                 // Match orders to the popup's contract by their own
                 // contractNumber, any line-item contractNumber, OR their
                 // splitNumber's contract prefix (digits stripped).
