@@ -3728,6 +3728,38 @@ export default function App() {
     return false;
   };
 
+  // Resolve the contract behind an order so the orders table can show its
+  // Price/MT (finalPrice) when the order itself carries no amount. An order can
+  // reference a contract three ways, any of which counts:
+  //   1. order.contractNumber — possibly a comma-joined list ("A, B"),
+  //   2. any line item's contractNumber (also possibly comma-joined),
+  //   3. order.splitNumber whose contract prefix is the contract number.
+  // Strict equality (the old behaviour) missed cases 1-list, 2, and 3.
+  const contractForOrder = (ord: Order): Contract | undefined => {
+    const nums = new Set<string>();
+    const addAll = (s: string | undefined) =>
+      (s || '').split(',').map(x => x.trim()).filter(Boolean).forEach(x => nums.add(x));
+    addAll(ord.contractNumber);
+    ord.lineItems.forEach(li => addAll(li.contractNumber));
+    if (ord.splitNumber) {
+      const fromSplit = contractNumberFromSplit(ord.splitNumber);
+      if (fromSplit) nums.add(fromSplit);
+    }
+    if (nums.size === 0) return undefined;
+    return contracts.find(c => c.contractNumber && nums.has(c.contractNumber));
+  };
+
+  // Price/MT for an order: prefer the matching contract's finalPrice, then fall
+  // back to the order's own amount ÷ total weight (MT). Returns 0 when neither
+  // is available so the caller can render an em-dash.
+  const orderPricePerMt = (ord: Order): number => {
+    const c = contractForOrder(ord);
+    if (c?.finalPrice) return c.finalPrice;
+    const totalWeight = ord.lineItems.reduce((s, li) => s + li.totalWeight, 0);
+    if (totalWeight > 0 && ord.amount) return ord.amount / totalWeight;
+    return 0;
+  };
+
   // Find every active contract that matches a given customer. Contracts may
   // reference the customer by Customer.id, by Customer.customerNumber, or by
   // name (depending on how the contract was created / imported), so try all
@@ -5972,12 +6004,8 @@ export default function App() {
           aVal = a.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
           bVal = b.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
         } else if (key === 'pricePerMt') {
-          const aContract = contracts.find(c => c.contractNumber === (a.contractNumber || a.lineItems.map(li => li.contractNumber).filter(Boolean)[0]));
-          const bContract = contracts.find(c => c.contractNumber === (b.contractNumber || b.lineItems.map(li => li.contractNumber).filter(Boolean)[0]));
-          const aTotalWt = a.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
-          const bTotalWt = b.lineItems.reduce((sum, li) => sum + li.totalWeight, 0);
-          aVal = aContract?.finalPrice || (aTotalWt > 0 && a.amount ? a.amount / aTotalWt : 0);
-          bVal = bContract?.finalPrice || (bTotalWt > 0 && b.amount ? b.amount / bTotalWt : 0);
+          aVal = orderPricePerMt(a);
+          bVal = orderPricePerMt(b);
         } else {
           aVal = (a as any)[key] ?? '';
           bVal = (b as any)[key] ?? '';
@@ -5990,7 +6018,7 @@ export default function App() {
       const buildOrderRows = () => orders.map(o => {
         const li = o.lineItems[0];
         const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
-        const contract = contracts.find(c => c.contractNumber === o.contractNumber);
+        const contract = contractForOrder(o);
         const rawProduct = o.product || li?.productName || '';
         return {
           bolNumber: o.bolNumber,
@@ -6002,7 +6030,7 @@ export default function App() {
           shipmentDate: o.shipmentDate || '',
           deliveryDate: o.deliveryDate || '',
           qty: totalWeight,
-          pricePerMt: contract?.finalPrice || (totalWeight > 0 ? o.amount / totalWeight : 0),
+          pricePerMt: orderPricePerMt(o),
           currency: contract?.currency || o.currency || '',
           carrier: o.carrier,
           status: o.status,
@@ -6200,11 +6228,15 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || '—'}</td>
                         {(() => {
-                          const ordContractNum = ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
-                          const ordContract = contracts.find(c => c.contractNumber === ordContractNum);
+                          // Price/MT prefers the matching contract's finalPrice
+                          // (robust match: comma lists, line-item contracts, and
+                          // split-number prefixes), then falls back to the order's
+                          // own amount ÷ total weight.
+                          const ordContract = contractForOrder(ord);
+                          const priceMt = orderPricePerMt(ord);
                           return (<>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
-                              {ordContract?.finalPrice ? `$${ordContract.finalPrice.toFixed(2)}` : totalWeight > 0 && ord.amount ? `$${(ord.amount / totalWeight).toFixed(2)}` : '—'}
+                              {priceMt > 0 ? `$${priceMt.toFixed(2)}` : '—'}
                             </td>
                             <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
                               {ordContract?.currency || ord.currency || '—'}
