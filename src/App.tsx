@@ -573,10 +573,10 @@ export default function App() {
           const deliveryDate = normalizeDate(get(entry, 'deliverydate', 'delivery'));
 
           const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
-          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const qty = parseLooseNumber(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight'));
           const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
-          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'price', 'pricemt') || '0') || 0;
-          const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(get(entry, 'amount', 'total', 'totalamount') || '0') || 0);
+          const pricePerMt = parseLooseNumber(get(entry, 'pricepermt', 'pricepmt', 'price', 'pricemt'));
+          const amount = pricePerMt > 0 ? pricePerMt * qty : parseLooseNumber(get(entry, 'amount', 'total', 'totalamount'));
           const bolNumber = get(entry, 'bolnumber', 'bol', 'bolno', 'bol#', 'billoflading') || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const splitNumber = get(entry, 'splitnumber', 'splitno', 'split', 'split#', 'splno');
           const currency = get(entry, 'currency', 'curr');
@@ -740,9 +740,9 @@ export default function App() {
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
-          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
-          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
-          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
+          const qty = parseLooseNumber(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight'));
+          const pricePerMt = parseLooseNumber(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton'));
+          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseLooseNumber(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value')));
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
@@ -865,6 +865,20 @@ export default function App() {
   // match the lookup keys instead of being dropped.
   const normalizeHeader = (h: string): string => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+  // Parse a numeric CSV value that may carry currency/thousands formatting, e.g.
+  // "$713.37", "1,234.56", "$1,234.56", or "(50)" for a negative. Strips every
+  // character except digits, a decimal point, and a leading minus so a price
+  // like "$713.37" imports as 713.37 instead of NaN→0.
+  const parseLooseNumber = (s: string | undefined): number => {
+    if (!s) return 0;
+    let cleaned = String(s).trim();
+    // Accounting-style negatives: "(50)" -> "-50"
+    if (/^\(.*\)$/.test(cleaned)) cleaned = '-' + cleaned.slice(1, -1);
+    cleaned = cleaned.replace(/[^0-9.\-]/g, '');
+    const n = parseFloat(cleaned);
+    return isNaN(n) ? 0 : n;
+  };
+
   const handleReplaceInvoiceCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -932,9 +946,9 @@ export default function App() {
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'datedue'));
-          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
-          const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
-          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
+          const qty = parseLooseNumber(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight'));
+          const pricePerMt = parseLooseNumber(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton'));
+          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseLooseNumber(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value')));
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
