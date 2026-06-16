@@ -345,6 +345,8 @@ export interface Invoice {
   shippingTerms?: string;
   location?: string;
   contractNumber?: string;
+  papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
+  customsEntryNo?: string;  // Customs entry number
 }
 
 export interface OrderLineItem {
@@ -382,6 +384,8 @@ export interface Order {
   palletType?: 'CHEP' | 'One Way' | ''; // from contract
   hidden?: boolean;        // hide instead of delete for confirmed orders (BOL permanently reserved)
   shipToLocationId?: string; // references ShipToLocation.id under the order's customer
+  papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
+  customsEntryNo?: string;  // Customs entry number
 }
 
 /* ====================================================================== */

@@ -347,6 +347,8 @@ export default function App() {
   const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
   const [orderLocation, setOrderLocation] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
+  const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
+  const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
   const [orderCustomerNumberInput, setOrderCustomerNumberInput] = useState<string>(''); // manual customer number entry in order modal
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
@@ -5750,7 +5752,7 @@ export default function App() {
                     <tr
                       className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer"
                       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
-                      onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '' })}>
+                      onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '', papsNo: i.papsNo || linkedOrder?.papsNo || '', customsEntryNo: i.customsEntryNo || linkedOrder?.customsEntryNo || '' })}>
                       <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         {/*
                           Uncontrolled input: defaultValue + onBlur. Typing no
@@ -6285,6 +6287,8 @@ export default function App() {
                               setOrderShippingTerms(ord.shippingTerms || '');
                               setOrderShipToId(ord.shipToLocationId || '');
                               setOrderLocation(ord.location || '');
+                              setOrderPapsNo(ord.papsNo || '');
+                              setOrderCustomsEntryNo(ord.customsEntryNo || '');
                               setOrderLineItems(ord.lineItems);
                               if (cust) {
                                 setFilteredOrderContracts(contractsForCustomer(cust));
@@ -9235,6 +9239,12 @@ export default function App() {
                       return pallets > 0 ? pallets : '—';
                     })()}</div></div>
                 </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
+                    <div className="text-sm font-mono">{editingInvoiceCard.papsNo || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
+                    <div className="text-sm font-mono">{editingInvoiceCard.customsEntryNo || '—'}</div></div>
+                </div>
 
                 {/* Line Items with contract-dependent details */}
                 <div className="border border-[#141414] overflow-hidden">
@@ -9631,6 +9641,8 @@ export default function App() {
                         setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
                         setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
+                        setOrderPapsNo(viewingOrderCard.papsNo || '');
+                        setOrderCustomsEntryNo(viewingOrderCard.customsEntryNo || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
                         if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
                         setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
@@ -15211,6 +15223,8 @@ export default function App() {
                   setOrderShippingTerms((ord.shippingTerms as any) || '');
                   setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
+                  setOrderPapsNo(ord.papsNo || '');
+                  setOrderCustomsEntryNo(ord.customsEntryNo || '');
                   setOrderLineItems(ord.lineItems);
                   if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
                   setEditingOrder(ord);
@@ -15309,7 +15323,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setOrderPapsNo(''); setOrderCustomsEntryNo(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -15439,6 +15453,33 @@ export default function App() {
                       />
                     </div>
                   </div>
+                  {/* Customs references — only surfaced when editing an existing
+                      order (PAPS / entry numbers are assigned after the order is
+                      created and the shipment clears the border). */}
+                  {editingOrder && (
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">PAPS No.</label>
+                        <input
+                          type="text"
+                          value={orderPapsNo}
+                          onChange={(e) => setOrderPapsNo(e.target.value)}
+                          placeholder="PAPS number"
+                          className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Customs Entry No.</label>
+                        <input
+                          type="text"
+                          value={orderCustomsEntryNo}
+                          onChange={(e) => setOrderCustomsEntryNo(e.target.value)}
+                          placeholder="Customs entry number"
+                          className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Line Items & Contract Details — table layout: one header row,
@@ -15702,6 +15743,8 @@ export default function App() {
                           shipToLocationId: orderShipToId || undefined,
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
+                          papsNo: orderPapsNo.trim() || undefined,
+                          customsEntryNo: orderCustomsEntryNo.trim() || undefined,
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
                       } else {
@@ -15740,6 +15783,8 @@ export default function App() {
                       setOrderShippingTerms('');
                       setOrderLocation('');
                       setOrderShipToId('');
+                      setOrderPapsNo('');
+                      setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
                     }}
                     className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
@@ -15811,6 +15856,8 @@ export default function App() {
                       setOrderShippingTerms('');
                       setOrderLocation('');
                       setOrderShipToId('');
+                      setOrderPapsNo('');
+                      setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"

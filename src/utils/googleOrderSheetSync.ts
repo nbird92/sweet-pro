@@ -81,6 +81,10 @@ export interface ParsedOrderRow {
   transferNumber: string;
   /** Lot code (used when building Transfers). */
   lotCode: string;
+  /** PAPS number — cross-border customs pre-arrival ref (orders + invoices). */
+  papsNo: string;
+  /** Customs entry number (orders + invoices). */
+  customsEntryNo: string;
 }
 
 export interface OrderSyncResult {
@@ -253,6 +257,8 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       toLocation: '',
       transferNumber: '',
       lotCode: '',
+      papsNo: '',
+      customsEntryNo: '',
     });
   }
   return out;
@@ -313,6 +319,8 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       toLocation: '',
       transferNumber: '',
       lotCode: lot, // Molasses lot # doubles as the transfer lot code
+      papsNo: '',
+      customsEntryNo: '',
     });
   }
   return out;
@@ -874,6 +882,10 @@ export interface ColumnMap {
   transferNumber?: number;
   /** Lot code — used by the transfer-sync path; written to Transfer.lotCode. */
   lotCode?: number;
+  /** PAPS number — cross-border customs pre-arrival ref (orders + invoices). */
+  papsNo?: number;
+  /** Customs entry number (orders + invoices). */
+  customsEntryNo?: number;
 }
 
 export interface ConfiguredTab {
@@ -984,6 +996,8 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     toLocation: find(h => h === 'to' || h === 'destination' || h === 'to location' || /^transfer to$|^ship to$/.test(h)),
     transferNumber: find(h => h === 'transfer' || h === 'transfer #' || h === 'transfer no' || h === 'transfer number' || h === 'transfer no.'),
     lotCode: find(h => h === 'lot' || h === 'lot #' || h === 'lot code' || h === 'lot no' || h === 'lot#'),
+    papsNo: find(h => h === 'paps' || h === 'paps #' || h === 'paps no' || h === 'paps no.' || h === 'paps number'),
+    customsEntryNo: find(h => /customs entry|entry no|entry number|entry #/.test(h) || h === 'customs entry' || h === 'customs no'),
   };
 }
 
@@ -1023,6 +1037,8 @@ export function parseConfiguredTab(
     const toRaw = cell(row, cm.toLocation);
     const transferNoRaw = cell(row, cm.transferNumber);
     const lotRaw = cell(row, cm.lotCode);
+    const papsRaw = cell(row, cm.papsNo);
+    const customsEntryRaw = cell(row, cm.customsEntryNo);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
@@ -1069,6 +1085,8 @@ export function parseConfiguredTab(
       toLocation: toRaw,
       transferNumber: transferNoRaw,
       lotCode: lotRaw,
+      papsNo: papsRaw,
+      customsEntryNo: customsEntryRaw,
     });
   }
   return out;
@@ -1229,6 +1247,8 @@ export function parsedRowsToOrdersConfigured(
         ...(carrierCanonical ? { carrier: carrierCanonical } : {}),
         ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
         ...(shipToLocationId ? { shipToLocationId } : {}),
+        ...(r.papsNo ? { papsNo: r.papsNo } : {}),
+        ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
       };
       result.newOrders.push(stripUndefined(newOrder));
       if (bolU) addedBOLs.add(bolU);
@@ -1339,6 +1359,8 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'bay', label: 'Bay / Dock (shipments)' },
   { key: 'appointmentTime', label: 'Appointment Time (shipments)' },
   { key: 'invoiceNumber', label: 'Invoice Number' },
+  { key: 'papsNo', label: 'PAPS No.' },
+  { key: 'customsEntryNo', label: 'Customs Entry No.' },
   { key: 'status', label: 'Status / Cancellation' },
 ];
 
@@ -1475,6 +1497,8 @@ export function parsedRowsToInvoicesConfigured(
         ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
         ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
         ...(lineItems ? { lineItems } : {}),
+        ...(r.papsNo ? { papsNo: r.papsNo } : {}),
+        ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
       };
 
       result.newInvoices.push(stripUndefined(newInvoice));
