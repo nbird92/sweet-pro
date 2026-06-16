@@ -573,7 +573,7 @@ export default function App() {
           const deliveryDate = normalizeDate(get(entry, 'deliverydate', 'delivery'));
 
           const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
-          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
           const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
           const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'price', 'pricemt') || '0') || 0;
           const amount = pricePerMt > 0 ? pricePerMt * qty : (parseFloat(get(entry, 'amount', 'total', 'totalamount') || '0') || 0);
@@ -740,7 +740,7 @@ export default function App() {
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
-          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
           const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
           const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
@@ -859,7 +859,11 @@ export default function App() {
   };
 
   // Normalize CSV header to a canonical key: strip spaces, special chars, lowercase
-  const normalizeHeader = (h: string): string => h.trim().toLowerCase().replace(/[\s_\-\.#]+/g, '');
+  // Normalize a CSV header to an alphanumeric key for fuzzy matching. Strips
+  // ALL non-alphanumeric characters (spaces, _ - . # /, parentheses, etc.) so
+  // headers like "Price/MT" and "Qty (MT)" collapse to "pricemt" / "qtymt" and
+  // match the lookup keys instead of being dropped.
+  const normalizeHeader = (h: string): string => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 
   const handleReplaceInvoiceCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -928,7 +932,7 @@ export default function App() {
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
           const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue', 'datedue'));
-          const qty = parseFloat(get(entry, 'qty', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
+          const qty = parseFloat(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight') || '0') || 0;
           const pricePerMt = parseFloat(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton') || '0') || 0;
           const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseFloat(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value') || '0') || 0);
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
@@ -5374,10 +5378,11 @@ export default function App() {
           { header: 'From', key: 'from' },
           { header: 'To', key: 'to' },
           { header: 'Product', key: 'product' },
+          { header: 'PO No.', key: 'po' },
           { header: 'Lot Code', key: 'lotCode' },
           { header: 'Amount (MT)', key: 'amount', format: 'number' },
           { header: 'Carrier', key: 'carrier' },
-          { header: 'Ship Date', key: 'shipmentDate' },
+          { header: 'Shipment Date', key: 'shipmentDate' },
           { header: 'Arrival Date', key: 'arrivalDate' },
           { header: 'Status', key: 'status' },
         ],
@@ -5425,6 +5430,7 @@ export default function App() {
               { key: 'from', label: 'From' },
               { key: 'to', label: 'To' },
               { key: 'product', label: 'Product', bold: true },
+              { key: 'po', label: 'PO No.', render: (t) => t.po || '—' },
               { key: 'lotCode', label: 'Lot Code', mono: true, render: (t) => t.lotCode || '—' },
               { key: 'amount', label: 'Amount (MT)', align: 'right', bold: true },
               { key: 'carrier', label: 'Carrier' },
@@ -5436,7 +5442,7 @@ export default function App() {
                   <span className="text-[10px] opacity-40">Direct</span>
                 ),
               },
-              { key: 'shipmentDate', label: 'Ship Date' },
+              { key: 'shipmentDate', label: 'Shipment Date' },
               { key: 'arrivalDate', label: 'Arrival Date' },
               {
                 key: 'status', label: 'Status', sortValue: (t) => t.status,
@@ -6085,13 +6091,13 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="BOL Number" sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Customer" sortKey="customer" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Ship To" sortKey="shipToName" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="PO #" sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="PO No." sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Delivery Date" sortKey="deliveryDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Carrier" sortKey="carrier" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -16814,6 +16820,7 @@ export default function App() {
                             <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">To</span><span className="font-bold">{transfer.to}</span></div>
                             <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Product</span><span className="font-bold">{transfer.product}</span></div>
                             <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Amount</span><span className="font-bold">{transfer.amount} MT</span></div>
+                            <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">PO No.</span><span className="font-bold font-mono">{transfer.po || '—'}</span></div>
                             <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Lot Code</span><span className="font-bold font-mono">{transfer.lotCode || '—'}</span></div>
                             <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Carrier</span><span className="font-bold">{transfer.carrier}</span></div>
                           </div>
@@ -17110,6 +17117,7 @@ export default function App() {
                     from: data.get('from') as string,
                     to: data.get('to') as string,
                     product: data.get('product') as string,
+                    po: (data.get('po') as string) || undefined,
                     lotCode: data.get('lotCode') as string || '',
                     amount: newTransferLegs.length > 0 ? totalLegAmount : (parseFloat(data.get('amount') as string) || 0),
                     carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : (data.get('carrier') as string),
@@ -17161,6 +17169,10 @@ export default function App() {
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
                       <input name="lotCode" type="text" placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
+                      <input name="po" type="text" placeholder="e.g. PO-12345" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
                     {newTransferLegs.length === 0 && (
                       <div className="space-y-1">
@@ -17329,6 +17341,10 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
                     <input type="text" value={editingTransfer.lotCode || ''} onChange={(e) => setEditingTransfer({...editingTransfer, lotCode: e.target.value})} placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
+                    <input type="text" value={editingTransfer.po || ''} onChange={(e) => setEditingTransfer({...editingTransfer, po: e.target.value})} placeholder="e.g. PO-12345" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
                   {!hasLegs && (
                     <div className="space-y-1">

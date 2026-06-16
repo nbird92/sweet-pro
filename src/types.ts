@@ -318,6 +318,7 @@ export interface Transfer {
   carrier: string;
   product: string;
   amount: number;
+  po?: string;
   lotCode?: string;
   notes?: string;
   status: string;
