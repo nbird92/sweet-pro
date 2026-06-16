@@ -3742,19 +3742,20 @@ export default function App() {
     maxColor: qa?.maxColor ?? sku?.maxColor,
   });
 
+  // True when a product value is already a compact shortform code — "MOL" or a
+  // "<CODE><digits>" code with an optional "<num>kg " prefix (e.g. "GC45",
+  // "GCC45", "20kg GC45"). Such values are preserved EXACTLY as entered /
+  // imported rather than re-resolved to a catalog product (which would re-render
+  // the canonical, weight-prefixed form). So an imported order/invoice product
+  // "GC45" stays "GC45" unless the source literally said "20kg GC45".
+  const isShortformCode = (name: string): boolean =>
+    name === 'MOL' || /^(\d+(\.\d+)?kg\s+)?[A-Z]{2,6}\d+$/.test(name);
+
   // Compute the shortform code for a product. Uses user-defined naming-formula rules
   // first, then falls back to the legacy hardcoded formula if no rule resolves.
   const productToShortform = (productName: string | undefined): string => {
     if (!productName) return '';
-    // If it's already a shortform-shaped value, return it EXACTLY as entered /
-    // imported — don't re-resolve it to a catalog product (which would re-render
-    // the canonical, weight-prefixed form). This covers "MOL" and any compact
-    // "<CODE><digits>" code such as "GC45" or "GCC45", with or without a leading
-    // "<num>kg " prefix — so an imported invoice product "GC45" stays "GC45"
-    // unless the import literally said "20kg GC45".
-    const looksLikeShortform = productName === 'MOL'
-      || /^(\d+(\.\d+)?kg\s+)?[A-Z]{2,6}\d+$/.test(productName);
-    if (looksLikeShortform) return productName;
+    if (isShortformCode(productName)) return productName;
 
     const { sku, qa } = resolveProduct(productName);
     if (!sku) return productName; // unmatched — caller can highlight via productMatchesCurrentSku
@@ -3848,6 +3849,9 @@ export default function App() {
   // the user selected, instead of the raw stored name / shortform.
   const productNameToDisplay = (productName: string | undefined): string => {
     if (!productName) return '';
+    // Already a shortform code (e.g. an imported "GC45") — keep it as-is rather
+    // than expanding it to the canonical descriptive name. See isShortformCode.
+    if (isShortformCode(productName)) return productName;
     const { sku, qa } = resolveProduct(productName);
     if (!sku && !qa) return productName;
     const product = buildProductAttrs(sku, qa);
