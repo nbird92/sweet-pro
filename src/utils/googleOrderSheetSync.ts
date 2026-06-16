@@ -18,7 +18,7 @@
 // The sheet must be either "Anyone with link can view" or published to the
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
-import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment } from '../types';
+import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer } from '../types';
 import { parseCSV } from './googleSheetsSync';
 
 // Workbook containing the order tabs to import.
@@ -73,6 +73,14 @@ export interface ParsedOrderRow {
   bay: string;
   /** Appointment time slot (used when building Shipments). */
   appointmentTime: string;
+  /** Origin location (used when building Transfers). */
+  fromLocation: string;
+  /** Destination location (used when building Transfers). */
+  toLocation: string;
+  /** Transfer number from the sheet (used when building Transfers). */
+  transferNumber: string;
+  /** Lot code (used when building Transfers). */
+  lotCode: string;
 }
 
 export interface OrderSyncResult {
@@ -241,6 +249,10 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       pricePerMt: (() => { const n = parseFloat(priceRaw); return Number.isFinite(n) ? n : 0; })(),
       bay: '',
       appointmentTime: '',
+      fromLocation: '',
+      toLocation: '',
+      transferNumber: '',
+      lotCode: '',
     });
   }
   return out;
@@ -297,6 +309,10 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       pricePerMt: 0,
       bay: '',
       appointmentTime: '',
+      fromLocation: '',
+      toLocation: '',
+      transferNumber: '',
+      lotCode: lot, // Molasses lot # doubles as the transfer lot code
     });
   }
   return out;
@@ -850,6 +866,14 @@ export interface ColumnMap {
   bay?: number;
   /** Appointment time — used by the shipment-sync path; written to Shipment.time. */
   appointmentTime?: number;
+  /** Origin location — used by the transfer-sync path; written to Transfer.from. */
+  fromLocation?: number;
+  /** Destination location — used by the transfer-sync path; written to Transfer.to. */
+  toLocation?: number;
+  /** Transfer number — used by the transfer-sync path; written to Transfer.transferNumber. */
+  transferNumber?: number;
+  /** Lot code — used by the transfer-sync path; written to Transfer.lotCode. */
+  lotCode?: number;
 }
 
 export interface ConfiguredTab {
@@ -956,6 +980,10 @@ export function autoDetectColumns(headers: string[]): ColumnMap {
     pricePerMt: find(h => /^price\s*(per\s*)?mt$|^price\/mt$|^unit price$/.test(h)),
     bay: find(h => h === 'bay' || h === 'dock' || h === 'bay #' || h === 'dock #'),
     appointmentTime: find(h => h === 'time' || h === 'appointment' || h === 'appt time' || h === 'appointment time'),
+    fromLocation: find(h => h === 'from' || h === 'origin' || h === 'from location' || /^transfer from$|^ship from$/.test(h)),
+    toLocation: find(h => h === 'to' || h === 'destination' || h === 'to location' || /^transfer to$|^ship to$/.test(h)),
+    transferNumber: find(h => h === 'transfer' || h === 'transfer #' || h === 'transfer no' || h === 'transfer number' || h === 'transfer no.'),
+    lotCode: find(h => h === 'lot' || h === 'lot #' || h === 'lot code' || h === 'lot no' || h === 'lot#'),
   };
 }
 
@@ -991,10 +1019,15 @@ export function parseConfiguredTab(
     const priceRawC = cell(row, cm.pricePerMt);
     const bayRaw = cell(row, cm.bay);
     const apptTimeRaw = cell(row, cm.appointmentTime);
+    const fromRaw = cell(row, cm.fromLocation);
+    const toRaw = cell(row, cm.toLocation);
+    const transferNoRaw = cell(row, cm.transferNumber);
+    const lotRaw = cell(row, cm.lotCode);
     let status = cell(row, cm.status);
 
-    // Empty / placeholder row — skip
-    if (!customer && !bol && !po && !product) continue;
+    // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
+    // so from/to/transfer-number presence also counts as a non-empty row.
+    if (!customer && !bol && !po && !product && !fromRaw && !toRaw && !transferNoRaw) continue;
     if (bol.toLowerCase() === 'bl number') continue;
     if (skipPrefixes.some(p => po.toUpperCase().startsWith(p))) continue;
 
@@ -1032,6 +1065,10 @@ export function parseConfiguredTab(
       pricePerMt: (() => { const n = parseFloat(priceRawC); return Number.isFinite(n) ? n : 0; })(),
       bay: bayRaw,
       appointmentTime: apptTimeRaw,
+      fromLocation: fromRaw,
+      toLocation: toRaw,
+      transferNumber: transferNoRaw,
+      lotCode: lotRaw,
     });
   }
   return out;
@@ -1662,3 +1699,189 @@ export const DEFAULT_SHIPMENT_IMPORT_CONFIG: SheetImportConfig = {
     },
   ],
 };
+
+/* ====================================================================== */
+/* Transfer sync — same fetch + parse pipeline, builds Transfer records.  */
+/* Tabular sheet layout: one inventory transfer per row. Unlike orders,   */
+/* transfers move between two of OUR locations (from → to) rather than to */
+/* a customer, so the column map uses From/To instead of Customer/Ship-To.*/
+/* ====================================================================== */
+
+export interface TransferSyncResult {
+  newTransfers: Transfer[];
+  skipped: Array<{ tab: string; transferNumber: string; reason: string }>;
+  errors: Array<{ tab: string; rowIdx: number; message: string }>;
+}
+
+export function parsedRowsToTransfersConfigured(
+  parsed: ParsedOrderRow[],
+  configured: ConfiguredTab[],
+  existingTransfers: Transfer[],
+  skus: SKU[],
+  qaProducts: QAProduct[],
+  carriers: Carrier[],
+): TransferSyncResult {
+  const tabByName = new Map<string, ConfiguredTab>();
+  for (const t of configured) tabByName.set(t.tabName, t);
+
+  const result: TransferSyncResult = { newTransfers: [], skipped: [], errors: [] };
+
+  // Dedup: rows that carry a transfer number are keyed on it; rows without one
+  // fall back to a composite of from|to|product|date|po so re-running the sync
+  // doesn't duplicate the same movement.
+  const existingNums = new Set(
+    existingTransfers.map(t => (t.transferNumber || '').trim().toUpperCase()).filter(Boolean),
+  );
+  const addedNums = new Set<string>();
+  const compositeKey = (t: { from: string; to: string; product: string; date: string; po: string }) =>
+    `${t.from.toUpperCase()}|${t.to.toUpperCase()}|${t.product.toUpperCase()}|${t.date}|${t.po.toUpperCase()}`;
+  const existingComposites = new Set(
+    existingTransfers.map(t => compositeKey({
+      from: t.from || '', to: t.to || '', product: t.product || '', date: t.shipmentDate || '', po: t.po || '',
+    })),
+  );
+  const addedComposites = new Set<string>();
+
+  // Sequential fallback number for rows that don't supply one. Continues past
+  // the existing transfer count so generated numbers don't collide.
+  let genSeq = existingTransfers.length + 1;
+  const year = new Date().getFullYear();
+
+  for (const r of parsed) {
+    try {
+      if (isCancelledStatus(r.status)) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Row marked cancelled' });
+        continue;
+      }
+      const from = (r.fromLocation || '').trim();
+      const to = (r.toLocation || '').trim();
+      if (!from || !to) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Row is missing a From or To location' });
+        continue;
+      }
+      if (!r.shipmentDate) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Row has no shipment date' });
+        continue;
+      }
+      if (!Number.isFinite(r.quantityMT) || r.quantityMT <= 0) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Amount is blank or not a positive number' });
+        continue;
+      }
+      if (r.quantityMT > MAX_ORDER_MT) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: `Amount ${r.quantityMT} MT exceeds the ${MAX_ORDER_MT} MT maximum` });
+        continue;
+      }
+
+      const numU = (r.transferNumber || '').trim().toUpperCase();
+      if (numU && (existingNums.has(numU) || addedNums.has(numU))) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Transfer number already exists' });
+        continue;
+      }
+
+      const explicit = tabByName.get(r.tab);
+      const expectedFormat = explicit?.expectedFormat;
+      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+
+      const comp = compositeKey({ from, to, product: productRefs.productName, date: r.shipmentDate, po: r.poNumber });
+      if (!numU && (existingComposites.has(comp) || addedComposites.has(comp))) {
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'An identical transfer already exists (same from/to/product/date/PO)' });
+        continue;
+      }
+
+      const transferNumber = numU
+        ? r.transferNumber.trim()
+        : `TRF-${year}-${String(genSeq++).padStart(3, '0')}`;
+
+      const newTransfer: Transfer = {
+        id: `TRF-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        transferNumber,
+        from,
+        to,
+        shipmentDate: r.shipmentDate,
+        arrivalDate: r.deliveryDate || r.shipmentDate,
+        carrier: carrierCanonical || '',
+        product: productRefs.productDisplayName || productRefs.productName,
+        amount: r.quantityMT,
+        status: 'Pending',
+        ...(r.poNumber ? { po: r.poNumber } : {}),
+        ...(r.lotCode ? { lotCode: r.lotCode } : {}),
+      };
+
+      result.newTransfers.push(stripUndefined(newTransfer));
+      if (numU) addedNums.add(numU);
+      addedComposites.add(comp);
+    } catch (err) {
+      result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Run a transfer sync against any sheet/config. Same fetch + parse path as
+ *  orders / invoices / shipments; the difference is the row-to-record build. */
+export async function syncTransfersFromConfig(
+  config: SheetImportConfig,
+  ctx: {
+    existingTransfers: Transfer[];
+    skus: SKU[];
+    qaProducts: QAProduct[];
+    carriers: Carrier[];
+  },
+): Promise<TransferSyncResult> {
+  const allParsed: ParsedOrderRow[] = [];
+  const fetchErrors: TransferSyncResult['errors'] = [];
+
+  for (const tab of config.tabs) {
+    try {
+      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+      const rows = parseCSV(csv);
+      allParsed.push(...parseConfiguredTab(rows, tab));
+    } catch (err) {
+      fetchErrors.push({
+        tab: tab.tabName,
+        rowIdx: 0,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const result = parsedRowsToTransfersConfigured(
+    allParsed, config.tabs,
+    ctx.existingTransfers, ctx.skus, ctx.qaProducts, ctx.carriers,
+  );
+  result.errors.unshift(...fetchErrors);
+  return result;
+}
+
+/** Default transfer-sync preset — tabular layout starter. Users clone it,
+ *  point at their sheet, then "Fetch Headers" + "Auto-detect Columns". */
+export const DEFAULT_TRANSFER_IMPORT_CONFIG: SheetImportConfig = {
+  name: 'Transfers (tabular template)',
+  sheetId: '',
+  tabs: [
+    {
+      tabName: 'Sheet1',
+      columns: {
+        // Indices left blank — map them in the configurator from a real sheet.
+      },
+    },
+  ],
+};
+
+/** Canonical field list for the transfer column-mapping UI (label + key).
+ *  Reuses generic ColumnMap keys (product, carrier, quantityMT, etc.) plus the
+ *  transfer-specific fromLocation / toLocation / transferNumber / lotCode. */
+export const TRANSFER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required?: boolean }> = [
+  { key: 'transferNumber', label: 'Transfer Number' },
+  { key: 'fromLocation', label: 'From (origin)', required: true },
+  { key: 'toLocation', label: 'To (destination)', required: true },
+  { key: 'product', label: 'Product' },
+  { key: 'quantityMT', label: 'Amount (MT)', required: true },
+  { key: 'carrier', label: 'Carrier' },
+  { key: 'shipmentDate', label: 'Shipment Date', required: true },
+  { key: 'deliveryDate', label: 'Arrival Date' },
+  { key: 'poNumber', label: 'PO Number' },
+  { key: 'lotCode', label: 'Lot Code' },
+  { key: 'status', label: 'Status / Cancellation' },
+];

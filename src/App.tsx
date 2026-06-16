@@ -83,6 +83,7 @@ import {
   syncOrdersFromConfig,
   syncInvoicesFromConfig,
   syncShipmentsFromConfig,
+  syncTransfersFromConfig,
   fetchTabPreview,
   extractSheetId,
   autoDetectColumns,
@@ -90,10 +91,13 @@ import {
   DEFAULT_ORDER_IMPORT_CONFIG,
   DEFAULT_INVOICE_IMPORT_CONFIG,
   DEFAULT_SHIPMENT_IMPORT_CONFIG,
+  DEFAULT_TRANSFER_IMPORT_CONFIG,
   ORDER_FIELDS,
+  TRANSFER_FIELDS,
   type OrderSyncResult,
   type InvoiceSyncResult,
   type ShipmentSyncResult,
+  type TransferSyncResult,
   type SheetImportConfig,
   type ConfiguredTab,
   type ColumnMap,
@@ -3355,9 +3359,9 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
-  // Configurable sync UI — same modal serves Orders, Invoices, and Shipments.
+  // Configurable sync UI — same modal serves Orders, Invoices, Shipments, and Transfers.
   // syncMode tracks which mode the modal is in; null means closed.
-  type SyncMode = 'orders' | 'invoices' | 'shipments';
+  type SyncMode = 'orders' | 'invoices' | 'shipments' | 'transfers';
   const [syncMode, setSyncMode] = useState<SyncMode | null>(null);
   const isConfiguringOrderSync = syncMode !== null;
   const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
@@ -3387,6 +3391,15 @@ export default function App() {
   const [shipmentSyncPresets, setShipmentSyncPresets] = useState<SheetImportConfig[]>(() => {
     try {
       const raw = localStorage.getItem('shipmentImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
+  // Transfer-sync state (separate preset store from orders / invoices / shipments)
+  const [isSyncingTransferSheet, setIsSyncingTransferSheet] = useState(false);
+  const [transferSyncPreview, setTransferSyncPreview] = useState<TransferSyncResult | null>(null);
+  const [transferSyncPresets, setTransferSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('transferImportPresets');
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
@@ -5411,6 +5424,24 @@ export default function App() {
             exportSheets={transferExportSheets}
             exportFileName="Transfers"
           >
+            <button
+              onClick={() => {
+                // Open the configurable sheet sync in transfer mode. Default to
+                // the user's saved transfer preset, else the built-in template.
+                const preset = transferSyncPresets[0] || DEFAULT_TRANSFER_IMPORT_CONFIG;
+                setOrderSyncConfig(preset);
+                setOrderSyncUrl(preset.sheetId ? `https://docs.google.com/spreadsheets/d/${preset.sheetId}/` : '');
+                setOrderSyncEditingTabIdx(null);
+                setOrderSyncTabHeaders(null);
+                setOrderSyncTabSample([]);
+                setSyncMode('transfers');
+              }}
+              disabled={isSyncingTransferSheet}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              title="Configure a Google Sheet source and column mapping, then pull new transfers for review."
+            >
+              <FileText size={12} /> {isSyncingTransferSheet ? 'Syncing…' : 'Sync Transfers'}
+            </button>
             <button
               onClick={() => {
                 setEditingTransfer(null);
@@ -11084,23 +11115,31 @@ export default function App() {
           const presetStorageKey =
             syncMode === 'invoices' ? 'invoiceImportPresets'
             : syncMode === 'shipments' ? 'shipmentImportPresets'
+            : syncMode === 'transfers' ? 'transferImportPresets'
             : 'orderImportPresets';
           const modePresets =
             syncMode === 'invoices' ? invoiceSyncPresets
             : syncMode === 'shipments' ? shipmentSyncPresets
+            : syncMode === 'transfers' ? transferSyncPresets
             : orderSyncPresets;
           const setModePresets =
             syncMode === 'invoices' ? setInvoiceSyncPresets
             : syncMode === 'shipments' ? setShipmentSyncPresets
+            : syncMode === 'transfers' ? setTransferSyncPresets
             : setOrderSyncPresets;
           const modeDefaultConfig =
             syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG
             : syncMode === 'shipments' ? DEFAULT_SHIPMENT_IMPORT_CONFIG
+            : syncMode === 'transfers' ? DEFAULT_TRANSFER_IMPORT_CONFIG
             : DEFAULT_ORDER_IMPORT_CONFIG;
           const modeDefaultName =
             syncMode === 'invoices' ? 'Sucro Invoices Default'
             : syncMode === 'shipments' ? 'Shipments Template'
+            : syncMode === 'transfers' ? 'Transfers Template'
             : 'Sucro Default';
+          // Column-mapping field list is mode-specific: transfers map From/To
+          // and a Transfer Number instead of Customer/Ship-To/BOL.
+          const modeFields = syncMode === 'transfers' ? TRANSFER_FIELDS : ORDER_FIELDS;
           const savePreset = () => {
             const name = window.prompt('Preset name:', cfg.name || (syncMode === 'invoices' ? 'My Invoice Sheet' : 'My Order Sheet'));
             if (!name) return;
@@ -11164,6 +11203,20 @@ export default function App() {
               } finally {
                 setIsSyncingSheet(false);
               }
+            } else if (syncMode === 'transfers') {
+              setIsSyncingTransferSheet(true);
+              try {
+                const preview = await syncTransfersFromConfig(toRun, {
+                  existingTransfers: transfers,
+                  skus, qaProducts, carriers,
+                });
+                setTransferSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingTransferSheet(false);
+              }
             } else {
               setIsSyncingOrdersSheet(true);
               try {
@@ -11189,7 +11242,7 @@ export default function App() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : 'Order'} Sheet Sync</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : syncMode === 'transfers' ? 'Transfer' : 'Order'} Sheet Sync</h3>
                   <button onClick={() => setSyncMode(null)} className="hover:opacity-70"><X size={16} /></button>
                 </div>
 
@@ -11245,8 +11298,8 @@ export default function App() {
                     {cfg.tabs.length === 0 && <div className="text-[10px] opacity-50 italic">No tabs configured. Add one above.</div>}
                     {cfg.tabs.map((tab, idx) => {
                       const isEditing = orderSyncEditingTabIdx === idx;
-                      const mappedFields = ORDER_FIELDS.filter(f => tab.columns[f.key] !== undefined && tab.columns[f.key]! >= 0).length;
-                      const reqMissing = ORDER_FIELDS.filter(f => f.required && (tab.columns[f.key] === undefined || tab.columns[f.key]! < 0)).map(f => f.label);
+                      const mappedFields = modeFields.filter(f => tab.columns[f.key] !== undefined && tab.columns[f.key]! >= 0).length;
+                      const reqMissing = modeFields.filter(f => f.required && (tab.columns[f.key] === undefined || tab.columns[f.key]! < 0)).map(f => f.label);
                       return (
                         <div key={idx} className={`border ${isEditing ? 'border-blue-500' : 'border-[#141414]/30'} bg-[#F5F5F5]`}>
                           <div className="flex items-center gap-2 p-3">
@@ -11291,7 +11344,7 @@ export default function App() {
                                 <option value={tab.defaultLocation}>{tab.defaultLocation} (inactive)</option>
                               )}
                             </select>
-                            <span className="text-[10px] opacity-60 font-mono whitespace-nowrap">{mappedFields}/{ORDER_FIELDS.length} mapped</span>
+                            <span className="text-[10px] opacity-60 font-mono whitespace-nowrap">{mappedFields}/{modeFields.length} mapped</span>
                             <button onClick={() => { setOrderSyncEditingTabIdx(isEditing ? null : idx); setOrderSyncTabHeaders(null); setOrderSyncTabSample([]); }} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase bg-white hover:bg-[#E4E3E0]">{isEditing ? 'Done' : 'Map'}</button>
                             <button onClick={() => removeTab(idx)} className="p-1.5 border border-[#141414] hover:bg-red-100 text-red-700" title="Remove tab"><X size={12} /></button>
                           </div>
@@ -11322,7 +11375,7 @@ export default function App() {
                                     </table>
                                   </div>
                                   <div className="grid grid-cols-2 gap-3">
-                                    {ORDER_FIELDS.map(field => (
+                                    {modeFields.map(field => (
                                       <div key={field.key} className="space-y-1">
                                         <label className="text-[10px] uppercase font-bold opacity-60">{field.label}{field.required && <span className="text-red-700 ml-1">*</span>}</label>
                                         <select
@@ -11370,7 +11423,7 @@ export default function App() {
                   <button onClick={savePreset} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Save Preset</button>
                   <div className="flex gap-2">
                     <button onClick={() => setSyncMode(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
-                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet) ? 'Fetching…' : 'Preview Import →'}</button>
+                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet) ? 'Fetching…' : 'Preview Import →'}</button>
                   </div>
                 </div>
               </motion.div>
@@ -11801,6 +11854,131 @@ export default function App() {
                   className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
                 >
                   Import {orderSyncPreview.newOrders.length} Orders
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Transfer Sheet Sync — Preview / Confirm modal */}
+        {transferSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setTransferSyncPreview(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><ArrowRightLeft size={14} /> Transfer Sync Preview</h3>
+                <button onClick={() => setTransferSyncPreview(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="border border-emerald-500/40 bg-emerald-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">New Transfers</div>
+                    <div className="text-2xl font-bold">{transferSyncPreview.newTransfers.length}</div>
+                  </div>
+                  <div className="border border-amber-500/40 bg-amber-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Skipped</div>
+                    <div className="text-2xl font-bold">{transferSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="border border-red-500/40 bg-red-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Errors</div>
+                    <div className="text-2xl font-bold">{transferSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {/* New transfers table */}
+                {transferSyncPreview.newTransfers.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Transfers ({transferSyncPreview.newTransfers.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Transfer No.</th>
+                            <th className="p-2 text-left font-bold">From</th>
+                            <th className="p-2 text-left font-bold">To</th>
+                            <th className="p-2 text-left font-bold">Product</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-right font-bold">Amount (MT)</th>
+                            <th className="p-2 text-left font-bold">Carrier</th>
+                            <th className="p-2 text-left font-bold">Ship Date</th>
+                            <th className="p-2 text-left font-bold">Arrival</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {transferSyncPreview.newTransfers.map(t => (
+                            <tr key={t.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{t.transferNumber}</td>
+                              <td className="p-2">{t.from}</td>
+                              <td className="p-2">{t.to}</td>
+                              <td className="p-2">{t.product}</td>
+                              <td className="p-2 font-mono">{t.po || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(t.amount || 0).toFixed(3)}</td>
+                              <td className="p-2">{t.carrier || '—'}</td>
+                              <td className="p-2">{t.shipmentDate}</td>
+                              <td className="p-2">{t.arrivalDate || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Skipped */}
+                {transferSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({transferSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto text-xs">
+                      <table className="w-full">
+                        <thead className="bg-[#F5F5F5] sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Tab</th>
+                            <th className="p-2 text-left font-bold">Transfer #</th>
+                            <th className="p-2 text-left font-bold">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {transferSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2">{s.tab}</td>
+                              <td className="p-2 font-mono">{s.transferNumber || '—'}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Errors */}
+                {transferSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70 text-red-700">Errors ({transferSyncPreview.errors.length})</h4>
+                    <div className="border border-red-300 bg-red-50 max-h-32 overflow-y-auto p-2 text-xs">
+                      {transferSyncPreview.errors.map((e, i) => (
+                        <div key={i} className="py-1"><span className="font-mono">{e.tab}</span>{e.rowIdx ? `:row ${e.rowIdx}` : ''} — <span className="text-red-700">{e.message}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setTransferSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button
+                  disabled={transferSyncPreview.newTransfers.length === 0}
+                  onClick={() => {
+                    setTransfers([...transfers, ...transferSyncPreview.newTransfers]);
+                    setTransferSyncPreview(null);
+                  }}
+                  className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                >
+                  Import {transferSyncPreview.newTransfers.length} Transfer{transferSyncPreview.newTransfers.length === 1 ? '' : 's'}
                 </button>
               </div>
             </motion.div>
