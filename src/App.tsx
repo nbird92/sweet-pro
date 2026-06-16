@@ -3746,10 +3746,14 @@ export default function App() {
   // first, then falls back to the legacy hardcoded formula if no rule resolves.
   const productToShortform = (productName: string | undefined): string => {
     if (!productName) return '';
-    // If it's already a shortform-shaped value (e.g. "MOL", "GCC45", "20kg GCC45"), return as-is.
+    // If it's already a shortform-shaped value, return it EXACTLY as entered /
+    // imported — don't re-resolve it to a catalog product (which would re-render
+    // the canonical, weight-prefixed form). This covers "MOL" and any compact
+    // "<CODE><digits>" code such as "GC45" or "GCC45", with or without a leading
+    // "<num>kg " prefix — so an imported invoice product "GC45" stays "GC45"
+    // unless the import literally said "20kg GC45".
     const looksLikeShortform = productName === 'MOL'
-      || /^\d+(\.\d+)?kg\s+[A-Z]{2,4}[CB]\d+$/.test(productName)
-      || /^[A-Z]{2,4}[CB]\d+$/.test(productName);
+      || /^(\d+(\.\d+)?kg\s+)?[A-Z]{2,6}\d+$/.test(productName);
     if (looksLikeShortform) return productName;
 
     const { sku, qa } = resolveProduct(productName);
