@@ -9,7 +9,8 @@ import { extractPO, DEFAULT_MODEL, type UploadFile } from './_poExtract.js';
  *     hints?: { customers?, products?, contracts?, learned? } }
  * Response: { extractions: ExtractedPO[], errors: [{file,message}] }
  *
- * Env: ANTHROPIC_API_KEY (required), PO_EXTRACT_MODEL (optional),
+ * Env: GEMINI_API_KEY (required; GOOGLE_API_KEY also accepted),
+ *      PO_EXTRACT_MODEL (optional),
  *      EXTRACT_SHARED_SECRET (optional — when set, require Bearer auth).
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -22,9 +23,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured on the server.' });
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
   }
   const model = process.env.PO_EXTRACT_MODEL || DEFAULT_MODEL;
 

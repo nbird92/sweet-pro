@@ -11,20 +11,20 @@ import {
  * Scheduled PO inbox scan (Vercel Cron, every 15 min).
  *
  * Reads unread, attachment-bearing messages from the shared PO mailbox, runs
- * each attachment through Claude, and APPENDS the structured result to the
+ * each attachment through Gemini, and APPENDS the structured result to the
  * `incomingPoOrders` Firestore collection. The web app ingests that queue into
  * real Open orders on load (so cron writes never collide with the client's
  * whole-collection sync). Processed messages are marked read + labelled so they
  * are not picked up again.
  *
  * Required env:
- *   ANTHROPIC_API_KEY
+ *   GEMINI_API_KEY  (GOOGLE_API_KEY also accepted)
  *   PO_INBOX_ADDRESS                     mailbox to scan (impersonated)
  *   GOOGLE_SERVICE_ACCOUNT_EMAIL         service account w/ domain-wide delegation
  *   GOOGLE_PRIVATE_KEY                   (gmail.modify scope authorized in Admin)
  *   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
  * Optional env:
- *   PO_EXTRACT_MODEL  (default claude-sonnet-4-6)
+ *   PO_EXTRACT_MODEL  (default gemini-2.5-flash)
  *   PO_INBOX_QUERY    (default "is:unread has:attachment")
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
@@ -72,9 +72,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const inbox = process.env.PO_INBOX_ADDRESS;
-  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured.' });
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' });
   if (!inbox) return res.status(500).json({ error: 'PO_INBOX_ADDRESS not configured.' });
   const model = process.env.PO_EXTRACT_MODEL || DEFAULT_MODEL;
   const query = process.env.PO_INBOX_QUERY || 'is:unread has:attachment';

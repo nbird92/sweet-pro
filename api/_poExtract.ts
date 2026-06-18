@@ -1,14 +1,15 @@
 // Shared PO extraction core used by both the manual upload endpoint
 // (api/extract-po.ts) and the automated Gmail inbox scan (api/scan-po-inbox.ts).
 //
-// Calls Anthropic Claude with a forced tool call so the model returns a single
-// structured purchase-order object. PDFs and images are sent natively; Excel is
-// flattened to text via exceljs; csv/txt are sent as text.
+// Calls Google Gemini (via @google/genai) with a JSON response schema so the
+// model returns a single structured purchase-order object. PDFs and images are
+// sent natively as inline data; Excel is flattened to text via exceljs; csv/txt
+// are sent as text.
 
+import { GoogleGenAI, Type } from '@google/genai';
 import ExcelJS from 'exceljs';
 
-export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-export const DEFAULT_MODEL = 'claude-sonnet-4-6';
+export const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export interface UploadFile {
   name: string;
@@ -23,51 +24,48 @@ export interface ExtractHints {
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 
-export const PO_TOOL = {
-  name: 'record_purchase_order',
-  description: 'Record the structured fields extracted from a customer purchase order.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      poNumber: { type: 'string', description: 'The purchase order number exactly as printed.' },
-      customerName: { type: 'string', description: 'The BUYER that issued the PO (never Sucro Can).' },
-      customerNumber: { type: 'string', description: 'Customer/account number if present.' },
-      shipToName: { type: 'string' },
-      shipToAddress: { type: 'string' },
-      orderDate: { type: 'string', description: 'ISO YYYY-MM-DD' },
-      shipmentDate: { type: 'string', description: 'Requested ship/pickup date, ISO YYYY-MM-DD' },
-      deliveryDate: { type: 'string', description: 'Requested delivery/receipt date, ISO YYYY-MM-DD' },
-      currency: { type: 'string', description: 'ISO currency code, e.g. CAD or USD.' },
-      paymentTerms: { type: 'string' },
-      shippingTerms: { type: 'string', description: 'Incoterms / FOB / EXW / DAP / DDP / FCA, etc.' },
-      carrier: { type: 'string', description: 'Carrier or ship method (e.g. "Pick Up", "Prepaid").' },
-      contractNumber: { type: 'string', description: 'Contract / agreement number if referenced.' },
-      totalAmount: { type: 'number' },
-      notes: { type: 'string', description: 'Any special instructions worth surfacing.' },
-      confidence: { type: 'number', description: 'Overall extraction confidence 0..1.' },
-      lineItems: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            description: { type: 'string', description: 'Product description as written on the PO.' },
-            itemNumber: { type: 'string' },
-            quantity: { type: 'number', description: 'Quantity in the document unit.' },
-            unit: { type: 'string', description: 'Unit of measure (kg, lb, MT, each, ...).' },
-            quantityMt: { type: 'number', description: 'Quantity converted to metric tonnes.' },
-            unitPrice: { type: 'number', description: 'Raw unit price number.' },
-            priceBasis: { type: 'string', description: 'What the unit price is per (e.g. "per 100 lb").' },
-            pricePerMt: { type: 'number', description: 'Price normalized to $/MT when derivable.' },
-            amount: { type: 'number', description: 'Line extended/total price.' },
-            deliveryDate: { type: 'string', description: 'Per-line delivery date, ISO YYYY-MM-DD' },
-          },
-          required: ['description', 'quantity'],
+// Gemini structured-output schema (Type-based). Mirrors the fields the app maps.
+const PO_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    poNumber: { type: Type.STRING, description: 'The purchase order number exactly as printed.' },
+    customerName: { type: Type.STRING, description: 'The BUYER that issued the PO (never Sucro Can).' },
+    customerNumber: { type: Type.STRING, description: 'Customer/account number if present.' },
+    shipToName: { type: Type.STRING },
+    shipToAddress: { type: Type.STRING },
+    orderDate: { type: Type.STRING, description: 'ISO YYYY-MM-DD' },
+    shipmentDate: { type: Type.STRING, description: 'Requested ship/pickup date, ISO YYYY-MM-DD' },
+    deliveryDate: { type: Type.STRING, description: 'Requested delivery/receipt date, ISO YYYY-MM-DD' },
+    currency: { type: Type.STRING, description: 'ISO currency code, e.g. CAD or USD.' },
+    paymentTerms: { type: Type.STRING },
+    shippingTerms: { type: Type.STRING, description: 'Incoterms / FOB / EXW / DAP / DDP / FCA, etc.' },
+    carrier: { type: Type.STRING, description: 'Carrier or ship method (e.g. "Pick Up", "Prepaid").' },
+    contractNumber: { type: Type.STRING, description: 'Contract / agreement number if referenced.' },
+    totalAmount: { type: Type.NUMBER },
+    notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
+    confidence: { type: Type.NUMBER, description: 'Overall extraction confidence 0..1.' },
+    lineItems: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          description: { type: Type.STRING, description: 'Product description as written on the PO.' },
+          itemNumber: { type: Type.STRING },
+          quantity: { type: Type.NUMBER, description: 'Quantity in the document unit.' },
+          unit: { type: Type.STRING, description: 'Unit of measure (kg, lb, MT, each, ...).' },
+          quantityMt: { type: Type.NUMBER, description: 'Quantity converted to metric tonnes.' },
+          unitPrice: { type: Type.NUMBER, description: 'Raw unit price number.' },
+          priceBasis: { type: Type.STRING, description: 'What the unit price is per (e.g. "per 100 lb").' },
+          pricePerMt: { type: Type.NUMBER, description: 'Price normalized to $/MT when derivable.' },
+          amount: { type: Type.NUMBER, description: 'Line extended/total price.' },
+          deliveryDate: { type: Type.STRING, description: 'Per-line delivery date, ISO YYYY-MM-DD' },
         },
+        required: ['description', 'quantity'],
       },
     },
-    required: ['poNumber', 'customerName', 'lineItems'],
   },
-} as const;
+  required: ['poNumber', 'customerName', 'lineItems'],
+};
 
 export const SYSTEM_PROMPT = `You extract structured data from a customer Purchase Order (PO) received by Sucro Can, a sugar manufacturer and supplier.
 
@@ -80,7 +78,7 @@ Extraction rules:
 - Pricing: provide pricePerMt whenever derivable. Bases vary: "per 100 lb", "per cwt", "per kg", "per lb", "per MT". unitPrice is the raw number; priceBasis is its unit. Convert to $/MT in pricePerMt.
 - Dates must be ISO YYYY-MM-DD.
 - Normalize customer / product / contract names to the provided known lists ONLY when there is an obvious match; otherwise return the document's text verbatim.
-- Omit any field you cannot find. Never invent values. Set confidence to reflect how clean the document was.`;
+- Omit (leave empty) any field you cannot find. Never invent values. Set confidence to reflect how clean the document was.`;
 
 function mediaTypeFor(mime: string): string {
   const m = (mime || '').toLowerCase();
@@ -111,22 +109,20 @@ async function xlsxToText(buf: Buffer): Promise<string> {
   return out.join('\n');
 }
 
-async function contentForFile(file: UploadFile): Promise<any[]> {
+/** Build the Gemini content parts for one uploaded file. */
+async function partsForFile(file: UploadFile): Promise<any[]> {
   const mime = mediaTypeFor(file.mimeType);
-  const label = { type: 'text', text: `--- Document: ${file.name} ---` };
-  if (mime === 'application/pdf') {
-    return [label, { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.dataBase64 } }];
-  }
-  if (mime.startsWith('image/')) {
-    return [label, { type: 'image', source: { type: 'base64', media_type: mime, data: file.dataBase64 } }];
+  const label = { text: `--- Document: ${file.name} ---` };
+  if (mime === 'application/pdf' || mime.startsWith('image/')) {
+    return [label, { inlineData: { mimeType: mime, data: file.dataBase64 } }];
   }
   const buf = Buffer.from(file.dataBase64, 'base64');
   const name = (file.name || '').toLowerCase();
   if (name.endsWith('.xlsx') || name.endsWith('.xls') || mime.includes('spreadsheet') || mime.includes('excel')) {
     const text = await xlsxToText(buf);
-    return [label, { type: 'text', text: `Spreadsheet contents (tab-separated):\n${text}` }];
+    return [label, { text: `Spreadsheet contents (tab-separated):\n${text}` }];
   }
-  return [label, { type: 'text', text: `File contents:\n${buf.toString('utf8')}` }];
+  return [label, { text: `File contents:\n${buf.toString('utf8')}` }];
 }
 
 function hintsText(hints?: ExtractHints): string {
@@ -142,7 +138,7 @@ function hintsText(hints?: ExtractHints): string {
   return parts.join('\n\n');
 }
 
-/** Returns the closest media-type a file should be treated as (for callers). */
+/** Returns true when an attachment is a file type we can extract from. */
 export function isSupportedAttachment(filename: string, mimeType: string): boolean {
   const n = (filename || '').toLowerCase();
   const m = (mimeType || '').toLowerCase();
@@ -154,39 +150,39 @@ export function isSupportedAttachment(filename: string, mimeType: string): boole
   );
 }
 
-/** Extract one PO document via Claude. Returns the tool input object (with sourceFile). */
+/** Extract one PO document via Gemini. Returns the parsed object (with sourceFile). */
 export async function extractPO(
   file: UploadFile,
   hints: ExtractHints | undefined,
   opts: { apiKey: string; model?: string },
 ): Promise<any> {
-  const content = await contentForFile(file);
+  const parts = await partsForFile(file);
   const ht = hintsText(hints);
-  if (ht) content.push({ type: 'text', text: `\nReference data:\n${ht}` });
-  content.push({ type: 'text', text: 'Extract this purchase order using the record_purchase_order tool.' });
+  if (ht) parts.push({ text: `\nReference data:\n${ht}` });
+  parts.push({ text: 'Extract this purchase order into the required JSON schema.' });
 
-  const res = await fetch(ANTHROPIC_URL, {
-    method: 'POST',
-    headers: {
-      'x-api-key': opts.apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
+  const ai = new GoogleGenAI({ apiKey: opts.apiKey });
+  const response = await ai.models.generateContent({
+    model: opts.model || DEFAULT_MODEL,
+    contents: [{ role: 'user', parts }],
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      responseMimeType: 'application/json',
+      responseSchema: PO_SCHEMA,
+      temperature: 0,
     },
-    body: JSON.stringify({
-      model: opts.model || DEFAULT_MODEL,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: [PO_TOOL],
-      tool_choice: { type: 'tool', name: PO_TOOL.name },
-      messages: [{ role: 'user', content }],
-    }),
   });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Anthropic API error ${res.status}: ${errText.slice(0, 500)}`);
+
+  const text = response.text;
+  if (!text || !text.trim()) {
+    const blocked = response.promptFeedback?.blockReason;
+    throw new Error(blocked ? `Gemini blocked the request (${blocked}).` : 'Gemini returned no structured PO data.');
   }
-  const json = await res.json();
-  const toolUse = (json.content || []).find((b: any) => b.type === 'tool_use');
-  if (!toolUse) throw new Error('Model did not return structured PO data.');
-  return { sourceFile: file.name, ...toolUse.input };
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`Gemini did not return valid JSON: ${text.slice(0, 300)}`);
+  }
+  return { sourceFile: file.name, ...parsed };
 }

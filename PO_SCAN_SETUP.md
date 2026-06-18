@@ -8,7 +8,8 @@ Two features turn customer purchase orders into Sweet Pro orders:
 2. **Automated Gmail scan** — every 15 minutes a cron reads the shared PO inbox,
    extracts each attached PO, and the app ingests them as **Open** orders automatically.
 
-Both call one Claude-backed endpoint (`/api/extract-po` / shared core in `api/_poExtract.ts`).
+Both call one Gemini-backed endpoint (`/api/extract-po` / shared core in `api/_poExtract.ts`,
+using `@google/genai`).
 
 ---
 
@@ -17,12 +18,12 @@ Both call one Claude-backed endpoint (`/api/extract-po` / shared core in `api/_p
 ### Required for the modal (feature 1)
 | Variable | Notes |
 |---|---|
-| `ANTHROPIC_API_KEY` | Anthropic API key used for extraction. |
+| `GEMINI_API_KEY` | Google Gemini API key used for extraction (`GOOGLE_API_KEY` also accepted). Create one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
 
 ### Optional
 | Variable | Notes |
 |---|---|
-| `PO_EXTRACT_MODEL` | Defaults to `claude-sonnet-4-6`. |
+| `PO_EXTRACT_MODEL` | Defaults to `gemini-2.5-flash`. |
 | `EXTRACT_SHARED_SECRET` | If set, `/api/extract-po` requires `Authorization: Bearer <value>`. |
 | `VITE_EXTRACT_SHARED_SECRET` | Must equal `EXTRACT_SHARED_SECRET` so the browser sends the header. |
 
@@ -98,7 +99,7 @@ Response summarizes `scanned`, `attachments`, `queued`, and any `errors`.
 
 ## Files
 
-- `api/_poExtract.ts` — shared Claude extraction core.
+- `api/_poExtract.ts` — shared Gemini extraction core (`@google/genai`).
 - `api/extract-po.ts` — manual upload endpoint (Scan PO modal).
 - `api/_gmail.ts` — Gmail REST helper (service-account impersonation).
 - `api/scan-po-inbox.ts` — 15-minute cron: Gmail → extract → `incomingPoOrders`.

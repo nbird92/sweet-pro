@@ -1,6 +1,6 @@
 // Client helper for the "Scan Purchase Order" feature.
 //
-// Reads uploaded PO files, calls the /api/extract-po endpoint (Claude-backed),
+// Reads uploaded PO files, calls the /api/extract-po endpoint (Gemini-backed),
 // and provides best-effort matching of the extracted text to the app's
 // catalog (customers / products / contracts). User corrections are remembered
 // in localStorage and fed back to the extractor as "learned" hints so repeat
