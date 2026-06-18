@@ -12,9 +12,6 @@
   ],
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 30
-    },
-    "api/scan-po-inbox.ts": {
       "maxDuration": 60
     }
   },
