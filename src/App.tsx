@@ -51,7 +51,9 @@ import {
   BarChart3,
   Landmark,
   Zap,
-  RotateCcw
+  RotateCcw,
+  ScanLine,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -102,6 +104,17 @@ import {
   type ConfiguredTab,
   type ColumnMap,
 } from './utils/googleOrderSheetSync';
+import {
+  fileToUpload,
+  extractPOs,
+  matchCustomer,
+  matchProduct,
+  matchContract,
+  loadLearned,
+  recordLearned,
+  type ExtractedPO,
+  type LearnedMapping,
+} from './utils/poScan';
 // import SalesStatsPage from './components/SalesStatsPage';
 
 // ============================
@@ -349,6 +362,223 @@ export default function App() {
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
   const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
   const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
+
+  /* ---- Scan Purchase Order (AI document extraction → new order) ---- */
+  // One editable review card per extracted PO. Mappings (customer/product/
+  // contract) start from best-effort matches and the user can fix them; fixes
+  // are remembered so future scans of the same PO map themselves.
+  interface POReviewLine {
+    productValue: string;   // chosen catalog product name
+    productKey: string;     // chosen catalog key (QA id / SKU id)
+    productLabel: string;   // chosen display label
+    productRaw: string;     // text as extracted from the PO
+    qtyMt: number;
+    pricePerMt: number;
+    contractNumber: string;
+  }
+  interface POReview {
+    id: string;
+    source: ExtractedPO;
+    customerId: string;
+    customerRaw: string;
+    po: string;
+    shipmentDate: string;
+    deliveryDate: string;
+    carrier: string;
+    currency: string;
+    shippingTerms: '' | 'FOB' | 'DAP' | 'DDP' | 'FCA';
+    contractNumber: string;
+    contractRaw: string;
+    papsNo: string;
+    customsEntryNo: string;
+    notes: string;
+    lines: POReviewLine[];
+    created: boolean;
+  }
+  const [isScanningPO, setIsScanningPO] = useState(false);
+  const [poScanFiles, setPoScanFiles] = useState<File[]>([]);
+  const [poScanLoading, setPoScanLoading] = useState(false);
+  const [poScanError, setPoScanError] = useState<string | null>(null);
+  const [poReviews, setPoReviews] = useState<POReview[]>([]);
+  const [poLearned, setPoLearned] = useState<LearnedMapping[]>(() => loadLearned());
+  const poScanInputRef = useRef<HTMLInputElement>(null);
+
+  const normShipTerms = (s?: string): '' | 'FOB' | 'DAP' | 'DDP' | 'FCA' => {
+    const u = (s || '').toUpperCase();
+    if (u.includes('FOB')) return 'FOB';
+    if (u.includes('DDP')) return 'DDP';
+    if (u.includes('DAP')) return 'DAP';
+    if (u.includes('FCA')) return 'FCA';
+    return '';
+  };
+
+  // Reference data sent to the extractor so it can normalize names to our catalog.
+  const buildScanHints = () => ({
+    customers: customers.map(c => c.name).filter(Boolean),
+    products: Array.from(new Set(buildOrderProductOptions().flatMap(o => [o.label, o.value]).filter(Boolean))),
+    contracts: contracts.map(c => c.contractNumber).filter(Boolean),
+    learned: poLearned,
+  });
+
+  // Turn a raw extraction into an editable review card with best-effort mappings.
+  const reviewFromExtraction = (po: ExtractedPO): POReview => {
+    const opts = buildOrderProductOptions();
+    const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
+    const contract = matchContract(po.contractNumber, contracts, poLearned);
+    const lines: POReviewLine[] = (po.lineItems || []).map(li => {
+      const prod = matchProduct(li.description, opts, poLearned);
+      const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
+        ? li.quantityMt
+        : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
+      return {
+        productValue: prod?.value || '',
+        productKey: prod?.key || '',
+        productLabel: prod?.label || '',
+        productRaw: li.description || '',
+        qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
+        pricePerMt: typeof li.pricePerMt === 'number' ? Math.round(li.pricePerMt * 100) / 100 : 0,
+        contractNumber: contract?.contractNumber || '',
+      };
+    });
+    return {
+      id: `POREV-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      source: po,
+      customerId: cust?.id || '',
+      customerRaw: po.customerName || '',
+      po: po.poNumber || '',
+      shipmentDate: po.shipmentDate || '',
+      deliveryDate: po.deliveryDate || '',
+      carrier: po.carrier || '',
+      currency: (po.currency || '').toUpperCase(),
+      shippingTerms: normShipTerms(po.shippingTerms),
+      contractNumber: contract?.contractNumber || '',
+      contractRaw: po.contractNumber || '',
+      papsNo: '',
+      customsEntryNo: '',
+      notes: po.notes || '',
+      lines,
+      created: false,
+    };
+  };
+
+  const runPOExtraction = async () => {
+    if (poScanFiles.length === 0) { setPoScanError('Add at least one PO file to scan.'); return; }
+    setPoScanLoading(true);
+    setPoScanError(null);
+    try {
+      const uploads = await Promise.all(poScanFiles.map(fileToUpload));
+      const resp = await extractPOs(uploads, buildScanHints());
+      const reviews = (resp.extractions || []).map(reviewFromExtraction);
+      setPoReviews(reviews);
+      const errs = resp.errors || [];
+      if (errs.length) setPoScanError(errs.map(e => `${e.file}: ${e.message}`).join(' • '));
+      else if (reviews.length === 0) setPoScanError('No purchase orders could be read from the uploaded file(s).');
+    } catch (e) {
+      setPoScanError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPoScanLoading(false);
+    }
+  };
+
+  // Build an OrderLineItem from a reviewed scan line (mirrors submitOrderLineItem's
+  // net-weight + pricing math; qty here is expressed so totalWeight == qtyMt MT).
+  const buildScanLineItem = (line: POReviewLine): OrderLineItem => {
+    let product = skus.find(s => s.name === line.productValue);
+    if (!product) {
+      const orphan = qaProducts.find(q => q.skuName === line.productValue);
+      if (orphan) {
+        product = {
+          id: orphan.skuId,
+          name: orphan.skuName,
+          productGroup: orphan.productGroup,
+          category: orphan.category,
+          netWeight: orphan.netWeightKg || 0,
+          brix: 99.9,
+          premiumCadMt: 0,
+          netWeightKg: orphan.netWeightKg,
+          grossWeightKg: orphan.grossWeightKg,
+          maxColor: orphan.maxColor,
+          location: orphan.location,
+          sugarType: orphan.sugarType,
+          productFormat: orphan.productFormat,
+        };
+      }
+    }
+    const netWeightKg = product ? (product.netWeightKg || product.netWeight) : 0;
+    const effNetKg = netWeightKg > 0 ? netWeightKg : 1000; // fallback 1 MT / unit
+    const totalWeight = line.qtyMt > 0 ? line.qtyMt : 0;    // MT
+    const qtyUnits = effNetKg > 0 ? (totalWeight * 1000) / effNetKg : totalWeight;
+    const mtAmount = line.pricePerMt > 0 ? line.pricePerMt : 0;
+    return {
+      id: `LINEITEM-${Date.now()}-${Math.random()}`,
+      productName: line.productValue,
+      productDisplayName: line.productLabel || undefined,
+      productKey: line.productKey || undefined,
+      qty: qtyUnits,
+      contractNumber: line.contractNumber || '',
+      netWeightPerUnit: effNetKg / 1000,
+      totalWeight,
+      unitAmount: mtAmount * effNetKg / 1000,
+      mtAmount,
+      lineAmount: totalWeight * mtAmount,
+    };
+  };
+
+  const createOrderFromReview = (rev: POReview) => {
+    const customer = customers.find(c => c.id === rev.customerId);
+    if (!customer) { setErrorBox('Select a customer before creating the order.'); return; }
+    const validLines = rev.lines.filter(l => l.productValue && l.qtyMt > 0);
+    if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return; }
+    const lineItems = validLines.map(buildScanLineItem);
+    const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
+    const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
+    const lineContracts = Array.from(new Set(lineItems.map(li => li.contractNumber).filter(Boolean)));
+    const contractNumber = rev.contractNumber || lineContracts.join(', ');
+    const location = matchedContract?.origin || customer.defaultLocation || '';
+    const newOrder: Order = {
+      id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      bolNumber: generateBOLNumber(lineItems),
+      customer: customer.name,
+      product: lineItems.map(li => li.productDisplayName || li.productName).join(', '),
+      contractNumber: contractNumber || undefined,
+      po: rev.po,
+      date: new Date().toISOString().split('T')[0],
+      shipmentDate: rev.shipmentDate || undefined,
+      deliveryDate: rev.deliveryDate || undefined,
+      status: 'Open',
+      lineItems,
+      amount: totalAmount,
+      carrier: rev.carrier || undefined,
+      shippingTerms: rev.shippingTerms || undefined,
+      location: location || undefined,
+      currency: rev.currency || undefined,
+      palletType: matchedContract?.palletType || '',
+      papsNo: rev.papsNo.trim() || undefined,
+      customsEntryNo: rev.customsEntryNo.trim() || undefined,
+    };
+    setOrders(prev => [...prev, newOrder]);
+    // Remember the user's mappings so the next scan of this PO maps itself.
+    if (rev.customerRaw) recordLearned('customer', rev.customerRaw, customer.id);
+    validLines.forEach(l => { if (l.productRaw && l.productValue) recordLearned('product', l.productRaw, l.productValue); });
+    if (rev.contractRaw && rev.contractNumber) recordLearned('contract', rev.contractRaw, rev.contractNumber);
+    setPoLearned(loadLearned());
+    setPoReviews(prev => prev.map(r => r.id === rev.id ? { ...r, created: true } : r));
+  };
+
+  const updateReview = (id: string, patch: Partial<POReview>) =>
+    setPoReviews(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  const updateReviewLine = (id: string, idx: number, patch: Partial<POReviewLine>) =>
+    setPoReviews(prev => prev.map(r => r.id === id
+      ? { ...r, lines: r.lines.map((l, i) => i === idx ? { ...l, ...patch } : l) }
+      : r));
+
+  const closePOScan = () => {
+    setIsScanningPO(false);
+    setPoScanFiles([]);
+    setPoReviews([]);
+    setPoScanError(null);
+    setPoScanLoading(false);
+  };
   const [orderCustomerNumberInput, setOrderCustomerNumberInput] = useState<string>(''); // manual customer number entry in order modal
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
@@ -6090,6 +6320,13 @@ export default function App() {
             <button onClick={() => orderFileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
+            </button>
+            <button
+              onClick={() => { setPoScanFiles([]); setPoReviews([]); setPoScanError(null); setIsScanningPO(true); }}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              title="Upload a customer PO (PDF/Excel/image) and let AI extract it into a new order."
+            >
+              <ScanLine size={12} /> Scan PO
             </button>
             <button
               onClick={() => {
@@ -15901,6 +16138,195 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {/* Scan Purchase Order — AI document extraction → new order */}
+        {isScanningPO && (() => {
+          const poProductOptions = buildOrderProductOptions();
+          const totalToReview = poReviews.length;
+          const createdCount = poReviews.filter(r => r.created).length;
+          return (
+            <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/70 backdrop-blur-md overflow-y-auto" onClick={closePOScan}>
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+              >
+                <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><ScanLine size={14} /> Scan Purchase Order</h3>
+                  <button onClick={closePOScan} className="hover:rotate-90 transition-transform"><X size={18} /></button>
+                </div>
+
+                <div className="p-6 space-y-5 max-h-[78vh] overflow-y-auto">
+                  {/* Upload step */}
+                  {totalToReview === 0 && (
+                    <>
+                      <p className="text-sm opacity-70">Upload one or more customer purchase orders (PDF, Excel, CSV or image). AI reads each document and pre-fills a reviewable order — Sucro Can is treated as the supplier, the issuer as the customer.</p>
+                      <div
+                        className="border-2 border-dashed border-[#141414]/40 bg-[#F5F5F5] p-8 text-center cursor-pointer hover:bg-[#EFEFEF]"
+                        onClick={() => poScanInputRef.current?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setPoScanFiles(prev => [...prev, ...fs]); }}
+                      >
+                        <Upload size={24} className="mx-auto mb-2 opacity-50" />
+                        <div className="text-xs font-bold uppercase">Click or drop PO files here</div>
+                        <div className="text-[10px] opacity-50 mt-1">PDF, XLSX, XLS, CSV, PNG, JPG — up to 10 files</div>
+                      </div>
+                      <input
+                        ref={poScanInputRef}
+                        type="file"
+                        multiple
+                        accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,application/pdf,image/*"
+                        className="hidden"
+                        onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setPoScanFiles(prev => [...prev, ...fs]); e.target.value = ''; }}
+                      />
+                      {poScanFiles.length > 0 && (
+                        <div className="space-y-1">
+                          {poScanFiles.map((f, i) => (
+                            <div key={i} className="flex items-center justify-between border border-[#141414]/20 bg-white px-3 py-2 text-xs">
+                              <span className="font-mono truncate">{f.name} <span className="opacity-40">({Math.round(f.size / 1024)} KB)</span></span>
+                              <button onClick={() => setPoScanFiles(prev => prev.filter((_, j) => j !== i))} className="text-red-700 hover:bg-red-50 p-1"><X size={12} /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {poScanError && <div className="border border-red-300 bg-red-50 text-red-700 text-xs p-3">{poScanError}</div>}
+                    </>
+                  )}
+
+                  {/* Review step */}
+                  {poReviews.map(rev => (
+                    <div key={rev.id} className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : 'border-[#141414]/30'} p-4 space-y-3`}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-bold uppercase tracking-wide flex items-center gap-2">
+                          <Sparkles size={12} className="opacity-60" />
+                          {rev.source.sourceFile || 'Purchase Order'}
+                          {typeof rev.source.confidence === 'number' && (
+                            <span className="opacity-50 font-normal">· {Math.round(rev.source.confidence * 100)}% confidence</span>
+                          )}
+                        </div>
+                        {rev.created && <span className="text-[10px] font-bold uppercase text-emerald-700">✓ Order created</span>}
+                      </div>
+
+                      {/* Header fields */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="space-y-1 col-span-2">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Customer {rev.customerRaw && <span className="opacity-60 normal-case">· read: "{rev.customerRaw}"</span>}</label>
+                          <select value={rev.customerId} onChange={(e) => updateReview(rev.id, { customerId: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">— Select customer —</option>
+                            {customersSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">PO No.</label>
+                          <input value={rev.po} onChange={(e) => updateReview(rev.id, { po: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Shipment Date</label>
+                          <input type="date" value={rev.shipmentDate} onChange={(e) => updateReview(rev.id, { shipmentDate: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Delivery Date</label>
+                          <input type="date" value={rev.deliveryDate} onChange={(e) => updateReview(rev.id, { deliveryDate: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Currency</label>
+                          <input value={rev.currency} onChange={(e) => updateReview(rev.id, { currency: e.target.value.toUpperCase() })} disabled={rev.created} placeholder="CAD" className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Carrier</label>
+                          <input value={rev.carrier} onChange={(e) => updateReview(rev.id, { carrier: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Shipping Terms</label>
+                          <select value={rev.shippingTerms} onChange={(e) => updateReview(rev.id, { shippingTerms: e.target.value as POReview['shippingTerms'] })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">—</option><option value="FOB">FOB</option><option value="FCA">FCA</option><option value="DAP">DAP</option><option value="DDP">DDP</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Contract {rev.contractRaw && <span className="opacity-60 normal-case">· read: "{rev.contractRaw}"</span>}</label>
+                          <select value={rev.contractNumber} onChange={(e) => updateReview(rev.id, { contractNumber: e.target.value, lines: rev.lines.map(l => ({ ...l, contractNumber: e.target.value })) })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none">
+                            <option value="">— None —</option>
+                            {contracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
+                            {rev.contractNumber && !contracts.some(c => c.contractNumber === rev.contractNumber) && <option value={rev.contractNumber}>{rev.contractNumber} (unmatched)</option>}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">PAPS No.</label>
+                          <input value={rev.papsNo} onChange={(e) => updateReview(rev.id, { papsNo: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Customs Entry No.</label>
+                          <input value={rev.customsEntryNo} onChange={(e) => updateReview(rev.id, { customsEntryNo: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
+                        </div>
+                      </div>
+
+                      {/* Line items */}
+                      <div className="border border-[#141414]/15">
+                        <table className="w-full text-xs">
+                          <thead className="bg-[#F5F5F5] border-b border-[#141414]/15">
+                            <tr>
+                              <th className="p-2 text-left font-bold">Product</th>
+                              <th className="p-2 text-right font-bold w-28">Qty (MT)</th>
+                              <th className="p-2 text-right font-bold w-28">Price/MT</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rev.lines.map((line, idx) => (
+                              <tr key={idx} className="border-b border-[#141414]/5 align-top">
+                                <td className="p-2">
+                                  <select
+                                    value={line.productValue}
+                                    disabled={rev.created}
+                                    onChange={(e) => { const opt = poProductOptions.find(o => o.value === e.target.value); updateReviewLine(rev.id, idx, { productValue: e.target.value, productKey: opt?.key || '', productLabel: opt?.label || '' }); }}
+                                    className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none"
+                                  >
+                                    <option value="">— Select product —</option>
+                                    {poProductOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                                  </select>
+                                  {line.productRaw && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"</div>}
+                                </td>
+                                <td className="p-2 text-right">
+                                  <input type="number" step="0.001" value={line.qtyMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { qtyMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
+                                </td>
+                                <td className="p-2 text-right">
+                                  <input type="number" step="0.01" value={line.pricePerMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { pricePerMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {!rev.created && (
+                        <div className="flex justify-end">
+                          <button onClick={() => createOrderFromReview(rev)} className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800">Create Open Order</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between sticky bottom-0">
+                  <div className="text-[10px] opacity-60 uppercase font-bold">
+                    {totalToReview === 0 ? `${poScanFiles.length} file${poScanFiles.length === 1 ? '' : 's'} ready` : `${createdCount}/${totalToReview} orders created`}
+                  </div>
+                  <div className="flex gap-2">
+                    {totalToReview > 0 && (
+                      <button onClick={() => { setPoReviews([]); setPoScanFiles([]); setPoScanError(null); }} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Scan More</button>
+                    )}
+                    <button onClick={closePOScan} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">{createdCount > 0 ? 'Done' : 'Cancel'}</button>
+                    {totalToReview === 0 && (
+                      <button onClick={runPOExtraction} disabled={poScanLoading || poScanFiles.length === 0} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">
+                        <Sparkles size={12} /> {poScanLoading ? 'Reading…' : 'Extract with AI →'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
 
         {/* Add Batch Orders Modal */}
         {isAddingBatchOrder && (
