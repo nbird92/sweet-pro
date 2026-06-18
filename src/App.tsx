@@ -432,11 +432,40 @@ export default function App() {
     return m?.id || '';
   };
 
+  // Sucro contract numbers look like S######.### (e.g. S123456.001). Scan the
+  // extraction's text fields for the first value matching that format.
+  const CONTRACT_CODE_RE = /\bS\d{6}\.\d{3}\b/i;
+  const findContractCode = (po: ExtractedPO): string => {
+    // Note: the customer's own PO number is deliberately excluded — it's a
+    // different identifier and could coincidentally match our contract format.
+    const fields = [
+      po.contractNumber, po.notes,
+      ...(po.lineItems || []).map(li => `${li.description || ''} ${li.itemNumber || ''}`),
+    ];
+    for (const f of fields) {
+      const m = (f || '').match(CONTRACT_CODE_RE);
+      if (m) return m[0].toUpperCase();
+    }
+    return '';
+  };
+  // Resolve the contract number for an extraction: a learned/known match first,
+  // then a known contract whose number equals the scanned S######.### code,
+  // then the raw scanned code (shown as an "unmatched" option for review).
+  const resolveContractNumber = (po: ExtractedPO): string => {
+    const matched = matchContract(po.contractNumber, contracts, poLearned);
+    if (matched) return matched.contractNumber;
+    const code = findContractCode(po);
+    if (!code) return '';
+    const known = contracts.find(c => c.contractNumber.toUpperCase() === code);
+    return known?.contractNumber || code;
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (po: ExtractedPO): POReview => {
     const opts = buildOrderProductOptions();
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
     const contract = matchContract(po.contractNumber, contracts, poLearned);
+    const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
     // Default the shipment date to the delivery date (these POs usually carry a
     // delivery/receipt date; the order's ship date should match unless edited).
     const deliveryDate = po.deliveryDate || '';
@@ -453,7 +482,7 @@ export default function App() {
         productRaw: li.description || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
         pricePerMt: typeof li.pricePerMt === 'number' ? Math.round(li.pricePerMt * 100) / 100 : 0,
-        contractNumber: contract?.contractNumber || '',
+        contractNumber,
       };
     });
     return {
@@ -470,7 +499,7 @@ export default function App() {
       carrier: po.carrier || '',
       currency: (po.currency || '').toUpperCase(),
       shippingTerms: normShipTerms(po.shippingTerms),
-      contractNumber: contract?.contractNumber || '',
+      contractNumber,
       contractRaw: po.contractNumber || '',
       papsNo: '',
       customsEntryNo: '',
@@ -607,6 +636,7 @@ export default function App() {
   const buildOrderFromExtraction = (po: ExtractedPO, extraBols: string[] = []): Order | null => {
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
     const contract = matchContract(po.contractNumber, contracts, poLearned);
+    const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
     const opts = buildOrderProductOptions();
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = matchProduct(li.description, opts, poLearned);
@@ -620,7 +650,7 @@ export default function App() {
         productRaw: li.description || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
         pricePerMt: typeof li.pricePerMt === 'number' ? li.pricePerMt : 0,
-        contractNumber: contract?.contractNumber || '',
+        contractNumber,
       };
     }).filter(l => l.qtyMt > 0 || l.productValue);
     if (lines.length === 0) return null;
@@ -635,7 +665,7 @@ export default function App() {
       bolNumber: generateBOLNumber(lineItems, extraBols),
       customer: cust?.name || po.customerName || 'Unknown Customer',
       product: lineItems.map(li => li.productDisplayName || li.productName).join(', '),
-      contractNumber: contract?.contractNumber || undefined,
+      contractNumber: contractNumber || undefined,
       po: po.poNumber || '',
       date: new Date().toISOString().split('T')[0],
       shipmentDate: shipmentDate || undefined,
@@ -16339,6 +16369,9 @@ export default function App() {
                     const selectedCustomer = customers.find(c => c.id === rev.customerId);
                     const poTrim = rev.po.trim().toLowerCase();
                     const poExists = !!poTrim && orders.some(o => (o.po || '').trim().toLowerCase() === poTrim);
+                    // Once a customer is determined, restrict the contract list to
+                    // that customer's available contracts; otherwise show all.
+                    const customerContracts = selectedCustomer ? contractsForCustomer(selectedCustomer) : contracts;
                     return (
                     <div key={rev.id} className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : poExists ? 'border-amber-500' : 'border-[#141414]/30'} p-4 space-y-3`}>
                       <div className="flex items-center justify-between">
@@ -16367,10 +16400,16 @@ export default function App() {
                             onChange={(e) => {
                               const newId = e.target.value;
                               const c = customers.find(x => x.id === newId);
+                              const newContracts = c ? contractsForCustomer(c) : [];
+                              // Drop a contract that is a KNOWN contract not belonging to the newly
+                              // chosen customer; preserve a genuinely-unknown scanned code.
+                              const isKnown = !!rev.contractNumber && contracts.some(ct => ct.contractNumber === rev.contractNumber);
+                              const dropContract = isKnown && !newContracts.some(ct => ct.contractNumber === rev.contractNumber);
                               updateReview(rev.id, {
                                 customerId: newId,
                                 shipToLocationId: matchShipToForCustomer(newId, rev.source),
                                 ...(rev.locationTouched ? {} : { location: c?.defaultLocation || '' }),
+                                ...(dropContract ? { contractNumber: '', lines: rev.lines.map(l => ({ ...l, contractNumber: '' })) } : {}),
                               });
                             }}
                             disabled={rev.created}
@@ -16424,9 +16463,9 @@ export default function App() {
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Contract {rev.contractRaw && <span className="opacity-60 normal-case">· read: "{rev.contractRaw}"</span>}</label>
                           <select value={rev.contractNumber} onChange={(e) => updateReview(rev.id, { contractNumber: e.target.value, lines: rev.lines.map(l => ({ ...l, contractNumber: e.target.value })) })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none">
-                            <option value="">— None —</option>
-                            {contracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
-                            {rev.contractNumber && !contracts.some(c => c.contractNumber === rev.contractNumber) && <option value={rev.contractNumber}>{rev.contractNumber} (unmatched)</option>}
+                            <option value="">{selectedCustomer && customerContracts.length === 0 ? '— no contracts for this customer —' : '— None —'}</option>
+                            {customerContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
+                            {rev.contractNumber && !customerContracts.some(c => c.contractNumber === rev.contractNumber) && <option value={rev.contractNumber}>{rev.contractNumber} {contracts.some(c => c.contractNumber === rev.contractNumber) ? '(inactive / other customer)' : '(scanned — not in catalog)'}</option>}
                           </select>
                         </div>
                         <div className="space-y-1">

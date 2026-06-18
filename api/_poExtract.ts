@@ -78,6 +78,7 @@ Extraction rules:
 - Pricing: provide pricePerMt whenever derivable. Bases vary: "per 100 lb", "per cwt", "per kg", "per lb", "per MT". unitPrice is the raw number; priceBasis is its unit. Convert to $/MT in pricePerMt.
 - Dates must be ISO YYYY-MM-DD.
 - Normalize customer / product / contract names to the provided known lists ONLY when there is an obvious match; otherwise return the document's text verbatim.
+- Contract number: Sucro contract numbers follow the format S######.### (the letter S, six digits, a period, then three digits — e.g. S123456.001). If any value matching that pattern appears ANYWHERE on the PO (header, notes, line items, references), return it as contractNumber.
 - Omit (leave empty) any field you cannot find. Never invent values. Set confidence to reflect how clean the document was.`;
 
 function mediaTypeFor(mime: string): string {
