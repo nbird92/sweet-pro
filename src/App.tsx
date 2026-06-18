@@ -58,7 +58,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection } from './firebaseDb';
+import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, deleteDocs } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
@@ -401,6 +401,7 @@ export default function App() {
   const [poScanError, setPoScanError] = useState<string | null>(null);
   const [poReviews, setPoReviews] = useState<POReview[]>([]);
   const [poLearned, setPoLearned] = useState<LearnedMapping[]>(() => loadLearned());
+  const [poIngestNotice, setPoIngestNotice] = useState<string | null>(null);
   const poScanInputRef = useRef<HTMLInputElement>(null);
 
   const normShipTerms = (s?: string): '' | 'FOB' | 'DAP' | 'DDP' | 'FCA' => {
@@ -579,6 +580,97 @@ export default function App() {
     setPoScanError(null);
     setPoScanLoading(false);
   };
+
+  // Build a fully-formed Open order straight from an extraction (no review) —
+  // used by the automated Gmail inbox ingest. Unmatched customer/product fall
+  // back to the document's own text so nothing is silently dropped; the order
+  // lands as Open and can be corrected in the table.
+  const buildOrderFromExtraction = (po: ExtractedPO): Order | null => {
+    const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
+    const contract = matchContract(po.contractNumber, contracts, poLearned);
+    const opts = buildOrderProductOptions();
+    const lines: POReviewLine[] = (po.lineItems || []).map(li => {
+      const prod = matchProduct(li.description, opts, poLearned);
+      const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
+        ? li.quantityMt
+        : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
+      return {
+        productValue: prod?.value || li.description || '',
+        productKey: prod?.key || '',
+        productLabel: prod?.label || '',
+        productRaw: li.description || '',
+        qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
+        pricePerMt: typeof li.pricePerMt === 'number' ? li.pricePerMt : 0,
+        contractNumber: contract?.contractNumber || '',
+      };
+    }).filter(l => l.qtyMt > 0 || l.productValue);
+    if (lines.length === 0) return null;
+    const lineItems = lines.map(buildScanLineItem);
+    const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
+    const location = contract?.origin || cust?.defaultLocation || '';
+    return {
+      id: `ORD-PO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      bolNumber: generateBOLNumber(lineItems),
+      customer: cust?.name || po.customerName || 'Unknown Customer',
+      product: lineItems.map(li => li.productDisplayName || li.productName).join(', '),
+      contractNumber: contract?.contractNumber || undefined,
+      po: po.poNumber || '',
+      date: new Date().toISOString().split('T')[0],
+      shipmentDate: po.shipmentDate || undefined,
+      deliveryDate: po.deliveryDate || undefined,
+      status: 'Open',
+      lineItems,
+      amount: totalAmount,
+      carrier: po.carrier || undefined,
+      shippingTerms: normShipTerms(po.shippingTerms) || undefined,
+      location: location || undefined,
+      currency: (po.currency || '').toUpperCase() || undefined,
+      palletType: contract?.palletType || '',
+    };
+  };
+
+  // Drain the incomingPoOrders queue (written by the Gmail cron) into real Open
+  // orders. Dedupes by PO number against existing orders; always deletes the
+  // consumed queue docs so they don't reprocess.
+  const ingestingPOsRef = useRef(false);
+  const ingestIncomingPOs = async () => {
+    if (ingestingPOsRef.current || !user) return;
+    ingestingPOsRef.current = true;
+    try {
+      const incoming = await fetchCollection<any>(COLLECTIONS.incomingPoOrders);
+      if (!incoming.length) return;
+      const built: Order[] = [];
+      const consumedIds: string[] = [];
+      const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
+      for (const item of incoming) {
+        if (!item?.id) continue;
+        consumedIds.push(item.id);
+        const po = item.extraction as ExtractedPO | undefined;
+        if (!po || !Array.isArray(po.lineItems)) continue;
+        const poNum = (po.poNumber || '').trim();
+        if (poNum && seenPo.has(poNum)) continue; // already imported earlier
+        const order = buildOrderFromExtraction(po);
+        if (order) { built.push(order); if (poNum) seenPo.add(poNum); }
+      }
+      if (built.length) setOrders(prev => [...prev, ...built]);
+      if (consumedIds.length) await deleteDocs(COLLECTIONS.incomingPoOrders, consumedIds);
+      if (built.length) setPoIngestNotice(`${built.length} order${built.length === 1 ? '' : 's'} imported from emailed POs.`);
+    } catch (e) {
+      console.error('PO ingest failed:', e);
+    } finally {
+      ingestingPOsRef.current = false;
+    }
+  };
+  // Keep a latest-closure ref so the polling interval always runs the current
+  // version (fresh catalog + orders) without re-subscribing. The scheduling
+  // effect itself lives lower down, after `user` is declared.
+  const ingestPOsRef = useRef<() => void>(() => {});
+  ingestPOsRef.current = ingestIncomingPOs;
+  useEffect(() => {
+    if (!poIngestNotice) return;
+    const t = setTimeout(() => setPoIngestNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [poIngestNotice]);
   const [orderCustomerNumberInput, setOrderCustomerNumberInput] = useState<string>(''); // manual customer number entry in order modal
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
   const [newLineItem, setNewLineItem] = useState<{
@@ -2726,6 +2818,15 @@ export default function App() {
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, lastSynced, user]);
+
+  // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
+  // ingest any new POs as Open orders: shortly after login, then every 5 min.
+  useEffect(() => {
+    if (!user) return;
+    const t = setTimeout(() => ingestPOsRef.current(), 8000);
+    const interval = setInterval(() => ingestPOsRef.current(), 5 * 60 * 1000);
+    return () => { clearTimeout(t); clearInterval(interval); };
+  }, [user]);
 
   // One-time backfill: assign a uniform 6-digit productCode to every SKU and
   // mirror it onto every matching QAProduct. Existing codes are preserved.
@@ -16136,6 +16237,14 @@ export default function App() {
                 </div>
               </div>
             </motion.div>
+          </div>
+        )}
+
+        {/* Auto-import notice — emailed POs ingested into Open orders */}
+        {poIngestNotice && (
+          <div className="fixed bottom-6 right-6 z-[600] bg-emerald-700 text-white px-4 py-3 shadow-[6px_6px_0px_0px_rgba(20,20,20,1)] border border-[#141414] flex items-center gap-2 text-xs font-bold uppercase">
+            <ScanLine size={14} /> {poIngestNotice}
+            <button onClick={() => setPoIngestNotice(null)} className="ml-2 hover:opacity-70"><X size={14} /></button>
           </div>
         )}
 

@@ -3,6 +3,7 @@ import {
   doc,
   getDocs,
   writeBatch,
+  deleteDoc,
 } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './firebaseConfig';
@@ -45,12 +46,23 @@ export const COLLECTIONS = {
   emailLog: 'emailLog',
   emailSettings: 'emailSettings',
   returnOrders: 'returnOrders',
+  // Append-only queue: the Gmail PO scan (api/scan-po-inbox) writes extracted
+  // POs here; the app ingests them into `orders` on load, then deletes them.
+  // NOT part of the whole-collection autosave, so cron writes are never
+  // clobbered by the client's syncCollection.
+  incomingPoOrders: 'incomingPoOrders',
 } as const;
 
 // Fetch all documents from a collection (one-time read)
 export async function fetchCollection<T>(collectionName: string): Promise<T[]> {
   const snapshot = await getDocs(collection(db, collectionName));
   return snapshot.docs.map(doc => ({ ...doc.data() } as T));
+}
+
+// Delete specific documents from a collection by id (used to drain the
+// incomingPoOrders queue after the app ingests them into orders).
+export async function deleteDocs(collectionName: string, ids: string[]): Promise<void> {
+  await Promise.all(ids.map(id => deleteDoc(doc(db, collectionName, id)).catch(() => {})));
 }
 
 // Fetch all data from all collections (one-time bulk read)
