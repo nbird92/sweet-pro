@@ -110,6 +110,7 @@ import {
   matchCustomer,
   matchProduct,
   matchContract,
+  matchShipToLocation,
   loadLearned,
   recordLearned,
   type ExtractedPO,
@@ -381,6 +382,9 @@ export default function App() {
     source: ExtractedPO;
     customerId: string;
     customerRaw: string;
+    location: string;          // shipping origin (Location.name)
+    locationTouched: boolean;  // user manually set the origin → don't auto-refresh on customer change
+    shipToLocationId: string;  // matched ship-to site under the customer
     po: string;
     shipmentDate: string;
     deliveryDate: string;
@@ -421,11 +425,22 @@ export default function App() {
     learned: poLearned,
   });
 
+  // Best ship-to site id within a given customer for an extraction's ship-to text.
+  const matchShipToForCustomer = (customerId: string, po: ExtractedPO): string => {
+    const c = customers.find(x => x.id === customerId);
+    const m = matchShipToLocation(po.shipToName, po.shipToAddress, c?.shipToLocations);
+    return m?.id || '';
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (po: ExtractedPO): POReview => {
     const opts = buildOrderProductOptions();
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
     const contract = matchContract(po.contractNumber, contracts, poLearned);
+    // Default the shipment date to the delivery date (these POs usually carry a
+    // delivery/receipt date; the order's ship date should match unless edited).
+    const deliveryDate = po.deliveryDate || '';
+    const shipmentDate = deliveryDate || po.shipmentDate || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = matchProduct(li.description, opts, poLearned);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
@@ -446,9 +461,12 @@ export default function App() {
       source: po,
       customerId: cust?.id || '',
       customerRaw: po.customerName || '',
+      location: contract?.origin || cust?.defaultLocation || '',
+      locationTouched: false,
+      shipToLocationId: matchShipToForCustomer(cust?.id || '', po),
       po: po.poNumber || '',
-      shipmentDate: po.shipmentDate || '',
-      deliveryDate: po.deliveryDate || '',
+      shipmentDate,
+      deliveryDate,
       carrier: po.carrier || '',
       currency: (po.currency || '').toUpperCase(),
       shippingTerms: normShipTerms(po.shippingTerms),
@@ -535,7 +553,7 @@ export default function App() {
     const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
     const lineContracts = Array.from(new Set(lineItems.map(li => li.contractNumber).filter(Boolean)));
     const contractNumber = rev.contractNumber || lineContracts.join(', ');
-    const location = matchedContract?.origin || customer.defaultLocation || '';
+    const location = rev.location || matchedContract?.origin || customer.defaultLocation || '';
     const newOrder: Order = {
       id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       bolNumber: generateBOLNumber(lineItems),
@@ -552,6 +570,7 @@ export default function App() {
       carrier: rev.carrier || undefined,
       shippingTerms: rev.shippingTerms || undefined,
       location: location || undefined,
+      shipToLocationId: rev.shipToLocationId || undefined,
       currency: rev.currency || undefined,
       palletType: matchedContract?.palletType || '',
       papsNo: rev.papsNo.trim() || undefined,
@@ -585,7 +604,7 @@ export default function App() {
   // used by the automated Gmail inbox ingest. Unmatched customer/product fall
   // back to the document's own text so nothing is silently dropped; the order
   // lands as Open and can be corrected in the table.
-  const buildOrderFromExtraction = (po: ExtractedPO): Order | null => {
+  const buildOrderFromExtraction = (po: ExtractedPO, extraBols: string[] = []): Order | null => {
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
     const contract = matchContract(po.contractNumber, contracts, poLearned);
     const opts = buildOrderProductOptions();
@@ -608,22 +627,26 @@ export default function App() {
     const lineItems = lines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
     const location = contract?.origin || cust?.defaultLocation || '';
+    const shipToLocationId = matchShipToForCustomer(cust?.id || '', po);
+    const deliveryDate = po.deliveryDate || '';
+    const shipmentDate = deliveryDate || po.shipmentDate || ''; // default ship date to delivery date
     return {
       id: `ORD-PO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      bolNumber: generateBOLNumber(lineItems),
+      bolNumber: generateBOLNumber(lineItems, extraBols),
       customer: cust?.name || po.customerName || 'Unknown Customer',
       product: lineItems.map(li => li.productDisplayName || li.productName).join(', '),
       contractNumber: contract?.contractNumber || undefined,
       po: po.poNumber || '',
       date: new Date().toISOString().split('T')[0],
-      shipmentDate: po.shipmentDate || undefined,
-      deliveryDate: po.deliveryDate || undefined,
+      shipmentDate: shipmentDate || undefined,
+      deliveryDate: deliveryDate || undefined,
       status: 'Open',
       lineItems,
       amount: totalAmount,
       carrier: po.carrier || undefined,
       shippingTerms: normShipTerms(po.shippingTerms) || undefined,
       location: location || undefined,
+      shipToLocationId: shipToLocationId || undefined,
       currency: (po.currency || '').toUpperCase() || undefined,
       palletType: contract?.palletType || '',
     };
@@ -642,6 +665,9 @@ export default function App() {
       const built: Order[] = [];
       const consumedIds: string[] = [];
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
+      // BOLs reserved within this batch so orders built before any state commit
+      // each get a unique, sequential BOL instead of all reusing the same number.
+      const batchBols: string[] = [];
       for (const item of incoming) {
         if (!item?.id) continue;
         consumedIds.push(item.id);
@@ -649,8 +675,8 @@ export default function App() {
         if (!po || !Array.isArray(po.lineItems)) continue;
         const poNum = (po.poNumber || '').trim();
         if (poNum && seenPo.has(poNum)) continue; // already imported earlier
-        const order = buildOrderFromExtraction(po);
-        if (order) { built.push(order); if (poNum) seenPo.add(poNum); }
+        const order = buildOrderFromExtraction(po, batchBols);
+        if (order) { built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum); }
       }
       if (built.length) setOrders(prev => [...prev, ...built]);
       if (consumedIds.length) await deleteDocs(COLLECTIONS.incomingPoOrders, consumedIds);
@@ -3397,7 +3423,10 @@ export default function App() {
     return pg?.bolCode || 'P';
   };
 
-  const generateBOLNumber = (lineItems: OrderLineItem[]): string => {
+  // `extraBols` lets a caller that builds several orders in one synchronous
+  // pass (before any state commit) reserve the BOLs it has already assigned, so
+  // they don't all collide on the same next-number from the stale `orders` state.
+  const generateBOLNumber = (lineItems: OrderLineItem[], extraBols: string[] = []): string => {
     // Determine prefix based on bolCode from product groups
     const itemGroups = lineItems.map(item =>
       productGroupOf(item.productName, item.productKey) || 'Other'
@@ -3413,10 +3442,12 @@ export default function App() {
       prefix = bolPrefixForGroup(productGroupOf(lineItems[0].productName, lineItems[0].productKey));
     }
 
-    // Consider BOLs from BOTH orders AND invoices so sequences never collide.
+    // Consider BOLs from BOTH orders AND invoices so sequences never collide,
+    // plus any BOLs reserved earlier in the same batch (extraBols).
     const allBols = [
       ...orders.map(o => o.bolNumber || ''),
       ...invoices.map(inv => inv.bolNumber || ''),
+      ...extraBols,
     ];
 
     // Pull the 6-digit counter off any BOL that starts with the same letter,
@@ -16303,13 +16334,17 @@ export default function App() {
                     </>
                   )}
 
-                  {/* Review step */}
-                  {poReviews.map(rev => (
-                    <div key={rev.id} className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : 'border-[#141414]/30'} p-4 space-y-3`}>
+                  {/* Review step — one card (= one order) per uploaded file */}
+                  {poReviews.map((rev, ri) => {
+                    const selectedCustomer = customers.find(c => c.id === rev.customerId);
+                    const poTrim = rev.po.trim().toLowerCase();
+                    const poExists = !!poTrim && orders.some(o => (o.po || '').trim().toLowerCase() === poTrim);
+                    return (
+                    <div key={rev.id} className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : poExists ? 'border-amber-500' : 'border-[#141414]/30'} p-4 space-y-3`}>
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] font-bold uppercase tracking-wide flex items-center gap-2">
                           <Sparkles size={12} className="opacity-60" />
-                          {rev.source.sourceFile || 'Purchase Order'}
+                          Order {ri + 1} · {rev.source.sourceFile || 'Purchase Order'}
                           {typeof rev.source.confidence === 'number' && (
                             <span className="opacity-50 font-normal">· {Math.round(rev.source.confidence * 100)}% confidence</span>
                           )}
@@ -16317,18 +16352,52 @@ export default function App() {
                         {rev.created && <span className="text-[10px] font-bold uppercase text-emerald-700">✓ Order created</span>}
                       </div>
 
+                      {poExists && !rev.created && (
+                        <div className="border border-amber-500 bg-amber-50 text-amber-800 text-[11px] font-bold px-3 py-2 flex items-center gap-2">
+                          ⚠ PO <span className="font-mono">{rev.po}</span> already exists in the orders table — creating this will add a duplicate.
+                        </div>
+                      )}
+
                       {/* Header fields */}
                       <div className="grid grid-cols-3 gap-3">
                         <div className="space-y-1 col-span-2">
                           <label className="text-[9px] uppercase font-bold opacity-50">Customer {rev.customerRaw && <span className="opacity-60 normal-case">· read: "{rev.customerRaw}"</span>}</label>
-                          <select value={rev.customerId} onChange={(e) => updateReview(rev.id, { customerId: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                          <select
+                            value={rev.customerId}
+                            onChange={(e) => {
+                              const newId = e.target.value;
+                              const c = customers.find(x => x.id === newId);
+                              updateReview(rev.id, {
+                                customerId: newId,
+                                shipToLocationId: matchShipToForCustomer(newId, rev.source),
+                                ...(rev.locationTouched ? {} : { location: c?.defaultLocation || '' }),
+                              });
+                            }}
+                            disabled={rev.created}
+                            className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none"
+                          >
                             <option value="">— Select customer —</option>
                             {customersSorted.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                           </select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">PO No.</label>
-                          <input value={rev.po} onChange={(e) => updateReview(rev.id, { po: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
+                          <input value={rev.po} onChange={(e) => updateReview(rev.id, { po: e.target.value })} disabled={rev.created} className={`w-full border px-2 py-1.5 text-xs font-mono outline-none ${poExists ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-[#F5F5F5] border-[#141414]'}`} />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Location (origin)</label>
+                          <select value={rev.location} onChange={(e) => updateReview(rev.id, { location: e.target.value, locationTouched: true })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">— Location —</option>
+                            {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                            {rev.location && !activeLocations.some(l => l.name === rev.location) && <option value={rev.location}>{rev.location}</option>}
+                          </select>
+                        </div>
+                        <div className="space-y-1 col-span-2">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Ship To {rev.source.shipToName && <span className="opacity-60 normal-case">· read: "{rev.source.shipToName}"</span>}</label>
+                          <select value={rev.shipToLocationId} onChange={(e) => updateReview(rev.id, { shipToLocationId: e.target.value })} disabled={rev.created || !selectedCustomer?.shipToLocations?.length} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">{selectedCustomer?.shipToLocations?.length ? '— Select ship-to —' : '— no ship-to sites for this customer —'}</option>
+                            {selectedCustomer?.shipToLocations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                          </select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Shipment Date</label>
@@ -16413,7 +16482,8 @@ export default function App() {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between sticky bottom-0">

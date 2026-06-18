@@ -6,7 +6,7 @@
 // in localStorage and fed back to the extractor as "learned" hints so repeat
 // POs from the same customer map themselves over time.
 
-import type { Customer, Contract } from '../types';
+import type { Customer, Contract, ShipToLocation } from '../types';
 
 export interface ExtractedLineItem {
   description: string;
@@ -194,6 +194,33 @@ export function matchContract(
   }
   const exact = contracts.find(c => normalize(c.contractNumber) === normalize(raw));
   return exact || null;
+}
+
+/** Best ship-to match within a customer's ship-to locations, comparing the PO's
+ *  extracted ship-to name + address against each location's name/address. */
+export function matchShipToLocation(
+  rawName: string | undefined,
+  rawAddress: string | undefined,
+  locations: ShipToLocation[] | undefined,
+): ShipToLocation | null {
+  if (!locations || locations.length === 0) return null;
+  const hay = `${rawName || ''} ${rawAddress || ''}`.trim();
+  if (!hay) return null;
+  let best: ShipToLocation | null = null;
+  // Match the customer matcher's threshold so a couple of shared generic
+  // address tokens (e.g. "Toronto ON") can't trip a wrong default.
+  let bestScore = 0.45;
+  for (const loc of locations) {
+    const locStr = [loc.name, loc.addressLine1, loc.addressLine2, loc.city, loc.province, loc.postalCode]
+      .filter(Boolean).join(' ');
+    const score = Math.max(
+      similarity(hay, locStr),
+      similarity(rawName || '', loc.name),
+      similarity(rawAddress || '', locStr),
+    );
+    if (score > bestScore) { bestScore = score; best = loc; }
+  }
+  return best;
 }
 
 /* ------------------------------------------------------------------ */
