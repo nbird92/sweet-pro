@@ -6688,6 +6688,12 @@ export default function App() {
                             <option value="Open">Open</option>
                             <option value="Confirmed">Confirmed</option>
                             <option value="Cancelled">Cancelled</option>
+                            {/* A Completed order must have a matching option or the
+                                <select> falls back to showing the first option
+                                ("Open") — the value is right, only the display was
+                                wrong. Completed is reached via Complete & Bill, so
+                                only offer it when the order already is Completed. */}
+                            {ord.status === 'Completed' && <option value="Completed">Completed</option>}
                           </select>
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
