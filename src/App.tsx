@@ -12132,7 +12132,9 @@ export default function App() {
         )}
 
         {/* Orders Sheet Sync — Preview / Confirm modal */}
-        {orderSyncPreview && (
+        {orderSyncPreview && (() => {
+          const updatedOrders = orderSyncPreview.updatedOrders ?? [];
+          return (
           <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setOrderSyncPreview(null)}>
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -12147,10 +12149,14 @@ export default function App() {
 
               <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
                 {/* Summary cards */}
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-4 gap-3">
                   <div className="bg-emerald-50 border border-emerald-200 p-3">
                     <div className="text-[10px] uppercase font-bold opacity-60">New Orders</div>
                     <div className="text-2xl font-black">{orderSyncPreview.newOrders.length}</div>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 p-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Updated</div>
+                    <div className="text-2xl font-black">{updatedOrders.length}</div>
                   </div>
                   <div className="bg-amber-50 border border-amber-200 p-3">
                     <div className="text-[10px] uppercase font-bold opacity-60">Skipped</div>
@@ -12223,6 +12229,44 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Updated existing orders — missing fields filled in */}
+                {updatedOrders.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Updated Existing Orders ({updatedOrders.length}) — missing info filled in</h4>
+                    <div className="border border-blue-200 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-blue-50 border-b border-blue-200 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-left font-bold">Contract #</th>
+                            <th className="p-2 text-left font-bold">Carrier</th>
+                            <th className="p-2 text-right font-bold">Price/MT</th>
+                            <th className="p-2 text-left font-bold">Ship Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {updatedOrders.map(o => {
+                            const ppm = orderPricePerMt(o);
+                            return (
+                              <tr key={o.id} className="border-b border-blue-100 hover:bg-blue-50/50">
+                                <td className="p-2 font-mono font-bold">{o.bolNumber || '—'}</td>
+                                <td className="p-2">{o.customer}</td>
+                                <td className="p-2 font-mono">{o.po || '—'}</td>
+                                <td className="p-2 font-mono">{o.contractNumber || o.lineItems?.[0]?.contractNumber || '—'}</td>
+                                <td className="p-2">{o.carrier || '—'}</td>
+                                <td className="p-2 text-right font-mono font-bold">{ppm > 0 ? `$${ppm.toFixed(2)}` : '—'}</td>
+                                <td className="p-2">{o.shipmentDate || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* Skipped */}
                 {orderSyncPreview.skipped.length > 0 && (
                   <div>
@@ -12271,9 +12315,9 @@ export default function App() {
                   </div>
                 )}
 
-                {orderSyncPreview.newOrders.length === 0 && (
+                {orderSyncPreview.newOrders.length === 0 && updatedOrders.length === 0 && (
                   <div className="text-center p-8 opacity-60 text-sm">
-                    No new orders to import — every row was already in the orders table, invoiced, cancelled, or missing required fields.
+                    Nothing to import — every row was already complete in the orders table, invoiced, cancelled, or missing required fields.
                   </div>
                 )}
               </div>
@@ -12288,20 +12332,25 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    if (orderSyncPreview.newOrders.length > 0) {
-                      setOrders([...orders, ...orderSyncPreview.newOrders]);
+                    const updatedById = new Map(updatedOrders.map(o => [o.id, o]));
+                    if (orderSyncPreview.newOrders.length > 0 || updatedById.size > 0) {
+                      setOrders([
+                        ...orders.map(o => updatedById.get(o.id) || o),
+                        ...orderSyncPreview.newOrders,
+                      ]);
                     }
                     setOrderSyncPreview(null);
                   }}
-                  disabled={orderSyncPreview.newOrders.length === 0}
+                  disabled={orderSyncPreview.newOrders.length === 0 && updatedOrders.length === 0}
                   className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
                 >
-                  Import {orderSyncPreview.newOrders.length} Orders
+                  Import {orderSyncPreview.newOrders.length} New{updatedOrders.length > 0 ? ` + ${updatedOrders.length} Updated` : ''}
                 </button>
               </div>
             </motion.div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Transfer Sheet Sync — Preview / Confirm modal */}
         {transferSyncPreview && (

@@ -89,6 +89,9 @@ export interface ParsedOrderRow {
 
 export interface OrderSyncResult {
   newOrders: Order[];
+  /** Existing orders patched with previously-missing info (Price/MT, contract,
+   *  carrier, dates, etc.) when a sheet row matches their BOL or PO. */
+  updatedOrders?: Order[];
   skipped: Array<{ tab: string; bolNumber: string; poNumber: string; reason: string }>;
   errors: Array<{ tab: string; rowIdx: number; message: string }>;
 }
@@ -1113,15 +1116,20 @@ export function parsedRowsToOrdersConfigured(
   // body of parsedRowsToOrders here so we can pick per-tab expectedFormat /
   // netWeightPerUnit. (Kept inline rather than refactoring the older function
   // to avoid disturbing the existing hardcoded sync.)
-  const result: OrderSyncResult = { newOrders: [], skipped: [], errors: [] };
-  const existingBOLs = new Set(
-    existingOrders.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean),
-  );
-  const existingPOs = new Set(
-    existingOrders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean),
-  );
+  const result: OrderSyncResult = { newOrders: [], updatedOrders: [], skipped: [], errors: [] };
+  // Map existing orders by BOL and by PO so a matching row can UPDATE the order
+  // (fill missing fields) instead of being skipped.
+  const existingOrderByBol = new Map<string, Order>();
+  const existingOrderByPo = new Map<string, Order>();
+  for (const o of existingOrders) {
+    const b = (o.bolNumber || '').trim().toUpperCase();
+    const p = (o.po || '').trim().toUpperCase();
+    if (b && !existingOrderByBol.has(b)) existingOrderByBol.set(b, o);
+    if (p && !existingOrderByPo.has(p)) existingOrderByPo.set(p, o);
+  }
   const addedBOLs = new Set<string>();
   const addedPOs = new Set<string>();
+  const updatedIds = new Set<string>();
 
   for (const r of parsed) {
     try {
@@ -1158,14 +1166,6 @@ export function parsedRowsToOrdersConfigured(
       }
       const bolU = r.bolNumber.trim().toUpperCase();
       const poU = r.poNumber.trim().toUpperCase();
-      if (bolU && (existingBOLs.has(bolU) || addedBOLs.has(bolU))) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'BOL already exists in orders table' });
-        continue;
-      }
-      if (poU && (existingPOs.has(poU) || addedPOs.has(poU))) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'PO already exists in orders table' });
-        continue;
-      }
 
       // Per-tab defaults: explicit overrides from config > built-in tabDefaults
       const explicit = tabByName.get(r.tab);
@@ -1196,21 +1196,13 @@ export function parsedRowsToOrdersConfigured(
         ? Math.round(totalWeightKg / netWeightPerUnitKg)
         : totalWeightMT;
 
-      const lineItem: OrderLineItem = {
-        id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        productName: productRefs.productName,
-        qty,
-        contractNumber: r.contractNumber || '',
-        netWeightPerUnit: netWeightPerUnitKg,
-        totalWeight: totalWeightMT,
-        unitAmount: 0,
-        mtAmount: 0,
-        lineAmount: 0,
-        // Optional fields — omit when missing so Firestore doesn't choke
-        // on undefined values.
-        ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
-        ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
-      };
+      // Pricing from the sheet's Price/MT column. mtAmount is $/MT; lineAmount =
+      // weight(MT) × $/MT; unitAmount = $/MT × per-unit weight(MT). When the
+      // column is blank these stay 0 (so the orders table shows no price).
+      const pricePerMt = Number.isFinite(r.pricePerMt) && r.pricePerMt > 0 ? r.pricePerMt : 0;
+      const mtAmount = pricePerMt;
+      const unitAmount = Math.round(mtAmount * (netWeightPerUnitKg / 1000) * 100) / 100;
+      const lineAmount = Math.round(totalWeightMT * mtAmount * 100) / 100;
 
       // Resolve the sheet's ship-to text against this customer's saved
       // shipToLocations. Match on name (case-insensitive). When unmatched,
@@ -1227,6 +1219,83 @@ export function parsedRowsToOrdersConfigured(
         if (match) shipToLocationId = match.id;
       }
 
+      // Duplicate of a row we already imported as new in this same run → skip.
+      if ((bolU && addedBOLs.has(bolU)) || (poU && addedPOs.has(poU))) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Duplicate of an order already imported in this run' });
+        continue;
+      }
+
+      // Matches an EXISTING order by BOL — the unique shipment identifier — and
+      // fills in only its blank fields. We deliberately do NOT match on PO here:
+      // one PO can span several BOLs, so a PO match could attach data to the
+      // wrong order. Never overwrites a field that already has a value.
+      const existingOrder = bolU ? (existingOrderByBol.get(bolU) || null) : null;
+      if (existingOrder) {
+        if (updatedIds.has(existingOrder.id)) {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
+          continue;
+        }
+        const blank = (v: unknown) => v === undefined || v === null || v === '';
+        const patch: Partial<Order> = {};
+        if (blank(existingOrder.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
+        if (blank(existingOrder.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
+        if (blank(existingOrder.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
+        if (blank(existingOrder.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
+        if (blank(existingOrder.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
+        if (blank(existingOrder.splitNumber) && r.splitNumber) patch.splitNumber = r.splitNumber;
+        if (blank(existingOrder.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
+        if (blank(existingOrder.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+        if (blank(existingOrder.shipToLocationId) && shipToLocationId) patch.shipToLocationId = shipToLocationId;
+
+        // Price/MT backfill: when the order carries no amount yet, set each
+        // unpriced line's $/MT from the sheet and recompute the order total.
+        if (pricePerMt > 0 && (!existingOrder.amount || existingOrder.amount === 0)) {
+          let lineChanged = false;
+          const newLineItems = (existingOrder.lineItems || []).map(li => {
+            if (li.mtAmount && li.mtAmount > 0) return li; // already priced — leave it
+            lineChanged = true;
+            const tw = li.totalWeight || 0;
+            return { ...li, mtAmount: pricePerMt, lineAmount: Math.round(tw * pricePerMt * 100) / 100 };
+          });
+          if (lineChanged) {
+            patch.lineItems = newLineItems;
+            patch.amount = Math.round(newLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0) * 100) / 100;
+          }
+        }
+
+        if (Object.keys(patch).length > 0) {
+          result.updatedOrders!.push(stripUndefined({ ...existingOrder, ...patch }));
+          updatedIds.add(existingOrder.id);
+        } else {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already has all the available info' });
+        }
+        continue;
+      }
+
+      // New BOL, but this PO already belongs to another order → don't create a
+      // second order for it (preserves the importer's PO de-duplication; a PO is
+      // updated only via its own BOL match above).
+      if (poU && existingOrderByPo.has(poU)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'PO already exists in orders table' });
+        continue;
+      }
+
+      const lineItem: OrderLineItem = {
+        id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        productName: productRefs.productName,
+        qty,
+        contractNumber: r.contractNumber || '',
+        netWeightPerUnit: netWeightPerUnitKg,
+        totalWeight: totalWeightMT,
+        unitAmount,
+        mtAmount,
+        lineAmount,
+        // Optional fields — omit when missing so Firestore doesn't choke
+        // on undefined values.
+        ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
+        ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
+      };
+
       // Build the order WITHOUT undefined-valued optional fields. Firestore
       // rejects writes containing `undefined`; conditional spread keeps
       // empty optionals out of the document entirely.
@@ -1241,7 +1310,7 @@ export function parsedRowsToOrdersConfigured(
         deliveryDate: r.deliveryDate || '',
         status: 'Open',
         lineItems: [lineItem],
-        amount: 0,
+        amount: lineAmount,
         ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
         ...(r.splitNumber ? { splitNumber: r.splitNumber } : {}),
         ...(carrierCanonical ? { carrier: carrierCanonical } : {}),
