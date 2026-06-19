@@ -5721,6 +5721,7 @@ export default function App() {
           <DataTable<Customer>
             title="Customers"
             icon={<Users size={14} />}
+            stickyHeader
             columns={[
               { key: 'customerNumber', label: 'Cust No.', bold: true, render: (c) => c.customerNumber || '—' },
               {
@@ -6153,9 +6154,9 @@ export default function App() {
           </div>
           <div className="px-6 pb-6">
           
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Invoice No." sortKey="invoiceNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={sortConfig} onSort={handleSort} />
@@ -6583,9 +6584,9 @@ export default function App() {
           </div>
           <div className="px-6 pb-6">
 
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Customer" sortKey="customer" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -8670,9 +8671,9 @@ export default function App() {
           </div>
 
           <div className="px-6 py-4">
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[160px]" />
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
@@ -18546,7 +18547,7 @@ function SortableHeader({ label, sortKey, currentSort, onSort, className = '' }:
   const isActive = currentSort?.key === sortKey;
   return (
     <th
-      className={`p-4 border-r border-[#E4E3E0]/20 cursor-pointer hover:bg-white/10 transition-colors ${className}`}
+      className={`p-4 bg-[#141414] border-r border-[#E4E3E0]/20 cursor-pointer hover:bg-white/10 transition-colors ${className}`}
       onClick={() => onSort(sortKey)}
     >
       <div className="flex items-center gap-2">

@@ -626,7 +626,7 @@ export default function QualityAssurancePage({
 
   const SortHeader = ({ label, sortKey }: { label: string; sortKey: string }) => (
     <th
-      className="p-4 border-r border-white/10 cursor-pointer hover:bg-white/5 transition-colors select-none"
+      className="p-4 bg-[#141414] border-r border-white/10 cursor-pointer hover:bg-white/5 transition-colors select-none"
       onClick={() => handleSort(sortKey)}
     >
       <div className="flex items-center gap-1">
@@ -711,9 +711,9 @@ export default function QualityAssurancePage({
 
       {/* Product Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[calc(100vh-13rem)]">
           <table className="w-full text-left border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-20">
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <SortHeader label="Prod No." sortKey="productCode" />
                 <SortHeader label="Product Name" sortKey="productName" />

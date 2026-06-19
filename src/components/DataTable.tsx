@@ -63,6 +63,10 @@ interface DataTableProps<T> {
   /** Optional footer row(s) — rendered inside <tfoot>. Caller supplies the
    *  full <tr>...</tr> markup so totals rows keep their custom styling. */
   footer?: React.ReactNode;
+  /** When true, the table body scrolls within a bounded height and the header
+   *  row stays pinned to the top. Use for long full-page lists. Default off so
+   *  existing sub-tables keep their plain horizontal-overflow behaviour. */
+  stickyHeader?: boolean;
 }
 
 export default function DataTable<T>({
@@ -78,6 +82,7 @@ export default function DataTable<T>({
   defaultSortKey,
   defaultSortDir = 'asc',
   footer,
+  stickyHeader = false,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey || null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir);
@@ -107,7 +112,7 @@ export default function DataTable<T>({
   };
 
   return (
-    <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+    <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
       {/* Banner */}
       <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
         <div className="flex items-center gap-3">
@@ -125,9 +130,12 @@ export default function DataTable<T>({
         )}
       </div>
 
-      {/* Table */}
+      {/* Table. With stickyHeader the body scrolls within a bounded height and
+          the header row stays pinned; otherwise it keeps the original
+          horizontal-only overflow. */}
+      <div className={stickyHeader ? 'overflow-auto max-h-[calc(100vh-16rem)]' : 'overflow-x-auto'}>
       <table className="w-full text-left border-collapse">
-        <thead>
+        <thead className={stickyHeader ? 'sticky top-0 z-10' : ''}>
           <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
             {columns.map(col => {
               const sortable = col.sortable !== false;
@@ -136,7 +144,7 @@ export default function DataTable<T>({
                 <th
                   key={col.key}
                   onClick={() => toggleSort(col.key, sortable)}
-                  className={`p-3 border-r border-[#141414]/10 ${col.widthClass || ''} ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'} ${sortable ? 'cursor-pointer select-none hover:bg-[#141414]/5' : ''}`}
+                  className={`p-3 border-r border-[#141414]/10 ${stickyHeader ? 'bg-[#F5F5F5]' : ''} ${col.widthClass || ''} ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'} ${sortable ? 'cursor-pointer select-none hover:bg-[#141414]/5' : ''}`}
                 >
                   {col.label}
                   {sortable && isActive && (sortDir === 'asc' ? ' ▲' : ' ▼')}
@@ -177,6 +185,7 @@ export default function DataTable<T>({
         </tbody>
         {footer && <tfoot>{footer}</tfoot>}
       </table>
+      </div>
     </div>
   );
 }
