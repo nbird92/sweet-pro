@@ -4000,7 +4000,10 @@ export default function App() {
     // Sugar type abbreviation in the string (e.g. "GC", "LC", "BR") — counts as a sugar hit
     if (!detectedSugar) {
       for (const st of sugarTypes) {
-        if (st.abbreviation && new RegExp(`\\b${st.abbreviation}\\b`).test(productName)) {
+        // Escape the abbreviation — it's user-editable and could contain regex
+        // metacharacters, which would otherwise throw on new RegExp.
+        const esc = (st.abbreviation || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (esc && new RegExp(`\\b${esc}\\b`).test(productName)) {
           detectedSugar = st.name;
           break;
         }
@@ -4456,27 +4459,46 @@ export default function App() {
       setErrorBox('Please select a product and enter a quantity');
       return;
     }
-    // Look up the product in skus, then fall back to qaProducts (orphan QA rows)
-    let product = skus.find(s => s.name === newLineItem.productName);
+    // Synthesize an SKU-shaped record from a QA product (for orphan QAs and
+    // key/shortform matches), preferring QA attrs and filling gaps from its SKU.
+    const buildFromQa = (qa: QAProduct): SKU => {
+      const matchSku = skus.find(s => s.id === qa.skuId);
+      return {
+        id: qa.skuId,
+        name: qa.skuName || matchSku?.name || qa.id,
+        productGroup: qa.productGroup || matchSku?.productGroup || '',
+        category: qa.category || matchSku?.category || 'Conventional',
+        netWeight: qa.netWeightKg || matchSku?.netWeight || 0,
+        brix: matchSku?.brix ?? 99.9,
+        premiumCadMt: matchSku?.premiumCadMt ?? 0,
+        netWeightKg: qa.netWeightKg ?? matchSku?.netWeightKg,
+        grossWeightKg: qa.grossWeightKg ?? matchSku?.grossWeightKg,
+        maxColor: qa.maxColor ?? matchSku?.maxColor,
+        location: qa.location || matchSku?.location || '',
+        sugarType: qa.sugarType || matchSku?.sugarType,
+        productFormat: qa.productFormat || matchSku?.productFormat,
+      };
+    };
+    // Resolve the product, in order of reliability:
+    //   1. productKey (QA id, then SKU id) — set on dropdown-picked + imported lines
+    //   2. exact SKU name, 3. orphan QA by skuName,
+    //   4. shortform / rendered Product Name (resolveProduct) — so a line saved as
+    //      a shortform like "LC100" resolves to its SKU instead of erroring.
+    let product: SKU | undefined;
+    if (newLineItem.productKey) {
+      const qaByKey = qaProducts.find(q => q.id === newLineItem.productKey);
+      if (qaByKey) product = buildFromQa(qaByKey);
+      else product = skus.find(s => s.id === newLineItem.productKey) || undefined;
+    }
+    if (!product) product = skus.find(s => s.name === newLineItem.productName);
     if (!product) {
       const orphan = qaProducts.find(q => q.skuName === newLineItem.productName);
-      if (orphan) {
-        product = {
-          id: orphan.skuId,
-          name: orphan.skuName,
-          productGroup: orphan.productGroup,
-          category: orphan.category,
-          netWeight: orphan.netWeightKg || 0,
-          brix: 99.9,
-          premiumCadMt: 0,
-          netWeightKg: orphan.netWeightKg,
-          grossWeightKg: orphan.grossWeightKg,
-          maxColor: orphan.maxColor,
-          location: orphan.location,
-          sugarType: orphan.sugarType,
-          productFormat: orphan.productFormat,
-        };
-      }
+      if (orphan) product = buildFromQa(orphan);
+    }
+    if (!product) {
+      const resolved = resolveProduct(newLineItem.productName);
+      if (resolved.qa) product = buildFromQa(resolved.qa);
+      else if (resolved.sku) product = resolved.sku;
     }
     if (!product) {
       setErrorBox(`Product "${newLineItem.productName}" not found in catalog`);
