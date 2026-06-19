@@ -8520,11 +8520,6 @@ export default function App() {
                   });
                 }
 
-                if (collected.size === 0) {
-                  setErrorBox('No new contract numbers found in Orders, Invoices, or Shipments.');
-                  return;
-                }
-
                 // Build a Contract object per unique contract number, merging info across matches.
                 const pickFirst = <T,>(values: (T | undefined | null | '')[]): T | undefined => {
                   for (const v of values) {
@@ -8571,8 +8566,43 @@ export default function App() {
                   });
                 }
 
-                setContracts([...contracts, ...newContracts]);
-                setErrorBox(`Imported ${newContracts.length} contract${newContracts.length === 1 ? '' : 's'} from Orders/Invoices/Shipments.`);
+                // Backfill Price/MT onto EXISTING contracts that have no price
+                // yet, from a matching invoice's Price/MT. Invoices reference a
+                // contract by number / split / line item (invoiceMatchesContract),
+                // and the realized price/MT lives on inv.pricePerMt (or a line
+                // item's mtAmount). Never overwrite a contract price already set.
+                const invoicePrice = (inv: Invoice): number => {
+                  if (inv.pricePerMt && inv.pricePerMt > 0) return inv.pricePerMt;
+                  const li = (inv.lineItems || []).find(l => (l.mtAmount || 0) > 0);
+                  return li?.mtAmount || 0;
+                };
+                // Invoice carries no currency, so a backfilled finalPrice keeps the
+                // contract's existing currency (we only set the number here).
+                const priceUpdatedById = new Map<string, Contract>();
+                for (const c of contracts) {
+                  if (c.finalPrice && c.finalPrice > 0) continue; // already priced — never overwrite
+                  const cn = (c.contractNumber || '').trim();
+                  // Most-recent NON-cancelled priced invoice on this contract wins
+                  // (mirrors the invoice-on-contract convention used elsewhere).
+                  const inv = invoices
+                    .filter(i => i.status !== 'Cancelled' && invoicePrice(i) > 0 && invoiceMatchesContract(i, cn))
+                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+                  if (inv) priceUpdatedById.set(c.id, { ...c, finalPrice: invoicePrice(inv) });
+                }
+
+                if (newContracts.length === 0 && priceUpdatedById.size === 0) {
+                  setErrorBox('No new contract numbers to import, and no existing contracts needed a Price/MT from invoices.');
+                  return;
+                }
+
+                setContracts([
+                  ...contracts.map(c => priceUpdatedById.get(c.id) || c),
+                  ...newContracts,
+                ]);
+                const parts: string[] = [];
+                if (newContracts.length) parts.push(`imported ${newContracts.length} contract${newContracts.length === 1 ? '' : 's'}`);
+                if (priceUpdatedById.size) parts.push(`set Price/MT on ${priceUpdatedById.size} existing contract${priceUpdatedById.size === 1 ? '' : 's'} from invoices`);
+                setErrorBox(`Backfill complete — ${parts.join(' and ')}.`);
               }}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Plus size={12} /> Backfill from Orders/Invoices
