@@ -4,32 +4,33 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { extractPO, isSupportedAttachment, DEFAULT_MODEL, type ExtractHints } from './_poExtract.js';
 import {
   gmailAccessToken, listMessages, getMessage, collectAttachments,
-  getAttachmentBase64, getOrCreateLabel, modifyMessage, header,
+  getAttachmentBase64, header,
 } from './_gmail.js';
 
 /**
  * Scheduled PO inbox scan (Vercel Cron, every 15 min).
  *
- * Reads unread, attachment-bearing messages from the shared PO mailbox, runs
+ * Reads recent attachment-bearing messages from the shared PO mailbox, runs
  * each attachment through Gemini, and APPENDS the structured result to the
  * `incomingPoOrders` Firestore collection. The web app ingests that queue into
  * real Open orders on load (so cron writes never collide with the client's
- * whole-collection sync). Processed messages are marked read + labelled so they
- * are not picked up again.
+ * whole-collection sync).
+ *
+ * READ-ONLY mailbox: the Gmail scope is gmail.readonly, so the inbox is never
+ * modified. To avoid reprocessing, each handled message's id is recorded in the
+ * `processedPoEmails` Firestore collection and skipped on the next run.
  *
  * Required env:
  *   GEMINI_API_KEY  (GOOGLE_API_KEY also accepted)
  *   PO_INBOX_ADDRESS                     mailbox to scan (impersonated)
  *   GOOGLE_SERVICE_ACCOUNT_EMAIL         service account w/ domain-wide delegation
- *   GOOGLE_PRIVATE_KEY                   (gmail.modify scope authorized in Admin)
+ *   GOOGLE_PRIVATE_KEY                   (gmail.readonly scope authorized in Admin)
  *   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
  * Optional env:
  *   PO_EXTRACT_MODEL  (default gemini-2.5-flash)
- *   PO_INBOX_QUERY    (default "is:unread has:attachment")
+ *   PO_INBOX_QUERY    (default "has:attachment newer_than:3d")
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
-
-const PROCESSED_LABEL = 'PO-Imported';
 
 function getDb() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -77,19 +78,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' });
   if (!inbox) return res.status(500).json({ error: 'PO_INBOX_ADDRESS not configured.' });
   const model = process.env.PO_EXTRACT_MODEL || DEFAULT_MODEL;
-  const query = process.env.PO_INBOX_QUERY || 'is:unread has:attachment';
+  const query = process.env.PO_INBOX_QUERY || 'has:attachment newer_than:3d';
 
-  const summary = { scanned: 0, attachments: 0, queued: 0, errors: [] as Array<{ where: string; message: string }> };
+  const summary = { scanned: 0, skipped: 0, attachments: 0, queued: 0, errors: [] as Array<{ where: string; message: string }> };
 
   try {
     const db = getDb();
     const hints = await buildHints(db);
     const token = await gmailAccessToken(inbox);
-    const labelId = await getOrCreateLabel(token, inbox, PROCESSED_LABEL);
-    const messages = await listMessages(token, inbox, query, 25);
+    const processedRef = db.collection('processedPoEmails');
+    const messages = await listMessages(token, inbox, query); // paginated, up to maxTotal
 
     for (const meta of messages) {
       try {
+        // Read-only dedup: skip a message already handled on a previous run
+        // (we can't mark it read/labelled with a read-only scope).
+        const seen = await processedRef.doc(meta.id).get();
+        if (seen.exists) { summary.skipped++; continue; }
+
         const msg = await getMessage(token, inbox, meta.id);
         const fromEmail = header(msg.payload, 'From');
         const subject = header(msg.payload, 'Subject');
@@ -122,9 +128,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // Mark processed regardless of per-attachment outcome so we don't loop
-        // on a permanently-failing message; failures are recorded above.
-        await modifyMessage(token, inbox, meta.id, { addLabelIds: [labelId], removeLabelIds: ['UNREAD'] });
+        // Record the message as processed (read-only: tracked in Firestore,
+        // not via Gmail labels) regardless of per-attachment outcome so a
+        // permanently-failing message isn't retried forever.
+        await processedRef.doc(meta.id).set({
+          id: meta.id,
+          subject,
+          fromEmail,
+          processedAt: new Date().toISOString(),
+        });
       } catch (e) {
         summary.errors.push({ where: meta.id, message: e instanceof Error ? e.message : String(e) });
       }

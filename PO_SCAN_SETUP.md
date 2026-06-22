@@ -95,7 +95,8 @@ The cron does two privileged things, handled by **two different service accounts
    (direct: https://admin.google.com/ac/owl/domainwidedelegation).
 2. Click **Add new**.
 3. **Client ID** = the numeric Unique ID from B2.
-4. **OAuth scopes** = exactly `https://www.googleapis.com/auth/gmail.modify`
+4. **OAuth scopes** = exactly `https://www.googleapis.com/auth/gmail.readonly`
+   (read-only — the scan never modifies the mailbox; it can't send, label, or delete.)
 5. Click **Authorize**. (Propagation is usually a few minutes, occasionally longer.)
 
 ### B4. Pick / prepare the inbox
@@ -103,8 +104,9 @@ The cron does two privileged things, handled by **two different service accounts
   (e.g. `orders@yourdomain.com`) — not a Group, alias, or external address. The cron
   impersonates this mailbox.
 - Forward customers' PO emails into it (or have them send there directly). The cron reads
-  messages matching `is:unread has:attachment` by default; after processing it marks them read
-  and labels them **`PO-Imported`** so they're never re-imported.
+  messages matching `has:attachment newer_than:3d` by default. It's **read-only** — it never
+  marks emails read, labels, or deletes anything; instead it records each processed message id
+  in the Firestore `processedPoEmails` collection so the same email isn't imported twice.
 
 ### B5. Firebase Admin service account (Firestore writes)
 1. **https://console.firebase.google.com/** → your project → **gear ⚙ → Project settings →
@@ -134,7 +136,7 @@ In **Settings → Environment Variables** (Production, Sensitive where noted):
 | `FIREBASE_CLIENT_EMAIL` | from the Firebase JSON (Sensitive) |
 | `FIREBASE_PRIVATE_KEY` | from the Firebase JSON (Sensitive) |
 | `CRON_SECRET` | a random ≥16-char string, no spaces/newlines (recommended) |
-| `PO_INBOX_QUERY` | *(optional)* override the default `is:unread has:attachment` |
+| `PO_INBOX_QUERY` | *(optional)* override the default `has:attachment newer_than:3d` |
 
 `GEMINI_API_KEY` (from Milestone A) is also required for the cron. `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 and `GOOGLE_PRIVATE_KEY` are already present from Sheets — don't re-add them.
@@ -150,10 +152,11 @@ by others).
    ```bash
    curl -X POST https://<your-app>/api/scan-po-inbox -H "Authorization: Bearer $CRON_SECRET"
    ```
-   The JSON response reports `scanned`, `attachments`, `queued`, and any `errors`.
+   The JSON response reports `scanned`, `skipped`, `attachments`, `queued`, and any `errors`.
 4. Send a test PO email into the inbox, trigger the cron, then open the app — within a few
-   minutes the order appears as **Open** (a toast confirms "N orders imported from emailed POs"),
-   the email is marked read and labelled **PO-Imported**.
+   minutes the order appears as **Open** (a toast confirms "N orders imported from emailed POs").
+   The email itself is left untouched; its id is recorded in `processedPoEmails` so it isn't
+   re-imported.
 
 ---
 
