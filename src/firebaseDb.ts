@@ -4,6 +4,7 @@ import {
   getDocs,
   writeBatch,
   deleteDoc,
+  runTransaction,
 } from 'firebase/firestore';
 import { getFirestore } from 'firebase/firestore';
 import { app } from './firebaseConfig';
@@ -46,6 +47,8 @@ export const COLLECTIONS = {
   emailLog: 'emailLog',
   emailSettings: 'emailSettings',
   returnOrders: 'returnOrders',
+  // Persistent dashboard log of POs imported from the Gmail inbox scan.
+  poImportLog: 'poImportLog',
   // Append-only queue: the Gmail PO scan (api/scan-po-inbox) writes extracted
   // POs here; the app ingests them into `orders` on load, then deletes them.
   // NOT part of the whole-collection autosave, so cron writes are never
@@ -63,6 +66,20 @@ export async function fetchCollection<T>(collectionName: string): Promise<T[]> {
 // incomingPoOrders queue after the app ingests them into orders).
 export async function deleteDocs(collectionName: string, ids: string[]): Promise<void> {
   await Promise.all(ids.map(id => deleteDoc(doc(db, collectionName, id)).catch(() => {})));
+}
+
+// Atomically CLAIM a queue doc: in a transaction, read it and (if it still
+// exists) delete it, returning its data. Returns null when another client
+// already claimed it. This lets two open browser sessions drain the same
+// incomingPoOrders queue without double-processing the same emailed PO.
+export async function claimDoc<T>(collectionName: string, id: string): Promise<T | null> {
+  const ref = doc(db, collectionName, id);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    tx.delete(ref);
+    return snap.data() as T;
+  });
 }
 
 // Fetch all data from all collections (one-time bulk read)

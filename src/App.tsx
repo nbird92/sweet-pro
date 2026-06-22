@@ -58,7 +58,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, deleteDocs } from './firebaseDb';
+import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { generateBolPdf } from './bolPdf';
@@ -69,7 +69,7 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -683,8 +683,9 @@ export default function App() {
   };
 
   // Drain the incomingPoOrders queue (written by the Gmail cron) into real Open
-  // orders. Dedupes by PO number against existing orders; always deletes the
-  // consumed queue docs so they don't reprocess.
+  // orders, logging each to the Email Center dashboard. Each queue doc is CLAIMED
+  // atomically (claimDoc deletes it inside a transaction) so two open browser
+  // sessions can't import the same emailed PO twice. Dedupes by PO number too.
   const ingestingPOsRef = useRef(false);
   const ingestIncomingPOs = async () => {
     if (ingestingPOsRef.current || !user) return;
@@ -693,23 +694,66 @@ export default function App() {
       const incoming = await fetchCollection<any>(COLLECTIONS.incomingPoOrders);
       if (!incoming.length) return;
       const built: Order[] = [];
-      const consumedIds: string[] = [];
+      const logs: PoImportLogEntry[] = [];
+      const nowIso = new Date().toISOString();
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
       // BOLs reserved within this batch so orders built before any state commit
       // each get a unique, sequential BOL instead of all reusing the same number.
       const batchBols: string[] = [];
-      for (const item of incoming) {
-        if (!item?.id) continue;
-        consumedIds.push(item.id);
-        const po = item.extraction as ExtractedPO | undefined;
-        if (!po || !Array.isArray(po.lineItems)) continue;
-        const poNum = (po.poNumber || '').trim();
-        if (poNum && seenPo.has(poNum)) continue; // already imported earlier
-        const order = buildOrderFromExtraction(po, batchBols);
-        if (order) { built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum); }
+      // Common log fields carried from the email + extraction for the dashboard.
+      const logBase = (item: any, po: ExtractedPO | undefined) => ({
+        id: `POLOG-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        importedAt: nowIso,
+        receivedAt: item?.receivedAt,
+        fromEmail: item?.fromEmail,
+        subject: item?.subject,
+        sourceFile: item?.sourceFile,
+        poNumber: (po?.poNumber || '').trim() || undefined,
+        customer: po?.customerName || undefined,
+      });
+      for (const queued of incoming) {
+        if (!queued?.id) continue;
+        // Claim (and remove) the queue doc atomically — null means another
+        // open session already took it, so skip to avoid a duplicate import.
+        let item: any;
+        try {
+          item = await claimDoc<any>(COLLECTIONS.incomingPoOrders, queued.id);
+        } catch (e) { console.error('PO claim failed:', e); continue; }
+        if (!item) continue;
+        try {
+          const po = item.extraction as ExtractedPO | undefined;
+          if (!po || !Array.isArray(po.lineItems)) {
+            logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
+            continue;
+          }
+          const poNum = (po.poNumber || '').trim();
+          if (poNum && seenPo.has(poNum)) {
+            logs.push({ ...logBase(item, po), result: 'duplicate', note: 'A matching PO number already exists in orders' });
+            continue;
+          }
+          const order = buildOrderFromExtraction(po, batchBols);
+          if (order) {
+            built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum);
+            logs.push({
+              ...logBase(item, po),
+              customer: order.customer,
+              orderId: order.id,
+              orderBol: order.bolNumber,
+              amount: order.amount,
+              productSummary: order.product,
+              result: 'created',
+            });
+          } else {
+            logs.push({ ...logBase(item, po), result: 'skipped', note: 'No valid product line could be built' });
+          }
+        } catch (e) {
+          // The doc is already claimed/deleted, so always leave a dashboard trail.
+          logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
+        }
       }
       if (built.length) setOrders(prev => [...prev, ...built]);
-      if (consumedIds.length) await deleteDocs(COLLECTIONS.incomingPoOrders, consumedIds);
+      // Cap the persisted log so the whole-collection resync stays bounded.
+      if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
       if (built.length) setPoIngestNotice(`${built.length} order${built.length === 1 ? '' : 's'} imported from emailed POs.`);
     } catch (e) {
       console.error('PO ingest failed:', e);
@@ -2451,6 +2495,8 @@ export default function App() {
 
   // Return Orders ----------------------------------------------------------
   const [returnOrders, setReturnOrders] = useState<ReturnOrder[]>([]);
+  // Persistent dashboard of POs imported from the Gmail inbox scan (Email Center).
+  const [poImportLog, setPoImportLog] = useState<PoImportLogEntry[]>([]);
   // Add / Edit modal state. When isAddingReturnOrder is true the modal opens
   // in "add" mode; when editingReturnOrder is non-null it opens in edit mode.
   const [isAddingReturnOrder, setIsAddingReturnOrder] = useState(false);
@@ -2503,6 +2549,7 @@ export default function App() {
     emaillog: JSON.stringify([]),
     emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
     returnorders: JSON.stringify([]),
+    poimportlog: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -2777,6 +2824,10 @@ export default function App() {
         setReturnOrders(data.returnOrders as ReturnOrder[]);
         lastSyncedData.current.returnorders = JSON.stringify(data.returnOrders);
       }
+      if (data.poImportLog?.length) {
+        setPoImportLog(data.poImportLog as PoImportLogEntry[]);
+        lastSyncedData.current.poimportlog = JSON.stringify(data.poImportLog);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -2848,6 +2899,7 @@ export default function App() {
         { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog },
         { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
+        { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
       ];
 
       try {
@@ -2873,7 +2925,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
@@ -7199,6 +7251,7 @@ export default function App() {
           emailLog={emailLog}
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
+          poImportLog={poImportLog}
         />
       );
     }

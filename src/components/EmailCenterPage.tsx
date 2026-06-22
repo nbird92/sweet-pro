@@ -6,14 +6,16 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox } from 'lucide-react';
 import PageBanner from './PageBanner';
-import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType } from '../types';
+import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry } from '../types';
 
 interface Props {
   emailLog: EmailLog[];
   emailSettings: EmailSettings;
   setEmailSettings: (next: EmailSettings) => void;
+  /** Dashboard log of POs imported from the Gmail inbox scan. */
+  poImportLog?: PoImportLogEntry[];
 }
 
 const TYPE_LABELS: Record<EmailDocumentType, string> = {
@@ -32,7 +34,7 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [] }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [statusFilter, setStatusFilter] = useState<EmailStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<EmailDocumentType | 'all'>('all');
@@ -58,6 +60,22 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     }
     return c;
   }, [emailLog]);
+
+  // PO import dashboard — newest first + outcome counts.
+  const poImports = useMemo(
+    () => [...poImportLog].sort((a, b) => (b.importedAt || '').localeCompare(a.importedAt || '')),
+    [poImportLog],
+  );
+  const lastImport = poImports[0]?.importedAt;
+  const importCounts = useMemo(() => {
+    const c = { total: poImportLog.length, created: 0, duplicate: 0, skipped: 0 };
+    for (const e of poImportLog) {
+      if (e.result === 'created') c.created++;
+      else if (e.result === 'duplicate') c.duplicate++;
+      else c.skipped++;
+    }
+    return c;
+  }, [poImportLog]);
 
   const setSettings = (patch: Partial<EmailSettings>) => setEmailSettings({ ...emailSettings, ...patch });
   const setTriggers = (patch: Partial<EmailSettings['triggers']>) =>
@@ -87,6 +105,53 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             Test mode is ON. Every send is rerouted to <span className="font-mono font-bold">{emailSettings.testAddress || '(no test address set)'}</span> with a [TEST → original] subject prefix. Configure in Settings.
           </div>
         )}
+      </div>
+
+      {/* PO Import dashboard — emailed POs auto-imported into orders */}
+      <div className="px-6 pt-2 pb-5">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Emailed PO Imports</h3>
+          <span className="text-[10px] opacity-50 font-mono">
+            {importCounts.total} imported{lastImport ? ` · last ${new Date(lastImport).toLocaleString()}` : ''}
+            {importCounts.duplicate > 0 ? ` · ${importCounts.duplicate} dup` : ''}
+            {importCounts.skipped > 0 ? ` · ${importCounts.skipped} skipped` : ''}
+          </span>
+        </div>
+        <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[420px]">
+          <table className="w-full text-left border-collapse">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                <th className="p-3 bg-[#141414] border-r border-white/20">Imported</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Subject</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">File</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">PO No.</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Order (BOL)</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20 text-right">Amount</th>
+                <th className="p-3 bg-[#141414]">Result</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {poImports.map(e => (
+                <tr key={e.id} className="hover:bg-[#F9F9F9]">
+                  <td className="p-3 text-xs font-mono whitespace-nowrap">{e.importedAt ? new Date(e.importedAt).toLocaleString() : '—'}</td>
+                  <td className="p-3 text-xs">{e.fromEmail || '—'}</td>
+                  <td className="p-3 text-xs max-w-[240px] truncate" title={e.subject}>{e.subject || '—'}</td>
+                  <td className="p-3 text-xs font-mono">{e.sourceFile || '—'}</td>
+                  <td className="p-3 text-xs font-mono font-bold">{e.poNumber || '—'}</td>
+                  <td className="p-3 text-xs">{e.customer || '—'}</td>
+                  <td className="p-3 text-xs font-mono">{e.orderBol || '—'}</td>
+                  <td className="p-3 text-xs text-right font-mono">{typeof e.amount === 'number' && e.amount > 0 ? `$${e.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
+                  <td className="p-3"><ImportResultPill result={e.result} note={e.note} /></td>
+                </tr>
+              ))}
+              {poImports.length === 0 && (
+                <tr><td colSpan={9} className="p-8 text-center text-xs opacity-50 italic">No POs imported from email yet. The inbox scan runs every 15 minutes; imports appear here once an open browser session ingests them.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Stat tiles */}
@@ -295,6 +360,18 @@ function StatusPill({ status }: { status: EmailStatus }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${STATUS_STYLES[status]}`}>
       <Icon size={10} /> {status}
+    </span>
+  );
+}
+
+function ImportResultPill({ result, note }: { result: PoImportLogEntry['result']; note?: string }) {
+  const style =
+    result === 'created'   ? 'bg-emerald-100 text-emerald-800' :
+    result === 'duplicate' ? 'bg-amber-100   text-amber-800'   :
+                             'bg-slate-100   text-slate-700';
+  return (
+    <span title={note} className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${style}`}>
+      {result}
     </span>
   );
 }

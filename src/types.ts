@@ -388,6 +388,25 @@ export interface Order {
   customsEntryNo?: string;  // Customs entry number
 }
 
+/** One row in the Email Center's PO-import dashboard. Written by the app each
+ *  time it ingests an emailed PO (from the Gmail inbox scan queue) into an order. */
+export interface PoImportLogEntry {
+  id: string;
+  importedAt: string;          // ISO — when the app turned the queued PO into an order
+  receivedAt?: string;         // ISO — when the email arrived (from the cron)
+  fromEmail?: string;          // sender of the PO email
+  subject?: string;            // email subject
+  sourceFile?: string;         // attachment filename the PO was read from
+  poNumber?: string;
+  customer?: string;
+  orderId?: string;            // id of the created order (when result === 'created')
+  orderBol?: string;           // BOL of the created order
+  amount?: number;             // order amount
+  productSummary?: string;     // products on the order
+  result: 'created' | 'duplicate' | 'skipped';
+  note?: string;               // reason when duplicate / skipped
+}
+
 /* ====================================================================== */
 /* Return Orders — track product being returned after it has shipped.     */
 /* Mirrors the Order shape so the existing UI patterns translate.         */
