@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { extractPO, isSupportedAttachment, DEFAULT_MODEL, type ExtractHints } from './_poExtract.js';
 import {
   gmailAccessToken, listMessages, getMessage, collectAttachments,
@@ -32,15 +33,18 @@ import {
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
 
-function getDb() {
+function getAdminApp() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error('FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY are not configured.');
   }
-  const app = getApps().length ? getApps()[0] : initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
-  return getFirestore(app, 'sweetpro');
+  return getApps().length ? getApps()[0] : initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+}
+
+function getDb() {
+  return getFirestore(getAdminApp(), 'sweetpro');
 }
 
 async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints> {
@@ -67,11 +71,31 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Cron auth — Vercel injects Authorization: Bearer <CRON_SECRET> when set.
+  // Authorize EITHER the Vercel cron (Bearer <CRON_SECRET>) OR a signed-in app
+  // user (Bearer <Firebase ID token>) — the latter lets the Email Center
+  // "Scan Inbox Now" button trigger an ad-hoc run without exposing the secret.
+  // When no CRON_SECRET is configured the endpoint stays open (prior behaviour).
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && req.headers['authorization'] !== `Bearer ${cronSecret}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  const authHeader = (req.headers['authorization'] as string) || '';
+  let authorized = !cronSecret;
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) authorized = true;
+  if (!authorized && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = await getAuth(getAdminApp()).verifyIdToken(authHeader.slice(7));
+      // Optional staff allowlist: when PO_SCAN_ALLOWED_DOMAINS is set, the signed-in
+      // user's email (or Google hosted-domain) must match one of the listed domains;
+      // otherwise any verified user of the Firebase project is accepted.
+      const allowed = (process.env.PO_SCAN_ALLOWED_DOMAINS || '')
+        .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+      const emailDomain = (decoded.email || '').split('@')[1]?.toLowerCase() || '';
+      const hd = decoded.hd ? String(decoded.hd).toLowerCase() : '';
+      const domainOk = allowed.length === 0 || allowed.includes(emailDomain) || (hd !== '' && allowed.includes(hd));
+      if (decoded.email_verified !== false && domainOk) authorized = true;
+    } catch (e) {
+      console.warn('scan-po-inbox token verify failed:', e instanceof Error ? e.message : e);
+    }
   }
+  if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const inbox = process.env.PO_INBOX_ADDRESS;

@@ -140,6 +140,7 @@ In **Settings → Environment Variables** (Production, Sensitive where noted):
 | `FIREBASE_PRIVATE_KEY` | from the Firebase JSON (Sensitive) |
 | `CRON_SECRET` | a random ≥16-char string, no spaces/newlines (recommended) |
 | `PO_INBOX_QUERY` | *(optional)* override the default `newer_than:3d` (add `has:attachment` to skip body-only amendment emails) |
+| `PO_SCAN_ALLOWED_DOMAINS` | *(optional)* comma-separated email domains (e.g. `sucrosourcing.com,sucro.ca`) allowed to use the **Scan Inbox Now** button; unset = any signed-in user |
 
 `GEMINI_API_KEY` (from Milestone A) is also required for the cron. `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 and `GOOGLE_PRIVATE_KEY` are already present from Sheets — don't re-add them.

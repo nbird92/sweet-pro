@@ -6,7 +6,7 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw } from 'lucide-react';
 import PageBanner from './PageBanner';
 import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment } from '../types';
 
@@ -20,6 +20,8 @@ interface Props {
   poAmendments?: PoAmendment[];
   onApplyAmendment?: (a: PoAmendment) => void;
   onDismissAmendment?: (a: PoAmendment) => void;
+  /** Trigger an ad-hoc inbox scan now; resolves with the run summary. */
+  onScanInbox?: () => Promise<{ ok: boolean; summary?: any; error?: string }>;
 }
 
 /** Compact "before → after" description of a requested amendment. */
@@ -48,8 +50,26 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poAmendments = [], onApplyAmendment, onDismissAmendment }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
   const [showSettings, setShowSettings] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const handleScanInbox = async () => {
+    if (!onScanInbox || scanning) return;
+    setScanning(true);
+    setScanMsg(null);
+    const r = await onScanInbox();
+    setScanning(false);
+    if (r.ok) {
+      const s = r.summary || {};
+      setScanMsg({
+        ok: true,
+        text: `Scanned ${s.scanned ?? 0} email${s.scanned === 1 ? '' : 's'} · ${s.queued ?? 0} queued${s.errors?.length ? ` · ${s.errors.length} error(s)` : ''}. New orders/amendments appear below.`,
+      });
+    } else {
+      setScanMsg({ ok: false, text: `Scan failed: ${r.error || 'unknown error'}` });
+    }
+  };
   const [statusFilter, setStatusFilter] = useState<EmailStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<EmailDocumentType | 'all'>('all');
   const [viewingLog, setViewingLog] = useState<EmailLog | null>(null);
@@ -108,6 +128,16 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   return (
     <div>
       <PageBanner icon={<Mail size={18} />} title="Email Center" count={emailLog.length}>
+        {onScanInbox && (
+          <button
+            onClick={handleScanInbox}
+            disabled={scanning}
+            title="Scan the PO inbox now instead of waiting for the 15-minute schedule."
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> {scanning ? 'Scanning…' : 'Scan Inbox Now'}
+          </button>
+        )}
         <button
           onClick={() => setShowSettings(true)}
           className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
@@ -118,6 +148,12 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
 
       {/* Test-mode + master-switch banner */}
       <div className="px-6 pt-4">
+        {scanMsg && (
+          <div className={`border p-3 text-xs mb-3 flex items-center justify-between gap-2 ${scanMsg.ok ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-red-500 bg-red-50 text-red-800'}`}>
+            <span className="flex items-center gap-2">{scanMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {scanMsg.text}</span>
+            <button onClick={() => setScanMsg(null)} className="hover:opacity-70"><X size={14} /></button>
+          </div>
+        )}
         {!emailSettings.enabled && (
           <div className="border border-red-500 bg-red-50 text-red-800 p-3 text-xs mb-3 flex items-center gap-2">
             <AlertTriangle size={14} /> Email sending is DISABLED globally. Open Settings to turn it on.

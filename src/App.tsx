@@ -857,6 +857,26 @@ export default function App() {
   // effect itself lives lower down, after `user` is declared.
   const ingestPOsRef = useRef<() => void>(() => {});
   ingestPOsRef.current = ingestIncomingPOs;
+
+  // Manual "Scan Inbox Now" trigger for the Email Center button. Authenticates
+  // the cron endpoint with the signed-in user's Firebase ID token (no secret in
+  // the browser), then drains the queue immediately so results show right away.
+  const scanInboxNow = async (): Promise<{ ok: boolean; summary?: any; error?: string }> => {
+    if (!user) return { ok: false, error: 'Not signed in.' };
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/scan-po-inbox', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
+      // Drain the freshly-queued POs now — wait out any in-flight poll first so
+      // ingestIncomingPOs's busy-guard doesn't make this a silent no-op.
+      for (let i = 0; i < 25 && ingestingPOsRef.current; i++) await new Promise(r => setTimeout(r, 200));
+      await ingestIncomingPOs();
+      return { ok: true, summary: body };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  };
   useEffect(() => {
     if (!poIngestNotice) return;
     const t = setTimeout(() => setPoIngestNotice(null), 6000);
@@ -7354,6 +7374,7 @@ export default function App() {
           poAmendments={poAmendments}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}
+          onScanInbox={scanInboxNow}
         />
       );
     }
