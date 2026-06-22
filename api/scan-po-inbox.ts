@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { extractPO, isSupportedAttachment, DEFAULT_MODEL, type ExtractHints } from './_poExtract.js';
 import {
   gmailAccessToken, listMessages, getMessage, collectAttachments,
-  getAttachmentBase64, header,
+  getAttachmentBase64, getMessageBody, header,
 } from './_gmail.js';
 
 /**
@@ -84,7 +84,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // and re-extract even ones already processed (the client still skips POs that
   // already exist in the orders table). The 15-min cron passes none of these.
   const qOverride = typeof req.query.q === 'string' ? req.query.q : undefined;
-  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'has:attachment newer_than:3d');
+  // Default no longer requires an attachment so amendment emails (often plain
+  // text, no attachment) are also scanned. The model classifies each as
+  // new_order / amendment / cancellation / other; only non-'other' is queued.
+  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'newer_than:3d');
   const maxOverride = typeof req.query.max === 'string' ? parseInt(req.query.max, 10) : NaN;
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';
@@ -111,37 +114,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const msg = await getMessage(token, inbox, meta.id);
         const fromEmail = header(msg.payload, 'From');
         const subject = header(msg.payload, 'Subject');
-        const attachments = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
+        const receivedAt = new Date(Number(msg.internalDate) || Date.now()).toISOString();
         summary.scanned++;
 
+        // Queue an extraction unless the model classified it as unrelated mail.
+        const queueExtraction = async (extraction: any, sourceFile: string) => {
+          if (!extraction || extraction.documentType === 'other') return;
+          const id = `INPO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          await db.collection('incomingPoOrders').doc(id).set({
+            id, sourceEmailId: meta.id, sourceFile, fromEmail, subject, receivedAt,
+            createdAt: new Date().toISOString(), extraction,
+          });
+          summary.queued++;
+        };
+
+        // 1. Each supported attachment — usually a new PO document.
+        const attachments = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
         for (const att of attachments) {
           summary.attachments++;
           try {
             const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-            const extraction = await extractPO(
-              { name: att.filename, mimeType: att.mimeType, dataBase64 },
-              hints,
-              { apiKey, model },
-            );
-            const id = `INPO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            await db.collection('incomingPoOrders').doc(id).set({
-              id,
-              sourceEmailId: meta.id,
-              sourceFile: att.filename,
-              fromEmail,
-              subject,
-              receivedAt: new Date(Number(msg.internalDate) || Date.now()).toISOString(),
-              createdAt: new Date().toISOString(),
-              extraction,
-            });
-            summary.queued++;
+            const extraction = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+            await queueExtraction(extraction, att.filename);
           } catch (e) {
             summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
           }
         }
 
+        // 2. The email body text — catches amendments/cancellations written in
+        //    the message itself (no attachment). When the message DID have
+        //    attachments, those are the source of truth for new orders, so only
+        //    act on the body for amendments/cancellations — a PO restated in the
+        //    body can't then create a duplicate order.
+        try {
+          const body = getMessageBody(msg.payload);
+          if (body && body.trim().length > 20) {
+            const bodyB64 = Buffer.from(body, 'utf8').toString('base64');
+            const extraction = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+            const t = extraction?.documentType;
+            if (attachments.length === 0 || t === 'amendment' || t === 'cancellation') {
+              await queueExtraction(extraction, '(email body)');
+            }
+          }
+        } catch (e) {
+          summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
+        }
+
         // Record the message as processed (read-only: tracked in Firestore,
-        // not via Gmail labels) regardless of per-attachment outcome so a
+        // not via Gmail labels) regardless of per-source outcome so a
         // permanently-failing message isn't retried forever.
         await processedRef.doc(meta.id).set({
           id: meta.id,

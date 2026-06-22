@@ -40,6 +40,17 @@ export interface ExtractedPO {
   notes?: string;
   confidence?: number;
   lineItems: ExtractedLineItem[];
+  /** Classification of the email/document. Absent => treat as a new order. */
+  documentType?: 'new_order' | 'amendment' | 'cancellation' | 'other';
+  /** For amendment/cancellation: the PO number of the existing order to change. */
+  amendsPoNumber?: string;
+  amendment?: {
+    newShipmentDate?: string;
+    newDeliveryDate?: string;
+    newQuantityMt?: number;
+    cancel?: boolean;
+    summary?: string;
+  };
 }
 
 export interface ExtractResponse {

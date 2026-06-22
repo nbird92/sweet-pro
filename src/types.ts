@@ -407,6 +407,35 @@ export interface PoImportLogEntry {
   note?: string;               // reason when duplicate / skipped
 }
 
+/** A change to an existing order detected from an emailed amendment/cancellation,
+ *  held in a review queue (Email Center) until the operator applies or dismisses it. */
+export interface PoAmendment {
+  id: string;
+  createdAt: string;           // ISO — when the amendment was queued for review
+  receivedAt?: string;         // email date
+  fromEmail?: string;
+  subject?: string;
+  sourceFile?: string;         // attachment name or "(email body)"
+  poNumber?: string;           // the existing PO being amended
+  customer?: string;
+  orderId?: string;            // matched order (absent when status === 'unmatched')
+  orderBol?: string;
+  kind: 'amendment' | 'cancellation';
+  // Requested change (only the fields that change are set):
+  newShipmentDate?: string;
+  newDeliveryDate?: string;
+  newQuantityMt?: number;
+  cancel?: boolean;
+  summary?: string;            // model's one-line description
+  // Before-values captured at match time, for the review diff:
+  prevShipmentDate?: string;
+  prevDeliveryDate?: string;
+  prevQuantityMt?: number;
+  prevStatus?: string;
+  status: 'pending' | 'applied' | 'dismissed' | 'unmatched';
+  appliedAt?: string;
+}
+
 /* ====================================================================== */
 /* Return Orders — track product being returned after it has shipped.     */
 /* Mirrors the Order shape so the existing UI patterns translate.         */

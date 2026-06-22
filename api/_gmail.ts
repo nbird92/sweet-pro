@@ -107,3 +107,49 @@ export function header(payload: any, name: string): string {
   const h = (payload?.headers || []).find((x: any) => (x.name || '').toLowerCase() === name.toLowerCase());
   return h?.value || '';
 }
+
+/** Extract the plain-text body of a message (prefers text/plain, falls back to
+ *  stripped text/html). Used to catch order amendments written in the email
+ *  itself rather than an attachment. Capped to keep token use bounded. */
+export function getMessageBody(payload: any): string {
+  const decode = (data?: string) =>
+    data ? Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8') : '';
+  let plain = '';
+  let html = '';
+  const walk = (part: any) => {
+    if (!part) return;
+    const mt = (part.mimeType || '').toLowerCase();
+    if (mt === 'text/plain' && part.body?.data) plain += decode(part.body.data) + '\n';
+    else if (mt === 'text/html' && part.body?.data) html += decode(part.body.data) + '\n';
+    (part.parts || []).forEach(walk);
+  };
+  walk(payload);
+  let text = plain.trim();
+  if (!text && html) {
+    text = html
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  return stripQuotedReply(text).slice(0, 20000);
+}
+
+/** Drop quoted reply / forwarded history so only the new message text is read
+ *  (otherwise a reply in an old PO thread re-extracts the quoted original). */
+function stripQuotedReply(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    if (/^\s*>/.test(line)) break;                              // quoted line
+    if (/^\s*-{2,}\s*original message\s*-{2,}/i.test(line)) break;
+    if (/^\s*_{5,}\s*$/.test(line)) break;                      // Outlook divider
+    if (/^\s*On .+(wrote|écrit)\s*:?\s*$/i.test(line)) break;   // "On <date> ... wrote:"
+    if (out.length > 2 && /^\s*From:\s.+/i.test(line)) break;   // forwarded header block
+    out.push(line);
+  }
+  const result = out.join('\n').trim();
+  return result || text; // never return empty if the whole body looked quoted
+}

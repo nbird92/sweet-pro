@@ -44,6 +44,24 @@ const PO_SCHEMA = {
     totalAmount: { type: Type.NUMBER },
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
     confidence: { type: Type.NUMBER, description: 'Overall extraction confidence 0..1.' },
+    documentType: {
+      type: Type.STRING,
+      format: 'enum',
+      enum: ['new_order', 'amendment', 'cancellation', 'other'],
+      description: "Classify the input: 'new_order' (a new purchase order), 'amendment' (changes an existing order's ship date or quantity), 'cancellation' (cancels an existing order), or 'other' (unrelated mail).",
+    },
+    amendsPoNumber: { type: Type.STRING, description: 'For amendment/cancellation: the PO number of the EXISTING order being changed.' },
+    amendment: {
+      type: Type.OBJECT,
+      description: 'For amendment/cancellation only — the requested change (set only the fields that change).',
+      properties: {
+        newShipmentDate: { type: Type.STRING, description: 'New requested ship/pickup date, ISO YYYY-MM-DD.' },
+        newDeliveryDate: { type: Type.STRING, description: 'New requested delivery date, ISO YYYY-MM-DD.' },
+        newQuantityMt: { type: Type.NUMBER, description: 'New TOTAL order quantity in metric tonnes.' },
+        cancel: { type: Type.BOOLEAN, description: 'True when the order is being cancelled.' },
+        summary: { type: Type.STRING, description: 'One-line plain-English summary of the requested change.' },
+      },
+    },
     lineItems: {
       type: Type.ARRAY,
       items: {
@@ -64,10 +82,16 @@ const PO_SCHEMA = {
       },
     },
   },
-  required: ['poNumber', 'customerName', 'lineItems'],
+  required: ['documentType'],
 };
 
-export const SYSTEM_PROMPT = `You extract structured data from a customer Purchase Order (PO) received by Sucro Can, a sugar manufacturer and supplier.
+export const SYSTEM_PROMPT = `You read a customer email or attached document received by Sucro Can, a sugar manufacturer and supplier, and extract structured data from it.
+
+Document classification (set documentType):
+- 'new_order' — a new purchase order (usually an attached PO document).
+- 'amendment' — a request to CHANGE an existing order, e.g. "change the ship date on PO 12345 to Jun 25", "increase PO 12345 to 40 MT", "move delivery to next week". Set amendsPoNumber to the referenced existing PO number and fill the amendment object with only the fields that change. lineItems may be empty.
+- 'cancellation' — a request to cancel an existing order, e.g. "please cancel PO 12345". Set amendsPoNumber and amendment.cancel = true.
+- 'other' — anything unrelated (newsletters, replies with no order content, signatures). Leave the order fields empty.
 
 CRITICAL — who is the customer:
 - Sucro Can (including "Sucro Can Canada Inc", "Sucro Can Sourcing LLC", or any "Sucro" entity at 550 Sherman Ave N / North, Hamilton ON) is ALWAYS the vendor/supplier on these POs — NEVER the customer.

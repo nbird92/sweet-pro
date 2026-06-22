@@ -6,9 +6,9 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil } from 'lucide-react';
 import PageBanner from './PageBanner';
-import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry } from '../types';
+import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment } from '../types';
 
 interface Props {
   emailLog: EmailLog[];
@@ -16,6 +16,20 @@ interface Props {
   setEmailSettings: (next: EmailSettings) => void;
   /** Dashboard log of POs imported from the Gmail inbox scan. */
   poImportLog?: PoImportLogEntry[];
+  /** Review queue of emailed order amendments/cancellations. */
+  poAmendments?: PoAmendment[];
+  onApplyAmendment?: (a: PoAmendment) => void;
+  onDismissAmendment?: (a: PoAmendment) => void;
+}
+
+/** Compact "before → after" description of a requested amendment. */
+function amendmentChangeText(a: PoAmendment): string {
+  if (a.kind === 'cancellation' || a.cancel) return 'Cancel order';
+  const parts: string[] = [];
+  if (a.newShipmentDate) parts.push(`Ship ${a.prevShipmentDate || '—'} → ${a.newShipmentDate}`);
+  if (a.newDeliveryDate) parts.push(`Delivery ${a.prevDeliveryDate || '—'} → ${a.newDeliveryDate}`);
+  if (typeof a.newQuantityMt === 'number') parts.push(`Qty ${a.prevQuantityMt != null ? a.prevQuantityMt.toFixed(2) : '—'} → ${a.newQuantityMt.toFixed(2)} MT`);
+  return parts.join('   ·   ') || (a.summary || 'See email');
 }
 
 const TYPE_LABELS: Record<EmailDocumentType, string> = {
@@ -34,7 +48,7 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [] }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poAmendments = [], onApplyAmendment, onDismissAmendment }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [statusFilter, setStatusFilter] = useState<EmailStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<EmailDocumentType | 'all'>('all');
@@ -76,6 +90,16 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     }
     return c;
   }, [poImportLog]);
+
+  // Amendment review queue — pending/unmatched first (need action), then newest.
+  const amendmentsSorted = useMemo(() => {
+    const rank = (s: PoAmendment['status']) => (s === 'pending' ? 0 : s === 'unmatched' ? 1 : 2);
+    return [...poAmendments].sort((a, b) => {
+      const r = rank(a.status) - rank(b.status);
+      return r !== 0 ? r : (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+  }, [poAmendments]);
+  const pendingAmendments = poAmendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
 
   const setSettings = (patch: Partial<EmailSettings>) => setEmailSettings({ ...emailSettings, ...patch });
   const setTriggers = (patch: Partial<EmailSettings['triggers']>) =>
@@ -153,6 +177,60 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           </table>
         </div>
       </div>
+
+      {/* Order amendment review queue — emailed changes awaiting approval */}
+      {poAmendments.length > 0 && (
+        <div className="px-6 pt-2 pb-5">
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Pencil size={14} /> Order Amendments</h3>
+            {pendingAmendments > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-bold uppercase">{pendingAmendments} to review</span>}
+          </div>
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">PO No.</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Order (BOL)</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Requested change</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
+                  <th className="p-3 bg-[#141414]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {amendmentsSorted.map(a => (
+                  <tr key={a.id} className="hover:bg-[#F9F9F9]">
+                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
+                    <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
+                    <td className="p-3 text-xs font-mono font-bold">{a.poNumber || '—'}</td>
+                    <td className="p-3 text-xs font-mono">{a.orderBol || '—'}</td>
+                    <td className={`p-3 text-xs ${a.kind === 'cancellation' || a.cancel ? 'text-red-700 font-bold' : ''}`} title={a.summary}>{amendmentChangeText(a)}</td>
+                    <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
+                    <td className="p-3 whitespace-nowrap">
+                      {a.status === 'pending' ? (
+                        <div className="flex gap-2">
+                          <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800">Apply</button>
+                          <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                        </div>
+                      ) : a.status === 'unmatched' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] uppercase opacity-60">no matching order</span>
+                          <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                        </div>
+                      ) : a.status === 'applied' ? (
+                        <span className="text-[9px] uppercase opacity-60">{a.appliedAt ? `applied ${new Date(a.appliedAt).toLocaleDateString()}` : 'applied'}</span>
+                      ) : (
+                        <span className="text-[9px] uppercase opacity-40">dismissed</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Stat tiles */}
       <div className="px-6 grid grid-cols-4 gap-4 mb-4">
@@ -362,6 +440,15 @@ function StatusPill({ status }: { status: EmailStatus }) {
       <Icon size={10} /> {status}
     </span>
   );
+}
+
+function AmendmentStatusPill({ status }: { status: PoAmendment['status'] }) {
+  const style =
+    status === 'pending'   ? 'bg-amber-100   text-amber-800' :
+    status === 'applied'   ? 'bg-emerald-100 text-emerald-800' :
+    status === 'unmatched' ? 'bg-red-100     text-red-700' :
+                             'bg-slate-100   text-slate-600';
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${style}`}>{status}</span>;
 }
 
 function ImportResultPill({ result, note }: { result: PoImportLogEntry['result']; note?: string }) {

@@ -69,7 +69,7 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -682,6 +682,77 @@ export default function App() {
     };
   };
 
+  // Turn an emailed amendment/cancellation extraction into a review-queue entry,
+  // matching the existing order by PO number and capturing its before-values.
+  const buildAmendmentFromExtraction = (po: ExtractedPO, item: any, createdAt: string): PoAmendment => {
+    const amend = po.amendment || {};
+    const amendPo = (po.amendsPoNumber || po.poNumber || '').trim();
+    const isCancel = po.documentType === 'cancellation' || amend.cancel === true;
+    const order = amendPo ? orders.find(o => (o.po || '').trim() === amendPo) : undefined;
+    const prevQty = order ? order.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : undefined;
+    return {
+      id: `POAMEND-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      createdAt,
+      receivedAt: item?.receivedAt,
+      fromEmail: item?.fromEmail,
+      subject: item?.subject,
+      sourceFile: item?.sourceFile,
+      poNumber: amendPo || undefined,
+      customer: order?.customer || po.customerName || undefined,
+      orderId: order?.id,
+      orderBol: order?.bolNumber,
+      kind: isCancel ? 'cancellation' : 'amendment',
+      newShipmentDate: amend.newShipmentDate || undefined,
+      newDeliveryDate: amend.newDeliveryDate || undefined,
+      newQuantityMt: typeof amend.newQuantityMt === 'number' && amend.newQuantityMt > 0 ? amend.newQuantityMt : undefined,
+      cancel: isCancel || undefined,
+      summary: amend.summary || undefined,
+      prevShipmentDate: order?.shipmentDate,
+      prevDeliveryDate: order?.deliveryDate,
+      prevQuantityMt: prevQty,
+      prevStatus: order?.status,
+      status: order ? 'pending' : 'unmatched',
+    };
+  };
+
+  // Apply a reviewed amendment to its order (operator-approved). Cancellation →
+  // status Cancelled; otherwise patch ship/delivery dates and/or the quantity
+  // (recomputing the primary line's weight + amount).
+  const applyAmendment = (a: PoAmendment) => {
+    if (a.status !== 'pending') return; // already applied/dismissed/unmatched
+    const order = (a.orderId && orders.find(o => o.id === a.orderId))
+      || (a.poNumber ? orders.find(o => (o.po || '').trim() === a.poNumber!.trim()) : undefined);
+    if (!order) { setErrorBox('No matching order found for this amendment.'); return; }
+    const updated: Order = { ...order };
+    if (a.kind === 'cancellation' || a.cancel) {
+      updated.status = 'Cancelled';
+    } else {
+      if (a.newShipmentDate) updated.shipmentDate = a.newShipmentDate;
+      if (a.newDeliveryDate) updated.deliveryDate = a.newDeliveryDate;
+      if (typeof a.newQuantityMt === 'number' && a.newQuantityMt > 0) {
+        const newTotal = a.newQuantityMt;
+        const lis = updated.lineItems.map((li, idx) => {
+          if (idx !== 0) return li;
+          const oldTotal = li.totalWeight || 0;
+          const oldQty = li.qty || 0;
+          const mtAmount = li.mtAmount || 0;
+          // Scale qty proportionally from the line's OWN old total — unit-agnostic,
+          // so it's correct whether netWeightPerUnit was stored in MT (scan/manual)
+          // or KG (sheet sync import).
+          const qtyUnits = oldTotal > 0 && oldQty > 0 ? oldQty * (newTotal / oldTotal) : (oldQty || newTotal);
+          const perUnitMt = qtyUnits > 0 ? newTotal / qtyUnits : 0;
+          return { ...li, totalWeight: newTotal, qty: qtyUnits, lineAmount: Math.round(newTotal * mtAmount * 100) / 100, unitAmount: Math.round(mtAmount * perUnitMt * 100) / 100 };
+        });
+        updated.lineItems = lis;
+        updated.amount = Math.round(lis.reduce((s, li) => s + (li.lineAmount || 0), 0) * 100) / 100;
+      }
+    }
+    setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
+    setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
+  };
+  const dismissAmendment = (a: PoAmendment) =>
+    setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'dismissed' } : x));
+
   // Drain the incomingPoOrders queue (written by the Gmail cron) into real Open
   // orders, logging each to the Email Center dashboard. Each queue doc is CLAIMED
   // atomically (claimDoc deletes it inside a transaction) so two open browser
@@ -695,6 +766,7 @@ export default function App() {
       if (!incoming.length) return;
       const built: Order[] = [];
       const logs: PoImportLogEntry[] = [];
+      const amendments: PoAmendment[] = [];
       const nowIso = new Date().toISOString();
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
       // BOLs reserved within this batch so orders built before any state commit
@@ -722,7 +794,17 @@ export default function App() {
         if (!item) continue;
         try {
           const po = item.extraction as ExtractedPO | undefined;
-          if (!po || !Array.isArray(po.lineItems)) {
+          if (!po) {
+            logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
+            continue;
+          }
+          // Order amendments/cancellations go to the review queue, not orders.
+          if (po.documentType === 'amendment' || po.documentType === 'cancellation') {
+            amendments.push(buildAmendmentFromExtraction(po, item, nowIso));
+            continue;
+          }
+          if (po.documentType === 'other') continue; // model-classified noise
+          if (!Array.isArray(po.lineItems)) {
             logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
             continue;
           }
@@ -754,7 +836,16 @@ export default function App() {
       if (built.length) setOrders(prev => [...prev, ...built]);
       // Cap the persisted log so the whole-collection resync stays bounded.
       if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
-      if (built.length) setPoIngestNotice(`${built.length} order${built.length === 1 ? '' : 's'} imported from emailed POs.`);
+      if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
+      const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
+      if (built.length || pendingAmend) {
+        setPoIngestNotice(
+          [
+            built.length ? `${built.length} order${built.length === 1 ? '' : 's'} imported` : '',
+            pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
+          ].filter(Boolean).join(' · ') + ' from emailed POs.',
+        );
+      }
     } catch (e) {
       console.error('PO ingest failed:', e);
     } finally {
@@ -2497,6 +2588,8 @@ export default function App() {
   const [returnOrders, setReturnOrders] = useState<ReturnOrder[]>([]);
   // Persistent dashboard of POs imported from the Gmail inbox scan (Email Center).
   const [poImportLog, setPoImportLog] = useState<PoImportLogEntry[]>([]);
+  // Review queue of emailed order amendments/cancellations (Email Center).
+  const [poAmendments, setPoAmendments] = useState<PoAmendment[]>([]);
   // Add / Edit modal state. When isAddingReturnOrder is true the modal opens
   // in "add" mode; when editingReturnOrder is non-null it opens in edit mode.
   const [isAddingReturnOrder, setIsAddingReturnOrder] = useState(false);
@@ -2550,6 +2643,7 @@ export default function App() {
     emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
     returnorders: JSON.stringify([]),
     poimportlog: JSON.stringify([]),
+    poamendments: JSON.stringify([]),
   });
 
   // Fetch initial data from Firestore
@@ -2828,6 +2922,10 @@ export default function App() {
         setPoImportLog(data.poImportLog as PoImportLogEntry[]);
         lastSyncedData.current.poimportlog = JSON.stringify(data.poImportLog);
       }
+      if (data.poAmendments?.length) {
+        setPoAmendments(data.poAmendments as PoAmendment[]);
+        lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -2900,6 +2998,7 @@ export default function App() {
         { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
+        { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
       ];
 
       try {
@@ -2925,7 +3024,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poAmendments, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
@@ -7252,6 +7351,9 @@ export default function App() {
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
           poImportLog={poImportLog}
+          poAmendments={poAmendments}
+          onApplyAmendment={applyAmendment}
+          onDismissAmendment={dismissAmendment}
         />
       );
     }

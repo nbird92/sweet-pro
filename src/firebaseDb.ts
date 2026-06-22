@@ -49,6 +49,8 @@ export const COLLECTIONS = {
   returnOrders: 'returnOrders',
   // Persistent dashboard log of POs imported from the Gmail inbox scan.
   poImportLog: 'poImportLog',
+  // Review queue of emailed order amendments/cancellations awaiting approval.
+  poAmendments: 'poAmendments',
   // Append-only queue: the Gmail PO scan (api/scan-po-inbox) writes extracted
   // POs here; the app ingests them into `orders` on load, then deletes them.
   // NOT part of the whole-collection autosave, so cron writes are never

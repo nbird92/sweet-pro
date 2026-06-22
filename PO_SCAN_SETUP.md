@@ -104,9 +104,12 @@ The cron does two privileged things, handled by **two different service accounts
   (e.g. `orders@yourdomain.com`) — not a Group, alias, or external address. The cron
   impersonates this mailbox.
 - Forward customers' PO emails into it (or have them send there directly). The cron reads
-  messages matching `has:attachment newer_than:3d` by default. It's **read-only** — it never
-  marks emails read, labels, or deletes anything; instead it records each processed message id
-  in the Firestore `processedPoEmails` collection so the same email isn't imported twice.
+  messages matching `newer_than:3d` by default — both the **attachments** (new PO documents)
+  and the **email body text** (order amendments are usually written in the message). The AI
+  classifies each as a new order, an amendment, a cancellation, or unrelated mail; only the
+  first three are acted on. It's **read-only** — it never marks emails read, labels, or deletes
+  anything; instead it records each processed message id in the Firestore `processedPoEmails`
+  collection so the same email isn't imported twice.
 
 ### B5. Firebase Admin service account (Firestore writes)
 1. **https://console.firebase.google.com/** → your project → **gear ⚙ → Project settings →
@@ -136,7 +139,7 @@ In **Settings → Environment Variables** (Production, Sensitive where noted):
 | `FIREBASE_CLIENT_EMAIL` | from the Firebase JSON (Sensitive) |
 | `FIREBASE_PRIVATE_KEY` | from the Firebase JSON (Sensitive) |
 | `CRON_SECRET` | a random ≥16-char string, no spaces/newlines (recommended) |
-| `PO_INBOX_QUERY` | *(optional)* override the default `has:attachment newer_than:3d` |
+| `PO_INBOX_QUERY` | *(optional)* override the default `newer_than:3d` (add `has:attachment` to skip body-only amendment emails) |
 
 `GEMINI_API_KEY` (from Milestone A) is also required for the cron. `GOOGLE_SERVICE_ACCOUNT_EMAIL`
 and `GOOGLE_PRIVATE_KEY` are already present from Sheets — don't re-add them.
@@ -169,6 +172,10 @@ by others).
   with the same logic as a hand-entered order — deduping by PO number, then deletes the queue docs.
 - **Sucro = supplier.** Extraction always treats Sucro Can as the vendor and the PO issuer as the
   customer.
+- **Order amendments.** Emails that change an existing order (new ship date, new quantity, or a
+  cancellation) are detected and matched to the order by PO number, then placed in a **review
+  queue** on the Email Center ("Order Amendments"). Nothing is auto-applied — you click **Apply**
+  (or **Dismiss**) per amendment; unmatched ones (no order with that PO yet) are flagged for you.
 - **Learning.** Corrections in the Scan PO modal are stored in the browser
   (`localStorage` → `poFieldMappings`) and fed back to the extractor as hints. The cron also reads
   an optional Firestore `poFieldMappings` collection if you populate it (future: auto-sync the
