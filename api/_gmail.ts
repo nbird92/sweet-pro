@@ -22,6 +22,18 @@ export interface GmailMessageMeta {
   threadId: string;
 }
 
+/** Normalize a PEM private key from an env var so OpenSSL can parse it:
+ *  trim, strip a single pair of accidental wrapping quotes, and convert literal
+ *  "\n" / "\r\n" escape sequences to real newlines. Prevents the common
+ *  "error:1E08010C:DECODER routines::unsupported" from a mis-pasted key. */
+export function normalizePrivateKey(raw: string): string {
+  let k = raw.trim();
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1);
+  }
+  return k.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').trim();
+}
+
 /** Authorize as the impersonated mailbox and return a bearer access token. */
 export async function gmailAccessToken(impersonate: string): Promise<string> {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -29,8 +41,7 @@ export async function gmailAccessToken(impersonate: string): Promise<string> {
   if (!email || !rawKey) {
     throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY are not configured.');
   }
-  // Vercel stores newlines as literal "\n" — normalize them back.
-  const key = rawKey.replace(/\\n/g, '\n');
+  const key = normalizePrivateKey(rawKey);
   const jwt = new JWT({
     email,
     key,
