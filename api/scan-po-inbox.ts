@@ -78,7 +78,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' });
   if (!inbox) return res.status(500).json({ error: 'PO_INBOX_ADDRESS not configured.' });
   const model = process.env.PO_EXTRACT_MODEL || DEFAULT_MODEL;
-  const query = process.env.PO_INBOX_QUERY || 'has:attachment newer_than:3d';
+
+  // Optional one-off overrides via query string (still gated by CRON_SECRET) for
+  // ad-hoc tests, e.g. ?q=in:inbox&max=50&force=1 to scan the last 50 emails
+  // and re-extract even ones already processed (the client still skips POs that
+  // already exist in the orders table). The 15-min cron passes none of these.
+  const qOverride = typeof req.query.q === 'string' ? req.query.q : undefined;
+  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'has:attachment newer_than:3d');
+  const maxOverride = typeof req.query.max === 'string' ? parseInt(req.query.max, 10) : NaN;
+  const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
+  const force = req.query.force === '1' || req.query.force === 'true';
 
   const summary = { scanned: 0, skipped: 0, attachments: 0, queued: 0, errors: [] as Array<{ where: string; message: string }> };
 
@@ -87,14 +96,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hints = await buildHints(db);
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
-    const messages = await listMessages(token, inbox, query); // paginated, up to maxTotal
+    const messages = await listMessages(token, inbox, query, maxTotal);
 
     for (const meta of messages) {
       try {
         // Read-only dedup: skip a message already handled on a previous run
-        // (we can't mark it read/labelled with a read-only scope).
-        const seen = await processedRef.doc(meta.id).get();
-        if (seen.exists) { summary.skipped++; continue; }
+        // (we can't mark it read/labelled with a read-only scope). `force`
+        // bypasses this for a re-test; the client-side order dedup still holds.
+        if (!force) {
+          const seen = await processedRef.doc(meta.id).get();
+          if (seen.exists) { summary.skipped++; continue; }
+        }
 
         const msg = await getMessage(token, inbox, meta.id);
         const fromEmail = header(msg.payload, 'From');
