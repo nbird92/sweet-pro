@@ -40,7 +40,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const errors: Array<{ file: string; message: string }> = [];
     for (const file of files) {
       try {
-        extractions.push(await extractPO(file, hints, { apiKey, model }));
+        // A single file may hold several POs (e.g. one per page) — add each.
+        const docs = await extractPO(file, hints, { apiKey, model });
+        extractions.push(...docs);
       } catch (e) {
         errors.push({ file: file.name, message: e instanceof Error ? e.message : String(e) });
       }

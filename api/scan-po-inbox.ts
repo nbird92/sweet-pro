@@ -158,8 +158,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           summary.attachments++;
           try {
             const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-            const extraction = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
-            await queueExtraction(extraction, att.filename);
+            // One attachment can contain several POs (e.g. a multi-page PDF with
+            // one PO per page) — queue every order the extractor returns.
+            const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+            for (const extraction of docs) await queueExtraction(extraction, att.filename);
           } catch (e) {
             summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
           }
@@ -174,10 +176,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const body = getMessageBody(msg.payload);
           if (body && body.trim().length > 20) {
             const bodyB64 = Buffer.from(body, 'utf8').toString('base64');
-            const extraction = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
-            const t = extraction?.documentType;
-            if (attachments.length === 0 || t === 'amendment' || t === 'cancellation') {
-              await queueExtraction(extraction, '(email body)');
+            const docs = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+            for (const extraction of docs) {
+              const t = extraction?.documentType;
+              // When the message carried attachments, those are the source of
+              // truth for new orders — only act on the body for amendments/
+              // cancellations so a PO restated in the body can't duplicate.
+              if (attachments.length === 0 || t === 'amendment' || t === 'cancellation') {
+                await queueExtraction(extraction, '(email body)');
+              }
             }
           }
         } catch (e) {

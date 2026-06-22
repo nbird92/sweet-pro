@@ -85,7 +85,23 @@ const PO_SCHEMA = {
   required: ['documentType'],
 };
 
+// A single file/email can hold SEVERAL purchase orders (e.g. a multi-page PDF
+// with one PO per page). The model returns them all under `documents`.
+const PO_BATCH_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    documents: {
+      type: Type.ARRAY,
+      description: 'One entry per DISTINCT purchase order / amendment / cancellation found in the input. A multi-page PDF frequently holds one PO per page — return each separately.',
+      items: PO_SCHEMA,
+    },
+  },
+  required: ['documents'],
+};
+
 export const SYSTEM_PROMPT = `You read a customer email or attached document received by Sucro Can, a sugar manufacturer and supplier, and extract structured data from it.
+
+A single file or email may contain MULTIPLE purchase orders — e.g. a multi-page PDF with a separate PO on each page, or several POs concatenated together. Return EVERY distinct purchase order, amendment, or cancellation you find as its own entry in the \`documents\` array. If the input holds only one, return an array with a single entry. Never merge two different POs (different PO numbers) into one entry, and never split a single PO across multiple entries.
 
 Document classification (set documentType):
 - 'new_order' — a new purchase order (usually an attached PO document).
@@ -175,12 +191,15 @@ export function isSupportedAttachment(filename: string, mimeType: string): boole
   );
 }
 
-/** Extract one PO document via Gemini. Returns the parsed object (with sourceFile). */
+/** Extract ALL purchase orders found in one uploaded file via Gemini. A single
+ *  file can hold several POs (e.g. one per page of a multi-page PDF), so this
+ *  returns an ARRAY — one parsed object per PO, each tagged with sourceFile.
+ *  Returns [] when no order content is present (e.g. unrelated mail). */
 export async function extractPO(
   file: UploadFile,
   hints: ExtractHints | undefined,
   opts: { apiKey: string; model?: string },
-): Promise<any> {
+): Promise<any[]> {
   const parts = await partsForFile(file);
   const ht = hintsText(hints);
   if (ht) parts.push({ text: `\nReference data:\n${ht}` });
@@ -193,7 +212,7 @@ export async function extractPO(
     config: {
       systemInstruction: SYSTEM_PROMPT,
       responseMimeType: 'application/json',
-      responseSchema: PO_SCHEMA,
+      responseSchema: PO_BATCH_SCHEMA,
       temperature: 0,
     },
   });
@@ -209,5 +228,12 @@ export async function extractPO(
   } catch {
     throw new Error(`Gemini did not return valid JSON: ${text.slice(0, 300)}`);
   }
-  return { sourceFile: file.name, ...parsed };
+  // Tolerate either the batch shape ({ documents: [...] }) or a bare object
+  // (older single-PO shape) so a schema hiccup never drops the extraction.
+  const docs: any[] = Array.isArray(parsed?.documents)
+    ? parsed.documents
+    : (parsed && typeof parsed === 'object' ? [parsed] : []);
+  return docs
+    .filter(d => d && typeof d === 'object')
+    .map(d => ({ sourceFile: file.name, ...d }));
 }
