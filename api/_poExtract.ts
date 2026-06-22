@@ -114,8 +114,8 @@ CRITICAL — who is the customer:
 - The CUSTOMER is the company that ISSUED the purchase order (the buyer): the letterhead / bill-from / issuing company. Return that company as customerName.
 
 Extraction rules:
-- Quantities: also provide quantityMt (metric tonnes). 1 kg = 0.001 MT; 1 lb = 0.00045359237 MT; 1 short ton = 0.90718474 MT; 1 cwt (US, 100 lb) = 0.045359237 MT.
-- Pricing: provide pricePerMt whenever derivable. Bases vary: "per 100 lb", "per cwt", "per kg", "per lb", "per MT". unitPrice is the raw number; priceBasis is its unit. Convert to $/MT in pricePerMt.
+- Quantities: report quantity as the raw number and unit EXACTLY as printed (lb, lbs, kg, MT, cwt, short ton, ...). Provide quantityMt when you can, but the app recomputes MT in code, so a faithful quantity + unit matters most.
+- Pricing: report unitPrice as the RAW unit price exactly as printed, and priceBasis as the unit it is per (e.g. "per lb", "per 100 lb", "per cwt", "per kg", "per MT"). DO NOT pre-convert the price. The app converts unitPrice → $/MT in code (lb → kg → MT), so faithful unitPrice + priceBasis matter more than pricePerMt; still fill pricePerMt when obvious.
 - Dates must be ISO YYYY-MM-DD.
 - Normalize customer / product / contract names to the provided known lists ONLY when there is an obvious match; otherwise return the document's text verbatim.
 - Contract number: Sucro contract numbers follow the format S######.### (the letter S, six digits, a period, then three digits — e.g. S123456.001). If any value matching that pattern appears ANYWHERE on the PO (header, notes, line items, references), return it as contractNumber.
@@ -191,6 +191,56 @@ export function isSupportedAttachment(filename: string, mimeType: string): boole
   );
 }
 
+/* --- Deterministic unit math --------------------------------------------- *
+ * LLMs are unreliable at multi-digit arithmetic, so we never trust the model
+ * to convert prices/quantities. The model returns the RAW unitPrice and the
+ * printed unit/basis; the helpers below convert to $/MT and MT in code:
+ *   price "$P per <unit>"  ->  $/MT = P / (MT per unit)
+ *   quantity "Q <unit>"    ->  MT   = Q * (MT per unit)
+ * Every factor below is "metric tonnes per 1 of that unit" (lb -> kg -> MT). */
+const LB_TO_MT = 0.45359237 / 1000; // 1 lb = 0.45359237 kg = 0.00045359237 MT
+const BASE_MT_PER_UNIT: Record<string, number> = {
+  lb: LB_TO_MT, pound: LB_TO_MT,
+  cwt: LB_TO_MT * 100,            // US hundredweight = 100 lb
+  kg: 0.001, kilogram: 0.001,
+  g: 0.000001, gram: 0.000001,
+  mt: 1, tonne: 1,               // metric tonne
+  ton: 0.90718474, shortton: 0.90718474, // US short ton = 2000 lb
+};
+
+/** Metric tonnes represented by a unit/basis string ("lb", "per 100 lb",
+ *  "cwt", "$/kg", "per MT", "short ton"). Returns null when unrecognized so
+ *  the caller can fall back to the model's value. */
+function mtPerBasis(text: string | undefined): number | null {
+  if (!text) return null;
+  const s = String(text).toLowerCase()
+    .replace(/metric\s*tonn?es?|metric\s*tons?/g, ' mt ')
+    .replace(/short\s*tons?/g, ' shortton ')
+    .replace(/[(),$]/g, ' ');
+  // Optional leading count then a whole-word unit, e.g. "per 100 lb" = 100 x lb.
+  // The leading (^|[\s/]) boundary stops "bag" from matching the "g" in gram.
+  const m = s.match(/(?:^|[\s/])(?:(\d+(?:\.\d+)?)\s*)?(cwt|kilograms?|pounds?|tonnes?|grams?|shortton|lbs?|kgs?|tons?|mt|g)\b/);
+  if (!m) return null;
+  const count = m[1] ? parseFloat(m[1]) : 1;
+  const unit = m[2].replace(/s$/, ''); // lbs->lb, kgs->kg, tons->ton, grams->gram
+  const base = BASE_MT_PER_UNIT[unit];
+  if (base == null || !(count > 0)) return null;
+  return count * base;
+}
+
+/** Recompute quantityMt and pricePerMt for one line item from its raw fields,
+ *  overriding the model's arithmetic whenever the unit/basis is recognized. */
+function deriveLineMetrics(li: any): void {
+  if (!li || typeof li !== 'object') return;
+  const qtyMt = typeof li.quantity === 'number' ? li.quantity * (mtPerBasis(li.unit) ?? NaN) : NaN;
+  if (Number.isFinite(qtyMt) && qtyMt > 0) li.quantityMt = Math.round(qtyMt * 1000) / 1000;
+  const basisMt = mtPerBasis(li.priceBasis) ?? mtPerBasis(li.unit);
+  if (typeof li.unitPrice === 'number' && basisMt != null && basisMt > 0) {
+    const perMt = li.unitPrice / basisMt;
+    if (Number.isFinite(perMt) && perMt > 0) li.pricePerMt = Math.round(perMt * 100) / 100;
+  }
+}
+
 /** Extract ALL purchase orders found in one uploaded file via Gemini. A single
  *  file can hold several POs (e.g. one per page of a multi-page PDF), so this
  *  returns an ARRAY — one parsed object per PO, each tagged with sourceFile.
@@ -235,5 +285,11 @@ export async function extractPO(
     : (parsed && typeof parsed === 'object' ? [parsed] : []);
   return docs
     .filter(d => d && typeof d === 'object')
-    .map(d => ({ sourceFile: file.name, ...d }));
+    .map(d => {
+      const doc = { sourceFile: file.name, ...d };
+      // Recompute MT quantities and $/MT prices in code (never trust the LLM's
+      // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably.
+      if (Array.isArray(doc.lineItems)) doc.lineItems.forEach(deriveLineMetrics);
+      return doc;
+    });
 }
