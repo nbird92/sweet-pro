@@ -3600,28 +3600,38 @@ export default function App() {
   // catalog variant is most reliably identified by productKey (a QA product id,
   // or a SKU id for unpaired SKUs); fall back to matching the stored product
   // name against SKU names and QA skuNames. Returns null when nothing matches.
+  // Resolve a product's Product Group (which drives the BOL prefix). Prefer the
+  // explicit productGroup; when it's blank, fall back to the product's Format
+  // (Bulk / Bagged / Tote / Liquid) IF that names a known Product Group — many
+  // products carry the Format but not the Group, and both share one vocabulary,
+  // so without this a "Bulk" product would wrongly get the default 'P' prefix.
+  const groupFromRecord = (rec?: { productGroup?: string; productFormat?: string }): string | null => {
+    if (!rec) return null;
+    if (rec.productGroup && rec.productGroup.trim()) return rec.productGroup;
+    const fmt = (rec.productFormat || '').trim();
+    if (fmt && productGroups.some(pg => pg.name.trim().toLowerCase() === fmt.toLowerCase())) return fmt;
+    return null;
+  };
   const productGroupOf = (productName?: string, productKey?: string): string | null => {
     if (productKey) {
-      const qa = qaProducts.find(q => q.id === productKey);
-      if (qa?.productGroup) return qa.productGroup;
-      const sku = skus.find(s => s.id === productKey);
-      if (sku?.productGroup) return sku.productGroup;
+      const g = groupFromRecord(qaProducts.find(q => q.id === productKey)) || groupFromRecord(skus.find(s => s.id === productKey));
+      if (g) return g;
     }
     if (productName) {
-      const sku = skus.find(s => s.name === productName);
-      if (sku?.productGroup) return sku.productGroup;
-      const qa = qaProducts.find(q => q.skuName === productName);
-      if (qa?.productGroup) return qa.productGroup;
+      const g = groupFromRecord(skus.find(s => s.name === productName)) || groupFromRecord(qaProducts.find(q => q.skuName === productName));
+      if (g) return g;
     }
     return null;
   };
 
   // The BOL prefix (first character) for a Product Group, taken from the BOL
   // Code column of the Product Groups table. Defaults to 'P' when unknown.
+  // Matched case/space-insensitively so e.g. "bulk" still maps to its 'B' code.
   const bolPrefixForGroup = (groupName: string | null | undefined): string => {
     if (!groupName) return 'P';
-    const pg = productGroups.find(g => g.name === groupName);
-    return pg?.bolCode || 'P';
+    const key = groupName.trim().toLowerCase();
+    const pg = productGroups.find(g => g.name.trim().toLowerCase() === key);
+    return (pg?.bolCode || '').trim().toUpperCase() || 'P';
   };
 
   // `extraBols` lets a caller that builds several orders in one synchronous
