@@ -6,7 +6,7 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
 import PageBanner from './PageBanner';
 import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport } from '../types';
 
@@ -22,6 +22,10 @@ interface Props {
   onReviewImports?: (imports: PoPendingImport[]) => void;
   /** Discard a pending import without creating an order. */
   onDismissImport?: (imp: PoPendingImport) => void;
+  /** Delete a single Email Import History entry. */
+  onDeleteImport?: (id: string) => void;
+  /** Clear the whole Email Import History. */
+  onClearImportHistory?: () => void;
   /** Review queue of emailed order amendments/cancellations. */
   poAmendments?: PoAmendment[];
   onApplyAmendment?: (a: PoAmendment) => void;
@@ -56,7 +60,7 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [expandedImport, setExpandedImport] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -305,11 +309,21 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       <div className="px-6 pt-2 pb-5">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Email Import History</h3>
-          <span className="text-[10px] opacity-50 font-mono">
-            {importCounts.total} imported{lastImport ? ` · last ${new Date(lastImport).toLocaleString()}` : ''}
-            {importCounts.duplicate > 0 ? ` · ${importCounts.duplicate} dup` : ''}
-            {importCounts.skipped > 0 ? ` · ${importCounts.skipped} skipped` : ''}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] opacity-50 font-mono">
+              {importCounts.total} imported{lastImport ? ` · last ${new Date(lastImport).toLocaleString()}` : ''}
+              {importCounts.duplicate > 0 ? ` · ${importCounts.duplicate} dup` : ''}
+              {importCounts.skipped > 0 ? ` · ${importCounts.skipped} skipped` : ''}
+            </span>
+            {onClearImportHistory && poImports.length > 0 && (
+              <button
+                onClick={() => { if (window.confirm(`Delete all ${poImports.length} import history entries? This does not affect any orders already created.`)) onClearImportHistory(); }}
+                className="px-2 py-1 border border-[#141414] text-[9px] font-bold uppercase flex items-center gap-1 hover:bg-red-50 hover:border-red-500 hover:text-red-700 transition-all"
+              >
+                <Trash2 size={11} /> Clear
+              </button>
+            )}
+          </div>
         </div>
         <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[420px]">
           <table className="w-full text-left border-collapse">
@@ -323,7 +337,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
                 <th className="p-3 bg-[#141414] border-r border-white/20">Order (BOL)</th>
                 <th className="p-3 bg-[#141414] border-r border-white/20 text-right">Amount</th>
-                <th className="p-3 bg-[#141414]">Result</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Result</th>
+                <th className="p-3 bg-[#141414] text-center">Delete</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
@@ -338,10 +353,15 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <td className="p-3 text-xs font-mono">{e.orderBol || '—'}</td>
                   <td className="p-3 text-xs text-right font-mono">{typeof e.amount === 'number' && e.amount > 0 ? `$${e.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
                   <td className="p-3"><ImportResultPill result={e.result} note={e.note} /></td>
+                  <td className="p-3 text-center">
+                    <button onClick={() => onDeleteImport?.(e.id)} title="Delete this history entry" className="text-red-600 hover:bg-red-50 p-1 rounded">
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {poImports.length === 0 && (
-                <tr><td colSpan={9} className="p-8 text-center text-xs opacity-50 italic">No emailed POs processed yet. The inbox scan runs every 15 minutes; new POs appear above under "Awaiting Approval" for review — approved or dismissed ones land here.</td></tr>
+                <tr><td colSpan={10} className="p-8 text-center text-xs opacity-50 italic">No emailed POs processed yet. The inbox scan runs every 15 minutes; new POs appear above under "Awaiting Approval" for review — approved or dismissed ones land here.</td></tr>
               )}
             </tbody>
           </table>

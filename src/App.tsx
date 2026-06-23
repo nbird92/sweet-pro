@@ -715,6 +715,11 @@ export default function App() {
     }].slice(-1000));
   };
 
+  // Email Import History maintenance — delete a single entry or clear all. These
+  // only remove the dashboard log rows; orders already created are untouched.
+  const deleteImportLogEntry = (id: string) => setPoImportLog(prev => prev.filter(e => e.id !== id));
+  const clearImportHistory = () => setPoImportLog([]);
+
   // Build a fully-formed Open order straight from an extraction (no review) —
   // used by the automated Gmail inbox ingest. Unmatched customer/product fall
   // back to the document's own text so nothing is silently dropped; the order
@@ -7493,6 +7498,8 @@ export default function App() {
           poPendingImports={poPendingImports}
           onReviewImports={reviewPendingImports}
           onDismissImport={dismissPendingImport}
+          onDeleteImport={deleteImportLogEntry}
+          onClearImportHistory={clearImportHistory}
           poAmendments={poAmendments}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}
