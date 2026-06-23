@@ -11,11 +11,12 @@ import {
 /**
  * Scheduled PO inbox scan (Vercel Cron, every 15 min).
  *
- * Reads recent attachment-bearing messages from the shared PO mailbox, runs
- * each attachment through Gemini, and APPENDS the structured result to the
- * `incomingPoOrders` Firestore collection. The web app ingests that queue into
- * real Open orders on load (so cron writes never collide with the client's
- * whole-collection sync).
+ * Reads recent messages from the shared PO mailbox. For each message it scans
+ * the BODY first (the primary source for order info + changes), and only falls
+ * back to the attachments when the body did not already contain a complete
+ * order. Each extracted PO/amendment is APPENDED to the `incomingPoOrders`
+ * Firestore collection; the web app ingests that queue into the review queue on
+ * load (so cron writes never collide with the client's whole-collection sync).
  *
  * READ-ONLY mailbox: the Gmail scope is gmail.readonly, so the inbox is never
  * modified. To avoid reprocessing, each handled message's id is recorded in the
@@ -181,43 +182,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           summary.queued++;
         };
 
-        // 1. Each supported attachment — usually a new PO document.
+        // 1. Email BODY first — the primary source for order info AND changes.
+        //    New POs and amendments are frequently written in the message text
+        //    itself, so always read it before touching attachments.
         const attachments = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
-        for (const att of attachments) {
-          summary.attachments++;
-          try {
-            const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-            // One attachment can contain several POs (e.g. a multi-page PDF with
-            // one PO per page) — queue every order the extractor returns.
-            const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
-            for (const extraction of docs) await queueExtraction(extraction, att.filename);
-          } catch (e) {
-            summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
-          }
-        }
-
-        // 2. The email body text — catches amendments/cancellations written in
-        //    the message itself (no attachment). When the message DID have
-        //    attachments, those are the source of truth for new orders, so only
-        //    act on the body for amendments/cancellations — a PO restated in the
-        //    body can't then create a duplicate order.
+        let bodyHasOrder = false; // a complete new order was found in the body
         try {
           const body = getMessageBody(msg.payload);
           if (body && body.trim().length > 20) {
             const bodyB64 = Buffer.from(body, 'utf8').toString('base64');
             const docs = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
             for (const extraction of docs) {
-              const t = extraction?.documentType;
-              // When the message carried attachments, those are the source of
-              // truth for new orders — only act on the body for amendments/
-              // cancellations so a PO restated in the body can't duplicate.
-              if (attachments.length === 0 || t === 'amendment' || t === 'cancellation') {
-                await queueExtraction(extraction, '(email body)');
+              if (extraction?.documentType === 'new_order' && Array.isArray(extraction.lineItems) && extraction.lineItems.length > 0) {
+                bodyHasOrder = true;
               }
+              await queueExtraction(extraction, '(email body)'); // queues new_order / amendment / cancellation
             }
           }
         } catch (e) {
           summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
+        }
+
+        // 2. Attachments — scanned only IF NEEDED, i.e. the body did not already
+        //    contain a complete order. This covers "see attached PO" emails and
+        //    supplies detail a short body lacked, without re-reading a PO the body
+        //    already captured (which would duplicate it).
+        if (!bodyHasOrder) {
+          for (const att of attachments) {
+            summary.attachments++;
+            try {
+              const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
+              // One attachment can contain several POs (e.g. a multi-page PDF with
+              // one PO per page) — queue every order the extractor returns.
+              const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+              for (const extraction of docs) await queueExtraction(extraction, att.filename);
+            } catch (e) {
+              summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
+            }
+          }
         }
 
         // Record the message as processed (read-only: tracked in Firestore,
