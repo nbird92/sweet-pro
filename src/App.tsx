@@ -116,6 +116,7 @@ import {
   saveLearned,
   mergeLearned,
   learnedId,
+  pruneExpired,
   type ExtractedPO,
   type LearnedMapping,
 } from './utils/poScan';
@@ -2980,13 +2981,16 @@ export default function App() {
         setPoAmendments(data.poAmendments as PoAmendment[]);
         lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
       }
-      if (data.poFieldMappings?.length) {
-        // Merge synced learned corrections with any local (unsynced) ones, then
-        // persist the union back to localStorage so both scans + UI agree.
-        const merged = mergeLearned(data.poFieldMappings as LearnedMapping[], loadLearned());
+      {
+        // Merge synced learned corrections with any local (unsynced) ones, drop
+        // any older than 30 days, then persist the cleaned union to localStorage.
+        // Pruning here + the whole-collection autosave below physically deletes
+        // expired mappings from Firestore the next time the app loads.
+        const remoteLearned = (data.poFieldMappings as LearnedMapping[]) || [];
+        const merged = pruneExpired(mergeLearned(remoteLearned, loadLearned()));
         setPoLearned(merged);
         saveLearned(merged);
-        lastSyncedData.current.pofieldmappings = JSON.stringify(data.poFieldMappings);
+        if (remoteLearned.length) lastSyncedData.current.pofieldmappings = JSON.stringify(data.poFieldMappings);
       }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
@@ -3061,7 +3065,7 @@ export default function App() {
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
-        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: poLearned.map(l => ({ id: learnedId(l), ...l })) },
+        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })) },
       ];
 
       try {

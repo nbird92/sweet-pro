@@ -61,7 +61,17 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
     ...qaSnap.docs.map(d => (d.data() as any).skuName),
   ].filter(Boolean);
   const contracts = contractSnap.docs.map(d => (d.data() as any).contractNumber).filter(Boolean);
-  const learned = (learnedSnap.docs || []).map((d: any) => d.data()).filter((l: any) => l?.field && l?.from && l?.to);
+  // Ignore learned corrections older than 30 days (matches the client TTL) so a
+  // stale alias can't keep steering extractions after it should have expired.
+  // The client physically deletes them; this is a belt-and-suspenders read guard.
+  const LEARNED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const learned = (learnedSnap.docs || []).map((d: any) => d.data()).filter((l: any) => {
+    if (!l?.field || !l?.from || !l?.to) return false;
+    if (!l.recordedAt) return true; // legacy undated entry — keep
+    const at = Date.parse(l.recordedAt);
+    return Number.isNaN(at) || (nowMs - at) <= LEARNED_TTL_MS;
+  });
   return {
     customers: Array.from(new Set(customers)),
     products: Array.from(new Set(products)),

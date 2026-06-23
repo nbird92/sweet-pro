@@ -252,9 +252,29 @@ export function matchShipToLocation(
 /* ------------------------------------------------------------------ */
 
 export type LearnedField = 'customer' | 'product' | 'contract';
-export interface LearnedMapping { field: LearnedField; from: string; to: string; }
+export interface LearnedMapping { field: LearnedField; from: string; to: string; recordedAt?: string; }
 
 const LEARN_KEY = 'poFieldMappings';
+
+/** Learned corrections expire this many days after they were last recorded
+ *  (re-recording the same correction refreshes the window). */
+export const LEARNED_TTL_DAYS = 30;
+
+/** Drop mappings older than the TTL. Undated (legacy) entries are stamped with
+ *  the current time and kept, so they expire 30 days from now rather than
+ *  living forever. Returns a new, cleaned array. */
+export function pruneExpired(mappings: LearnedMapping[], nowMs = Date.now()): LearnedMapping[] {
+  const ttlMs = LEARNED_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const stamp = new Date(nowMs).toISOString();
+  const out: LearnedMapping[] = [];
+  for (const l of mappings || []) {
+    if (!l?.field || !l?.from || !l?.to) continue;
+    const at = l.recordedAt ? Date.parse(l.recordedAt) : NaN;
+    if (Number.isNaN(at)) { out.push({ ...l, recordedAt: stamp }); continue; }
+    if (nowMs - at <= ttlMs) out.push(l);
+  }
+  return out;
+}
 
 export function loadLearned(): LearnedMapping[] {
   try {
@@ -287,7 +307,13 @@ export function mergeLearned(base: LearnedMapping[], extra: LearnedMapping[]): L
   const byKey = new Map<string, LearnedMapping>();
   for (const l of [...(base || []), ...(extra || [])]) {
     if (!l?.field || !l?.from || !l?.to) continue;
-    byKey.set(`${l.field}__${normalize(l.from)}`, { field: l.field, from: l.from, to: l.to });
+    const k = `${l.field}__${normalize(l.from)}`;
+    const cand: LearnedMapping = { field: l.field, from: l.from, to: l.to, recordedAt: l.recordedAt };
+    const prev = byKey.get(k);
+    // Most-recently-recorded entry wins (keeps the freshest correction + TTL).
+    const pa = prev?.recordedAt ? Date.parse(prev.recordedAt) : 0;
+    const ca = cand.recordedAt ? Date.parse(cand.recordedAt) : 0;
+    if (!prev || ca >= pa) byKey.set(k, cand);
   }
   return Array.from(byKey.values());
 }
@@ -300,7 +326,7 @@ export function recordLearned(field: LearnedField, from: string, to: string): Le
   const current = loadLearned();
   const key = normalize(fromTrim);
   const next = current.filter(l => !(l.field === field && normalize(l.from) === key));
-  next.push({ field, from: fromTrim, to: toTrim });
+  next.push({ field, from: fromTrim, to: toTrim, recordedAt: new Date().toISOString() });
   try { localStorage.setItem(LEARN_KEY, JSON.stringify(next)); } catch {}
   return next;
 }
