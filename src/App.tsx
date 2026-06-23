@@ -896,11 +896,15 @@ export default function App() {
   // Manual "Scan Inbox Now" trigger for the Email Center button. Authenticates
   // the cron endpoint with the signed-in user's Firebase ID token (no secret in
   // the browser), then drains the queue immediately so results show right away.
-  const scanInboxNow = async (): Promise<{ ok: boolean; summary?: any; error?: string }> => {
+  const scanInboxNow = async (opts?: { force?: boolean }): Promise<{ ok: boolean; summary?: any; error?: string }> => {
     if (!user) return { ok: false, error: 'Not signed in.' };
     try {
       const token = await user.getIdToken();
-      const res = await fetch('/api/scan-po-inbox', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      // force=1 re-reads emails already recorded in processedPoEmails (used by the
+      // "Re-import last 3 days" action). The client still skips POs whose order
+      // already exists, so a forced re-scan never creates duplicate orders.
+      const qs = opts?.force ? '?force=1' : '';
+      const res = await fetch(`/api/scan-po-inbox${qs}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
       // Drain the freshly-queued POs now — wait out any in-flight poll first so

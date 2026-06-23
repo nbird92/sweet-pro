@@ -21,7 +21,7 @@ interface Props {
   onApplyAmendment?: (a: PoAmendment) => void;
   onDismissAmendment?: (a: PoAmendment) => void;
   /** Trigger an ad-hoc inbox scan now; resolves with the run summary. */
-  onScanInbox?: () => Promise<{ ok: boolean; summary?: any; error?: string }>;
+  onScanInbox?: (opts?: { force?: boolean }) => Promise<{ ok: boolean; summary?: any; error?: string }>;
 }
 
 /** Compact "before → after" description of a requested amendment. */
@@ -54,18 +54,30 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   const [showSettings, setShowSettings] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const handleScanInbox = async () => {
+  const handleScanInbox = async (opts?: { force?: boolean }) => {
     if (!onScanInbox || scanning) return;
     setScanning(true);
     setScanMsg(null);
-    const r = await onScanInbox();
+    const r = await onScanInbox(opts);
     setScanning(false);
     if (r.ok) {
       const s = r.summary || {};
-      setScanMsg({
-        ok: true,
-        text: `Scanned ${s.scanned ?? 0} email${s.scanned === 1 ? '' : 's'} · ${s.queued ?? 0} queued${s.errors?.length ? ` · ${s.errors.length} error(s)` : ''}. New orders/amendments appear below.`,
-      });
+      const scanned = s.scanned ?? 0;
+      const skipped = s.skipped ?? 0;
+      const queued = s.queued ?? 0;
+      const found = scanned + skipped;
+      const errs = s.errors?.length ? ` · ${s.errors.length} error(s)` : '';
+      let text: string;
+      if (found === 0) {
+        // The inbox query matched no messages — almost always a query/scope or
+        // address issue, not a genuine "no POs" situation.
+        text = 'No emails matched the inbox query in the last 3 days. If you expected POs, check the inbox address and PO_INBOX_QUERY — group mail is matched by "to:" (e.g. to:orderdesk@sucro.ca), not "deliveredto:".';
+      } else if (scanned === 0) {
+        text = `Found ${found} email${found === 1 ? '' : 's'} in the last 3 days, all already processed. Use "Re-import last 3 days" to pull them in again.`;
+      } else {
+        text = `Scanned ${scanned} of ${found} email${found === 1 ? '' : 's'} · ${queued} queued · ${skipped} already processed${errs}. New orders/amendments appear below.`;
+      }
+      setScanMsg({ ok: true, text });
     } else {
       setScanMsg({ ok: false, text: `Scan failed: ${r.error || 'unknown error'}` });
     }
@@ -136,6 +148,16 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
           >
             <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> {scanning ? 'Scanning…' : 'Scan Inbox Now'}
+          </button>
+        )}
+        {onScanInbox && (
+          <button
+            onClick={() => handleScanInbox({ force: true })}
+            disabled={scanning}
+            title="Re-import POs from the last 3 days, including emails already processed. Existing orders are never duplicated."
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> Re-import last 3 days
           </button>
         )}
         <button
