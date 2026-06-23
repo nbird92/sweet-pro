@@ -6,9 +6,9 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react';
 import PageBanner from './PageBanner';
-import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment } from '../types';
+import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport } from '../types';
 
 interface Props {
   emailLog: EmailLog[];
@@ -16,6 +16,12 @@ interface Props {
   setEmailSettings: (next: EmailSettings) => void;
   /** Dashboard log of POs imported from the Gmail inbox scan. */
   poImportLog?: PoImportLogEntry[];
+  /** Emailed new POs awaiting operator approval (no longer auto-created). */
+  poPendingImports?: PoPendingImport[];
+  /** Open the given pending imports in the review-and-approve modal. */
+  onReviewImports?: (imports: PoPendingImport[]) => void;
+  /** Discard a pending import without creating an order. */
+  onDismissImport?: (imp: PoPendingImport) => void;
   /** Review queue of emailed order amendments/cancellations. */
   poAmendments?: PoAmendment[];
   onApplyAmendment?: (a: PoAmendment) => void;
@@ -50,8 +56,9 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
   const [showSettings, setShowSettings] = useState(false);
+  const [expandedImport, setExpandedImport] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const handleScanInbox = async (opts?: { force?: boolean }) => {
@@ -124,6 +131,12 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     return c;
   }, [poImportLog]);
 
+  // Emailed POs awaiting approval — newest first.
+  const pendingImportsSorted = useMemo(
+    () => [...poPendingImports].sort((a, b) => (b.receivedAt || b.createdAt || '').localeCompare(a.receivedAt || a.createdAt || '')),
+    [poPendingImports],
+  );
+
   // Amendment review queue — pending/unmatched first (need action), then newest.
   const amendmentsSorted = useMemo(() => {
     const rank = (s: PoAmendment['status']) => (s === 'pending' ? 0 : s === 'unmatched' ? 1 : 2);
@@ -190,10 +203,108 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
         )}
       </div>
 
-      {/* PO Import dashboard — emailed POs auto-imported into orders */}
+      {/* Emailed POs awaiting operator approval (no longer auto-created) */}
+      {pendingImportsSorted.length > 0 && (
+        <div className="px-6 pt-2 pb-5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> PO Imports — Awaiting Approval</h3>
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-bold uppercase">{pendingImportsSorted.length} to review</span>
+            </div>
+            {onReviewImports && (
+              <button onClick={() => onReviewImports(pendingImportsSorted)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:opacity-80">Review all ({pendingImportsSorted.length})</button>
+            )}
+          </div>
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[460px]">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                  <th className="p-3 bg-[#141414] border-r border-white/20 w-6"></th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Subject</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">PO No.</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
+                  <th className="p-3 bg-[#141414]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {pendingImportsSorted.map(imp => {
+                  const ex = imp.extraction || {};
+                  const lines = Array.isArray(ex.lineItems) ? ex.lineItems : [];
+                  const open = expandedImport === imp.id;
+                  return (
+                    <React.Fragment key={imp.id}>
+                      <tr className="hover:bg-[#F9F9F9] cursor-pointer" onClick={() => setExpandedImport(open ? null : imp.id)}>
+                        <td className="p-3 text-xs">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                        <td className="p-3 text-xs font-mono whitespace-nowrap">{(imp.receivedAt || imp.createdAt) ? new Date(imp.receivedAt || imp.createdAt).toLocaleString() : '—'}</td>
+                        <td className="p-3 text-xs max-w-[180px] truncate" title={imp.fromEmail}>{imp.fromEmail || '—'}</td>
+                        <td className="p-3 text-xs max-w-[240px] truncate" title={imp.subject}>{imp.subject || '—'}</td>
+                        <td className="p-3 text-xs font-mono font-bold">{imp.poNumber || ex.poNumber || '—'}</td>
+                        <td className="p-3 text-xs">{imp.customer || ex.customerName || '—'}</td>
+                        <td className="p-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex gap-2">
+                            <button onClick={() => onReviewImports?.([imp])} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800">Review &amp; Approve</button>
+                            <button onClick={() => onDismissImport?.(imp)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                          </div>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-[#FAFAFA]">
+                          <td colSpan={7} className="p-4">
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-3">
+                              <Row label="Customer (read)" value={ex.customerName || '—'} />
+                              <Row label="PO Number" value={ex.poNumber || '—'} mono />
+                              <Row label="Ship To" value={[ex.shipToName, ex.shipToAddress].filter(Boolean).join(', ') || '—'} />
+                              <Row label="Contract" value={ex.contractNumber || '—'} mono />
+                              <Row label="Ship / Delivery" value={[ex.shipmentDate, ex.deliveryDate].filter(Boolean).join('  →  ') || '—'} />
+                              <Row label="Incoterms" value={ex.shippingTerms || '—'} />
+                            </div>
+                            <div className="border border-[#141414]/15 bg-white">
+                              <table className="w-full text-xs">
+                                <thead className="bg-[#F5F5F5] border-b border-[#141414]/15">
+                                  <tr>
+                                    <th className="p-2 text-left font-bold">Product (read)</th>
+                                    <th className="p-2 text-left font-bold">Item #</th>
+                                    <th className="p-2 text-right font-bold">Qty</th>
+                                    <th className="p-2 text-right font-bold">Qty (MT)</th>
+                                    <th className="p-2 text-right font-bold">$/MT</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {lines.map((li: any, i: number) => (
+                                    <tr key={i} className="border-b border-[#141414]/5">
+                                      <td className="p-2">{li.description || '—'}</td>
+                                      <td className="p-2 font-mono">{li.itemNumber || '—'}</td>
+                                      <td className="p-2 text-right font-mono">{li.quantity != null ? `${li.quantity}${li.unit ? ' ' + li.unit : ''}` : '—'}</td>
+                                      <td className="p-2 text-right font-mono">{typeof li.quantityMt === 'number' ? li.quantityMt.toFixed(3) : '—'}</td>
+                                      <td className="p-2 text-right font-mono">{typeof li.pricePerMt === 'number' ? `$${li.pricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
+                                    </tr>
+                                  ))}
+                                  {lines.length === 0 && <tr><td colSpan={5} className="p-3 text-center opacity-50 italic">No line items extracted.</td></tr>}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-3 flex justify-end gap-2">
+                              <button onClick={() => onDismissImport?.(imp)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                              <button onClick={() => onReviewImports?.([imp])} className="px-3 py-1.5 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800">Review &amp; Approve</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* PO import history — approved / dismissed / duplicate emailed POs */}
       <div className="px-6 pt-2 pb-5">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Emailed PO Imports</h3>
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Email Import History</h3>
           <span className="text-[10px] opacity-50 font-mono">
             {importCounts.total} imported{lastImport ? ` · last ${new Date(lastImport).toLocaleString()}` : ''}
             {importCounts.duplicate > 0 ? ` · ${importCounts.duplicate} dup` : ''}
@@ -230,7 +341,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 </tr>
               ))}
               {poImports.length === 0 && (
-                <tr><td colSpan={9} className="p-8 text-center text-xs opacity-50 italic">No POs imported from email yet. The inbox scan runs every 15 minutes; imports appear here once an open browser session ingests them.</td></tr>
+                <tr><td colSpan={9} className="p-8 text-center text-xs opacity-50 italic">No emailed POs processed yet. The inbox scan runs every 15 minutes; new POs appear above under "Awaiting Approval" for review — approved or dismissed ones land here.</td></tr>
               )}
             </tbody>
           </table>

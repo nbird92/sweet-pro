@@ -407,6 +407,22 @@ export interface PoImportLogEntry {
   note?: string;               // reason when duplicate / skipped
 }
 
+/** An emailed PO awaiting operator review/approval. The Gmail scan extracts it
+ *  and the app queues it here INSTEAD of auto-creating an order; the operator
+ *  reviews + corrects it in the scan modal, then approves (creates the order)
+ *  or dismisses it from the Email Center. */
+export interface PoPendingImport {
+  id: string;
+  createdAt: string;           // ISO — when queued for review
+  receivedAt?: string;         // email date
+  fromEmail?: string;
+  subject?: string;
+  sourceFile?: string;         // attachment name or "(email body)"
+  poNumber?: string;
+  customer?: string;           // extracted buyer name (for the table)
+  extraction: any;             // ExtractedPO-shaped payload fed into the review modal
+}
+
 /** A change to an existing order detected from an emailed amendment/cancellation,
  *  held in a review queue (Email Center) until the operator applies or dismisses it. */
 export interface PoAmendment {

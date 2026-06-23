@@ -69,7 +69,7 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -403,6 +403,9 @@ export default function App() {
     notes: string;
     lines: POReviewLine[];
     created: boolean;
+    /** When this review came from an emailed PO awaiting approval, the id of the
+     *  poPendingImports entry — cleared from the queue once the order is created. */
+    pendingImportId?: string;
   }
   const [isScanningPO, setIsScanningPO] = useState(false);
   const [poScanFiles, setPoScanFiles] = useState<File[]>([]);
@@ -623,6 +626,23 @@ export default function App() {
     });
     if (rev.contractRaw && rev.contractNumber) recordLearned('contract', rev.contractRaw, rev.contractNumber);
     setPoLearned(loadLearned());
+    // If this review came from an emailed PO awaiting approval, clear it from the
+    // pending queue and record the outcome in the import-history log.
+    if (rev.pendingImportId) {
+      const pid = rev.pendingImportId;
+      setPoPendingImports(prev => prev.filter(p => p.id !== pid));
+      setPoImportLog(prev => [...prev, {
+        id: `POLOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        importedAt: new Date().toISOString(),
+        poNumber: newOrder.po || undefined,
+        customer: newOrder.customer,
+        orderId: newOrder.id,
+        orderBol: newOrder.bolNumber,
+        amount: newOrder.amount,
+        productSummary: newOrder.product,
+        result: 'created',
+      }].slice(-1000));
+    }
     setPoReviews(prev => prev.map(r => r.id === rev.id ? { ...r, created: true } : r));
   };
 
@@ -661,6 +681,38 @@ export default function App() {
     setPoReviews([]);
     setPoScanError(null);
     setPoScanLoading(false);
+  };
+
+  // Open one or more emailed POs awaiting approval in the same review modal used
+  // for manual uploads. Each becomes an editable review card tagged with its
+  // pendingImportId, so approving (Create Open Order) clears it from the queue.
+  const reviewPendingImports = (imports: PoPendingImport[]) => {
+    const list = (imports || []).filter(Boolean);
+    if (!list.length) return;
+    setPoScanFiles([]);
+    setPoScanError(null);
+    setPoReviews(list.map(imp => ({
+      ...reviewFromExtraction(imp.extraction as ExtractedPO),
+      pendingImportId: imp.id,
+    })));
+    setIsScanningPO(true);
+  };
+
+  // Discard an emailed PO without creating an order; record it in the history log.
+  const dismissPendingImport = (imp: PoPendingImport) => {
+    setPoPendingImports(prev => prev.filter(p => p.id !== imp.id));
+    setPoImportLog(prev => [...prev, {
+      id: `POLOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      importedAt: new Date().toISOString(),
+      receivedAt: imp.receivedAt,
+      fromEmail: imp.fromEmail,
+      subject: imp.subject,
+      sourceFile: imp.sourceFile,
+      poNumber: imp.poNumber,
+      customer: imp.customer,
+      result: 'skipped',
+      note: 'Dismissed during review',
+    }].slice(-1000));
   };
 
   // Build a fully-formed Open order straight from an extraction (no review) —
@@ -799,14 +851,14 @@ export default function App() {
     try {
       const incoming = await fetchCollection<any>(COLLECTIONS.incomingPoOrders);
       if (!incoming.length) return;
-      const built: Order[] = [];
       const logs: PoImportLogEntry[] = [];
       const amendments: PoAmendment[] = [];
+      const pendingImports: PoPendingImport[] = [];
       const nowIso = new Date().toISOString();
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
-      // BOLs reserved within this batch so orders built before any state commit
-      // each get a unique, sequential BOL instead of all reusing the same number.
-      const batchBols: string[] = [];
+      // PO numbers already awaiting review, so a re-scan doesn't queue the same
+      // emailed PO twice.
+      const pendingPoSet = new Set(poPendingImports.map(p => (p.poNumber || '').trim()).filter(Boolean));
       // Common log fields carried from the email + extraction for the dashboard.
       const logBase = (item: any, po: ExtractedPO | undefined) => ({
         id: `POLOG-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -848,37 +900,37 @@ export default function App() {
             logs.push({ ...logBase(item, po), result: 'duplicate', note: 'A matching PO number already exists in orders' });
             continue;
           }
-          const order = buildOrderFromExtraction(po, batchBols);
-          if (order) {
-            built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum);
-            logs.push({
-              ...logBase(item, po),
-              customer: order.customer,
-              orderId: order.id,
-              orderBol: order.bolNumber,
-              amount: order.amount,
-              productSummary: order.product,
-              result: 'created',
-            });
-          } else {
-            logs.push({ ...logBase(item, po), result: 'skipped', note: 'No valid product line could be built' });
-          }
+          if (poNum && pendingPoSet.has(poNum)) continue; // already awaiting review
+          // Queue for operator review instead of auto-creating the order. The
+          // operator approves (creates the order) or dismisses it in Email Center.
+          pendingImports.push({
+            id: `PIMP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            createdAt: nowIso,
+            receivedAt: item?.receivedAt,
+            fromEmail: item?.fromEmail,
+            subject: item?.subject,
+            sourceFile: item?.sourceFile,
+            poNumber: poNum || undefined,
+            customer: po.customerName || undefined,
+            extraction: po,
+          });
+          if (poNum) pendingPoSet.add(poNum);
         } catch (e) {
           // The doc is already claimed/deleted, so always leave a dashboard trail.
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
         }
       }
-      if (built.length) setOrders(prev => [...prev, ...built]);
+      if (pendingImports.length) setPoPendingImports(prev => [...prev, ...pendingImports].slice(-500));
       // Cap the persisted log so the whole-collection resync stays bounded.
       if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
       if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
       const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
-      if (built.length || pendingAmend) {
+      if (pendingImports.length || pendingAmend) {
         setPoIngestNotice(
           [
-            built.length ? `${built.length} order${built.length === 1 ? '' : 's'} imported` : '',
+            pendingImports.length ? `${pendingImports.length} PO${pendingImports.length === 1 ? '' : 's'} to review` : '',
             pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
-          ].filter(Boolean).join(' · ') + ' from emailed POs.',
+          ].filter(Boolean).join(' · ') + ' from emailed POs — open Email Center to approve.',
         );
       }
     } catch (e) {
@@ -2647,6 +2699,7 @@ export default function App() {
   const [returnOrders, setReturnOrders] = useState<ReturnOrder[]>([]);
   // Persistent dashboard of POs imported from the Gmail inbox scan (Email Center).
   const [poImportLog, setPoImportLog] = useState<PoImportLogEntry[]>([]);
+  const [poPendingImports, setPoPendingImports] = useState<PoPendingImport[]>([]);
   // Review queue of emailed order amendments/cancellations (Email Center).
   const [poAmendments, setPoAmendments] = useState<PoAmendment[]>([]);
   // Add / Edit modal state. When isAddingReturnOrder is true the modal opens
@@ -2981,6 +3034,10 @@ export default function App() {
         setPoImportLog(data.poImportLog as PoImportLogEntry[]);
         lastSyncedData.current.poimportlog = JSON.stringify(data.poImportLog);
       }
+      if (data.poPendingImports?.length) {
+        setPoPendingImports(data.poPendingImports as PoPendingImport[]);
+        lastSyncedData.current.popendingimports = JSON.stringify(data.poPendingImports);
+      }
       if (data.poAmendments?.length) {
         setPoAmendments(data.poAmendments as PoAmendment[]);
         lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
@@ -3068,6 +3125,7 @@ export default function App() {
         { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
+        { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
         { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })) },
       ];
@@ -3095,7 +3153,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poAmendments, poLearned, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, poAmendments, poLearned, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
@@ -7432,6 +7490,9 @@ export default function App() {
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
           poImportLog={poImportLog}
+          poPendingImports={poPendingImports}
+          onReviewImports={reviewPendingImports}
+          onDismissImport={dismissPendingImport}
           poAmendments={poAmendments}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}
