@@ -132,7 +132,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
     [locations]
   );
   return (
-    <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -9853,7 +9853,7 @@ export default function App() {
       {/* Invoice Card Modal */}
       <AnimatePresence>
         {editingInvoiceCard && !getModalState('invoice').minimized && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -9997,7 +9997,7 @@ export default function App() {
       {/* Order Card Modal */}
       <AnimatePresence>
         {viewingOrderCard && !getModalState('order').minimized && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10344,7 +10344,7 @@ export default function App() {
       {/* PDF Preview Modal */}
       <AnimatePresence>
         {pdfPreview && (
-          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={handleClosePdfPreview}>
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -10438,7 +10438,7 @@ export default function App() {
             close();
           };
           return (
-            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={close}>
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                 className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full max-h-[92vh] overflow-y-auto"
@@ -10606,7 +10606,7 @@ export default function App() {
           const cust = customers.find(c => c.name === ro.customer);
           const shipTo = ro.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === ro.shipToLocationId)?.name : '';
           return (
-            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setReturnAndBillConfirm(null)}>
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
               <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden" onClick={e => e.stopPropagation()}>
                 <div className="bg-emerald-700 text-white px-6 py-4 flex justify-between items-center">
                   <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CheckCircle2 size={16} /> Confirm Return &amp; Bill</h3>
@@ -10876,7 +10876,7 @@ export default function App() {
           const ro = viewingReturnOrderCard;
           const totalKg = ro.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000;
           return (
-            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setViewingReturnOrderCard(null)}>
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
               <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full h-full max-w-full max-h-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                 <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                   <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
@@ -10951,7 +10951,7 @@ export default function App() {
             .map(li => li.productDisplayName || li.productName)
             .filter(Boolean).join(', ') || ord.product || '—';
           return (
-            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setCompleteAndBillConfirm(null)}>
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -11507,7 +11507,7 @@ export default function App() {
 
         {/* Google Sheet Sync — Error popup */}
         {sheetSyncError && (
-          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto" onClick={() => setSheetSyncError(null)}>
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11531,7 +11531,7 @@ export default function App() {
 
         {/* Google Sheet Sync — Preview / Confirm modal */}
         {sheetSyncPreview && (
-          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setSheetSyncPreview(null)}>
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11724,7 +11724,7 @@ export default function App() {
 
         {/* Orders Sheet Sync — Error popup */}
         {orderSyncError && (
-          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto" onClick={() => setOrderSyncError(null)}>
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -11921,7 +11921,7 @@ export default function App() {
             }
           };
           return (
-            <div className="fixed inset-0 z-[450] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setSyncMode(null)}>
+            <div className="fixed inset-0 z-[450] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -12121,7 +12121,7 @@ export default function App() {
 
         {/* Shipment Sheet Sync — Preview / Confirm modal */}
         {shipmentSyncPreview && (
-          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setShipmentSyncPreview(null)}>
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -12251,7 +12251,7 @@ export default function App() {
 
         {/* Invoice Sheet Sync — Preview / Confirm modal */}
         {invoiceSyncPreview && (
-          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setInvoiceSyncPreview(null)}>
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -12380,7 +12380,7 @@ export default function App() {
         {orderSyncPreview && (() => {
           const updatedOrders = orderSyncPreview.updatedOrders ?? [];
           return (
-          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setOrderSyncPreview(null)}>
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -12599,7 +12599,7 @@ export default function App() {
 
         {/* Transfer Sheet Sync — Preview / Confirm modal */}
         {transferSyncPreview && (
-          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setTransferSyncPreview(null)}>
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -13722,7 +13722,7 @@ export default function App() {
         )}
 
         {selectedContractDetail && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-4 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-4 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -14369,7 +14369,7 @@ export default function App() {
         )}
 
         {isAddingSugarType && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setIsAddingSugarType(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -14752,7 +14752,7 @@ export default function App() {
         )}
 
         {editingCustomer && !getModalState('customer').minimized && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => { setEditingCustomer(null); resetModalState('customer'); }}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -15825,7 +15825,7 @@ export default function App() {
 
         {/* Contract Orders Popup - shows every order using this contract */}
         {contractOrdersPopup && (
-          <div className="fixed inset-0 z-[700] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto" onClick={() => setContractOrdersPopup(null)}>
+          <div className="fixed inset-0 z-[700] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -16609,7 +16609,7 @@ export default function App() {
           const totalToReview = poReviews.length;
           const createdCount = poReviews.filter(r => r.created).length;
           return (
-            <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/70 backdrop-blur-md overflow-y-auto" onClick={closePOScan}>
+            <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/70 backdrop-blur-md overflow-y-auto">
               <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}

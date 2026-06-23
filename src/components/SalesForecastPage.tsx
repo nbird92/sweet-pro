@@ -1109,10 +1109,6 @@ export default function SalesForecastPage({
         {customerModalOpen && editingCf && selectedFY && (
           <div
             className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
-            onClick={() => {
-              setCustomerModalOpen(false);
-              setEditingCustomerId(null);
-            }}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -1447,10 +1443,6 @@ export default function SalesForecastPage({
         {productViewModalOpen && viewingProduct && selectedFY && (
           <div
             className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
-            onClick={() => {
-              setProductViewModalOpen(false);
-              setViewingProduct(null);
-            }}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}

@@ -336,7 +336,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
 
       {/* Settings modal */}
       {showSettings && (
-        <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setShowSettings(false)}>
+        <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
           <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full" onClick={e => e.stopPropagation()}>
             <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Settings size={14} /> Email Center Settings</h3>
@@ -418,7 +418,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
 
       {/* Log detail modal */}
       {viewingLog && (
-        <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setViewingLog(null)}>
+        <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
           <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full" onClick={e => e.stopPropagation()}>
             <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Mail size={14} /> {TYPE_LABELS[viewingLog.type]}</h3>

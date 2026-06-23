@@ -74,7 +74,6 @@ export default function DetailModal({
   return (
     <div
       className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
-      onClick={onClose}
     >
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}

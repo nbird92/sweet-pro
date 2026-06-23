@@ -1592,7 +1592,7 @@ export default function QualityAssurancePage({
       {/* Add/Edit Template Modal */}
       <AnimatePresence>
         {showTemplateModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowTemplateModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1718,7 +1718,7 @@ export default function QualityAssurancePage({
       {/* Delete Template Confirmation */}
       <AnimatePresence>
         {deleteTemplateConfirmId && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteTemplateConfirmId(null)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -1750,7 +1750,7 @@ export default function QualityAssurancePage({
       {/* Location Detail Card Modal */}
       <AnimatePresence>
         {selectedLocation && editLocationData && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeLocationDetail}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2025,7 +2025,7 @@ export default function QualityAssurancePage({
       {/* Add Product Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowAddModal(false)}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2275,7 +2275,7 @@ export default function QualityAssurancePage({
       {/* Product Detail Card Modal */}
       <AnimatePresence>
         {selectedProduct && displayData && !productModalMinimized && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={closeDetail}>
+          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3176,7 +3176,7 @@ export default function QualityAssurancePage({
       {/* Send for Approval Sub-Modal */}
       <AnimatePresence>
         {showApprovalModal && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setShowApprovalModal(false)}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -3226,7 +3226,7 @@ export default function QualityAssurancePage({
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deleteConfirmId && (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto" onClick={() => setDeleteConfirmId(null)}>
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
