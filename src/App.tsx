@@ -13209,7 +13209,24 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, time: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          {getLocationAllTimeSlots(scheduleLocation.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver').map(t => <option key={t} value={t}>{t}</option>)}
+                          {(() => {
+                            // All appointment times for THIS shipment's day + location. Slots
+                            // already taken that day (bay-aware) are shown but disabled; the
+                            // shipment's own current time always stays selectable.
+                            const shipLoc = editingShipment.location || (scheduleLocation.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver');
+                            const locIsHam = shipLoc.toLowerCase().includes('hamilton');
+                            const dayShipments = (locIsHam ? hamiltonShipments : vancouverShipments)
+                              .filter(s => s.date === editingShipment.date && s.id !== editingShipment.id);
+                            const bays = locations.find(l => l.name.toLowerCase().includes(shipLoc.toLowerCase()))?.bays || [];
+                            const booked = new Set(dayShipments.map(s => `${s.time}|${s.bay}`));
+                            const isOpen = (slot: string) => editingShipment.bay
+                              ? !booked.has(`${slot}|${editingShipment.bay}`)
+                              : (bays.length === 0 || bays.some(b => !booked.has(`${slot}|${b}`)));
+                            return getLocationAllTimeSlots(shipLoc).map(t => {
+                              const open = isOpen(t) || t === editingShipment.time;
+                              return <option key={t} value={t} disabled={!open}>{open ? t : `${t} (booked)`}</option>;
+                            });
+                          })()}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -16340,6 +16357,26 @@ export default function App() {
                       />
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Location (Origin)</label>
+                      <select
+                        value={orderLocation}
+                        onChange={(e) => setOrderLocation(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      >
+                        <option value="">{(() => {
+                          const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
+                          if (contractNums.length === 0) return 'Select';
+                          const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
+                          return c?.origin ? `Auto: ${c.origin}` : 'Select';
+                        })()}</option>
+                        {activeLocations.map(loc => (
+                          <option key={loc.id} value={loc.name}>{loc.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                   {/* Customs references — only surfaced when editing an existing
                       order (PAPS / entry numbers are assigned after the order is
                       created and the shipment clears the border). */}
@@ -16405,7 +16442,6 @@ export default function App() {
                               order — it isn't known when first creating one. */}
                           {editingOrder && <th className="p-3">Split Number</th>}
                           <th className="p-3">Shipping Terms</th>
-                          <th className="p-3">Location (Origin)</th>
                           <th className="p-3">Pallet Type</th>
                         </tr>
                       </thead>
@@ -16474,23 +16510,6 @@ export default function App() {
                               <option value="DAP">DAP</option>
                               <option value="DDP">DDP</option>
                               <option value="FCA">FCA</option>
-                            </select>
-                          </td>
-                          <td className="p-2">
-                            <select
-                              value={orderLocation}
-                              onChange={(e) => setOrderLocation(e.target.value)}
-                              className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
-                            >
-                              <option value="">{(() => {
-                                const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
-                                if (contractNums.length === 0) return 'Select';
-                                const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
-                                return c?.origin ? `Auto: ${c.origin}` : 'Select';
-                              })()}</option>
-                              {activeLocations.map(loc => (
-                                <option key={loc.id} value={loc.name}>{loc.name}</option>
-                              ))}
                             </select>
                           </td>
                           <td className="p-2">
