@@ -69,7 +69,7 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -720,6 +720,30 @@ export default function App() {
   const deleteImportLogEntry = (id: string) => setPoImportLog(prev => prev.filter(e => e.id !== id));
   const clearImportHistory = () => setPoImportLog([]);
 
+  // Inbox feed (read-only mirror of orderdesk@sucro.ca, written by the cron) —
+  // fetched on a cadence so operators can read/triage the inbox inside the app.
+  const loadInboxFeed = async () => {
+    if (!user) return;
+    try {
+      const feed = await fetchCollection<InboxFeedItem>(COLLECTIONS.inboxFeed);
+      setInboxFeed(feed);
+    } catch (e) { console.warn('inbox feed load failed:', e); }
+  };
+  // Operator triage state (client-owned, synced). Absence of an entry = "open".
+  const setInboxTriageStatus = (id: string, status: 'handled' | 'dismissed') =>
+    setInboxTriage(prev => [...prev.filter(t => t.id !== id), { id, status, updatedAt: new Date().toISOString() }]);
+  const dismissInboxEmail = (id: string) => setInboxTriageStatus(id, 'dismissed');
+  const markInboxHandled = (id: string) => setInboxTriageStatus(id, 'handled');
+  const reopenInboxEmail = (id: string) => setInboxTriage(prev => prev.filter(t => t.id !== id));
+  // Open the pending PO(s) extracted from a feed email in the review modal. One
+  // email can carry several POs (multi-PO PDF), so open all that match.
+  const reviewFeedPo = (feedId: string, poNumber?: string) => {
+    const imps = poPendingImports.filter(p =>
+      (p.sourceEmailId && p.sourceEmailId === feedId) || (!!poNumber && (p.poNumber || '') === poNumber));
+    if (imps.length) reviewPendingImports(imps);
+    else setErrorBox('That PO is no longer awaiting approval (already approved or dismissed).');
+  };
+
   // Build a fully-formed Open order straight from an extraction (no review) —
   // used by the automated Gmail inbox ingest. Unmatched customer/product fall
   // back to the document's own text so nothing is silently dropped; the order
@@ -911,6 +935,7 @@ export default function App() {
           pendingImports.push({
             id: `PIMP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             createdAt: nowIso,
+            sourceEmailId: item?.sourceEmailId,
             receivedAt: item?.receivedAt,
             fromEmail: item?.fromEmail,
             subject: item?.subject,
@@ -968,6 +993,7 @@ export default function App() {
       // ingestIncomingPOs's busy-guard doesn't make this a silent no-op.
       for (let i = 0; i < 25 && ingestingPOsRef.current; i++) await new Promise(r => setTimeout(r, 200));
       await ingestIncomingPOs();
+      await loadInboxFeed();
       return { ok: true, summary: body };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -2705,6 +2731,8 @@ export default function App() {
   // Persistent dashboard of POs imported from the Gmail inbox scan (Email Center).
   const [poImportLog, setPoImportLog] = useState<PoImportLogEntry[]>([]);
   const [poPendingImports, setPoPendingImports] = useState<PoPendingImport[]>([]);
+  const [inboxFeed, setInboxFeed] = useState<InboxFeedItem[]>([]);
+  const [inboxTriage, setInboxTriage] = useState<InboxTriage[]>([]);
   // Review queue of emailed order amendments/cancellations (Email Center).
   const [poAmendments, setPoAmendments] = useState<PoAmendment[]>([]);
   // Add / Edit modal state. When isAddingReturnOrder is true the modal opens
@@ -3043,6 +3071,13 @@ export default function App() {
         setPoPendingImports(data.poPendingImports as PoPendingImport[]);
         lastSyncedData.current.popendingimports = JSON.stringify(data.poPendingImports);
       }
+      if (data.inboxTriage?.length) {
+        setInboxTriage(data.inboxTriage as InboxTriage[]);
+        lastSyncedData.current.inboxtriage = JSON.stringify(data.inboxTriage);
+      }
+      if (data.inboxFeed?.length) {
+        setInboxFeed(data.inboxFeed as InboxFeedItem[]);
+      }
       if (data.poAmendments?.length) {
         setPoAmendments(data.poAmendments as PoAmendment[]);
         lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
@@ -3131,6 +3166,7 @@ export default function App() {
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
         { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports },
+        { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
         { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })) },
       ];
@@ -3158,14 +3194,14 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, poAmendments, poLearned, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
   useEffect(() => {
     if (!user) return;
-    const t = setTimeout(() => ingestPOsRef.current(), 8000);
-    const interval = setInterval(() => ingestPOsRef.current(), 5 * 60 * 1000);
+    const t = setTimeout(() => { ingestPOsRef.current(); loadInboxFeed(); }, 8000);
+    const interval = setInterval(() => { ingestPOsRef.current(); loadInboxFeed(); }, 5 * 60 * 1000);
     return () => { clearTimeout(t); clearInterval(interval); };
   }, [user]);
 
@@ -7500,6 +7536,13 @@ export default function App() {
           onDismissImport={dismissPendingImport}
           onDeleteImport={deleteImportLogEntry}
           onClearImportHistory={clearImportHistory}
+          inboxFeed={inboxFeed}
+          inboxTriage={inboxTriage}
+          onReviewFeedPo={reviewFeedPo}
+          onDismissInbox={dismissInboxEmail}
+          onMarkInboxHandled={markInboxHandled}
+          onReopenInbox={reopenInboxEmail}
+          onRefreshInbox={loadInboxFeed}
           poAmendments={poAmendments}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}

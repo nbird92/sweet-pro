@@ -34,6 +34,15 @@ import {
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
 
+/** Split a raw From header ("Name <email>") into name + email parts. */
+function parseFrom(raw: string): { name?: string; email?: string } {
+  const s = (raw || '').trim();
+  const m = s.match(/^(.*?)\s*<([^>]+)>\s*$/);
+  if (m) return { name: m[1].replace(/^"|"$/g, '').trim() || undefined, email: m[2].trim().toLowerCase() };
+  if (s.includes('@')) return { email: s.toLowerCase() };
+  return { name: s || undefined };
+}
+
 function getAdminApp() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
@@ -143,9 +152,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hints = await buildHints(db);
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
+    const feedRef = db.collection('inboxFeed');
     const messages = await listMessages(token, inbox, query, maxTotal);
-    // Load processed ids once (in-memory dedup) so skipping already-handled mail
-    // costs no time — a Firestore read per message would itself eat the budget.
+    // Load seen ids once (in-memory dedup) so skipping already-handled mail costs
+    // no time — a Firestore read per message would itself eat the budget. The
+    // inbox feed is the unit of "already shown"; processedPoEmails still gates PO
+    // extraction so a pruned-then-reappearing email never re-queues its PO.
+    const feedIds = new Set<string>((await feedRef.get()).docs.map(d => d.id));
     const processedIds = new Set<string>((await processedRef.get()).docs.map(d => d.id));
 
     for (let i = 0; i < messages.length; i++) {
@@ -154,14 +167,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Read-only dedup: skip a message already handled on a previous run
         // (we can't mark it read/labelled with a read-only scope). `force`
         // bypasses this for a re-test; the client-side order dedup still holds.
-        if (!force && processedIds.has(meta.id)) { summary.skipped++; continue; }
+        if (!force && feedIds.has(meta.id)) { summary.skipped++; continue; }
 
         // Stop before the function times out, recording how many are left so the
         // UI can prompt another run. Checked after the cheap skip so a backlog of
-        // already-processed mail doesn't count against the budget.
+        // already-shown mail doesn't count against the budget.
         if (Date.now() - startMs > BUDGET_MS) {
           summary.partial = true;
-          summary.remaining = messages.slice(i).filter(m => force || !processedIds.has(m.id)).length;
+          summary.remaining = messages.slice(i).filter(m => force || !feedIds.has(m.id)).length;
           break;
         }
 
@@ -171,8 +184,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const receivedAt = new Date(Number(msg.internalDate) || Date.now()).toISOString();
         summary.scanned++;
 
+        // Per-message order suggestion for the inbox feed, updated as we classify
+        // the mail. Order-related mail gets a suggestion; everything else 'none'.
+        let suggestion: 'new_po' | 'amendment' | 'cancellation' | 'none' = 'none';
+        let suggestionPo = '';
+        const noteSuggestion = (extraction: any) => {
+          const dt = extraction?.documentType;
+          if (dt === 'new_order') { suggestion = 'new_po'; suggestionPo = (extraction.poNumber || '').trim() || suggestionPo; }
+          else if (dt === 'amendment' && suggestion !== 'new_po') { suggestion = 'amendment'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
+          else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
+        };
+
         // Queue an extraction unless the model classified it as unrelated mail.
         const queueExtraction = async (extraction: any, sourceFile: string) => {
+          noteSuggestion(extraction);
           if (!extraction || extraction.documentType === 'other') return;
           const id = `INPO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           await db.collection('incomingPoOrders').doc(id).set({
@@ -182,58 +207,77 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           summary.queued++;
         };
 
-        // 1. Email BODY first — the primary source for order info AND changes.
-        //    New POs and amendments are frequently written in the message text
-        //    itself, so always read it before touching attachments.
-        const attachments = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
-        let bodyHasOrder = false; // a complete new order was found in the body
-        try {
-          const body = getMessageBody(msg.payload);
-          if (body && body.trim().length > 20) {
-            const bodyB64 = Buffer.from(body, 'utf8').toString('base64');
-            const docs = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
-            for (const extraction of docs) {
-              if (extraction?.documentType === 'new_order' && Array.isArray(extraction.lineItems) && extraction.lineItems.length > 0) {
-                bodyHasOrder = true;
+        const feedBody = getMessageBody(msg.payload);
+
+        // Run PO/amendment extraction only when this email hasn't been extracted
+        // before (a feed-pruned email reappearing must not re-queue its PO).
+        if (force || !processedIds.has(meta.id)) {
+          // 1. Email BODY first — primary source for order info AND changes.
+          const supported = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
+          let bodyHasOrder = false;
+          try {
+            if (feedBody && feedBody.trim().length > 20) {
+              const bodyB64 = Buffer.from(feedBody, 'utf8').toString('base64');
+              const docs = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+              for (const extraction of docs) {
+                if (extraction?.documentType === 'new_order' && Array.isArray(extraction.lineItems) && extraction.lineItems.length > 0) bodyHasOrder = true;
+                await queueExtraction(extraction, '(email body)');
               }
-              await queueExtraction(extraction, '(email body)'); // queues new_order / amendment / cancellation
+            }
+          } catch (e) {
+            summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
+          }
+          // 2. Attachments — only if the body didn't already contain a complete order.
+          if (!bodyHasOrder) {
+            for (const att of supported) {
+              summary.attachments++;
+              try {
+                const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
+                const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+                for (const extraction of docs) await queueExtraction(extraction, att.filename);
+              } catch (e) {
+                summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
+              }
             }
           }
-        } catch (e) {
-          summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
+          // Record the message as PO-processed so it isn't re-extracted later.
+          await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString() });
         }
 
-        // 2. Attachments — scanned only IF NEEDED, i.e. the body did not already
-        //    contain a complete order. This covers "see attached PO" emails and
-        //    supplies detail a short body lacked, without re-reading a PO the body
-        //    already captured (which would duplicate it).
-        if (!bodyHasOrder) {
-          for (const att of attachments) {
-            summary.attachments++;
-            try {
-              const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-              // One attachment can contain several POs (e.g. a multi-page PDF with
-              // one PO per page) — queue every order the extractor returns.
-              const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
-              for (const extraction of docs) await queueExtraction(extraction, att.filename);
-            } catch (e) {
-              summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
-            }
-          }
-        }
-
-        // Record the message as processed (read-only: tracked in Firestore,
-        // not via Gmail labels) regardless of per-source outcome so a
-        // permanently-failing message isn't retried forever.
-        await processedRef.doc(meta.id).set({
+        // Mirror the email into the read-only inbox feed (metadata + body + the
+        // order suggestion) so operators can read/triage it inside the app.
+        const fromParsed = parseFrom(fromEmail);
+        const allAttachments = collectAttachments(msg.payload).map(a => ({ filename: a.filename, mimeType: a.mimeType }));
+        await feedRef.doc(meta.id).set({
           id: meta.id,
-          subject,
-          fromEmail,
-          processedAt: new Date().toISOString(),
+          receivedAt,
+          internalDateMs: Number(msg.internalDate) || Date.now(),
+          fromName: fromParsed.name || '',
+          fromEmail: fromParsed.email || fromEmail || '',
+          subject: subject || '',
+          snippet: (msg.snippet || '').slice(0, 400),
+          body: (feedBody || '').slice(0, 8000),
+          hasAttachments: allAttachments.length > 0,
+          attachments: allAttachments,
+          suggestion,
+          poNumber: suggestionPo || '',
         });
       } catch (e) {
         summary.errors.push({ where: meta.id, message: e instanceof Error ? e.message : String(e) });
       }
+    }
+
+    // Keep the feed to a rolling ~7-day window so it stays bounded (capped per run).
+    try {
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const old = await feedRef.where('internalDateMs', '<', cutoff).limit(300).get();
+      if (!old.empty) {
+        const batch = db.batch();
+        old.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (e) {
+      console.warn('inbox feed prune failed:', e instanceof Error ? e.message : e);
     }
 
     return res.status(200).json({ ok: true, ...summary });

@@ -54,6 +54,13 @@ export const COLLECTIONS = {
   // Review queue of emailed new POs awaiting operator approval (the app no
   // longer auto-creates orders from the inbox scan — each is approved here).
   poPendingImports: 'poPendingImports',
+  // Read-only inbox feed (rolling ~7 days): the Gmail scan mirrors every inbox
+  // message here so operators can read/triage the PO inbox inside the app. Cron-
+  // written, so NOT part of the client whole-collection autosave.
+  inboxFeed: 'inboxFeed',
+  // Operator triage state (handled/dismissed) for inbox-feed emails. Client-owned
+  // and synced (keyed by Gmail message id).
+  inboxTriage: 'inboxTriage',
   // Learned PO field corrections (customer / product / contract aliases). The
   // app writes these as the operator corrects scans; the Gmail PO scan
   // (api/scan-po-inbox) reads them as extraction hints, so corrections improve

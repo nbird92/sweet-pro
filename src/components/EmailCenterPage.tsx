@@ -6,9 +6,9 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2 } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2, Paperclip } from 'lucide-react';
 import PageBanner from './PageBanner';
-import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport } from '../types';
+import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from '../types';
 
 interface Props {
   emailLog: EmailLog[];
@@ -26,6 +26,16 @@ interface Props {
   onDeleteImport?: (id: string) => void;
   /** Clear the whole Email Import History. */
   onClearImportHistory?: () => void;
+  /** Read-only inbox feed (rolling ~7 days) of the order-desk mailbox. */
+  inboxFeed?: InboxFeedItem[];
+  /** Operator triage state for feed emails (handled/dismissed). */
+  inboxTriage?: InboxTriage[];
+  /** Open the pending PO(s) extracted from a feed email in the review modal. */
+  onReviewFeedPo?: (feedId: string, poNumber?: string) => void;
+  onDismissInbox?: (id: string) => void;
+  onMarkInboxHandled?: (id: string) => void;
+  onReopenInbox?: (id: string) => void;
+  onRefreshInbox?: () => void;
   /** Review queue of emailed order amendments/cancellations. */
   poAmendments?: PoAmendment[];
   onApplyAmendment?: (a: PoAmendment) => void;
@@ -60,9 +70,25 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, inboxFeed = [], inboxTriage = [], onReviewFeedPo, onDismissInbox, onMarkInboxHandled, onReopenInbox, onRefreshInbox, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [expandedImport, setExpandedImport] = useState<string | null>(null);
+  const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
+  const [feedShowAll, setFeedShowAll] = useState(false);
+  const triageMap = useMemo(() => {
+    const m: Record<string, InboxTriage['status']> = {};
+    for (const t of inboxTriage) m[t.id] = t.status;
+    return m;
+  }, [inboxTriage]);
+  const feedSorted = useMemo(
+    () => [...inboxFeed].sort((a, b) => (b.internalDateMs || 0) - (a.internalDateMs || 0) || (b.receivedAt || '').localeCompare(a.receivedAt || '')),
+    [inboxFeed],
+  );
+  const feedVisible = useMemo(
+    () => feedShowAll ? feedSorted : feedSorted.filter(e => !triageMap[e.id]),
+    [feedSorted, feedShowAll, triageMap],
+  );
+  const feedOpenCount = useMemo(() => feedSorted.filter(e => !triageMap[e.id]).length, [feedSorted, triageMap]);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const handleScanInbox = async (opts?: { force?: boolean }) => {
@@ -205,6 +231,86 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             Test mode is ON. Every send is rerouted to <span className="font-mono font-bold">{emailSettings.testAddress || '(no test address set)'}</span> with a [TEST → original] subject prefix. Configure in Settings.
           </div>
         )}
+      </div>
+
+      {/* Live inbox feed — read-only mirror of the order-desk mailbox */}
+      <div className="px-6 pt-2 pb-5">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Inbox Feed</h3>
+            {feedOpenCount > 0 && <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[9px] font-bold uppercase">{feedOpenCount} open</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setFeedShowAll(v => !v)} className="px-2 py-1 border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">{feedShowAll ? 'Show open only' : 'Show all'}</button>
+            {onRefreshInbox && <button onClick={() => onRefreshInbox()} title="Refresh feed" className="px-2 py-1 border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5] flex items-center gap-1"><RefreshCw size={11} /> Refresh</button>}
+          </div>
+        </div>
+        <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[520px]">
+          <table className="w-full text-left border-collapse">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                <th className="p-3 bg-[#141414] border-r border-white/20 w-6"></th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Subject</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20 text-center">Att</th>
+                <th className="p-3 bg-[#141414] border-r border-white/20">Suggested action</th>
+                <th className="p-3 bg-[#141414]">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {feedVisible.map(e => {
+                const open = expandedFeed === e.id;
+                const status = triageMap[e.id];
+                return (
+                  <React.Fragment key={e.id}>
+                    <tr className={`hover:bg-[#F9F9F9] cursor-pointer ${status ? 'opacity-60' : ''}`} onClick={() => setExpandedFeed(open ? null : e.id)}>
+                      <td className="p-3 text-xs">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                      <td className="p-3 text-xs font-mono whitespace-nowrap">{e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'}</td>
+                      <td className="p-3 text-xs max-w-[180px] truncate" title={e.fromEmail}>{e.fromName || e.fromEmail || '—'}</td>
+                      <td className="p-3 text-xs max-w-[280px] truncate" title={e.subject}>{e.subject || '(no subject)'}</td>
+                      <td className="p-3 text-center">{e.hasAttachments ? <Paperclip size={12} className="inline opacity-60" /> : ''}</td>
+                      <td className="p-3"><FeedSuggestionPill suggestion={e.suggestion} poNumber={e.poNumber} /></td>
+                      <td className="p-3 text-[9px] uppercase font-bold opacity-60">{status || 'open'}</td>
+                    </tr>
+                    {open && (
+                      <tr className="bg-[#FAFAFA]">
+                        <td colSpan={7} className="p-4">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-3">
+                            <Row label="From" value={[e.fromName, e.fromEmail].filter(Boolean).join(' · ') || '—'} />
+                            <Row label="Received" value={e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'} />
+                            <Row label="Subject" value={e.subject || '(no subject)'} />
+                            <Row label="Attachments" value={e.attachments?.length ? e.attachments.map(a => a.filename).join(', ') : '—'} />
+                          </div>
+                          <div className="border border-[#141414]/15 bg-white p-3 text-xs whitespace-pre-wrap max-h-[320px] overflow-auto">{e.body || e.snippet || '(no body text)'}</div>
+                          <div className="mt-3 flex justify-end items-center gap-2">
+                            {e.suggestion === 'new_po' && onReviewFeedPo && (
+                              <button onClick={() => onReviewFeedPo(e.id, e.poNumber)} className="px-3 py-1.5 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800">Review &amp; Approve PO</button>
+                            )}
+                            {(e.suggestion === 'amendment' || e.suggestion === 'cancellation') && (
+                              <span className="text-[10px] uppercase font-bold text-amber-700 mr-auto">Order change — review under Order Amendments below</span>
+                            )}
+                            {status ? (
+                              onReopenInbox && <button onClick={() => onReopenInbox(e.id)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Reopen</button>
+                            ) : (
+                              <>
+                                {onMarkInboxHandled && <button onClick={() => onMarkInboxHandled(e.id)} className="px-3 py-1.5 border border-emerald-600 text-emerald-700 text-[10px] font-bold uppercase hover:bg-emerald-50">Mark handled</button>}
+                                {onDismissInbox && <button onClick={() => onDismissInbox(e.id)} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+              {feedVisible.length === 0 && (
+                <tr><td colSpan={7} className="p-8 text-center text-xs opacity-50 italic">{inboxFeed.length === 0 ? 'No inbox emails yet. The scan mirrors the order-desk mailbox here every 15 minutes — run "Scan Inbox Now" to populate it.' : 'No open emails — switch to "Show all" to see triaged mail.'}</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Emailed POs awaiting operator approval (no longer auto-created) */}
@@ -639,6 +745,18 @@ function AmendmentStatusPill({ status }: { status: PoAmendment['status'] }) {
     status === 'unmatched' ? 'bg-red-100     text-red-700' :
                              'bg-slate-100   text-slate-600';
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${style}`}>{status}</span>;
+}
+
+function FeedSuggestionPill({ suggestion, poNumber }: { suggestion?: InboxFeedItem['suggestion']; poNumber?: string }) {
+  if (!suggestion || suggestion === 'none') return <span className="text-[10px] opacity-40">—</span>;
+  const map = {
+    new_po:       { label: 'New PO',       cls: 'bg-emerald-100 text-emerald-800' },
+    amendment:    { label: 'Order change', cls: 'bg-amber-100   text-amber-800'   },
+    cancellation: { label: 'Cancellation', cls: 'bg-red-100     text-red-700'     },
+  } as const;
+  const m = map[suggestion];
+  if (!m) return <span className="text-[10px] opacity-40">—</span>;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${m.cls}`}>{m.label}{poNumber ? ` · ${poNumber}` : ''}</span>;
 }
 
 function ImportResultPill({ result, note }: { result: PoImportLogEntry['result']; note?: string }) {

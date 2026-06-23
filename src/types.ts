@@ -414,6 +414,7 @@ export interface PoImportLogEntry {
 export interface PoPendingImport {
   id: string;
   createdAt: string;           // ISO — when queued for review
+  sourceEmailId?: string;      // Gmail message id (links to the inbox-feed email)
   receivedAt?: string;         // email date
   fromEmail?: string;
   subject?: string;
@@ -421,6 +422,33 @@ export interface PoPendingImport {
   poNumber?: string;
   customer?: string;           // extracted buyer name (for the table)
   extraction: any;             // ExtractedPO-shaped payload fed into the review modal
+}
+
+/** One email in the read-only inbox feed (rolling ~7-day window), written by the
+ *  Gmail scan so operators can read + triage the PO inbox inside SweetPro without
+ *  opening Gmail. READ-ONLY: the app never modifies the real mailbox. */
+export interface InboxFeedItem {
+  id: string;                  // Gmail message id
+  receivedAt: string;          // ISO
+  internalDateMs?: number;     // epoch ms (for pruning / sorting)
+  fromName?: string;
+  fromEmail?: string;
+  subject?: string;
+  snippet?: string;            // Gmail one-line preview
+  body?: string;               // plain-text body, capped (the in-app viewer content)
+  hasAttachments?: boolean;
+  attachments?: { filename: string; mimeType: string }[];
+  /** AI suggestion for order-related mail; 'none' for everything else. */
+  suggestion?: 'new_po' | 'amendment' | 'cancellation' | 'none';
+  poNumber?: string;           // referenced PO when order-related
+}
+
+/** Operator triage state for an inbox-feed email (client-owned, synced). Absence
+ *  of an entry means the email is still "open" in the feed. */
+export interface InboxTriage {
+  id: string;                  // Gmail message id (matches InboxFeedItem.id)
+  status: 'handled' | 'dismissed';
+  updatedAt: string;
 }
 
 /** A change to an existing order detected from an emailed amendment/cancellation,
