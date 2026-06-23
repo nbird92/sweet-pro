@@ -126,7 +126,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';
 
-  const summary = { scanned: 0, skipped: 0, attachments: 0, queued: 0, errors: [] as Array<{ where: string; message: string }> };
+  const summary = { scanned: 0, skipped: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
+
+  // Each Gemini extraction takes a few seconds, so a backlog can exceed the
+  // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
+  // persisted per message (processedPoEmails + incomingPoOrders), so the next
+  // run — or the 15-min cron — continues where this one left off.
+  const startMs = Date.now();
+  const BUDGET_MS = 40000;
 
   try {
     const db = getDb();
@@ -134,15 +141,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
     const messages = await listMessages(token, inbox, query, maxTotal);
+    // Load processed ids once (in-memory dedup) so skipping already-handled mail
+    // costs no time — a Firestore read per message would itself eat the budget.
+    const processedIds = new Set<string>((await processedRef.get()).docs.map(d => d.id));
 
-    for (const meta of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const meta = messages[i];
       try {
         // Read-only dedup: skip a message already handled on a previous run
         // (we can't mark it read/labelled with a read-only scope). `force`
         // bypasses this for a re-test; the client-side order dedup still holds.
-        if (!force) {
-          const seen = await processedRef.doc(meta.id).get();
-          if (seen.exists) { summary.skipped++; continue; }
+        if (!force && processedIds.has(meta.id)) { summary.skipped++; continue; }
+
+        // Stop before the function times out, recording how many are left so the
+        // UI can prompt another run. Checked after the cheap skip so a backlog of
+        // already-processed mail doesn't count against the budget.
+        if (Date.now() - startMs > BUDGET_MS) {
+          summary.partial = true;
+          summary.remaining = messages.slice(i).filter(m => force || !processedIds.has(m.id)).length;
+          break;
         }
 
         const msg = await getMessage(token, inbox, meta.id);

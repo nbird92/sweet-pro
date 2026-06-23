@@ -77,6 +77,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       } else {
         text = `Scanned ${scanned} of ${found} email${found === 1 ? '' : 's'} · ${queued} queued · ${skipped} already processed${errs}. New orders/amendments appear below.`;
       }
+      if (s.partial) text += ` Stopped early to avoid a timeout — ${s.remaining ?? 0} more to go; click Scan Inbox Now again to continue.`;
       setScanMsg({ ok: true, text });
     } else {
       setScanMsg({ ok: false, text: `Scan failed: ${r.error || 'unknown error'}` });
