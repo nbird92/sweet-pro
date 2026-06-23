@@ -51,6 +51,11 @@ export const COLLECTIONS = {
   poImportLog: 'poImportLog',
   // Review queue of emailed order amendments/cancellations awaiting approval.
   poAmendments: 'poAmendments',
+  // Learned PO field corrections (customer / product / contract aliases). The
+  // app writes these as the operator corrects scans; the Gmail PO scan
+  // (api/scan-po-inbox) reads them as extraction hints, so corrections improve
+  // BOTH manual uploads and the automated inbox scan over time.
+  poFieldMappings: 'poFieldMappings',
   // Append-only queue: the Gmail PO scan (api/scan-po-inbox) writes extracted
   // POs here; the app ingests them into `orders` on load, then deletes them.
   // NOT part of the whole-collection autosave, so cron writes are never

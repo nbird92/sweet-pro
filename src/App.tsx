@@ -113,6 +113,9 @@ import {
   matchShipToLocation,
   loadLearned,
   recordLearned,
+  saveLearned,
+  mergeLearned,
+  learnedId,
   type ExtractedPO,
   type LearnedMapping,
 } from './utils/poScan';
@@ -372,7 +375,8 @@ export default function App() {
     productValue: string;   // chosen catalog product name
     productKey: string;     // chosen catalog key (QA id / SKU id)
     productLabel: string;   // chosen display label
-    productRaw: string;     // text as extracted from the PO
+    productRaw: string;     // description text as extracted from the PO
+    productCodeRaw: string; // buyer's vendor item code (e.g. LC325X), for matching + learning
     qtyMt: number;
     pricePerMt: number;
     contractNumber: string;
@@ -471,7 +475,7 @@ export default function App() {
     const deliveryDate = po.deliveryDate || '';
     const shipmentDate = deliveryDate || po.shipmentDate || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = matchProduct(li.description, opts, poLearned);
+      const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
@@ -480,6 +484,7 @@ export default function App() {
         productKey: prod?.key || '',
         productLabel: prod?.label || '',
         productRaw: li.description || '',
+        productCodeRaw: li.itemNumber || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
         pricePerMt: typeof li.pricePerMt === 'number' ? Math.round(li.pricePerMt * 100) / 100 : 0,
         contractNumber,
@@ -607,8 +612,14 @@ export default function App() {
     };
     setOrders(prev => [...prev, newOrder]);
     // Remember the user's mappings so the next scan of this PO maps itself.
+    // Product is learned by BOTH the description and the vendor item code (the
+    // code is the more stable key — a buyer's "LC325X" outlives wording tweaks).
     if (rev.customerRaw) recordLearned('customer', rev.customerRaw, customer.id);
-    validLines.forEach(l => { if (l.productRaw && l.productValue) recordLearned('product', l.productRaw, l.productValue); });
+    validLines.forEach(l => {
+      if (!l.productValue) return;
+      if (l.productRaw) recordLearned('product', l.productRaw, l.productValue);
+      if (l.productCodeRaw) recordLearned('product', l.productCodeRaw, l.productValue);
+    });
     if (rev.contractRaw && rev.contractNumber) recordLearned('contract', rev.contractRaw, rev.contractNumber);
     setPoLearned(loadLearned());
     setPoReviews(prev => prev.map(r => r.id === rev.id ? { ...r, created: true } : r));
@@ -620,6 +631,28 @@ export default function App() {
     setPoReviews(prev => prev.map(r => r.id === id
       ? { ...r, lines: r.lines.map((l, i) => i === idx ? { ...l, ...patch } : l) }
       : r));
+
+  // Save the scanned ship-to address as a new ship-to location on the chosen
+  // customer and select it — so a delivery site like "Kitchener, ON" that isn't
+  // in the catalog yet can be captured during review. It then auto-matches on
+  // future scans via matchShipToLocation.
+  const addScannedShipTo = (rev: POReview) => {
+    const cust = customers.find(c => c.id === rev.customerId);
+    if (!cust) { setErrorBox('Select a customer first, then add the scanned ship-to address.'); return; }
+    const nm = (rev.source.shipToName || '').trim();
+    const addr = (rev.source.shipToAddress || '').trim();
+    if (!nm && !addr) { setErrorBox('No ship-to address was read from this PO.'); return; }
+    const newLoc: ShipToLocation = {
+      id: `SHIPTO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      locationCode: '',
+      name: nm || addr.split(',')[0].trim() || 'Ship-To',
+      addressLine1: addr || nm,
+    };
+    setCustomers(prev => prev.map(c => c.id === cust.id
+      ? { ...c, shipToLocations: [...(c.shipToLocations || []), newLoc] }
+      : c));
+    updateReview(rev.id, { shipToLocationId: newLoc.id });
+  };
 
   const closePOScan = () => {
     setIsScanningPO(false);
@@ -639,7 +672,7 @@ export default function App() {
     const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
     const opts = buildOrderProductOptions();
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = matchProduct(li.description, opts, poLearned);
+      const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
@@ -648,6 +681,7 @@ export default function App() {
         productKey: prod?.key || '',
         productLabel: prod?.label || '',
         productRaw: li.description || '',
+        productCodeRaw: li.itemNumber || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
         pricePerMt: typeof li.pricePerMt === 'number' ? li.pricePerMt : 0,
         contractNumber,
@@ -2946,6 +2980,14 @@ export default function App() {
         setPoAmendments(data.poAmendments as PoAmendment[]);
         lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
       }
+      if (data.poFieldMappings?.length) {
+        // Merge synced learned corrections with any local (unsynced) ones, then
+        // persist the union back to localStorage so both scans + UI agree.
+        const merged = mergeLearned(data.poFieldMappings as LearnedMapping[], loadLearned());
+        setPoLearned(merged);
+        saveLearned(merged);
+        lastSyncedData.current.pofieldmappings = JSON.stringify(data.poFieldMappings);
+      }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
         setLastMarketUpdate(new Date().toISOString());
@@ -3019,6 +3061,7 @@ export default function App() {
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
+        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: poLearned.map(l => ({ id: learnedId(l), ...l })) },
       ];
 
       try {
@@ -3044,7 +3087,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poAmendments, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poAmendments, poLearned, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
@@ -16726,11 +16769,16 @@ export default function App() {
                           </select>
                         </div>
                         <div className="space-y-1 col-span-2">
-                          <label className="text-[9px] uppercase font-bold opacity-50">Ship To {rev.source.shipToName && <span className="opacity-60 normal-case">· read: "{rev.source.shipToName}"</span>}</label>
+                          <label className="text-[9px] uppercase font-bold opacity-50">Ship To {(rev.source.shipToName || rev.source.shipToAddress) && <span className="opacity-60 normal-case">· read: "{[rev.source.shipToName, rev.source.shipToAddress].filter(Boolean).join(', ')}"</span>}</label>
                           <select value={rev.shipToLocationId} onChange={(e) => updateReview(rev.id, { shipToLocationId: e.target.value })} disabled={rev.created || !selectedCustomer?.shipToLocations?.length} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
                             <option value="">{selectedCustomer?.shipToLocations?.length ? '— Select ship-to —' : '— no ship-to sites for this customer —'}</option>
                             {selectedCustomer?.shipToLocations?.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                           </select>
+                          {!rev.created && rev.customerId && (rev.source.shipToName || rev.source.shipToAddress) && (
+                            <button type="button" onClick={() => addScannedShipTo(rev)} className="text-[10px] font-bold uppercase text-emerald-700 hover:underline mt-0.5">
+                              + Add scanned address as ship-to
+                            </button>
+                          )}
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Shipment Date</label>
@@ -16793,9 +16841,9 @@ export default function App() {
                                     className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none"
                                   >
                                     <option value="">— Select product —</option>
-                                    {poProductOptions.map(o => <option key={o.key} value={o.value}>{o.label}</option>)}
+                                    {poProductOptions.map(o => <option key={o.key} value={o.value}>{o.label === o.value ? o.label : `${o.label} — ${o.value}`}</option>)}
                                   </select>
-                                  {line.productRaw && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"</div>}
+                                  {(line.productRaw || line.productCodeRaw) && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"{line.productCodeRaw && <> · item <span className="font-mono">{line.productCodeRaw}</span></>}</div>}
                                 </td>
                                 <td className="p-2 text-right">
                                   <input type="number" step="0.001" value={line.qtyMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { qtyMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />

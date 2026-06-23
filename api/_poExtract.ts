@@ -68,7 +68,7 @@ const PO_SCHEMA = {
         type: Type.OBJECT,
         properties: {
           description: { type: Type.STRING, description: 'Product description as written on the PO.' },
-          itemNumber: { type: Type.STRING },
+          itemNumber: { type: Type.STRING, description: "The buyer's code for this product on this line — a \"Vendor Item #\", \"Material #\", \"Customer Part #\" or similar. Capture it exactly as printed (e.g. LC325X)." },
           quantity: { type: Type.NUMBER, description: 'Quantity in the document unit.' },
           unit: { type: Type.STRING, description: 'Unit of measure (kg, lb, MT, each, ...).' },
           quantityMt: { type: Type.NUMBER, description: 'Quantity converted to metric tonnes.' },
@@ -114,6 +114,8 @@ CRITICAL — who is the customer:
 - The CUSTOMER is the company that ISSUED the purchase order (the buyer): the letterhead / bill-from / issuing company. Return that company as customerName.
 
 Extraction rules:
+- Ship-to: shipToName / shipToAddress must be the DELIVERY / ship-to location where the goods are physically received (often labelled "Ship To", "Deliver To", "Delivery Address"). Do NOT use the bill-to, sold-to, invoice/remit-to, or company head-office address for ship-to — those are frequently different from the delivery site. Capture the ship-to city/province/postal as printed.
+- Vendor item code: each line's itemNumber is the BUYER's code for our product (a "Vendor Item #", "Material #", "Customer Part #", e.g. LC325X). Always capture it when present — it is the most reliable key for matching our catalog product.
 - Quantities: report quantity as the raw number and unit EXACTLY as printed (lb, lbs, kg, MT, cwt, short ton, ...). Provide quantityMt when you can, but the app recomputes MT in code, so a faithful quantity + unit matters most.
 - Pricing: report unitPrice as the RAW unit price exactly as printed, and priceBasis as the unit it is per (e.g. "per lb", "per 100 lb", "per cwt", "per kg", "per MT"). DO NOT pre-convert the price. The app converts unitPrice → $/MT in code (lb → kg → MT), so faithful unitPrice + priceBasis matter more than pricePerMt; still fill pricePerMt when obvious.
 - Dates must be ISO YYYY-MM-DD.

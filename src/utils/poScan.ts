@@ -170,18 +170,31 @@ export function matchCustomer(
 
 export interface ProductOption { value: string; label: string; key: string; location: string; }
 
-/** Best product-option match for a free-text description, honouring learned aliases. */
+/** Best product-option match for a line, honouring learned aliases. Tries the
+ *  vendor item code first (the most stable signal — it survives wording changes
+ *  in the description), then the description text, then fuzzy similarity. */
 export function matchProduct(
   raw: string,
   options: ProductOption[],
   learned: LearnedMapping[],
+  itemCode?: string,
 ): ProductOption | null {
+  // 1) Learned by the buyer's vendor item code (e.g. LC325X -> our SKU).
+  if (itemCode && itemCode.trim()) {
+    const byCode = findLearned(learned, 'product', itemCode);
+    if (byCode) {
+      const o = options.find(x => x.value === byCode);
+      if (o) return o;
+    }
+  }
   if (!raw) return null;
+  // 2) Learned by the description text.
   const learnedTo = findLearned(learned, 'product', raw);
   if (learnedTo) {
     const byLearned = options.find(o => o.value === learnedTo);
     if (byLearned) return byLearned;
   }
+  // 3) Fuzzy similarity against the option label / value.
   let best: ProductOption | null = null;
   let bestScore = 0.34;
   for (const o of options) {
@@ -255,6 +268,28 @@ export function findLearned(learned: LearnedMapping[], field: LearnedField, from
   if (!key) return null;
   const hit = learned.find(l => l.field === field && normalize(l.from) === key);
   return hit ? hit.to : null;
+}
+
+/** Stable document id for a learned mapping, for syncing to Firestore. */
+export function learnedId(l: LearnedMapping): string {
+  return `${l.field}__${normalize(l.from)}`;
+}
+
+/** Overwrite the whole localStorage learned store (used after a remote merge). */
+export function saveLearned(mappings: LearnedMapping[]): void {
+  try { localStorage.setItem(LEARN_KEY, JSON.stringify(mappings)); } catch {}
+}
+
+/** Merge two learned lists, de-duping by field + normalized `from`. Entries from
+ *  `extra` win over `base` on conflict (pass local edits as `extra` so a fresh
+ *  local correction overrides a stale synced value). */
+export function mergeLearned(base: LearnedMapping[], extra: LearnedMapping[]): LearnedMapping[] {
+  const byKey = new Map<string, LearnedMapping>();
+  for (const l of [...(base || []), ...(extra || [])]) {
+    if (!l?.field || !l?.from || !l?.to) continue;
+    byKey.set(`${l.field}__${normalize(l.from)}`, { field: l.field, from: l.from, to: l.to });
+  }
+  return Array.from(byKey.values());
 }
 
 /** Remember a correction (raw source text → chosen canonical value). De-dupes by field+from. */
