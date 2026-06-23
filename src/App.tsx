@@ -18229,7 +18229,7 @@ export default function App() {
                       <div className="flex gap-4">
                         <button
                           onClick={() => {
-                            if (!shipmentCreationData.date || !shipmentCreationData.time || !shipmentCreationData.bay || !shipmentCreationData.carrier) {
+                            if (!shipmentCreationData.location || !shipmentCreationData.date || !shipmentCreationData.time || !shipmentCreationData.bay || !shipmentCreationData.carrier) {
                               setErrorBox('Please fill in all shipping details (location, date, time slot, bay, and carrier)');
                               return;
                             }
@@ -18255,7 +18255,8 @@ export default function App() {
                                 out: '',
                                 status: 'Confirmed',
                                 notes: '',
-                                color: ''
+                                color: '',
+                                location: shipmentCreationData.location,
                               }));
 
                               const saveToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');
@@ -18264,6 +18265,10 @@ export default function App() {
                               } else {
                                 setVancouverShipments([...vancouverShipments, ...newShipments]);
                               }
+                              // Show the scheduler tab the appointment was filed under so it's
+                              // never invisible (an imported order whose origin isn't literally
+                              // "Hamilton" otherwise lands in the Vancouver bucket silently).
+                              setScheduleLocation(saveToHamilton ? 'Hamilton' : 'Vancouver');
                               setOrders(orders.map(o => o.id === order.id ? { ...o, shipmentDate: shipmentCreationData.date } : o));
                             } else if (transfer) {
                               // Create shipment from transfer
@@ -18285,7 +18290,8 @@ export default function App() {
                                 out: '',
                                 status: 'Confirmed',
                                 notes: `TRANSFER:${transfer.id}`,
-                                color: ''
+                                color: '',
+                                location: shipmentCreationData.location,
                               };
 
                               const saveTransferToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');
@@ -18294,6 +18300,7 @@ export default function App() {
                               } else {
                                 setVancouverShipments([...vancouverShipments, newShipment]);
                               }
+                              setScheduleLocation(saveTransferToHamilton ? 'Hamilton' : 'Vancouver');
                             }
 
                             setIsCreatingShipments(false);
