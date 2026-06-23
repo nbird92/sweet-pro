@@ -132,8 +132,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
   // persisted per message (processedPoEmails + incomingPoOrders), so the next
   // run — or the 15-min cron — continues where this one left off.
+  // Budget sits ~50s under the 300s maxDuration (vercel.json, Pro plan) to leave
+  // room for the in-flight message's extraction + Firestore writes + response.
   const startMs = Date.now();
-  const BUDGET_MS = 40000;
+  const BUDGET_MS = 250000;
 
   try {
     const db = getDb();
