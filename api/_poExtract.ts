@@ -11,6 +11,27 @@ import ExcelJS from 'exceljs';
 
 export const DEFAULT_MODEL = 'gemini-2.5-flash';
 
+/** Call Gemini with retry + exponential backoff on TRANSIENT errors (rate limit
+ *  429 / RESOURCE_EXHAUSTED, 503 overloaded, transient network). A burst of scans
+ *  — e.g. re-importing 200 emails at once — easily exceeds the per-minute quota;
+ *  backing off lets the batch recover instead of failing every call. Permanent
+ *  errors (bad key, invalid request) are thrown immediately. */
+async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ai.models.generateContent(req);
+    } catch (e: any) {
+      const status = e?.status ?? e?.code;
+      const msg = String(e?.message || e);
+      const transient = status === 429 || status === 503 ||
+        /\b429\b|\b503\b|rate|quota|resource[_\s-]*exhausted|overloaded|unavailable|try again|deadline/i.test(msg);
+      if (!transient || attempt >= maxRetries) throw e;
+      const waitMs = Math.min(20000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 600);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+}
+
 export interface UploadFile {
   name: string;
   mimeType: string;
@@ -268,7 +289,7 @@ export async function extractPO(
   parts.push({ text: 'Extract this purchase order into the required JSON schema.' });
 
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-  const response = await ai.models.generateContent({
+  const response = await generateWithRetry(ai, {
     model: opts.model || DEFAULT_MODEL,
     contents: [{ role: 'user', parts }],
     config: {

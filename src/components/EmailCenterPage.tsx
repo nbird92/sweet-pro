@@ -103,7 +103,14 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       const skipped = s.skipped ?? 0;
       const queued = s.queued ?? 0;
       const found = scanned + skipped;
-      const errs = s.errors?.length ? ` · ${s.errors.length} error(s)` : '';
+      let errs = '';
+      if (s.errors?.length) {
+        // Surface the most common error message so the cause is visible (e.g. a
+        // rate-limit / quota error vs. a parse error), not just the count.
+        const distinct = Array.from(new Set((s.errors as any[]).map(e => (e?.message || '').trim()).filter(Boolean)));
+        errs = ` · ${s.errors.length} error(s)`;
+        if (distinct[0]) errs += ` — e.g. "${String(distinct[0]).slice(0, 200)}"`;
+      }
       let text: string;
       if (found === 0) {
         // The inbox query matched no messages — almost always a query/scope or
