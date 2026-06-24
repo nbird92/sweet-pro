@@ -4539,10 +4539,14 @@ export default function App() {
       return '';
     };
 
-    // 3. Match against rendered Shortform or Product Name (case/whitespace tolerant)
+    // 3. Match against rendered Shortform or Product Name (case/whitespace tolerant).
+    //    Short-form codes are also compared with all spaces removed, so a line that
+    //    reads "GC 45" or "LC 60" still matches the catalog code "GC45" / "LC60".
+    const stripSpace = (x: string) => x.replace(/\s+/g, '');
+    const normNoSpace = stripSpace(normalized);
     for (const s of skus) {
       const sf = renderShortform(s).trim().toLowerCase();
-      if (sf && sf === normalized) return findPairBySku(s);
+      if (sf && (sf === normalized || stripSpace(sf) === normNoSpace)) return findPairBySku(s);
       const pn = renderProductName(s).trim().toLowerCase();
       if (pn && pn === normalized) return findPairBySku(s);
     }
@@ -8637,12 +8641,32 @@ export default function App() {
         // Resolve an invoiced product to its Product Group: catalog first, then a
         // keyword match against the tolling-fee group names (so "Bulk Liquid Sucrose"
         // maps to the "Liquid" fee even when its catalog group is unset).
+        const groupCache = new Map<string, string>();
         const resolveGroup = (productName?: string, productKey?: string): string => {
+          const ck = `${productKey || ''}|||${productName || ''}`;
+          const hit = groupCache.get(ck);
+          if (hit !== undefined) return hit;
+          let result: string;
           const pg = productGroupOf(productName, productKey);
-          if (pg) return pg;
-          const nm = norm(productName);
-          const tf = nm ? tollingFees.find(t => t.productGroup && nm.includes(norm(t.productGroup))) : undefined;
-          return tf?.productGroup || 'Ungrouped';
+          if (pg) {
+            result = pg;
+          } else {
+            // Robust catalog match before giving up: resolveProduct handles short-form
+            // codes (e.g. "GC45", "LC60"), case/spacing differences, format-only names
+            // and fuzzy keywords — so a product invoiced by its code still maps to the
+            // Product Group set on its catalog row instead of landing in "Ungrouped".
+            const { sku, qa } = resolveProduct(productName);
+            const matched = groupFromRecord(qa) || groupFromRecord(sku);
+            if (matched) {
+              result = matched;
+            } else {
+              const nm = norm(productName);
+              const tf = nm ? tollingFees.find(t => t.productGroup && nm.includes(norm(t.productGroup))) : undefined;
+              result = tf?.productGroup || 'Ungrouped';
+            }
+          }
+          groupCache.set(ck, result);
+          return result;
         };
         const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number> }> }>();
         for (const inv of invoices) {
