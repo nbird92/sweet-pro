@@ -276,7 +276,10 @@ export default function App() {
   // DetailModal state for the Tolling Fees table.
   const [tollingFeeDraft, setTollingFeeDraft] = useState<TollingFee | null>(null);
   const [tollingFeeMode, setTollingFeeMode] = useState<'view' | 'edit' | 'add'>('view');
-  const [tollingTimeframe, setTollingTimeframe] = useState<'weekly' | 'monthly' | 'annual'>('annual');
+  const [tollingTimeframe, setTollingTimeframe] = useState<'weekly' | 'monthly' | 'annual'>('weekly');
+  // Periods the operator has toggled away from their default (current period is
+  // expanded by default, others collapsed — toggling flips that per period).
+  const [tollingToggled, setTollingToggled] = useState<Set<string>>(new Set());
   // DetailModal state for the standardized CHEP Pallets Inventory table.
   const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
   const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
@@ -8537,49 +8540,53 @@ export default function App() {
     }
 
     if (activePage === 'Tolling Fees') {
-      // Tolling Fees Summary: invoiced MT × the fee for that product group +
-      // location, over the selected timeframe (this week / month / year by
-      // invoice date). EVERY invoiced product is included (groups with no fee
-      // show 0 Total Fees).
-      const tollingSummary = (() => {
+      // Tolling Fees Summary, grouped by period (week / month / year by invoice
+      // date). Each period totals invoiced MT × the fee for that product group +
+      // location; expanding a period shows the per-product-category breakdown.
+      // EVERY invoiced product is included (groups with no fee show 0 Total Fees).
+      const tollingPeriods = (() => {
         const now = new Date();
-        const todayWeek = getWeekNumber(now.toISOString().split('T')[0]);
-        const inFrame = (dateStr?: string): boolean => {
-          if (!dateStr) return false;
-          const d = new Date(dateStr + 'T12:00:00');
-          if (isNaN(d.getTime())) return false;
-          if (tollingTimeframe === 'annual') return d.getFullYear() === now.getFullYear();
-          if (tollingTimeframe === 'monthly') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-          return d.getFullYear() === now.getFullYear() && getWeekNumber(dateStr) === todayWeek;
+        const periodOf = (d: Date): { key: string; label: string; sortKey: string } => {
+          const y = d.getFullYear();
+          if (tollingTimeframe === 'annual') return { key: `${y}`, label: `${y}`, sortKey: `${y}` };
+          if (tollingTimeframe === 'monthly') {
+            const m = d.getMonth();
+            return { key: `${y}-M${String(m).padStart(2, '0')}`, label: d.toLocaleString(undefined, { month: 'short', year: 'numeric' }), sortKey: `${y}-${String(m).padStart(2, '0')}` };
+          }
+          const wk = getWeekNumber(d.toISOString().split('T')[0]);
+          return { key: `${y}-W${String(wk).padStart(2, '0')}`, label: `Week ${wk}, ${y}`, sortKey: `${y}-${String(wk).padStart(2, '0')}` };
         };
+        const currentKey = periodOf(now).key;
         const feeFor = (pg: string, loc: string): TollingFee | undefined =>
           tollingFees.find(t => t.productGroup === pg && t.location === loc) || tollingFees.find(t => t.productGroup === pg);
-        const map = new Map<string, { productGroup: string; location: string; mt: number }>();
+        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number }> }>();
         for (const inv of invoices) {
-          if ((inv.status || '').toLowerCase() === 'cancelled') continue;
-          if (!inFrame(inv.date)) continue;
+          if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
+          const d = new Date(inv.date + 'T12:00:00');
+          if (isNaN(d.getTime())) continue;
+          const p = periodOf(d);
+          let g = groups.get(p.key);
+          if (!g) { g = { label: p.label, sortKey: p.sortKey, rows: new Map() }; groups.set(p.key, g); }
           const loc = inv.location || '';
           const add = (productName?: string, productKey?: string, mt?: number) => {
             const pg = productGroupOf(productName, productKey) || 'Ungrouped';
-            const key = `${pg}|||${loc}`;
-            const cur = map.get(key) || { productGroup: pg, location: loc, mt: 0 };
+            const rk = `${pg}|||${loc}`;
+            const cur = g!.rows.get(rk) || { pg, loc, mt: 0 };
             cur.mt += mt || 0;
-            map.set(key, cur);
+            g!.rows.set(rk, cur);
           };
           if (inv.lineItems && inv.lineItems.length) inv.lineItems.forEach(li => add(li.productName, li.productKey, li.totalWeight));
           else add(inv.product, undefined, inv.qty);
         }
-        return Array.from(map.values()).map(r => {
-          const fee = feeFor(r.productGroup, r.location);
-          return {
-            id: `${r.productGroup}|||${r.location}`,
-            productGroup: r.productGroup,
-            location: r.location,
-            mt: Math.round(r.mt * 1000) / 1000,
-            totalFees: r.mt * (fee?.amountPerMt || 0),
-            currency: fee?.currency || '',
-          };
-        }).sort((a, b) => b.totalFees - a.totalFees);
+        return Array.from(groups.entries()).map(([key, g]) => {
+          const rows = Array.from(g.rows.values()).map(r => {
+            const fee = feeFor(r.pg, r.loc);
+            return { productGroup: r.pg, location: r.loc, mt: Math.round(r.mt * 1000) / 1000, totalFees: r.mt * (fee?.amountPerMt || 0), currency: fee?.currency || '' };
+          }).sort((a, b) => b.totalFees - a.totalFees);
+          const mt = rows.reduce((s, r) => s + r.mt, 0);
+          const totalFees = rows.reduce((s, r) => s + r.totalFees, 0);
+          return { key, label: g.label, sortKey: g.sortKey, isCurrent: key === currentKey, mt: Math.round(mt * 1000) / 1000, totalFees, currency: rows.find(r => r.currency)?.currency || '', rows };
+        }).sort((a, b) => b.sortKey.localeCompare(a.sortKey));
       })();
       return (
         <div>
@@ -8703,31 +8710,59 @@ export default function App() {
               )}
             </DetailModal>
 
-            {/* Tolling Fees Summary — invoiced MT × fee per product group + location */}
+            {/* Tolling Fees Summary — invoiced MT × fee, grouped by period. Click a
+                period to expand its product-category breakdown; current is open. */}
             <div className="flex items-center justify-between mt-8 mb-2">
               <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2"><DollarSign size={14} /> Tolling Fees Summary</h3>
               <div className="flex items-center gap-2">
-                <label className="text-[10px] uppercase font-bold opacity-50">Timeframe</label>
+                <label className="text-[10px] uppercase font-bold opacity-50">Group by</label>
                 <select value={tollingTimeframe} onChange={(e) => setTollingTimeframe(e.target.value as 'weekly' | 'monthly' | 'annual')} className="bg-white border border-[#141414] px-3 py-1.5 text-xs outline-none">
-                  <option value="weekly">Weekly (this week)</option>
-                  <option value="monthly">Monthly (this month)</option>
-                  <option value="annual">Annual (this year)</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="annual">Annual</option>
                 </select>
               </div>
             </div>
-            <DataTable<typeof tollingSummary[number]>
-              title="Tolling Fees Summary"
-              columns={[
-                { key: 'productGroup', label: 'Product Category', bold: true, render: (r) => r.productGroup || '—' },
-                { key: 'location', label: 'Location', render: (r) => r.location || '—' },
-                { key: 'mt', label: 'MT', align: 'right', mono: true, render: (r) => r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), sortValue: (r) => r.mt },
-                { key: 'totalFees', label: 'Total Fees', align: 'right', mono: true, render: (r) => `${r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${r.currency ? ' ' + r.currency : ''}`, sortValue: (r) => r.totalFees },
-              ]}
-              rows={tollingSummary}
-              getRowKey={(r) => r.id}
-              emptyMessage="No invoiced volume in the selected timeframe."
-              defaultSortKey="totalFees"
-            />
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[600px]">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                    <th className="p-3 bg-[#141414] w-6"></th>
+                    <th className="p-3 bg-[#141414]">Period / Product Category</th>
+                    <th className="p-3 bg-[#141414] text-right">MT</th>
+                    <th className="p-3 bg-[#141414] text-right">Total Fees</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#141414]/10">
+                  {tollingPeriods.flatMap(g => {
+                    const expanded = g.isCurrent !== tollingToggled.has(g.key);
+                    const out = [
+                      <tr key={g.key} className="hover:bg-[#F9F9F9] cursor-pointer" onClick={() => setTollingToggled(prev => { const n = new Set(prev); if (n.has(g.key)) n.delete(g.key); else n.add(g.key); return n; })}>
+                        <td className="p-3">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
+                        <td className="p-3 text-sm font-bold">{g.label}{g.isCurrent ? <span className="ml-2 text-[9px] uppercase font-bold text-emerald-700">current</span> : null}</td>
+                        <td className="p-3 text-right text-sm font-mono font-bold">{g.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="p-3 text-right text-sm font-mono font-bold">{g.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{g.currency ? ` ${g.currency}` : ''}</td>
+                      </tr>,
+                    ];
+                    if (expanded) {
+                      g.rows.forEach((r, i) => out.push(
+                        <tr key={`${g.key}-${i}`} className="bg-[#FAFAFA] text-xs">
+                          <td className="p-2"></td>
+                          <td className="p-2 pl-8">{r.productGroup}{r.location ? <span className="opacity-60"> — {r.location}</span> : null}</td>
+                          <td className="p-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="p-2 text-right font-mono">{r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
+                        </tr>,
+                      ));
+                      if (g.rows.length === 0) out.push(<tr key={`${g.key}-empty`} className="bg-[#FAFAFA] text-xs"><td className="p-2"></td><td className="p-2 pl-8 italic opacity-50" colSpan={3}>No invoiced volume.</td></tr>);
+                    }
+                    return out;
+                  })}
+                  {tollingPeriods.length === 0 && (
+                    <tr><td colSpan={4} className="p-8 text-center text-xs opacity-50 italic">No invoiced volume yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       );
