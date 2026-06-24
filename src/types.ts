@@ -160,6 +160,17 @@ export interface FuelSurcharge {
 
 export const INITIAL_FUEL_SURCHARGES: FuelSurcharge[] = [];
 
+/** A tolling (refining) fee per metric tonne, set per product group + location. */
+export interface TollingFee {
+  id: string;
+  productGroup: string;   // Product Group name (from the Product Groups table)
+  location: string;       // Location name (from the Locations table)
+  amountPerMt: number;    // Tolling fee amount per MT
+  currency: string;       // e.g. "CAD", "USD"
+}
+
+export const INITIAL_TOLLING_FEES: TollingFee[] = [];
+
 export interface Contract {
   id: string;
   contractNumber: string;

@@ -31,6 +31,7 @@ export const COLLECTIONS = {
   people: 'people',
   qaProducts: 'qaProducts',
   fuelSurcharges: 'fuelSurcharges',
+  tollingFees: 'tollingFees',
   vendors: 'vendors',
   chepPalletMovements: 'chepPalletMovements',
   salesLeads: 'salesLeads',

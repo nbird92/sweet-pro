@@ -69,7 +69,7 @@ import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
 import DataTable from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
 import ConferencesPage from './components/ConferencesPage';
 import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
@@ -273,6 +273,9 @@ export default function App() {
   // DetailModal state for the standardized Fuel Surcharges table.
   const [fuelSurchargeDraft, setFuelSurchargeDraft] = useState<FuelSurcharge | null>(null);
   const [fuelSurchargeMode, setFuelSurchargeMode] = useState<'view' | 'edit' | 'add'>('view');
+  // DetailModal state for the Tolling Fees table.
+  const [tollingFeeDraft, setTollingFeeDraft] = useState<TollingFee | null>(null);
+  const [tollingFeeMode, setTollingFeeMode] = useState<'view' | 'edit' | 'add'>('view');
   // DetailModal state for the standardized CHEP Pallets Inventory table.
   const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
   const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
@@ -290,6 +293,7 @@ export default function App() {
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
   const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
   const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
+  const [tollingFees, setTollingFees] = useState<TollingFee[]>(INITIAL_TOLLING_FEES);
   const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
   const [chepPalletMovements, setChepPalletMovements] = useState<ChepPalletMovement[]>(INITIAL_CHEP_PALLET_MOVEMENTS);
   const [contracts, setContracts] = useState<Contract[]>(INITIAL_CONTRACTS);
@@ -3113,6 +3117,10 @@ export default function App() {
         setFuelSurcharges(data.fuelSurcharges);
         lastSyncedData.current.fuelsurcharges = JSON.stringify(data.fuelSurcharges);
       }
+      if (data.tollingFees?.length) {
+        setTollingFees(data.tollingFees as TollingFee[]);
+        lastSyncedData.current.tollingfees = JSON.stringify(data.tollingFees);
+      }
       if (data.vendors?.length) {
         setVendors(data.vendors);
         lastSyncedData.current.vendors = JSON.stringify(data.vendors);
@@ -3271,6 +3279,7 @@ export default function App() {
         { collection: COLLECTIONS.people, key: 'people', data: people },
         { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
+        { collection: COLLECTIONS.tollingFees, key: 'tollingfees', data: tollingFees },
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
         { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
@@ -3317,7 +3326,7 @@ export default function App() {
 
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
@@ -5447,6 +5456,7 @@ export default function App() {
     { name: 'Customers', icon: Users },
     { name: 'Reports', icon: TrendingUp },
     { name: 'Supply Chain', icon: Truck },
+    { name: 'Tolling Fees', icon: DollarSign },
     { name: 'Contracts', icon: FileText },
     { name: 'Transfers', icon: ArrowRightLeft },
     { name: 'Orders', icon: ShoppingCart },
@@ -8522,6 +8532,123 @@ export default function App() {
           productGroups={productGroups}
           namingFormulas={namingFormulas}
         />
+      );
+    }
+
+    if (activePage === 'Tolling Fees') {
+      return (
+        <div>
+          <PageBanner icon={<DollarSign size={18} />} title="Tolling Fees" count={tollingFees.length}>
+            <button
+              onClick={() => { setTollingFeeDraft({ id: `TF-${Date.now()}`, productGroup: '', location: '', amountPerMt: 0, currency: 'CAD' }); setTollingFeeMode('add'); }}
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+            >
+              <Plus size={12} /> Add Tolling Fee
+            </button>
+          </PageBanner>
+          <div className="p-6 space-y-4">
+            <DataTable<TollingFee>
+              title="Tolling Fees"
+              icon={<DollarSign size={14} />}
+              columns={[
+                { key: 'productGroup', label: 'Product Group', bold: true, render: (t) => t.productGroup || '—' },
+                { key: 'location', label: 'Location', render: (t) => t.location || '—' },
+                {
+                  key: 'amountPerMt',
+                  label: 'Tolling Fee / MT',
+                  align: 'right',
+                  mono: true,
+                  render: (t) => (t.amountPerMt || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+                  sortValue: (t) => t.amountPerMt || 0,
+                },
+                { key: 'currency', label: 'Currency', mono: true, render: (t) => t.currency || '—' },
+              ]}
+              rows={tollingFees}
+              getRowKey={(t) => t.id}
+              onRowClick={(t) => { setTollingFeeDraft({ ...t }); setTollingFeeMode('view'); }}
+              emptyMessage="No tolling fees added yet. Use “Add Tolling Fee”."
+              defaultSortKey="productGroup"
+            />
+
+            <DetailModal
+              tableName="Tolling Fees"
+              icon={<DollarSign size={14} />}
+              isOpen={!!tollingFeeDraft}
+              mode={tollingFeeMode}
+              onClose={() => setTollingFeeDraft(null)}
+              onEdit={() => setTollingFeeMode('edit')}
+              onSave={() => {
+                if (!tollingFeeDraft) return;
+                if (!tollingFeeDraft.productGroup.trim()) { setErrorBox('Product Group is required.'); return; }
+                if (!tollingFeeDraft.location.trim()) { setErrorBox('Location is required.'); return; }
+                if (tollingFeeMode === 'add') setTollingFees(prev => [...prev, tollingFeeDraft]);
+                else setTollingFees(prev => prev.map(t => t.id === tollingFeeDraft.id ? tollingFeeDraft : t));
+                setTollingFeeDraft(null);
+              }}
+              onDelete={tollingFeeMode === 'add' ? undefined : () => {
+                if (!tollingFeeDraft) return;
+                setTollingFees(prev => prev.filter(t => t.id !== tollingFeeDraft.id));
+                setTollingFeeDraft(null);
+              }}
+              deleteConfirmMessage={tollingFeeDraft ? `Delete the tolling fee for ${tollingFeeDraft.productGroup || 'this product group'}${tollingFeeDraft.location ? ` at ${tollingFeeDraft.location}` : ''}?` : undefined}
+              saveDisabled={!tollingFeeDraft?.productGroup.trim() || !tollingFeeDraft?.location.trim()}
+            >
+              {tollingFeeDraft && (
+                tollingFeeMode === 'view' ? (
+                  <>
+                    <DetailRow label="Product Group" value={tollingFeeDraft.productGroup} bold />
+                    <DetailRow label="Location" value={tollingFeeDraft.location} />
+                    <DetailRow label="Tolling Fee / MT" value={`${(tollingFeeDraft.amountPerMt || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tollingFeeDraft.currency || ''}`.trim()} mono />
+                    <DetailRow label="Currency" value={tollingFeeDraft.currency} mono />
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <DetailField label="Product Group" required>
+                      <select
+                        value={tollingFeeDraft.productGroup}
+                        onChange={(e) => setTollingFeeDraft(d => d ? { ...d, productGroup: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      >
+                        <option value="">Select Product Group</option>
+                        {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                      </select>
+                    </DetailField>
+                    <DetailField label="Location" required>
+                      <select
+                        value={tollingFeeDraft.location}
+                        onChange={(e) => setTollingFeeDraft(d => d ? { ...d, location: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      >
+                        <option value="">Select Location</option>
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    </DetailField>
+                    <DetailField label="Tolling Fee Amount / MT" required>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tollingFeeDraft.amountPerMt || ''}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setTollingFeeDraft(d => d ? { ...d, amountPerMt: parseFloat(e.target.value) || 0 } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                      />
+                    </DetailField>
+                    <DetailField label="Currency">
+                      <select
+                        value={tollingFeeDraft.currency}
+                        onChange={(e) => setTollingFeeDraft(d => d ? { ...d, currency: e.target.value } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                      >
+                        <option value="CAD">CAD</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </DetailField>
+                  </div>
+                )
+              )}
+            </DetailModal>
+          </div>
+        </div>
       );
     }
 
