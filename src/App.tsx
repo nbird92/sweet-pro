@@ -280,6 +280,9 @@ export default function App() {
   // Periods the operator has toggled away from their default (current period is
   // expanded by default, others collapsed — toggling flips that per period).
   const [tollingToggled, setTollingToggled] = useState<Set<string>>(new Set());
+  // Product-category rows the operator has expanded to see the invoices behind a
+  // total. Keyed by `${periodKey}::${productGroup}|||${location}`; collapsed default.
+  const [tollingRowExpanded, setTollingRowExpanded] = useState<Set<string>>(new Set());
   // DetailModal state for the standardized CHEP Pallets Inventory table.
   const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
   const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
@@ -8668,7 +8671,8 @@ export default function App() {
           groupCache.set(ck, result);
           return result;
         };
-        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number> }> }>();
+        type InvAgg = { invoiceNumber: string; customer: string; date: string; po: string; mt: number; products: Set<string> };
+        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number>; invoices: Map<string, InvAgg> }> }>();
         for (const inv of invoices) {
           if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
           const d = new Date(inv.date + 'T12:00:00');
@@ -8680,12 +8684,18 @@ export default function App() {
           const add = (productName?: string, productKey?: string, mt?: number) => {
             const pg = resolveGroup(productName, productKey);
             const rk = `${pg}|||${loc}`;
-            const cur = g!.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>() };
+            const cur = g!.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
             cur.mt += mt || 0;
             // Track which invoiced products fed this row so the Ungrouped bucket can
             // show exactly which products failed to resolve to a Product Group.
             const nm = (productName || '').trim() || '(no product name)';
             cur.products.set(nm, (cur.products.get(nm) || 0) + (mt || 0));
+            // Track the invoices behind this total so the row can be drilled into.
+            const invKey = inv.id || inv.invoiceNumber || `${inv.customer}|${inv.date}|${inv.po}`;
+            const ia = cur.invoices.get(invKey) || { invoiceNumber: inv.invoiceNumber || inv.bolNumber || inv.id || '(no number)', customer: inv.customer || '', date: inv.date || '', po: inv.po || '', mt: 0, products: new Set<string>() };
+            ia.mt += mt || 0;
+            ia.products.add(nm);
+            cur.invoices.set(invKey, ia);
             g!.rows.set(rk, cur);
           };
           if (inv.lineItems && inv.lineItems.length) inv.lineItems.forEach(li => add(li.productName, li.productKey, li.totalWeight));
@@ -8694,14 +8704,18 @@ export default function App() {
         return Array.from(groups.entries()).map(([key, g]) => {
           const rows = Array.from(g.rows.values()).map(r => {
             const fee = feeFor(r.pg, r.loc);
+            const rate = fee?.amountPerMt || 0;
             return {
               productGroup: r.pg, location: r.loc,
               mt: Math.round(r.mt * 1000) / 1000,
-              totalFees: r.mt * (fee?.amountPerMt || 0),
+              totalFees: r.mt * rate,
               currency: fee?.currency || '',
               products: Array.from(r.products.entries())
                 .map(([name, pmt]) => ({ name, mt: Math.round(pmt * 1000) / 1000 }))
                 .sort((a, b) => b.mt - a.mt),
+              invoices: Array.from(r.invoices.values())
+                .map(iv => ({ invoiceNumber: iv.invoiceNumber, customer: iv.customer, date: iv.date, po: iv.po, products: Array.from(iv.products).join(', '), mt: Math.round(iv.mt * 1000) / 1000, fees: iv.mt * rate }))
+                .sort((a, b) => b.fees - a.fees || b.mt - a.mt),
             };
           }).sort((a, b) => b.totalFees - a.totalFees);
           const mt = rows.reduce((s, r) => s + r.mt, 0);
@@ -8868,28 +8882,43 @@ export default function App() {
                     if (expanded) {
                       g.rows.forEach((r, i) => {
                         const isUngrouped = r.productGroup === 'Ungrouped';
+                        const rowKey = `${g.key}::${r.productGroup}|||${r.location}`;
+                        const rowOpen = tollingRowExpanded.has(rowKey);
+                        const hasInvoices = r.invoices.length > 0;
                         out.push(
-                          <tr key={`${g.key}-${i}`} className="bg-[#FAFAFA] text-xs">
-                            <td className="p-2"></td>
+                          <tr
+                            key={`${g.key}-${i}`}
+                            className={`bg-[#FAFAFA] text-xs ${hasInvoices ? 'cursor-pointer hover:bg-[#F0F0F0]' : ''}`}
+                            onClick={hasInvoices ? () => setTollingRowExpanded(prev => { const n = new Set(prev); if (n.has(rowKey)) n.delete(rowKey); else n.add(rowKey); return n; }) : undefined}
+                          >
+                            <td className="p-2 pl-6">{hasInvoices ? (rowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</td>
                             <td className="p-2 pl-8">
                               {isUngrouped
                                 ? <span className="font-bold text-amber-700">Ungrouped <span className="font-normal opacity-70">(no Product Group)</span></span>
                                 : r.productGroup}
                               {r.location ? <span className="opacity-60"> — {r.location}</span> : null}
+                              {hasInvoices ? <span className="opacity-40"> · {r.invoices.length} invoice{r.invoices.length === 1 ? '' : 's'}</span> : null}
                             </td>
                             <td className="p-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="p-2 text-right font-mono">{r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                           </tr>,
                         );
-                        // Under the Ungrouped bucket, list the exact products that
-                        // failed to resolve to a Product Group, so they can be fixed.
-                        if (isUngrouped) {
-                          r.products.forEach((prod, j) => out.push(
-                            <tr key={`${g.key}-${i}-p${j}`} className="bg-[#FFF8F0] text-[11px]">
+                        // Drill-down: the individual invoices behind this row's MT and
+                        // fee total. The product name is shown too, so the Ungrouped
+                        // bucket still reveals which products failed to resolve.
+                        if (rowOpen) {
+                          r.invoices.forEach((iv, j) => out.push(
+                            <tr key={`${g.key}-${i}-inv${j}`} className={`text-[11px] ${isUngrouped ? 'bg-[#FFF8F0]' : 'bg-white'}`}>
                               <td className="p-1.5"></td>
-                              <td className="p-1.5 pl-14 text-amber-900/80">↳ {prod.name}</td>
-                              <td className="p-1.5 text-right font-mono text-amber-900/80">{prod.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="p-1.5"></td>
+                              <td className="p-1.5 pl-16">
+                                <span className="font-mono font-bold">{iv.invoiceNumber}</span>
+                                {iv.customer ? <span className="opacity-70"> · {iv.customer}</span> : null}
+                                {iv.date ? <span className="opacity-50"> · {iv.date}</span> : null}
+                                {iv.po ? <span className="opacity-50"> · PO {iv.po}</span> : null}
+                                {iv.products ? <span className="opacity-50"> · {iv.products}</span> : null}
+                              </td>
+                              <td className="p-1.5 text-right font-mono">{iv.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-1.5 text-right font-mono">{iv.fees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                             </tr>,
                           ));
                         }
