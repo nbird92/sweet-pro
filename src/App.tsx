@@ -8644,7 +8644,7 @@ export default function App() {
           const tf = nm ? tollingFees.find(t => t.productGroup && nm.includes(norm(t.productGroup))) : undefined;
           return tf?.productGroup || 'Ungrouped';
         };
-        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number }> }>();
+        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number> }> }>();
         for (const inv of invoices) {
           if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
           const d = new Date(inv.date + 'T12:00:00');
@@ -8656,8 +8656,12 @@ export default function App() {
           const add = (productName?: string, productKey?: string, mt?: number) => {
             const pg = resolveGroup(productName, productKey);
             const rk = `${pg}|||${loc}`;
-            const cur = g!.rows.get(rk) || { pg, loc, mt: 0 };
+            const cur = g!.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>() };
             cur.mt += mt || 0;
+            // Track which invoiced products fed this row so the Ungrouped bucket can
+            // show exactly which products failed to resolve to a Product Group.
+            const nm = (productName || '').trim() || '(no product name)';
+            cur.products.set(nm, (cur.products.get(nm) || 0) + (mt || 0));
             g!.rows.set(rk, cur);
           };
           if (inv.lineItems && inv.lineItems.length) inv.lineItems.forEach(li => add(li.productName, li.productKey, li.totalWeight));
@@ -8666,7 +8670,15 @@ export default function App() {
         return Array.from(groups.entries()).map(([key, g]) => {
           const rows = Array.from(g.rows.values()).map(r => {
             const fee = feeFor(r.pg, r.loc);
-            return { productGroup: r.pg, location: r.loc, mt: Math.round(r.mt * 1000) / 1000, totalFees: r.mt * (fee?.amountPerMt || 0), currency: fee?.currency || '' };
+            return {
+              productGroup: r.pg, location: r.loc,
+              mt: Math.round(r.mt * 1000) / 1000,
+              totalFees: r.mt * (fee?.amountPerMt || 0),
+              currency: fee?.currency || '',
+              products: Array.from(r.products.entries())
+                .map(([name, pmt]) => ({ name, mt: Math.round(pmt * 1000) / 1000 }))
+                .sort((a, b) => b.mt - a.mt),
+            };
           }).sort((a, b) => b.totalFees - a.totalFees);
           const mt = rows.reduce((s, r) => s + r.mt, 0);
           const totalFees = rows.reduce((s, r) => s + r.totalFees, 0);
@@ -8830,14 +8842,34 @@ export default function App() {
                       </tr>,
                     ];
                     if (expanded) {
-                      g.rows.forEach((r, i) => out.push(
-                        <tr key={`${g.key}-${i}`} className="bg-[#FAFAFA] text-xs">
-                          <td className="p-2"></td>
-                          <td className="p-2 pl-8">{r.productGroup}{r.location ? <span className="opacity-60"> — {r.location}</span> : null}</td>
-                          <td className="p-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                          <td className="p-2 text-right font-mono">{r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
-                        </tr>,
-                      ));
+                      g.rows.forEach((r, i) => {
+                        const isUngrouped = r.productGroup === 'Ungrouped';
+                        out.push(
+                          <tr key={`${g.key}-${i}`} className="bg-[#FAFAFA] text-xs">
+                            <td className="p-2"></td>
+                            <td className="p-2 pl-8">
+                              {isUngrouped
+                                ? <span className="font-bold text-amber-700">Ungrouped <span className="font-normal opacity-70">(no Product Group)</span></span>
+                                : r.productGroup}
+                              {r.location ? <span className="opacity-60"> — {r.location}</span> : null}
+                            </td>
+                            <td className="p-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="p-2 text-right font-mono">{r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
+                          </tr>,
+                        );
+                        // Under the Ungrouped bucket, list the exact products that
+                        // failed to resolve to a Product Group, so they can be fixed.
+                        if (isUngrouped) {
+                          r.products.forEach((prod, j) => out.push(
+                            <tr key={`${g.key}-${i}-p${j}`} className="bg-[#FFF8F0] text-[11px]">
+                              <td className="p-1.5"></td>
+                              <td className="p-1.5 pl-14 text-amber-900/80">↳ {prod.name}</td>
+                              <td className="p-1.5 text-right font-mono text-amber-900/80">{prod.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-1.5"></td>
+                            </tr>,
+                          ));
+                        }
+                      });
                       if (g.rows.length === 0) out.push(<tr key={`${g.key}-empty`} className="bg-[#FAFAFA] text-xs"><td className="p-2"></td><td className="p-2 pl-8 italic opacity-50" colSpan={3}>No invoiced volume.</td></tr>);
                     }
                     return out;
