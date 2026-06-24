@@ -13189,7 +13189,7 @@ export default function App() {
                     {/* Edit Shipment - minimal fields */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Date</label>
+                        <label className="text-[10px] uppercase font-bold opacity-60">Pick Up Date</label>
                         <input
                           type="date"
                           value={editingShipment.date || ''}
@@ -18057,7 +18057,7 @@ export default function App() {
                             </select>
                           </div>
                           <div className="space-y-0.5">
-                            <label className="text-[10px] uppercase font-bold opacity-60">Date</label>
+                            <label className="text-[10px] uppercase font-bold opacity-60">Pick Up Date</label>
                             <input
                               type="date"
                               value={shipmentCreationData.date}
