@@ -469,6 +469,24 @@ export default function App() {
     return known?.contractNumber || code;
   };
 
+  // Best-guess shipping ORIGIN (which Sucro plant ships from) from the addresses
+  // on a PO. First try to match a known origin Location named in any address;
+  // otherwise fall back to region: Sucro ships Eastern Canada from Hamilton and
+  // Western Canada from Vancouver, so the ship-to province points at the origin.
+  // Returns an active Location name, or '' when undetectable.
+  const detectOriginFromAddresses = (po: ExtractedPO): string => {
+    const text = `${po.shipToAddress || ''} ${po.shipToName || ''} ${po.notes || ''}`.toUpperCase();
+    if (!text.trim()) return '';
+    const named = activeLocations.find(l => l.name && text.includes(l.name.toUpperCase()));
+    if (named) return named.name;
+    const loc = (kw: string) => activeLocations.find(l => l.name.toLowerCase().includes(kw))?.name || '';
+    const western = /\b(BC|BRITISH COLUMBIA|ALBERTA|AB|SASKATCHEWAN|SK|MANITOBA|MB|VANCOUVER|BURNABY|SURREY|RICHMOND|CALGARY|EDMONTON|WINNIPEG|REGINA|SASKATOON)\b/.test(text);
+    const eastern = /\b(ON|ONTARIO|QC|QUEBEC|QUÉBEC|TORONTO|HAMILTON|MISSISSAUGA|BRAMPTON|LONDON|KITCHENER|SCARBOROUGH|MONTREAL|MONTRÉAL|OTTAWA|NB|NS|PE|NL)\b/.test(text);
+    if (western && !eastern) return loc('vancouver');
+    if (eastern) return loc('hamilton');
+    return '';
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (po: ExtractedPO): POReview => {
     const opts = buildOrderProductOptions();
@@ -500,7 +518,7 @@ export default function App() {
       source: po,
       customerId: cust?.id || '',
       customerRaw: po.customerName || '',
-      location: contract?.origin || cust?.defaultLocation || '',
+      location: contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '',
       locationTouched: false,
       shipToLocationId: matchShipToForCustomer(cust?.id || '', po),
       po: po.poNumber || '',
@@ -799,7 +817,7 @@ export default function App() {
     if (lines.length === 0) return null;
     const lineItems = lines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    const location = contract?.origin || cust?.defaultLocation || '';
+    const location = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
     const shipToLocationId = matchShipToForCustomer(cust?.id || '', po);
     const deliveryDate = po.deliveryDate || '';
     const shipmentDate = deliveryDate || po.shipmentDate || ''; // default ship date to delivery date
@@ -17022,13 +17040,13 @@ export default function App() {
                               <tr key={idx} className="border-b border-[#141414]/5 align-top">
                                 <td className="p-2">
                                   <select
-                                    value={line.productValue}
+                                    value={line.productKey}
                                     disabled={rev.created}
-                                    onChange={(e) => { const opt = poProductOptions.find(o => o.value === e.target.value); updateReviewLine(rev.id, idx, { productValue: e.target.value, productKey: opt?.key || '', productLabel: opt?.label || '' }); }}
+                                    onChange={(e) => { const opt = poProductOptions.find(o => o.key === e.target.value); updateReviewLine(rev.id, idx, { productKey: e.target.value, productValue: opt?.value || '', productLabel: opt?.label || '' }); }}
                                     className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none"
                                   >
                                     <option value="">— Select product —</option>
-                                    {poProductOptions.map(o => <option key={o.key} value={o.value}>{o.label === o.value ? o.label : `${o.label} — ${o.value}`}</option>)}
+                                    {poProductOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}{o.label !== o.value ? ` (${o.value})` : ''}</option>)}
                                   </select>
                                   {(line.productRaw || line.productCodeRaw) && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"{line.productCodeRaw && <> · item <span className="font-mono">{line.productCodeRaw}</span></>}</div>}
                                 </td>
