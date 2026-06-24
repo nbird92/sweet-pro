@@ -250,6 +250,48 @@ export function matchShipToLocation(
   return best;
 }
 
+/** Best-effort parse of a one-line North American address into structured fields
+ *  so a scanned ship-to populates the proper columns (street / city / province /
+ *  postal / country) instead of dumping everything into addressLine1. Anything it
+ *  can't classify stays in addressLine1. */
+export function parseAddress(raw: string): {
+  addressLine1: string; city: string; province: string; postalCode: string; country: string;
+} {
+  let s = (raw || '').replace(/\s+/g, ' ').trim();
+  if (!s) return { addressLine1: '', city: '', province: '', postalCode: '', country: '' };
+  let country = '';
+  const cm = s.match(/,?\s*(CANADA|UNITED STATES|U\.?S\.?A\.?)\s*$/i);
+  if (cm && cm.index != null) { country = /can/i.test(cm[1]) ? 'Canada' : 'USA'; s = s.slice(0, cm.index).replace(/,\s*$/, '').trim(); }
+  const cut = (m: RegExpMatchArray) => (s.slice(0, m.index) + s.slice((m.index || 0) + m[0].length)).replace(/\s+/g, ' ').replace(/\s,/g, ',').trim();
+  let postalCode = '';
+  const ca = s.match(/\b([A-Za-z]\d[A-Za-z])\s?(\d[A-Za-z]\d)\b/);
+  const us = s.match(/\b(\d{5}(?:-\d{4})?)\b/);
+  if (ca) { postalCode = `${ca[1].toUpperCase()} ${ca[2].toUpperCase()}`; s = cut(ca); if (!country) country = 'Canada'; }
+  else if (us) { postalCode = us[1]; s = cut(us); if (!country) country = 'USA'; }
+  let province = '';
+  const provs: Record<string, string> = {
+    'ONTARIO': 'ON', 'QUEBEC': 'QC', 'QUÉBEC': 'QC', 'BRITISH COLUMBIA': 'BC', 'ALBERTA': 'AB',
+    'MANITOBA': 'MB', 'SASKATCHEWAN': 'SK', 'NOVA SCOTIA': 'NS', 'NEW BRUNSWICK': 'NB',
+    'NEWFOUNDLAND AND LABRADOR': 'NL', 'NEWFOUNDLAND': 'NL', 'PRINCE EDWARD ISLAND': 'PE',
+  };
+  // Normalize any full province name to its 2-letter code in place.
+  for (const [full, abbr] of Object.entries(provs)) s = s.replace(new RegExp(`\\b${full}\\b`, 'ig'), abbr);
+  // Take a trailing 2-letter code, but ONLY a real province/state, so a street
+  // suffix like "St" / "Rd" isn't mistaken for a province.
+  const CODES = new Set('ON QC BC AB MB SK NS NB NL PE NT YT NU AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC'.split(' '));
+  const pm = s.match(/(?:^|[,\s])([A-Za-z]{2})\s*,?\s*$/);
+  if (pm && pm.index != null && CODES.has(pm[1].toUpperCase())) {
+    province = pm[1].toUpperCase();
+    s = s.slice(0, pm.index).replace(/[,\s]+$/, '').trim();
+  }
+  s = s.replace(/[,\s]+$/, '').replace(/^[,\s]+/, '').trim();
+  const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+  let city = '', addressLine1 = '';
+  if (parts.length >= 2) { city = parts[parts.length - 1]; addressLine1 = parts.slice(0, -1).join(', '); }
+  else { addressLine1 = parts[0] || ''; }
+  return { addressLine1, city, province, postalCode, country };
+}
+
 /* ------------------------------------------------------------------ */
 /* Learning store (localStorage)                                       */
 /* ------------------------------------------------------------------ */

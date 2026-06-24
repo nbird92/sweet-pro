@@ -117,6 +117,7 @@ import {
   mergeLearned,
   learnedId,
   pruneExpired,
+  parseAddress,
   type ExtractedPO,
   type LearnedMapping,
 } from './utils/poScan';
@@ -487,12 +488,52 @@ export default function App() {
     return '';
   };
 
+  // When no customer matched by name/number, infer it from the PO's ship-to
+  // address by matching against every customer's saved ship-to sites.
+  const findCustomerByShipTo = (shipToName?: string, shipToAddress?: string): Customer | null => {
+    if (!shipToName && !shipToAddress) return null;
+    for (const c of customers) {
+      if (matchShipToLocation(shipToName, shipToAddress, c.shipToLocations)) return c;
+    }
+    return null;
+  };
+
+  // Match a PO's $/MT price to one of the customer's contracts (by contract-level
+  // final price or a contract line's final price), within a small tolerance — so a
+  // PO that quotes a price but no contract number still links to its contract.
+  const matchContractByPrice = (cust: Customer | null, pricePerMt: number, currency?: string): Contract | null => {
+    if (!cust || !(pricePerMt > 0)) return null;
+    const cur = (currency || '').toUpperCase();
+    let best: Contract | null = null;
+    let bestDiff = Infinity;
+    for (const c of contractsForCustomer(cust)) {
+      if (c.active === false) continue;
+      if (cur && c.currency && c.currency.toUpperCase() !== cur) continue; // currency must agree when both known
+      const prices = [c.finalPrice, ...(c.contractLines || []).map(l => l.finalPriceMt)].filter(p => typeof p === 'number' && p > 0) as number[];
+      for (const p of prices) {
+        const diff = Math.abs(p - pricePerMt);
+        const tol = Math.max(2, p * 0.01); // within $2/MT or 1%
+        if (diff <= tol && diff < bestDiff) { bestDiff = diff; best = c; }
+      }
+    }
+    return best;
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (po: ExtractedPO): POReview => {
     const opts = buildOrderProductOptions();
-    const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
-    const contract = matchContract(po.contractNumber, contracts, poLearned);
-    const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
+    // Customer: by name/number, else inferred from the ship-to address.
+    const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned)
+      || findCustomerByShipTo(po.shipToName, po.shipToAddress);
+    let contract = matchContract(po.contractNumber, contracts, poLearned);
+    let contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
+    // If no contract resolved but we have the customer + a quoted price, link the
+    // contract whose price matches the PO's $/MT.
+    if (!contractNumber && cust) {
+      const poPrice = (po.lineItems || []).map(li => li.pricePerMt).find(p => typeof p === 'number' && p > 0) || 0;
+      const byPrice = matchContractByPrice(cust, poPrice, po.currency);
+      if (byPrice) { contract = byPrice; contractNumber = byPrice.contractNumber; }
+    }
     // Default the shipment date to the delivery date (these POs usually carry a
     // delivery/receipt date; the order's ship date should match unless edited).
     const deliveryDate = po.deliveryDate || '';
@@ -708,11 +749,18 @@ export default function App() {
     const nm = (rev.source.shipToName || '').trim();
     const addr = (rev.source.shipToAddress || '').trim();
     if (!nm && !addr) { setErrorBox('No ship-to address was read from this PO.'); return; }
+    // Parse the one-line address into proper columns instead of dumping it all in
+    // addressLine1.
+    const p = parseAddress(addr);
     const newLoc: ShipToLocation = {
       id: `SHIPTO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       locationCode: '',
-      name: nm || addr.split(',')[0].trim() || 'Ship-To',
-      addressLine1: addr || nm,
+      name: nm || p.city || (p.addressLine1 || addr).split(',')[0].trim() || 'Ship-To',
+      addressLine1: p.addressLine1 || addr,
+      city: p.city || undefined,
+      province: p.province || undefined,
+      postalCode: p.postalCode || undefined,
+      country: p.country || undefined,
     };
     setCustomers(prev => prev.map(c => c.id === cust.id
       ? { ...c, shipToLocations: [...(c.shipToLocations || []), newLoc] }
