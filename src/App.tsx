@@ -16797,9 +16797,13 @@ export default function App() {
                         setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number. Set one of those fields before saving.');
                         return;
                       }
-                      // PO numbers must be unique across all orders (excluding this one when editing).
+                      // PO numbers must be unique across all orders. Only enforce on a
+                      // NEW PO value — creating an order, or editing one and CHANGING its
+                      // PO. Saving edits to an existing order (PO unchanged) is never
+                      // blocked, even if a pre-existing duplicate PO is on another order.
                       const poUniqTrim = (orderPO || '').trim();
-                      if (poUniqTrim && orders.some(o => o.id !== editingOrder?.id && (o.po || '').trim().toLowerCase() === poUniqTrim.toLowerCase())) {
+                      const poChanged = !editingOrder || poUniqTrim.toLowerCase() !== (editingOrder.po || '').trim().toLowerCase();
+                      if (poUniqTrim && poChanged && orders.some(o => o.id !== editingOrder?.id && (o.po || '').trim().toLowerCase() === poUniqTrim.toLowerCase())) {
                         setErrorBox(`PO ${orderPO} already exists on another order — PO numbers must be unique.`);
                         return;
                       }
