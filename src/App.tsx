@@ -276,6 +276,7 @@ export default function App() {
   // DetailModal state for the Tolling Fees table.
   const [tollingFeeDraft, setTollingFeeDraft] = useState<TollingFee | null>(null);
   const [tollingFeeMode, setTollingFeeMode] = useState<'view' | 'edit' | 'add'>('view');
+  const [tollingTimeframe, setTollingTimeframe] = useState<'weekly' | 'monthly' | 'annual'>('annual');
   // DetailModal state for the standardized CHEP Pallets Inventory table.
   const [chepDraft, setChepDraft] = useState<ChepPalletMovement | null>(null);
   const [chepMode, setChepMode] = useState<'view' | 'edit' | 'add'>('view');
@@ -8536,11 +8537,55 @@ export default function App() {
     }
 
     if (activePage === 'Tolling Fees') {
+      // Tolling Fees Summary: invoiced MT × the fee for that product group +
+      // location, over the selected timeframe (this week / month / year by
+      // invoice date). EVERY invoiced product is included (groups with no fee
+      // show 0 Total Fees).
+      const tollingSummary = (() => {
+        const now = new Date();
+        const todayWeek = getWeekNumber(now.toISOString().split('T')[0]);
+        const inFrame = (dateStr?: string): boolean => {
+          if (!dateStr) return false;
+          const d = new Date(dateStr + 'T12:00:00');
+          if (isNaN(d.getTime())) return false;
+          if (tollingTimeframe === 'annual') return d.getFullYear() === now.getFullYear();
+          if (tollingTimeframe === 'monthly') return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+          return d.getFullYear() === now.getFullYear() && getWeekNumber(dateStr) === todayWeek;
+        };
+        const feeFor = (pg: string, loc: string): TollingFee | undefined =>
+          tollingFees.find(t => t.productGroup === pg && t.location === loc) || tollingFees.find(t => t.productGroup === pg);
+        const map = new Map<string, { productGroup: string; location: string; mt: number }>();
+        for (const inv of invoices) {
+          if ((inv.status || '').toLowerCase() === 'cancelled') continue;
+          if (!inFrame(inv.date)) continue;
+          const loc = inv.location || '';
+          const add = (productName?: string, productKey?: string, mt?: number) => {
+            const pg = productGroupOf(productName, productKey) || 'Ungrouped';
+            const key = `${pg}|||${loc}`;
+            const cur = map.get(key) || { productGroup: pg, location: loc, mt: 0 };
+            cur.mt += mt || 0;
+            map.set(key, cur);
+          };
+          if (inv.lineItems && inv.lineItems.length) inv.lineItems.forEach(li => add(li.productName, li.productKey, li.totalWeight));
+          else add(inv.product, undefined, inv.qty);
+        }
+        return Array.from(map.values()).map(r => {
+          const fee = feeFor(r.productGroup, r.location);
+          return {
+            id: `${r.productGroup}|||${r.location}`,
+            productGroup: r.productGroup,
+            location: r.location,
+            mt: Math.round(r.mt * 1000) / 1000,
+            totalFees: r.mt * (fee?.amountPerMt || 0),
+            currency: fee?.currency || '',
+          };
+        }).sort((a, b) => b.totalFees - a.totalFees);
+      })();
       return (
         <div>
           <PageBanner icon={<DollarSign size={18} />} title="Tolling Fees" count={tollingFees.length}>
             <button
-              onClick={() => { setTollingFeeDraft({ id: `TF-${Date.now()}`, productGroup: '', location: '', amountPerMt: 0, currency: 'CAD' }); setTollingFeeMode('add'); }}
+              onClick={() => { setTollingFeeDraft({ id: `TF-${Date.now()}`, productGroup: '', location: '', amountPerMt: 0, currency: 'CAD', startDate: '', endDate: '' }); setTollingFeeMode('add'); }}
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Tolling Fee
@@ -8562,6 +8607,8 @@ export default function App() {
                   sortValue: (t) => t.amountPerMt || 0,
                 },
                 { key: 'currency', label: 'Currency', mono: true, render: (t) => t.currency || '—' },
+                { key: 'startDate', label: 'Start Date', render: (t) => t.startDate || '—' },
+                { key: 'endDate', label: 'End Date', render: (t) => t.endDate || '—' },
               ]}
               rows={tollingFees}
               getRowKey={(t) => t.id}
@@ -8600,6 +8647,8 @@ export default function App() {
                     <DetailRow label="Location" value={tollingFeeDraft.location} />
                     <DetailRow label="Tolling Fee / MT" value={`${(tollingFeeDraft.amountPerMt || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tollingFeeDraft.currency || ''}`.trim()} mono />
                     <DetailRow label="Currency" value={tollingFeeDraft.currency} mono />
+                    <DetailRow label="Start Date" value={tollingFeeDraft.startDate || '—'} />
+                    <DetailRow label="End Date" value={tollingFeeDraft.endDate || '—'} />
                   </>
                 ) : (
                   <div className="grid grid-cols-2 gap-4">
@@ -8643,10 +8692,42 @@ export default function App() {
                         <option value="USD">USD</option>
                       </select>
                     </DetailField>
+                    <DetailField label="Start Date">
+                      <input type="date" value={tollingFeeDraft.startDate || ''} onChange={(e) => setTollingFeeDraft(d => d ? { ...d, startDate: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
+                    </DetailField>
+                    <DetailField label="End Date">
+                      <input type="date" value={tollingFeeDraft.endDate || ''} onChange={(e) => setTollingFeeDraft(d => d ? { ...d, endDate: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
+                    </DetailField>
                   </div>
                 )
               )}
             </DetailModal>
+
+            {/* Tolling Fees Summary — invoiced MT × fee per product group + location */}
+            <div className="flex items-center justify-between mt-8 mb-2">
+              <h3 className="text-sm font-bold uppercase tracking-widest flex items-center gap-2"><DollarSign size={14} /> Tolling Fees Summary</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-[10px] uppercase font-bold opacity-50">Timeframe</label>
+                <select value={tollingTimeframe} onChange={(e) => setTollingTimeframe(e.target.value as 'weekly' | 'monthly' | 'annual')} className="bg-white border border-[#141414] px-3 py-1.5 text-xs outline-none">
+                  <option value="weekly">Weekly (this week)</option>
+                  <option value="monthly">Monthly (this month)</option>
+                  <option value="annual">Annual (this year)</option>
+                </select>
+              </div>
+            </div>
+            <DataTable<typeof tollingSummary[number]>
+              title="Tolling Fees Summary"
+              columns={[
+                { key: 'productGroup', label: 'Product Category', bold: true, render: (r) => r.productGroup || '—' },
+                { key: 'location', label: 'Location', render: (r) => r.location || '—' },
+                { key: 'mt', label: 'MT', align: 'right', mono: true, render: (r) => r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }), sortValue: (r) => r.mt },
+                { key: 'totalFees', label: 'Total Fees', align: 'right', mono: true, render: (r) => `${r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${r.currency ? ' ' + r.currency : ''}`, sortValue: (r) => r.totalFees },
+              ]}
+              rows={tollingSummary}
+              getRowKey={(r) => r.id}
+              emptyMessage="No invoiced volume in the selected timeframe."
+              defaultSortKey="totalFees"
+            />
           </div>
         </div>
       );

@@ -167,6 +167,8 @@ export interface TollingFee {
   location: string;       // Location name (from the Locations table)
   amountPerMt: number;    // Tolling fee amount per MT
   currency: string;       // e.g. "CAD", "USD"
+  startDate?: string;     // ISO yyyy-mm-dd — fee effective from
+  endDate?: string;       // ISO yyyy-mm-dd — fee effective to
 }
 
 export const INITIAL_TOLLING_FEES: TollingFee[] = [];
