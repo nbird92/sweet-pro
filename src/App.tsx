@@ -641,11 +641,18 @@ export default function App() {
     };
   };
 
-  const createOrderFromReview = (rev: POReview, reservedBols: string[] = []): string | null => {
+  const createOrderFromReview = (rev: POReview, reservedBols: string[] = [], reservedPos: string[] = []): string | null => {
     const customer = customers.find(c => c.id === rev.customerId);
     if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
     const validLines = rev.lines.filter(l => l.productValue && l.qtyMt > 0);
     if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return null; }
+    // PO numbers must be unique across all orders (and within this batch).
+    const poTrim = (rev.po || '').trim();
+    if (poTrim && (orders.some(o => (o.po || '').trim().toLowerCase() === poTrim.toLowerCase())
+        || reservedPos.some(p => p.toLowerCase() === poTrim.toLowerCase()))) {
+      setErrorBox(`PO ${rev.po} already exists — PO numbers must be unique.`);
+      return null;
+    }
     const lineItems = validLines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
     const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
@@ -725,10 +732,11 @@ export default function App() {
   // (orders state hasn't committed yet between synchronous calls).
   const createAllReviews = () => {
     const reserved: string[] = [];
+    const reservedPos: string[] = [];
     poReviews.forEach(rev => {
       if (rev.created || !rev.customerId || !rev.lines.some(l => l.productValue && l.qtyMt > 0)) return;
-      const bol = createOrderFromReview(rev, reserved);
-      if (bol) reserved.push(bol);
+      const bol = createOrderFromReview(rev, reserved, reservedPos);
+      if (bol) { reserved.push(bol); if ((rev.po || '').trim()) reservedPos.push(rev.po.trim()); }
     });
   };
 
@@ -3886,6 +3894,17 @@ export default function App() {
       const g = groupFromRecord(skus.find(s => s.name === productName)) || groupFromRecord(qaProducts.find(q => q.skuName === productName));
       if (g) return g;
     }
+    // Keyword fallback: infer the group from words in the product name/description
+    // itself, so an emailed PO line like "Bulk Liquid Sucrose" still gets the right
+    // BOL prefix even before it's matched to a catalog product. The most specific
+    // (longest) matching Product Group name wins (so "Liquid" beats "Bulk").
+    const n = (productName || '').toLowerCase();
+    if (n) {
+      const hit = productGroups
+        .filter(pg => pg.name && n.includes(pg.name.trim().toLowerCase()))
+        .sort((a, b) => b.name.trim().length - a.name.trim().length)[0];
+      if (hit) return hit.name;
+    }
     return null;
   };
 
@@ -3950,6 +3969,36 @@ export default function App() {
     const allBolSet = new Set(allBols.filter(Boolean));
     while (allBolSet.has(`${prefix}${String(next).padStart(6, '0')}`)) next++;
     return `${prefix}${String(next).padStart(6, '0')}`;
+  };
+
+  // One-time repair: re-number any order whose BOL prefix doesn't match its
+  // product group's BOL Code (e.g. emailed Bulk/Liquid orders that imported as
+  // "P"). Re-numbers with the correct prefix and cascades the change to linked
+  // shipments / invoices / return orders. Completed orders are skipped — their
+  // BOLs are on issued documents.
+  const fixBolPrefixes = () => {
+    const reserved: string[] = [];
+    const remap: Record<string, string> = {};
+    const newOrders = orders.map(o => {
+      const current = (o.bolNumber || '').trim();
+      if (!current || !(o.lineItems && o.lineItems.length) || o.status === 'Completed') {
+        if (current) reserved.push(current);
+        return o;
+      }
+      const candidate = generateBOLNumber(o.lineItems, reserved);
+      if (current[0] === candidate[0]) { reserved.push(current); return o; }
+      reserved.push(candidate);
+      remap[current] = candidate;
+      return { ...o, bolNumber: candidate };
+    });
+    const count = Object.keys(remap).length;
+    if (!count) { setErrorBox('All order BOL prefixes already match their product groups.'); return; }
+    setOrders(newOrders);
+    setHamiltonShipments(prev => prev.map(s => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s));
+    setVancouverShipments(prev => prev.map(s => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s));
+    setInvoices(prev => prev.map(inv => inv.bolNumber && remap[inv.bolNumber] ? { ...inv, bolNumber: remap[inv.bolNumber] } : inv));
+    setReturnOrders(prev => prev.map(ro => ro.originalBolNumber && remap[ro.originalBolNumber] ? { ...ro, originalBolNumber: remap[ro.originalBolNumber] } : ro));
+    setPoIngestNotice(`Fixed ${count} BOL prefix${count === 1 ? '' : 'es'} to match product groups.`);
   };
 
   // Compute `count` sequential BOL numbers for a product — its product group's
@@ -6994,6 +7043,13 @@ export default function App() {
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
             >
               <Plus size={12} /> Add Order
+            </button>
+            <button
+              onClick={() => { if (window.confirm('Re-number any orders whose BOL prefix does not match their product group (e.g. Bulk/Liquid orders that imported as "P")? Linked shipments, invoices and return orders are updated to match. Completed orders are left as-is.')) fixBolPrefixes(); }}
+              title="Fix BOL prefixes to match each order's product group (BOL Code)"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+            >
+              <FileText size={12} /> Fix BOLs
             </button>
             {/* TEMPORARY — wipes every order from the table and Firestore so the
                 user can start fresh. Remove this button once the table is in
@@ -16741,6 +16797,12 @@ export default function App() {
                         setErrorBox('Cannot save — an order must have either a Contract Number on at least one line item or a Split Number. Set one of those fields before saving.');
                         return;
                       }
+                      // PO numbers must be unique across all orders (excluding this one when editing).
+                      const poUniqTrim = (orderPO || '').trim();
+                      if (poUniqTrim && orders.some(o => o.id !== editingOrder?.id && (o.po || '').trim().toLowerCase() === poUniqTrim.toLowerCase())) {
+                        setErrorBox(`PO ${orderPO} already exists on another order — PO numbers must be unique.`);
+                        return;
+                      }
 
                       // Location: user-entered takes priority; fall back to first contract's origin
                       const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
@@ -16817,6 +16879,10 @@ export default function App() {
                       onClick={() => {
                         if (!orderCustomerId || orderLineItems.length === 0 || !orderPO) {
                           setErrorBox('Please select customer, add line items, and enter PO number');
+                          return;
+                        }
+                        if (orders.some(o => (o.po || '').trim().toLowerCase() === (orderPO || '').trim().toLowerCase())) {
+                          setErrorBox(`PO ${orderPO} already exists on another order — PO numbers must be unique.`);
                           return;
                         }
                         const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
