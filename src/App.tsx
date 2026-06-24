@@ -3891,12 +3891,34 @@ export default function App() {
   // (Bulk / Bagged / Tote / Liquid) IF that names a known Product Group — many
   // products carry the Format but not the Group, and both share one vocabulary,
   // so without this a "Bulk" product would wrongly get the default 'P' prefix.
-  const groupFromRecord = (rec?: { productGroup?: string; productFormat?: string }): string | null => {
+  // Infer a Product Group from a product's name / packaging-format text. The group
+  // word is frequently NOT present verbatim — names say "Bag" (group "Bagged") and
+  // "Totes" (group "Tote") — and a generic "Bulk Liquid" must resolve to the most
+  // specific group, so we match by keyword with a fixed precedence:
+  // Liquid > Tote > Bagged > Bulk. Only returns a Product Group that exists in the
+  // catalog; null when nothing matches.
+  const deriveProductGroup = (...texts: (string | undefined)[]): string | null => {
+    const t = texts.filter(Boolean).join(' ').toLowerCase();
+    if (!t.trim()) return null;
+    const rules: Array<[string, RegExp]> = [
+      ['Liquid', /liquid/],
+      ['Tote', /tote/],
+      ['Bagged', /\bbag/],
+      ['Bulk', /\bbulk\b/],
+    ];
+    for (const [name, re] of rules) {
+      if (re.test(t)) {
+        const match = productGroups.find(pg => pg.name.trim().toLowerCase() === name.toLowerCase());
+        if (match) return match.name;
+      }
+    }
+    return null;
+  };
+  const groupFromRecord = (rec?: { productGroup?: string; productFormat?: string; name?: string; skuName?: string }): string | null => {
     if (!rec) return null;
     if (rec.productGroup && rec.productGroup.trim()) return rec.productGroup;
-    const fmt = (rec.productFormat || '').trim();
-    if (fmt && productGroups.some(pg => pg.name.trim().toLowerCase() === fmt.toLowerCase())) return fmt;
-    return null;
+    // No explicit group — derive it from the format/name (covers "Bag"→Bagged etc.)
+    return deriveProductGroup(rec.productFormat, rec.name, rec.skuName);
   };
   const productGroupOf = (productName?: string, productKey?: string): string | null => {
     if (productKey) {
@@ -3930,6 +3952,46 @@ export default function App() {
     const pg = productGroups.find(g => g.name.trim().toLowerCase() === key);
     return (pg?.bolCode || '').trim().toUpperCase() || 'P';
   };
+
+  // One-time backfill: correct each product's Product Group. New QA products used to
+  // default to the first group ("Bulk"), and that wrong value then stuck even for
+  // Liquid / Bagged / Tote products — showing the wrong group in the QA table and,
+  // because productGroupOf trusts the stored group, charging them the Bulk tolling
+  // fee. Re-derive the group from the product's name/format and fix it when the
+  // stored value is blank, an unknown group, or the poisoned first-group default
+  // that conflicts with a confident derivation. Deliberately-set non-default groups
+  // (e.g. someone explicitly chose Bagged) are left untouched.
+  const productGroupBackfillRan = useRef(false);
+  useEffect(() => {
+    if (productGroupBackfillRan.current) return;
+    if (productGroups.length === 0) return;
+    if (qaProducts.length === 0 && skus.length === 0) return;
+
+    const isKnown = (g?: string) => !!g && productGroups.some(pg => pg.name.trim().toLowerCase() === (g || '').trim().toLowerCase());
+    const poison = (productGroups[0]?.name || '').trim().toLowerCase();
+    const needsFix = (stored: string | undefined, derived: string): boolean => {
+      const s = (stored || '').trim().toLowerCase();
+      if (!isKnown(stored)) return true;                    // blank or unknown group
+      if (s === derived.trim().toLowerCase()) return false; // already correct
+      return s === poison;                                  // only override the default; respect deliberate groups
+    };
+
+    const qaFix = new Map<string, string>();
+    qaProducts.forEach(q => {
+      const derived = deriveProductGroup(q.productFormat, q.skuName);
+      if (derived && needsFix(q.productGroup, derived)) qaFix.set(q.id, derived);
+    });
+    const skuFix = new Map<string, string>();
+    skus.forEach(s => {
+      const derived = deriveProductGroup(s.productFormat, s.name);
+      if (derived && needsFix(s.productGroup, derived)) skuFix.set(s.id, derived);
+    });
+
+    if (qaFix.size === 0 && skuFix.size === 0) { productGroupBackfillRan.current = true; return; }
+    if (qaFix.size > 0) setQaProducts(prev => prev.map(q => qaFix.has(q.id) ? { ...q, productGroup: qaFix.get(q.id)! } : q));
+    if (skuFix.size > 0) setSkus(prev => prev.map(s => skuFix.has(s.id) ? { ...s, productGroup: skuFix.get(s.id)! } : s));
+    productGroupBackfillRan.current = true;
+  }, [qaProducts, skus, productGroups]);
 
   // `extraBols` lets a caller that builds several orders in one synchronous
   // pass (before any state commit) reserve the BOLs it has already assigned, so
@@ -7819,7 +7881,12 @@ export default function App() {
           onUpdateProductGroups={setProductGroups}
           onUpdateSugarTypes={setSugarTypes}
           onUpdateLocations={setLocations}
-          onAddQAProduct={(product) => {
+          onAddQAProduct={(rawProduct) => {
+            // Fill a blank Product Group from the format/name so new products carry
+            // the right group (and tolling fee) instead of an empty/defaulted one.
+            const product = (rawProduct.productGroup && rawProduct.productGroup.trim())
+              ? rawProduct
+              : { ...rawProduct, productGroup: deriveProductGroup(rawProduct.productFormat, rawProduct.skuName) || (productGroups[0]?.name || '') };
             setQaProducts(prev => [...prev, product]);
             // Also create a corresponding SKU so the Products page mirrors it
             const existingSku = skus.find(s => s.id === product.skuId);
@@ -7843,7 +7910,11 @@ export default function App() {
               setSkus(prev => [...prev, newSkuFromQA]);
             }
           }}
-          onUpdateQAProduct={(updated) => {
+          onUpdateQAProduct={(raw) => {
+            // Keep the group populated: if it was cleared, re-derive from format/name.
+            const updated = (raw.productGroup && raw.productGroup.trim())
+              ? raw
+              : { ...raw, productGroup: deriveProductGroup(raw.productFormat, raw.skuName) || raw.productGroup };
             setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
             // Mirror QA changes to the corresponding SKU so the Products page stays in sync
             setSkus(prev => prev.map(s => s.id === updated.skuId ? {

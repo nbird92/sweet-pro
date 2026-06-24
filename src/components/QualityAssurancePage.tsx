@@ -327,7 +327,9 @@ export default function QualityAssurancePage({
     id: `QA-${Date.now()}`,
     skuId: '',
     skuName: '',
-    productGroup: productGroups.length > 0 ? productGroups[0].name : '',
+    // Leave blank — the group is derived from the packaging format on save so a
+    // Liquid/Bagged/Tote product is never silently stamped with the first group.
+    productGroup: '',
     category: 'Conventional',
     location: locations.length > 0 ? locations[0].name : '',
     netWeightKg: 0,
@@ -2073,6 +2075,7 @@ export default function QualityAssurancePage({
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
                       <select value={newProductData.productGroup} onChange={(e) => setNewProductData(prev => ({ ...prev, productGroup: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Auto (from packaging format)</option>
                         {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
                       </select>
                     </div>
@@ -2338,6 +2341,7 @@ export default function QualityAssurancePage({
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Group</label>
                         <select value={editData?.productGroup || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, productGroup: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                          <option value="">Auto (from packaging format)</option>
                           {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
                         </select>
                       </div>
