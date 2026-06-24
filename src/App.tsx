@@ -8557,8 +8557,22 @@ export default function App() {
           return { key: `${y}-W${String(wk).padStart(2, '0')}`, label: `Week ${wk}, ${y}`, sortKey: `${y}-${String(wk).padStart(2, '0')}` };
         };
         const currentKey = periodOf(now).key;
+        const norm = (s?: string) => (s || '').trim().toLowerCase();
+        // Match a tolling fee by product group (case/space-insensitive), preferring
+        // an exact location match, else the group's fee at any location.
         const feeFor = (pg: string, loc: string): TollingFee | undefined =>
-          tollingFees.find(t => t.productGroup === pg && t.location === loc) || tollingFees.find(t => t.productGroup === pg);
+          tollingFees.find(t => norm(t.productGroup) === norm(pg) && norm(t.location) === norm(loc))
+          || tollingFees.find(t => norm(t.productGroup) === norm(pg));
+        // Resolve an invoiced product to its Product Group: catalog first, then a
+        // keyword match against the tolling-fee group names (so "Bulk Liquid Sucrose"
+        // maps to the "Liquid" fee even when its catalog group is unset).
+        const resolveGroup = (productName?: string, productKey?: string): string => {
+          const pg = productGroupOf(productName, productKey);
+          if (pg) return pg;
+          const nm = norm(productName);
+          const tf = nm ? tollingFees.find(t => t.productGroup && nm.includes(norm(t.productGroup))) : undefined;
+          return tf?.productGroup || 'Ungrouped';
+        };
         const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number }> }>();
         for (const inv of invoices) {
           if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
@@ -8569,7 +8583,7 @@ export default function App() {
           if (!g) { g = { label: p.label, sortKey: p.sortKey, rows: new Map() }; groups.set(p.key, g); }
           const loc = inv.location || '';
           const add = (productName?: string, productKey?: string, mt?: number) => {
-            const pg = productGroupOf(productName, productKey) || 'Ungrouped';
+            const pg = resolveGroup(productName, productKey);
             const rk = `${pg}|||${loc}`;
             const cur = g!.rows.get(rk) || { pg, loc, mt: 0 };
             cur.mt += mt || 0;
@@ -8730,7 +8744,7 @@ export default function App() {
                     <th className="p-3 bg-[#141414] w-6"></th>
                     <th className="p-3 bg-[#141414]">Period / Product Category</th>
                     <th className="p-3 bg-[#141414] text-right">MT</th>
-                    <th className="p-3 bg-[#141414] text-right">Total Fees</th>
+                    <th className="p-3 bg-[#141414] text-right">Total Tolling Fees</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
