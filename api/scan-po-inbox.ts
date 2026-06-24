@@ -5,7 +5,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { extractPO, isSupportedAttachment, DEFAULT_MODEL, type ExtractHints } from './_poExtract.js';
 import {
   gmailAccessToken, listMessages, getMessage, collectAttachments,
-  getAttachmentBase64, getMessageBody, header, normalizePrivateKey,
+  getAttachmentBase64, getMessageBody, emailContext, header, normalizePrivateKey,
 } from './_gmail.js';
 
 /**
@@ -188,8 +188,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // the mail. Order-related mail gets a suggestion; everything else 'none'.
         let suggestion: 'new_po' | 'amendment' | 'cancellation' | 'none' = 'none';
         let suggestionPo = '';
+        let suggestionCustomer = '';
+        let suggestionCarrier = '';
         const noteSuggestion = (extraction: any) => {
           const dt = extraction?.documentType;
+          if (extraction?.customerName && !suggestionCustomer) suggestionCustomer = String(extraction.customerName).trim();
+          if (extraction?.carrier && !suggestionCarrier) suggestionCarrier = String(extraction.carrier).trim();
           if (dt === 'new_order') { suggestion = 'new_po'; suggestionPo = (extraction.poNumber || '').trim() || suggestionPo; }
           else if (dt === 'amendment' && suggestion !== 'new_po') { suggestion = 'amendment'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
           else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
@@ -212,24 +216,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Run PO/amendment extraction only when this email hasn't been extracted
         // before (a feed-pruned email reappearing must not re-queue its PO).
         if (force || !processedIds.has(meta.id)) {
-          // 1. Email BODY first — primary source for order info AND changes.
           const supported = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
-          let bodyHasOrder = false;
+          const isImage = (a: { filename: string; mimeType: string }) =>
+            /\.(png|jpe?g|gif|webp)$/i.test(a.filename) || (a.mimeType || '').toLowerCase().startsWith('image/');
+          const docAtts = supported.filter(a => !isImage(a));   // PDF / Excel / CSV
+          const imgAtts = supported.filter(isImage);            // inline logos / scans
+          let foundOrder = false;
+          const noteOrder = (docs: any[]) => { if (docs.some(d => d?.documentType && d.documentType !== 'other')) foundOrder = true; };
+
+          // 1. Email BODY — full thread + participant headers (From/Reply-To/To/Cc/
+          //    Subject) so the customer + carrier are identifiable even when the
+          //    message came "via" a Sucro group address.
           try {
-            if (feedBody && feedBody.trim().length > 20) {
-              const bodyB64 = Buffer.from(feedBody, 'utf8').toString('base64');
-              const docs = await extractPO({ name: '(email body)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
-              for (const extraction of docs) {
-                if (extraction?.documentType === 'new_order' && Array.isArray(extraction.lineItems) && extraction.lineItems.length > 0) bodyHasOrder = true;
-                await queueExtraction(extraction, '(email body)');
-              }
+            const bodyText = [emailContext(msg.payload), getMessageBody(msg.payload, { keepQuoted: true })].filter(Boolean).join('\n\n');
+            if (bodyText && bodyText.trim().length > 20) {
+              const bodyB64 = Buffer.from(bodyText, 'utf8').toString('base64');
+              const docs = await extractPO({ name: '(email)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+              noteOrder(docs);
+              for (const extraction of docs) await queueExtraction(extraction, '(email body)');
             }
           } catch (e) {
             summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
           }
-          // 2. Attachments — only if the body didn't already contain a complete order.
-          if (!bodyHasOrder) {
-            for (const att of supported) {
+
+          // 2. Document attachments — ALWAYS scanned (the PO is frequently in an
+          //    attached spreadsheet/PDF). Duplicates across body + attachment are
+          //    deduped by PO number when the app ingests them for review.
+          for (const att of docAtts) {
+            summary.attachments++;
+            try {
+              const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
+              const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+              noteOrder(docs);
+              for (const extraction of docs) await queueExtraction(extraction, att.filename);
+            } catch (e) {
+              summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
+            }
+          }
+
+          // 3. Inline images — only when nothing above found an order (a scanned PO
+          //    image), so signature logos don't waste vision calls.
+          if (!foundOrder) {
+            for (const att of imgAtts) {
               summary.attachments++;
               try {
                 const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
@@ -240,6 +268,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               }
             }
           }
+
           // Record the message as PO-processed so it isn't re-extracted later.
           await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString() });
         }
@@ -261,6 +290,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           attachments: allAttachments,
           suggestion,
           poNumber: suggestionPo || '',
+          customer: suggestionCustomer || '',
+          carrier: suggestionCarrier || '',
         });
       } catch (e) {
         summary.errors.push({ where: meta.id, message: e instanceof Error ? e.message : String(e) });

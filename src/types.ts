@@ -441,6 +441,8 @@ export interface InboxFeedItem {
   /** AI suggestion for order-related mail; 'none' for everything else. */
   suggestion?: 'new_po' | 'amendment' | 'cancellation' | 'none';
   poNumber?: string;           // referenced PO when order-related
+  customer?: string;           // buyer identified from participant domains/signatures
+  carrier?: string;            // freight carrier identified from participants/body
 }
 
 /** Operator triage state for an inbox-feed email (client-owned, synced). Absence

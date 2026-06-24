@@ -270,7 +270,12 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       <td className="p-3 text-xs max-w-[180px] truncate" title={e.fromEmail}>{e.fromName || e.fromEmail || '—'}</td>
                       <td className="p-3 text-xs max-w-[280px] truncate" title={e.subject}>{e.subject || '(no subject)'}</td>
                       <td className="p-3 text-center">{e.hasAttachments ? <Paperclip size={12} className="inline opacity-60" /> : ''}</td>
-                      <td className="p-3"><FeedSuggestionPill suggestion={e.suggestion} poNumber={e.poNumber} /></td>
+                      <td className="p-3">
+                        <FeedSuggestionPill suggestion={e.suggestion} poNumber={e.poNumber} />
+                        {e.suggestion && e.suggestion !== 'none' && (e.customer || e.carrier) && (
+                          <div className="text-[9px] opacity-60 mt-0.5">{[e.customer, e.carrier && `via ${e.carrier}`].filter(Boolean).join(' · ')}</div>
+                        )}
+                      </td>
                       <td className="p-3 text-[9px] uppercase font-bold opacity-60">{status || 'open'}</td>
                     </tr>
                     {open && (
@@ -281,6 +286,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                             <Row label="Received" value={e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'} />
                             <Row label="Subject" value={e.subject || '(no subject)'} />
                             <Row label="Attachments" value={e.attachments?.length ? e.attachments.map(a => a.filename).join(', ') : '—'} />
+                            {e.customer && <Row label="Customer" value={e.customer} />}
+                            {e.carrier && <Row label="Carrier" value={e.carrier} />}
                           </div>
                           <div className="border border-[#141414]/15 bg-white p-3 text-xs whitespace-pre-wrap max-h-[320px] overflow-auto">{e.body || e.snippet || '(no body text)'}</div>
                           <div className="mt-3 flex justify-end items-center gap-2">

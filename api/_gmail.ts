@@ -119,10 +119,26 @@ export function header(payload: any, name: string): string {
   return h?.value || '';
 }
 
+/** A compact header block (From / Reply-To / To / Cc / Subject) so the extractor
+ *  can identify the customer + carrier from participant domains and signatures,
+ *  even when the message was sent "via" a Sucro group address (e.g. an order
+ *  forwarded through Orderdesk@sucro.ca whose real buyer is a @ca.nestle.com
+ *  participant). */
+export function emailContext(payload: any): string {
+  const lines: string[] = [];
+  for (const name of ['From', 'Reply-To', 'To', 'Cc', 'Subject']) {
+    const v = header(payload, name);
+    if (v) lines.push(`${name}: ${v.slice(0, 800)}`);
+  }
+  return lines.join('\n');
+}
+
 /** Extract the plain-text body of a message (prefers text/plain, falls back to
- *  stripped text/html). Used to catch order amendments written in the email
- *  itself rather than an attachment. Capped to keep token use bounded. */
-export function getMessageBody(payload: any): string {
+ *  stripped text/html). Capped to keep token use bounded. By default quoted /
+ *  forwarded history is removed (good for display + amendment detection); pass
+ *  { keepQuoted: true } to keep the whole thread, since an order is often stated
+ *  in an earlier quoted message or a confirmation table further down. */
+export function getMessageBody(payload: any, opts?: { keepQuoted?: boolean }): string {
   const decode = (data?: string) =>
     data ? Buffer.from(data.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8') : '';
   let plain = '';
@@ -145,7 +161,7 @@ export function getMessageBody(payload: any): string {
       .replace(/\s+/g, ' ')
       .trim();
   }
-  return stripQuotedReply(text).slice(0, 20000);
+  return (opts?.keepQuoted ? text : stripQuotedReply(text)).slice(0, 20000);
 }
 
 /** Drop quoted reply / forwarded history so only the new message text is read

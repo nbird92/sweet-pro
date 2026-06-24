@@ -101,7 +101,9 @@ const PO_BATCH_SCHEMA = {
 
 export const SYSTEM_PROMPT = `You read a customer email or attached document received by Sucro Can, a sugar manufacturer and supplier, and extract structured data from it.
 
-A single file or email may contain MULTIPLE purchase orders — e.g. a multi-page PDF with a separate PO on each page, or several POs concatenated together. Return EVERY distinct purchase order, amendment, or cancellation you find as its own entry in the \`documents\` array. If the input holds only one, return an array with a single entry. Never merge two different POs (different PO numbers) into one entry, and never split a single PO across multiple entries.
+A single file or email may contain MULTIPLE purchase orders — e.g. a multi-page PDF with a separate PO on each page, several POs concatenated together, OR a WEEKLY SCHEDULE / calendar table that lists many POs at once (rows or columns of Date, Load/Pick-up Time, PO #, Quantity). Return EVERY distinct purchase order, amendment, or cancellation you find as its own entry in the \`documents\` array — one entry PER PO NUMBER. If the input holds only one, return an array with a single entry. Never merge two different POs (different PO numbers) into one entry, and never split a single PO across multiple entries.
+
+Read the WHOLE email thread, including quoted/forwarded earlier messages and any later confirmation tables — an order is frequently stated in an earlier message in the thread or restated in a logistics confirmation. A PO number may appear inside a longer composite reference (e.g. "9200195450_010_4581845008_020_01"); return the customer's actual PO number (the recognizable order number, e.g. 4581845008). Capture each PO's quantity, requested ship/pick-up date, and delivery date when the schedule provides them.
 
 Document classification (set documentType):
 - 'new_order' — a new purchase order (usually an attached PO document).
@@ -110,8 +112,9 @@ Document classification (set documentType):
 - 'other' — anything unrelated (newsletters, replies with no order content, signatures). Leave the order fields empty.
 
 CRITICAL — who is the customer:
-- Sucro Can (including "Sucro Can Canada Inc", "Sucro Can Sourcing LLC", or any "Sucro" entity at 550 Sherman Ave N / North, Hamilton ON) is ALWAYS the vendor/supplier on these POs — NEVER the customer.
-- The CUSTOMER is the company that ISSUED the purchase order (the buyer): the letterhead / bill-from / issuing company. Return that company as customerName.
+- Sucro Can (any "Sucro" / "Sucro Can" / "Sucro Canada" / "Sucro Can Sourcing LLC" entity, or an address at 550 Sherman Ave N / 560 Ferguson Ave N, Hamilton ON, or an email at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us) is ALWAYS the vendor/supplier — NEVER the customer. This holds EVEN when the email was sent "via Order Desk SucroCan Canada <Orderdesk@sucro.ca>": that is just a shared group the order was forwarded through, not the buyer.
+- The CUSTOMER is the EXTERNAL company that placed the order (the buyer). The input may include the email's From / Reply-To / To / Cc / Subject headers, signatures, and a multi-message thread — USE THEM. Identify the customer from the participant email DOMAINS and signatures: a participant at, e.g., @ca.nestle.com identifies the customer as "Nestle". Prefer the company behind the Reply-To / external sender / signature over a group address. Normalize to the known customers list when there's an obvious match; otherwise return the company's plain name.
+- Freight carriers / dispatchers (e.g. Contrans / "Contrans Tank Group", emails at contrans.ca, "CTT Burford Dispatch", a "Dispatcher" signature) are the CARRIER, never the customer. Put the carrier company in the carrier field.
 
 Extraction rules:
 - Ship-to: shipToName / shipToAddress must be the DELIVERY / ship-to location where the goods are physically received (often labelled "Ship To", "Deliver To", "Delivery Address"). Do NOT use the bill-to, sold-to, invoice/remit-to, or company head-office address for ship-to — those are frequently different from the delivery site. Capture the ship-to city/province/postal as printed.
