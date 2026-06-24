@@ -58,11 +58,12 @@ function getDb() {
 }
 
 async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints> {
-  const [custSnap, skuSnap, qaSnap, contractSnap, learnedSnap] = await Promise.all([
+  const [custSnap, skuSnap, qaSnap, contractSnap, carrierSnap, learnedSnap] = await Promise.all([
     db.collection('customers').get(),
     db.collection('products').get(),
     db.collection('qaProducts').get(),
     db.collection('contracts').get(),
+    db.collection('carriers').get().catch(() => ({ docs: [] as any[] })),
     db.collection('poFieldMappings').get().catch(() => ({ docs: [] as any[] })),
   ]);
   const customers = custSnap.docs.map(d => (d.data() as any).name).filter(Boolean);
@@ -71,6 +72,7 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
     ...qaSnap.docs.map(d => (d.data() as any).skuName),
   ].filter(Boolean);
   const contracts = contractSnap.docs.map(d => (d.data() as any).contractNumber).filter(Boolean);
+  const carriers = (carrierSnap.docs || []).map((d: any) => d.data().name).filter(Boolean);
   // Ignore learned corrections older than 30 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.
   // The client physically deletes them; this is a belt-and-suspenders read guard.
@@ -86,6 +88,7 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
     customers: Array.from(new Set(customers)),
     products: Array.from(new Set(products)),
     contracts: Array.from(new Set(contracts)),
+    carriers: Array.from(new Set(carriers)),
     learned,
   };
 }

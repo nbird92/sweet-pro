@@ -642,6 +642,26 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 />
               </Field>
               <div className="border-t border-[#141414]/20 pt-4">
+                <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Emailed PO import</div>
+                <ToggleRow
+                  label="Auto-approve emailed POs"
+                  description="When ON, a scanned PO at/above the confidence threshold whose customer matches a known customer is created as an Open order automatically, skipping the review queue. Leave OFF to review every PO. Best once the scan has been reliable for a customer."
+                  checked={!!emailSettings.autoApproveEmailedPos}
+                  onChange={v => setSettings({ autoApproveEmailedPos: v })}
+                  compact
+                />
+                {emailSettings.autoApproveEmailedPos && (
+                  <Field label="Auto-approve confidence threshold" hint="0–1. POs at or above this AI confidence auto-create (default 0.85).">
+                    <input
+                      type="number" min="0" max="1" step="0.05"
+                      value={emailSettings.autoApproveMinConfidence ?? 0.85}
+                      onChange={e => setSettings({ autoApproveMinConfidence: Math.max(0, Math.min(1, parseFloat(e.target.value) || 0.85)) })}
+                      className="w-full border border-[#141414] bg-[#F5F5F5] p-2 text-sm"
+                    />
+                  </Field>
+                )}
+              </div>
+              <div className="border-t border-[#141414]/20 pt-4">
                 <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Auto-send triggers</div>
                 <div className="space-y-2">
                   <ToggleRow

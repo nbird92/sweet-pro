@@ -26,15 +26,18 @@ export interface ExtractedPO {
   poNumber: string;
   customerName: string;
   customerNumber?: string;
+  customerDomain?: string;
   shipToName?: string;
   shipToAddress?: string;
   orderDate?: string;
   shipmentDate?: string;
+  pickupTime?: string;
   deliveryDate?: string;
   currency?: string;
   paymentTerms?: string;
   shippingTerms?: string;
   carrier?: string;
+  carrierDomain?: string;
   contractNumber?: string;
   totalAmount?: number;
   notes?: string;
@@ -251,7 +254,7 @@ export function matchShipToLocation(
 /* Learning store (localStorage)                                       */
 /* ------------------------------------------------------------------ */
 
-export type LearnedField = 'customer' | 'product' | 'contract';
+export type LearnedField = 'customer' | 'product' | 'contract' | 'carrier';
 export interface LearnedMapping { field: LearnedField; from: string; to: string; recordedAt?: string; }
 
 const LEARN_KEY = 'poFieldMappings';

@@ -372,6 +372,7 @@ export interface Order {
   po: string;
   date: string;
   shipmentDate?: string;
+  pickupTime?: string;     // requested pick-up/load time (HH:MM) — pre-fills the appointment
   deliveryDate?: string;
   status: 'Open' | 'Confirmed' | 'Cancelled' | 'Completed';
   lineItems: OrderLineItem[];
@@ -595,6 +596,12 @@ export interface EmailSettings {
   replyToAddress?: string;
   /** Always BCC these on every send (internal audit trail). */
   internalCc: string[];
+  /** When true, emailed POs above autoApproveMinConfidence whose customer
+   *  matches a known customer are auto-created as Open orders, bypassing the
+   *  review queue. Off by default — operator opts in once they trust the scan. */
+  autoApproveEmailedPos?: boolean;
+  /** Minimum extraction confidence (0..1) required to auto-approve. Default 0.85. */
+  autoApproveMinConfidence?: number;
   /** Per-event auto-send toggles. Off by default — operator turns each on
    *  from the Email Center once they're comfortable with the test sends. */
   triggers: {
@@ -617,6 +624,8 @@ export const INITIAL_EMAIL_SETTINGS: EmailSettings = {
   fromAddress: '', // server fills from env when blank
   replyToAddress: '',
   internalCc: [],
+  autoApproveEmailedPos: false,
+  autoApproveMinConfidence: 0.85,
   triggers: {
     orderConfirmationOnConfirmed: false,
     bolOnCompletedAndBilled: false,

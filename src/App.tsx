@@ -430,6 +430,7 @@ export default function App() {
     customers: customers.map(c => c.name).filter(Boolean),
     products: Array.from(new Set(buildOrderProductOptions().flatMap(o => [o.label, o.value]).filter(Boolean))),
     contracts: contracts.map(c => c.contractNumber).filter(Boolean),
+    carriers: carriers.map(c => c.name).filter(Boolean),
     learned: poLearned,
   });
 
@@ -581,11 +582,11 @@ export default function App() {
     };
   };
 
-  const createOrderFromReview = (rev: POReview) => {
+  const createOrderFromReview = (rev: POReview, reservedBols: string[] = []): string | null => {
     const customer = customers.find(c => c.id === rev.customerId);
-    if (!customer) { setErrorBox('Select a customer before creating the order.'); return; }
+    if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
     const validLines = rev.lines.filter(l => l.productValue && l.qtyMt > 0);
-    if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return; }
+    if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return null; }
     const lineItems = validLines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
     const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
@@ -594,13 +595,14 @@ export default function App() {
     const location = rev.location || matchedContract?.origin || customer.defaultLocation || '';
     const newOrder: Order = {
       id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      bolNumber: generateBOLNumber(lineItems),
+      bolNumber: generateBOLNumber(lineItems, reservedBols),
       customer: customer.name,
       product: lineItems.map(li => li.productDisplayName || li.productName).join(', '),
       contractNumber: contractNumber || undefined,
       po: rev.po,
       date: new Date().toISOString().split('T')[0],
       shipmentDate: rev.shipmentDate || undefined,
+      pickupTime: rev.source.pickupTime || undefined,
       deliveryDate: rev.deliveryDate || undefined,
       status: 'Open',
       lineItems,
@@ -619,12 +621,24 @@ export default function App() {
     // Product is learned by BOTH the description and the vendor item code (the
     // code is the more stable key — a buyer's "LC325X" outlives wording tweaks).
     if (rev.customerRaw) recordLearned('customer', rev.customerRaw, customer.id);
+    // Learn the customer by their email DOMAIN too (stored as the canonical name
+    // so the extractor maps e.g. ca.nestle.com -> Nestle on the next email).
+    const custDomain = (rev.source.customerDomain || '').trim();
+    if (custDomain) recordLearned('customer', custDomain, customer.name);
     validLines.forEach(l => {
       if (!l.productValue) return;
       if (l.productRaw) recordLearned('product', l.productRaw, l.productValue);
       if (l.productCodeRaw) recordLearned('product', l.productCodeRaw, l.productValue);
     });
     if (rev.contractRaw && rev.contractNumber) recordLearned('contract', rev.contractRaw, rev.contractNumber);
+    // Learn the carrier by email domain (contrans.ca -> Contrans) and by any raw
+    // name the extractor used, so the carrier auto-fills next time.
+    if (rev.carrier) {
+      const carrierDomain = (rev.source.carrierDomain || '').trim();
+      if (carrierDomain) recordLearned('carrier', carrierDomain, rev.carrier);
+      const carrierRaw = (rev.source.carrier || '').trim();
+      if (carrierRaw && carrierRaw.toLowerCase() !== rev.carrier.toLowerCase()) recordLearned('carrier', carrierRaw, rev.carrier);
+    }
     setPoLearned(loadLearned());
     // If this review came from an emailed PO awaiting approval, clear it from the
     // pending queue and record the outcome in the import-history log.
@@ -644,6 +658,19 @@ export default function App() {
       }].slice(-1000));
     }
     setPoReviews(prev => prev.map(r => r.id === rev.id ? { ...r, created: true } : r));
+    return newOrder.bolNumber;
+  };
+
+  // Bulk-approve every uncreated review that already has a customer + a valid
+  // product line. Reserved BOLs accumulate so each order gets a unique number
+  // (orders state hasn't committed yet between synchronous calls).
+  const createAllReviews = () => {
+    const reserved: string[] = [];
+    poReviews.forEach(rev => {
+      if (rev.created || !rev.customerId || !rev.lines.some(l => l.productValue && l.qtyMt > 0)) return;
+      const bol = createOrderFromReview(rev, reserved);
+      if (bol) reserved.push(bol);
+    });
   };
 
   const updateReview = (id: string, patch: Partial<POReview>) =>
@@ -785,6 +812,7 @@ export default function App() {
       po: po.poNumber || '',
       date: new Date().toISOString().split('T')[0],
       shipmentDate: shipmentDate || undefined,
+      pickupTime: po.pickupTime || undefined,
       deliveryDate: deliveryDate || undefined,
       status: 'Open',
       lineItems,
@@ -883,6 +911,8 @@ export default function App() {
       const logs: PoImportLogEntry[] = [];
       const amendments: PoAmendment[] = [];
       const pendingImports: PoPendingImport[] = [];
+      const built: Order[] = [];        // auto-approved orders (opt-in)
+      const batchBols: string[] = [];   // BOLs reserved this batch for unique numbering
       const nowIso = new Date().toISOString();
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
       // PO numbers already awaiting review, so a re-scan doesn't queue the same
@@ -930,8 +960,25 @@ export default function App() {
             continue;
           }
           if (poNum && pendingPoSet.has(poNum)) continue; // already awaiting review
-          // Queue for operator review instead of auto-creating the order. The
-          // operator approves (creates the order) or dismisses it in Email Center.
+
+          // Opt-in auto-approval: a high-confidence PO whose customer matches a
+          // known customer is created straight away, skipping review.
+          const knownCustomer = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
+          const autoOk = !!emailSettings.autoApproveEmailedPos
+            && typeof po.confidence === 'number'
+            && po.confidence >= (emailSettings.autoApproveMinConfidence ?? 0.85)
+            && !!knownCustomer;
+          if (autoOk) {
+            const order = buildOrderFromExtraction(po, batchBols);
+            if (order) {
+              built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum);
+              logs.push({ ...logBase(item, po), customer: order.customer, orderId: order.id, orderBol: order.bolNumber, amount: order.amount, productSummary: order.product, result: 'created', note: 'Auto-approved (high confidence, known customer)' });
+              continue;
+            }
+          }
+
+          // Otherwise queue for operator review. The operator approves (creates the
+          // order) or dismisses it in Email Center.
           pendingImports.push({
             id: `PIMP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             createdAt: nowIso,
@@ -950,17 +997,19 @@ export default function App() {
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
         }
       }
+      if (built.length) setOrders(prev => [...prev, ...built]);
       if (pendingImports.length) setPoPendingImports(prev => [...prev, ...pendingImports].slice(-500));
       // Cap the persisted log so the whole-collection resync stays bounded.
       if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
       if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
       const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
-      if (pendingImports.length || pendingAmend) {
+      if (built.length || pendingImports.length || pendingAmend) {
         setPoIngestNotice(
           [
+            built.length ? `${built.length} order${built.length === 1 ? '' : 's'} auto-created` : '',
             pendingImports.length ? `${pendingImports.length} PO${pendingImports.length === 1 ? '' : 's'} to review` : '',
             pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
-          ].filter(Boolean).join(' · ') + ' from emailed POs — open Email Center to approve.',
+          ].filter(Boolean).join(' · ') + ' from emailed POs.',
         );
       }
     } catch (e) {
@@ -12941,7 +12990,7 @@ export default function App() {
                                       const schedContractNum = o.contractNumber || o.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
                                       const schedContract = contracts.find(c => c.contractNumber === schedContractNum);
                                       const loc = schedContract?.origin || o.location || locationName;
-                                      setShipmentCreationData({ location: loc, date: o.shipmentDate || '', time: '', bay: '', carrier: o.carrier || '', orderId: o.id });
+                                      setShipmentCreationData({ location: loc, date: o.shipmentDate || '', time: o.pickupTime || '', bay: '', carrier: o.carrier || '', orderId: o.id });
                                       setIsCreatingShipments(true);
                                     }}
                                     className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
@@ -17012,6 +17061,9 @@ export default function App() {
                   <div className="flex gap-2">
                     {totalToReview > 0 && (
                       <button onClick={() => { setPoReviews([]); setPoScanFiles([]); setPoScanError(null); }} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Scan More</button>
+                    )}
+                    {totalToReview > 1 && poReviews.some(r => !r.created && r.customerId && r.lines.some(l => l.productValue && l.qtyMt > 0)) && (
+                      <button onClick={createAllReviews} title="Create an Open order for every card that has a customer and a product line" className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800">Create All Valid</button>
                     )}
                     <button onClick={closePOScan} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">{createdCount > 0 ? 'Done' : 'Cancel'}</button>
                     {totalToReview === 0 && (

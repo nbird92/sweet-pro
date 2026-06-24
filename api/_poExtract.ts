@@ -21,6 +21,7 @@ export interface ExtractHints {
   customers?: string[];
   products?: string[];
   contracts?: string[];
+  carriers?: string[];
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 
@@ -31,15 +32,18 @@ const PO_SCHEMA = {
     poNumber: { type: Type.STRING, description: 'The purchase order number exactly as printed.' },
     customerName: { type: Type.STRING, description: 'The BUYER that issued the PO (never Sucro Can).' },
     customerNumber: { type: Type.STRING, description: 'Customer/account number if present.' },
+    customerDomain: { type: Type.STRING, description: "The customer's email domain from the participants, lowercase (e.g. ca.nestle.com). Empty if not derivable." },
     shipToName: { type: Type.STRING },
     shipToAddress: { type: Type.STRING },
     orderDate: { type: Type.STRING, description: 'ISO YYYY-MM-DD' },
     shipmentDate: { type: Type.STRING, description: 'Requested ship/pickup date, ISO YYYY-MM-DD' },
+    pickupTime: { type: Type.STRING, description: 'Requested pick-up / load time at the origin, 24h HH:MM if given (e.g. "03:00" from "LOAD 0300").' },
     deliveryDate: { type: Type.STRING, description: 'Requested delivery/receipt date, ISO YYYY-MM-DD' },
     currency: { type: Type.STRING, description: 'ISO currency code, e.g. CAD or USD.' },
     paymentTerms: { type: Type.STRING },
     shippingTerms: { type: Type.STRING, description: 'Incoterms / FOB / EXW / DAP / DDP / FCA, etc.' },
-    carrier: { type: Type.STRING, description: 'Carrier or ship method (e.g. "Pick Up", "Prepaid").' },
+    carrier: { type: Type.STRING, description: 'Freight carrier company (e.g. "Contrans", "Pick Up", "Prepaid").' },
+    carrierDomain: { type: Type.STRING, description: "The carrier's email domain, lowercase (e.g. contrans.ca). Empty if not derivable." },
     contractNumber: { type: Type.STRING, description: 'Contract / agreement number if referenced.' },
     totalAmount: { type: Type.NUMBER },
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
@@ -115,6 +119,8 @@ CRITICAL — who is the customer:
 - Sucro Can (any "Sucro" / "Sucro Can" / "Sucro Canada" / "Sucro Can Sourcing LLC" entity, or an address at 550 Sherman Ave N / 560 Ferguson Ave N, Hamilton ON, or an email at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us) is ALWAYS the vendor/supplier — NEVER the customer. This holds EVEN when the email was sent "via Order Desk SucroCan Canada <Orderdesk@sucro.ca>": that is just a shared group the order was forwarded through, not the buyer.
 - The CUSTOMER is the EXTERNAL company that placed the order (the buyer). The input may include the email's From / Reply-To / To / Cc / Subject headers, signatures, and a multi-message thread — USE THEM. Identify the customer from the participant email DOMAINS and signatures: a participant at, e.g., @ca.nestle.com identifies the customer as "Nestle". Prefer the company behind the Reply-To / external sender / signature over a group address. Normalize to the known customers list when there's an obvious match; otherwise return the company's plain name.
 - Freight carriers / dispatchers (e.g. Contrans / "Contrans Tank Group", emails at contrans.ca, "CTT Burford Dispatch", a "Dispatcher" signature) are the CARRIER, never the customer. Put the carrier company in the carrier field.
+- Also set customerDomain to the customer's email domain (e.g. ca.nestle.com) and carrierDomain to the carrier's email domain (e.g. contrans.ca), taken from the participant addresses. These let the app remember "this domain = this customer/carrier" for next time.
+- In a thread, a LATER message that changes an already-stated order (e.g. "PO 4581816652 for 0600 on June 30", "move to 1400", "please cancel PO ...") is an amendment/cancellation of that PO — return it as a separate documents[] entry with documentType amendment/cancellation and amendsPoNumber set.
 
 Extraction rules:
 - Ship-to: shipToName / shipToAddress must be the DELIVERY / ship-to location where the goods are physically received (often labelled "Ship To", "Deliver To", "Delivery Address"). Do NOT use the bill-to, sold-to, invoice/remit-to, or company head-office address for ship-to — those are frequently different from the delivery site. Capture the ship-to city/province/postal as printed.
@@ -177,6 +183,7 @@ function hintsText(hints?: ExtractHints): string {
   if (hints.customers?.length) parts.push(`Known customers (normalize to these when matched):\n${hints.customers.slice(0, 400).join(', ')}`);
   if (hints.products?.length) parts.push(`Known products:\n${hints.products.slice(0, 400).join(', ')}`);
   if (hints.contracts?.length) parts.push(`Known contract numbers:\n${hints.contracts.slice(0, 400).join(', ')}`);
+  if (hints.carriers?.length) parts.push(`Known freight carriers (normalize the carrier to these when matched):\n${hints.carriers.slice(0, 200).join(', ')}`);
   if (hints.learned?.length) {
     const lines = hints.learned.slice(0, 200).map(l => `- ${l.field}: when the document says "${l.from}", use "${l.to}"`).join('\n');
     parts.push(`Learned corrections from past reviews (apply when the source text matches):\n${lines}`);
