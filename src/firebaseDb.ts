@@ -129,7 +129,8 @@ export async function fetchAllData() {
 //     Genuine, small user deletions still propagate.
 export async function syncCollection<T extends { id: string }>(
   collectionName: string,
-  data: T[]
+  data: T[],
+  opts?: { allowMassDelete?: boolean }
 ): Promise<void> {
   const existing = await getDocs(collection(db, collectionName));
   const existingCount = existing.docs.length;
@@ -138,10 +139,14 @@ export async function syncCollection<T extends { id: string }>(
 
   // Mass-deletion guard: an update may remove a handful of user-deleted records,
   // never empty or gut the collection. Beyond max(20, 50% of the collection) we
-  // treat it as a bad/unloaded state and keep the existing docs.
-  const massDelete =
+  // treat it as a bad/unloaded state and keep the existing docs. Review queues
+  // and logs (poPendingImports, poAmendments, poImportLog, emailLog, inboxTriage)
+  // are EXEMPT — emptying/clearing them is a normal operator action — so callers
+  // pass { allowMassDelete: true } for those.
+  const massDelete = !opts?.allowMassDelete && (
     (data.length === 0 && existingCount > 0) ||
-    toDelete.length > Math.max(20, existingCount * 0.5);
+    toDelete.length > Math.max(20, existingCount * 0.5)
+  );
   if (massDelete && toDelete.length > 0) {
     console.warn(
       `[syncCollection] Refusing to delete ${toDelete.length} of ${existingCount} docs in "${collectionName}" ` +

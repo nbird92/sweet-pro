@@ -93,13 +93,24 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   };
 }
 
-// Sucro's own domains — an email FROM one of these is an INTERNAL message, never
-// a customer purchase order. Includes the "surco.ca" spelling the team also uses.
-const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca'];
+// Sucro's own domains — an email FROM one of these is an INTERNAL message from a
+// Sucro employee, never a customer purchase order. Includes the "surco.ca" /
+// "surco.us" spellings the team also uses.
+const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca', 'surco.us'];
 function isInternalSender(fromEmail: string | undefined): boolean {
   const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
   if (!domain) return false;
   return INTERNAL_SENDER_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+}
+// The shared "Order Desk" group address forwards real CUSTOMER POs through a Sucro
+// domain — that is NOT an employee email, so it stays eligible to be a new PO.
+function isOrderDeskForward(fromEmail: string | undefined): boolean {
+  return /order\s*desk|orderdesk@/i.test(String(fromEmail || ''));
+}
+// A Sucro EMPLOYEE address (internal domain, but not the order-desk forwarder).
+// Email from an employee is never a new-PO suggestion.
+function isInternalEmployee(fromEmail: string | undefined): boolean {
+  return isInternalSender(fromEmail) && !isOrderDeskForward(fromEmail);
 }
 function isStockRequest(subject: string | undefined): boolean {
   return /stock\s*request/i.test(String(subject || ''));
@@ -214,27 +225,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
         };
 
-        const internalSender = isInternalSender(fromEmail);
+        const internalEmployee = isInternalEmployee(fromEmail);
         const stockRequest = isStockRequest(subject);
         // Queue an extraction unless the model classified it as unrelated mail.
         const queueExtraction = async (extraction: any, sourceFile: string) => {
-          // Internal Sucro emails and "Stock Request" notes are NEVER new orders —
-          // at most they amend an existing PO (a split number / updated quantity).
-          // Downgrade any such new_order so it routes to the amendment review queue
-          // instead of creating a bogus new PO. A customer PO merely FORWARDED via a
-          // Sucro order-desk group is preserved: if the model identified an external
-          // customer domain, the internal-sender rule does not apply (Stock Request
-          // is unconditional).
-          if (extraction && extraction.documentType === 'new_order') {
-            const extDomain = String(extraction.customerDomain || '').toLowerCase();
-            const hasExternalCustomer = !!extDomain && !INTERNAL_SENDER_DOMAINS.some(d => extDomain === d || extDomain.endsWith('.' + d));
-            if (stockRequest || (internalSender && !hasExternalCustomer)) {
-              extraction.documentType = 'amendment';
-              extraction.amendsPoNumber = (extraction.amendsPoNumber || extraction.poNumber || '').trim();
-              extraction.amendment = extraction.amendment || {};
-              if (extraction.splitNumber && !extraction.amendment.newSplitNumber) extraction.amendment.newSplitNumber = extraction.splitNumber;
-              if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest ? 'Internal Stock Request — split number for an existing order/invoice' : 'Internal email — update to an existing order';
-            }
+          // An email from a Sucro EMPLOYEE (internal domain, not the order-desk
+          // forwarder) and any "Stock Request" note is NEVER a new order — at most
+          // it amends an existing PO (a split number / updated quantity). Downgrade
+          // any such new_order so it routes to the amendment review queue instead of
+          // becoming a new-PO suggestion. A customer PO FORWARDED via the shared
+          // Order Desk group address is preserved as a new order.
+          if (extraction && extraction.documentType === 'new_order' && (stockRequest || internalEmployee)) {
+            extraction.documentType = 'amendment';
+            extraction.amendsPoNumber = (extraction.amendsPoNumber || extraction.poNumber || '').trim();
+            extraction.amendment = extraction.amendment || {};
+            if (extraction.splitNumber && !extraction.amendment.newSplitNumber) extraction.amendment.newSplitNumber = extraction.splitNumber;
+            if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest ? 'Internal Stock Request — split number for an existing order/invoice' : 'Internal email — update to an existing order';
           }
           noteSuggestion(extraction);
           if (!extraction || extraction.documentType === 'other') return;
@@ -307,6 +313,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // Record the message as PO-processed so it isn't re-extracted later.
           await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString() });
         }
+
+        // A Sucro employee's email must never be a NEW-PO suggestion in the feed
+        // (it can still hint an amendment to an existing PO).
+        if (internalEmployee && (suggestion as string) === 'new_po') suggestion = suggestionPo ? 'amendment' : 'none';
 
         // Mirror the email into the read-only inbox feed (metadata + body + the
         // order suggestion) so operators can read/triage it inside the app.

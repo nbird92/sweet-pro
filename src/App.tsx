@@ -915,11 +915,16 @@ export default function App() {
   // internal domain, or whose subject says "Stock Request", is never a NEW order —
   // at most it amends an existing PO (a split number / quantity). These let the
   // client downgrade any new_order that slips through (e.g. queued before deploy).
-  const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca'];
+  const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca', 'surco.us'];
   const isInternalSenderEmail = (fromEmail?: string): boolean => {
     const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
     return !!domain && INTERNAL_SENDER_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
   };
+  // The shared "Order Desk" group forwards real CUSTOMER POs through a Sucro
+  // domain — that is not an employee, so it stays eligible to be a new PO.
+  const isOrderDeskForwardEmail = (fromEmail?: string): boolean => /order\s*desk|orderdesk@/i.test(String(fromEmail || ''));
+  // A Sucro employee address: internal domain, but not the order-desk forwarder.
+  const isInternalEmployeeEmail = (fromEmail?: string): boolean => isInternalSenderEmail(fromEmail) && !isOrderDeskForwardEmail(fromEmail);
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
 
   // Resolve an extracted carrier (name and/or email domain) to a Carrier record
@@ -1096,20 +1101,16 @@ export default function App() {
             logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
             continue;
           }
-          // Safety net (mirrors the server guard): an internal Sucro sender or a
-          // "Stock Request" subject is never a NEW order — downgrade to an amendment
-          // so it updates an existing PO (split number / qty) instead of creating
-          // one. A customer PO forwarded via a Sucro order-desk group is preserved
-          // when an external customer domain was identified ("Stock Request" is
-          // unconditional).
-          if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other') {
-            const extDomain = String(po.customerDomain || '').toLowerCase();
-            const hasExternalCustomer = !!extDomain && !INTERNAL_SENDER_DOMAINS.some(d => extDomain === d || extDomain.endsWith('.' + d));
-            if (isStockRequestSubject(item?.subject) || (isInternalSenderEmail(item?.fromEmail) && !hasExternalCustomer)) {
-              po.documentType = 'amendment';
-              po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
-              if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }
-            }
+          // Safety net (mirrors the server guard): an email from a Sucro EMPLOYEE
+          // (internal domain, not the order-desk forwarder) or a "Stock Request"
+          // subject is never a NEW order — downgrade to an amendment so it updates
+          // an existing PO (split number / qty) instead of becoming a new PO. A
+          // customer PO forwarded via the Order Desk group is preserved.
+          if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other'
+              && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail))) {
+            po.documentType = 'amendment';
+            po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
+            if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }
           }
           // Auto-enrichment (no approval): when this email references an EXISTING
           // order, fill the carrier (from a carrier email) and any MISSING split /
@@ -3427,7 +3428,7 @@ export default function App() {
       if (isSyncing.current || !lastSynced || !user) return;
       isSyncing.current = true;
 
-      const syncTasks: { collection: string; key: string; data: any[] }[] = [
+      const syncTasks: { collection: string; key: string; data: any[]; allowMassDelete?: boolean }[] = [
         { collection: COLLECTIONS.customers, key: 'customers', data: customers },
         { collection: COLLECTIONS.products, key: 'products', data: skus },
         { collection: COLLECTIONS.logistics, key: 'logistics', data: supplyChain },
@@ -3458,14 +3459,17 @@ export default function App() {
         { collection: COLLECTIONS.packagingFormats, key: 'packagingformats', data: packagingFormats },
         { collection: COLLECTIONS.namingFormulas, key: 'namingformulas', data: namingFormulas },
         { collection: COLLECTIONS.shippingTerms, key: 'shippingterms', data: shippingTermsList },
-        { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog },
+        // Review queues + logs: emptying / clearing them is a normal operator
+        // action, so they bypass the mass-deletion guard (a dismissed / approved
+        // PO or amendment must stay gone after a refresh).
+        { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog, allowMassDelete: true },
         { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
-        { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog },
-        { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports },
-        { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage },
-        { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments },
-        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })) },
+        { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog, allowMassDelete: true },
+        { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports, allowMassDelete: true },
+        { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage, allowMassDelete: true },
+        { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments, allowMassDelete: true },
+        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), allowMassDelete: true },
       ];
 
       try {
@@ -3474,7 +3478,7 @@ export default function App() {
           if (dataStr === lastSyncedData.current[task.key]) continue;
 
           setSyncStatus('syncing');
-          await syncCollection(task.collection, task.data);
+          await syncCollection(task.collection, task.data, { allowMassDelete: task.allowMassDelete });
           lastSyncedData.current[task.key] = dataStr;
         }
 
@@ -3492,6 +3496,28 @@ export default function App() {
     const timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+
+  // Fast-persist the review queues so a dismissed / approved PO or amendment
+  // sticks immediately and never reappears on a quick refresh. The main autosave
+  // is debounced 15s; this mirrors just these two queues within ~0.6s and bypasses
+  // the mass-deletion guard (clearing a queue is a normal operator action).
+  useEffect(() => {
+    if (!user || !lastSynced) return;
+    const t = setTimeout(() => {
+      const quick: { c: string; k: string; d: any[] }[] = [
+        { c: COLLECTIONS.poPendingImports, k: 'popendingimports', d: poPendingImports },
+        { c: COLLECTIONS.poAmendments, k: 'poamendments', d: poAmendments },
+      ];
+      quick.forEach(({ c, k, d }) => {
+        const s = JSON.stringify(d);
+        if (s === lastSyncedData.current[k]) return;
+        syncCollection(c, d, { allowMassDelete: true })
+          .then(() => { lastSyncedData.current[k] = s; })
+          .catch(e => console.error('queue persist failed:', c, e));
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [poPendingImports, poAmendments, user, lastSynced]);
 
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
