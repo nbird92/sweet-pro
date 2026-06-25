@@ -388,6 +388,146 @@ export default function QualityAssurancePage({
     setSelectedSkuId('');
   };
 
+  // ---- CSV import / export for the QA products table -----------------------
+  // Columns mirror the editable fields. On import, rows are matched to existing
+  // products by Product No. (productCode) then SKU name (case-insensitive) — a
+  // match updates in place, everything else is added. Adds go through
+  // onAddQAProduct so the paired SKU + product-group derivation still happen.
+  const QA_CSV_FIELDS = ['skuName', 'productCode', 'productGroup', 'category', 'location', 'sugarType', 'productFormat', 'netWeightKg', 'grossWeightKg', 'maxColor', 'packagingSupplier', 'upcCode', 'pol', 'ti', 'hi', 'unitsPerPallet'] as const;
+  const csvImportRef = useRef<HTMLInputElement>(null);
+
+  const parseCsvRow = (row: string): string[] => {
+    const out: string[] = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i];
+      if (inQ) {
+        if (ch === '"') { if (row[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+        else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === ',') { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  };
+  const csvCell = (v: any) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const downloadCsv = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const downloadQATemplate = () => downloadCsv('qa_products_template.csv', QA_CSV_FIELDS.join(','));
+  const exportQACsv = () => {
+    const lines = [QA_CSV_FIELDS.join(',')];
+    qaProducts.forEach(p => lines.push(QA_CSV_FIELDS.map(f => csvCell((p as any)[f])).join(',')));
+    downloadCsv('qa_products_export.csv', lines.join('\n'));
+  };
+
+  const handleImportQACSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string || '').replace(/\r\n?/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) { alert('CSV file is empty or has no data rows.'); return; }
+        const norm = (h: string) => h.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+        // header alias -> canonical QAProduct field
+        const alias: Record<string, string> = {
+          name: 'skuName', productname: 'skuName', description: 'skuName', skuname: 'skuName',
+          productcode: 'productCode', prodno: 'productCode', productnumber: 'productCode', productno: 'productCode',
+          productgroup: 'productGroup', group: 'productGroup',
+          category: 'category', convorganic: 'category', conventionalorganic: 'category',
+          location: 'location',
+          sugartype: 'sugarType',
+          productformat: 'productFormat', packagingformat: 'productFormat', format: 'productFormat',
+          netweightkg: 'netWeightKg', netweight: 'netWeightKg',
+          grossweightkg: 'grossWeightKg', grossweight: 'grossWeightKg',
+          maxcolor: 'maxColor', color: 'maxColor',
+          packagingsupplier: 'packagingSupplier', supplier: 'packagingSupplier',
+          upccode: 'upcCode', upc: 'upcCode',
+          pol: 'pol', portofloading: 'pol',
+          ti: 'ti', hi: 'hi',
+          unitsperpallet: 'unitsPerPallet',
+        };
+        const known = new Set<string>(QA_CSV_FIELDS as readonly string[]);
+        const colField = parseCsvRow(lines[0]).map(norm).map(h => alias[h] || (known.has(h) ? h : ''));
+        if (!colField.includes('skuName')) { alert(`The CSV needs a product name column ("skuName", "name" or "description").\n\nFound: ${colField.filter(Boolean).join(', ') || '(none recognized)'}`); return; }
+
+        const num = (v: string) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
+        const ts = Date.now();
+        const toAdd: QAProduct[] = [];
+        const toUpdate: QAProduct[] = [];
+        const seen = new Set<string>();
+        let skipped = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const values = parseCsvRow(lines[i]);
+          const row: any = {};
+          colField.forEach((f, idx) => { if (f) row[f] = (values[idx] ?? '').trim(); });
+          const skuName = (row.skuName || '').trim();
+          if (!skuName) { skipped++; continue; }
+          const key = skuName.toLowerCase();
+          if (seen.has(key)) { skipped++; continue; }
+          seen.add(key);
+
+          const existing = qaProducts.find(p =>
+            (row.productCode && p.productCode && p.productCode === row.productCode) ||
+            (p.skuName || '').trim().toLowerCase() === key
+          );
+          const category: 'Conventional' | 'Organic' = /organic/i.test(row.category || '') ? 'Organic' : 'Conventional';
+          const patch: Partial<QAProduct> = {
+            skuName,
+            productCode: row.productCode || (existing?.productCode ?? undefined),
+            productGroup: row.productGroup || (existing?.productGroup ?? ''),
+            category,
+            location: row.location || existing?.location || (locations[0]?.name || ''),
+            sugarType: row.sugarType || existing?.sugarType,
+            productFormat: row.productFormat || existing?.productFormat,
+            packagingSupplier: row.packagingSupplier || existing?.packagingSupplier || '',
+            upcCode: row.upcCode || existing?.upcCode || '',
+            pol: row.pol || existing?.pol,
+          };
+          if (row.netWeightKg) patch.netWeightKg = num(row.netWeightKg);
+          if (row.grossWeightKg) patch.grossWeightKg = num(row.grossWeightKg);
+          if (row.maxColor) patch.maxColor = num(row.maxColor) ?? 0;
+          if (row.ti) patch.ti = num(row.ti);
+          if (row.hi) patch.hi = num(row.hi);
+          if (row.unitsPerPallet) patch.unitsPerPallet = num(row.unitsPerPallet);
+
+          if (existing) {
+            toUpdate.push({ ...existing, ...patch, id: existing.id, skuId: existing.skuId });
+          } else {
+            const base = createBlankProduct();
+            toAdd.push({
+              ...base,
+              ...patch,
+              id: `QA-${ts}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+              skuId: `SKU-${ts}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+              maxColor: patch.maxColor ?? 0,
+            });
+          }
+        }
+        if (!toAdd.length && !toUpdate.length) { alert(`No products were imported.${skipped ? ` ${skipped} row(s) skipped (missing or duplicate name).` : ''}`); return; }
+        toUpdate.forEach(p => onUpdateQAProduct(p));
+        toAdd.forEach(p => onAddQAProduct(p));
+        alert(`QA products imported: ${toAdd.length} added, ${toUpdate.length} updated${skipped ? `, ${skipped} skipped` : ''}.`);
+      } catch (err) {
+        alert('Failed to import the CSV: ' + (err instanceof Error ? err.message : String(err)));
+      } finally {
+        if (csvImportRef.current) csvImportRef.current.value = '';
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // Open detail card
   const openDetail = (product: QAProduct) => {
     setSelectedProduct(product);
@@ -700,11 +840,33 @@ export default function QualityAssurancePage({
         exportFileName="Quality_Assurance"
       >
         <button
+          onClick={downloadQATemplate}
+          title="Download a blank CSV template with the QA product columns"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+        >
+          <Download size={12} /> Template
+        </button>
+        <button
+          onClick={() => csvImportRef.current?.click()}
+          title="Import QA products from a CSV (matches existing by Product No. / name)"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+        >
+          <Upload size={12} /> Import CSV
+        </button>
+        <button
+          onClick={exportQACsv}
+          title="Export the QA products table to CSV"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+        >
+          <Download size={12} /> Export CSV
+        </button>
+        <button
           onClick={openAddModal}
           className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
         >
           <Plus size={12} /> Add Product
         </button>
+        <input ref={csvImportRef} type="file" accept=".csv" onChange={handleImportQACSV} className="sr-only" />
       </PageBanner>
     <div className="p-6 space-y-4">
 
