@@ -111,59 +111,68 @@ export async function fetchAllData() {
   return Object.fromEntries(results) as Record<string, any[]>;
 }
 
-// Sync an entire collection: clear all docs and re-add from the provided array.
-// Each item MUST have an `id` field used as the document ID.
+// Sync an entire collection NON-DESTRUCTIVELY: UPSERT every provided doc (add +
+// update) and delete ONLY the docs the user actually removed. Each item MUST have
+// an `id` field used as the document ID.
+//
+// CRITICAL SAFETY INVARIANT: an automatic save must NEVER wipe or mass-delete a
+// collection. A previous version deleted every doc and re-added the array, so any
+// moment the in-memory state was empty or stale (e.g. a flaky read leaving the app
+// on its built-in demo data) the real records were destroyed. Now:
+//   * We never blind delete-all first — incoming docs are upserted, so a mid-sync
+//     failure can't leave the collection emptied.
+//   * Deletions are limited to docs that are genuinely absent from the incoming
+//     set AND only when that's a small change. If the incoming set is empty, or
+//     would remove a large fraction of what's stored (the signature of an
+//     unloaded / bad state such as demo data replacing real data), ALL deletions
+//     are SKIPPED and a warning is logged — existing records are preserved.
+//     Genuine, small user deletions still propagate.
 export async function syncCollection<T extends { id: string }>(
   collectionName: string,
   data: T[]
 ): Promise<void> {
-  // Get existing docs
   const existing = await getDocs(collection(db, collectionName));
+  const existingCount = existing.docs.length;
+  const incomingIds = new Set(data.map(it => it.id));
+  const toDelete = existing.docs.filter(d => !incomingIds.has(d.id));
 
-  // Use batched writes (max 500 per batch)
-  const batchSize = 450; // Leave room for deletes + writes in same batch
+  // Mass-deletion guard: an update may remove a handful of user-deleted records,
+  // never empty or gut the collection. Beyond max(20, 50% of the collection) we
+  // treat it as a bad/unloaded state and keep the existing docs.
+  const massDelete =
+    (data.length === 0 && existingCount > 0) ||
+    toDelete.length > Math.max(20, existingCount * 0.5);
+  if (massDelete && toDelete.length > 0) {
+    console.warn(
+      `[syncCollection] Refusing to delete ${toDelete.length} of ${existingCount} docs in "${collectionName}" ` +
+      `(incoming ${data.length}). Looks like an unloaded/bad in-memory state — preserving existing records, ` +
+      `upserting incoming only. A genuine bulk delete must be re-done in smaller batches.`,
+    );
+  }
 
-  // First, delete all existing docs
-  const deleteBatches: ReturnType<typeof writeBatch>[] = [];
-  let currentBatch = writeBatch(db);
+  const batchSize = 450;
+  const batches: ReturnType<typeof writeBatch>[] = [];
+  let batch = writeBatch(db);
   let count = 0;
+  const rotate = () => { if (count >= batchSize) { batches.push(batch); batch = writeBatch(db); count = 0; } };
 
-  for (const docSnap of existing.docs) {
-    currentBatch.delete(docSnap.ref);
-    count++;
-    if (count >= batchSize) {
-      deleteBatches.push(currentBatch);
-      currentBatch = writeBatch(db);
-      count = 0;
-    }
-  }
-  if (count > 0) deleteBatches.push(currentBatch);
-
-  for (const batch of deleteBatches) {
-    await batch.commit();
-  }
-
-  // Then, add all new docs
-  const addBatches: ReturnType<typeof writeBatch>[] = [];
-  currentBatch = writeBatch(db);
-  count = 0;
-
+  // Upsert every incoming doc (Firestore rejects `undefined`, so strip those).
   for (const item of data) {
-    const docRef = doc(db, collectionName, item.id);
-    // Strip undefined values — Firestore rejects them
     const cleanItem = Object.fromEntries(Object.entries(item).filter(([, v]) => v !== undefined));
-    currentBatch.set(docRef, cleanItem);
+    batch.set(doc(db, collectionName, item.id), cleanItem);
     count++;
-    if (count >= batchSize) {
-      addBatches.push(currentBatch);
-      currentBatch = writeBatch(db);
-      count = 0;
+    rotate();
+  }
+  // Delete only genuine, small user removals.
+  if (!massDelete) {
+    for (const d of toDelete) {
+      batch.delete(d.ref);
+      count++;
+      rotate();
     }
   }
-  if (count > 0) addBatches.push(currentBatch);
+  if (count > 0) batches.push(batch);
 
-  for (const batch of addBatches) {
-    await batch.commit();
-  }
+  for (const b of batches) await b.commit();
 }
 

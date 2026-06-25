@@ -3085,7 +3085,12 @@ export default function App() {
       setSyncError(null);
       const data = await fetchAllData();
 
-      if (data.customers?.length) {
+      // Authoritative: reflect Firestore even when a collection comes back EMPTY,
+      // so the built-in demo customers/products can never linger in state and then
+      // be persisted over the real records. A failed read throws and aborts the
+      // whole load (autosave stays disabled), so an empty array here means the
+      // collection genuinely is empty — not a glitch.
+      if (data.customers) {
         const mapped = data.customers.map((c: any) => ({
           ...c,
           defaultMargin: parseFloat(c.defaultMargin) || 0
@@ -3093,7 +3098,7 @@ export default function App() {
         setCustomers(mapped);
         lastSyncedData.current.customers = JSON.stringify(mapped);
       }
-      if (data.products?.length) {
+      if (data.products) {
         const validLocations = ['Hamilton', 'Vancouver'];
         const mapped = data.products.map((s: any) => ({
           ...s,
