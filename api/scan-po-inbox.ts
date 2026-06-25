@@ -93,6 +93,18 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   };
 }
 
+// Sucro's own domains — an email FROM one of these is an INTERNAL message, never
+// a customer purchase order. Includes the "surco.ca" spelling the team also uses.
+const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca'];
+function isInternalSender(fromEmail: string | undefined): boolean {
+  const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
+  if (!domain) return false;
+  return INTERNAL_SENDER_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+}
+function isStockRequest(subject: string | undefined): boolean {
+  return /stock\s*request/i.test(String(subject || ''));
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Authorize EITHER the Vercel cron (Bearer <CRON_SECRET>) OR a signed-in app
   // user (Bearer <Firebase ID token>) — the latter lets the Email Center
@@ -202,8 +214,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
         };
 
+        const internalSender = isInternalSender(fromEmail);
+        const stockRequest = isStockRequest(subject);
         // Queue an extraction unless the model classified it as unrelated mail.
         const queueExtraction = async (extraction: any, sourceFile: string) => {
+          // Internal Sucro emails and "Stock Request" notes are NEVER new orders —
+          // at most they amend an existing PO (a split number / updated quantity).
+          // Downgrade any such new_order so it routes to the amendment review queue
+          // instead of creating a bogus new PO. A customer PO merely FORWARDED via a
+          // Sucro order-desk group is preserved: if the model identified an external
+          // customer domain, the internal-sender rule does not apply (Stock Request
+          // is unconditional).
+          if (extraction && extraction.documentType === 'new_order') {
+            const extDomain = String(extraction.customerDomain || '').toLowerCase();
+            const hasExternalCustomer = !!extDomain && !INTERNAL_SENDER_DOMAINS.some(d => extDomain === d || extDomain.endsWith('.' + d));
+            if (stockRequest || (internalSender && !hasExternalCustomer)) {
+              extraction.documentType = 'amendment';
+              extraction.amendsPoNumber = (extraction.amendsPoNumber || extraction.poNumber || '').trim();
+              extraction.amendment = extraction.amendment || {};
+              if (extraction.splitNumber && !extraction.amendment.newSplitNumber) extraction.amendment.newSplitNumber = extraction.splitNumber;
+              if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest ? 'Internal Stock Request — split number for an existing order/invoice' : 'Internal email — update to an existing order';
+            }
+          }
           noteSuggestion(extraction);
           if (!extraction || extraction.documentType === 'other') return;
           const id = `INPO-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

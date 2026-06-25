@@ -911,14 +911,29 @@ export default function App() {
     };
   };
 
+  // Mirror of the server-side guard (api/scan-po-inbox.ts): an email FROM a Sucro
+  // internal domain, or whose subject says "Stock Request", is never a NEW order —
+  // at most it amends an existing PO (a split number / quantity). These let the
+  // client downgrade any new_order that slips through (e.g. queued before deploy).
+  const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca'];
+  const isInternalSenderEmail = (fromEmail?: string): boolean => {
+    const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
+    return !!domain && INTERNAL_SENDER_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
+  };
+  const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
+
   // Turn an emailed amendment/cancellation extraction into a review-queue entry,
-  // matching the existing order by PO number and capturing its before-values.
+  // matching the existing order (or, for a split-only note, invoice) by PO number
+  // and capturing its before-values.
   const buildAmendmentFromExtraction = (po: ExtractedPO, item: any, createdAt: string): PoAmendment => {
     const amend = po.amendment || {};
     const amendPo = (po.amendsPoNumber || po.poNumber || '').trim();
     const isCancel = po.documentType === 'cancellation' || amend.cancel === true;
     const order = amendPo ? orders.find(o => (o.po || '').trim() === amendPo) : undefined;
+    // A "Stock Request" split may target an invoice when no open order remains.
+    const matchInvoice = !order && amendPo ? invoices.find(inv => (inv.po || '').trim() === amendPo) : undefined;
     const prevQty = order ? order.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : undefined;
+    const newSplit = (amend.newSplitNumber || po.splitNumber || '').trim();
     return {
       id: `POAMEND-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       createdAt,
@@ -927,20 +942,22 @@ export default function App() {
       subject: item?.subject,
       sourceFile: item?.sourceFile,
       poNumber: amendPo || undefined,
-      customer: order?.customer || po.customerName || undefined,
+      customer: order?.customer || matchInvoice?.customer || po.customerName || undefined,
       orderId: order?.id,
       orderBol: order?.bolNumber,
       kind: isCancel ? 'cancellation' : 'amendment',
       newShipmentDate: amend.newShipmentDate || undefined,
       newDeliveryDate: amend.newDeliveryDate || undefined,
       newQuantityMt: typeof amend.newQuantityMt === 'number' && amend.newQuantityMt > 0 ? amend.newQuantityMt : undefined,
+      newSplitNumber: newSplit || undefined,
       cancel: isCancel || undefined,
       summary: amend.summary || undefined,
       prevShipmentDate: order?.shipmentDate,
       prevDeliveryDate: order?.deliveryDate,
       prevQuantityMt: prevQty,
+      prevSplitNumber: order?.splitNumber || matchInvoice?.splitNo || undefined,
       prevStatus: order?.status,
-      status: order ? 'pending' : 'unmatched',
+      status: (order || matchInvoice) ? 'pending' : 'unmatched',
     };
   };
 
@@ -951,13 +968,29 @@ export default function App() {
     if (a.status !== 'pending') return; // already applied/dismissed/unmatched
     const order = (a.orderId && orders.find(o => o.id === a.orderId))
       || (a.poNumber ? orders.find(o => (o.po || '').trim() === a.poNumber!.trim()) : undefined);
-    if (!order) { setErrorBox('No matching order found for this amendment.'); return; }
+    const split = (a.newSplitNumber || '').trim();
+    const poKey = (a.poNumber || order?.po || '').trim();
+    if (!order) {
+      // No order to patch — a split number can still attach to matching invoices
+      // (a "Stock Request" against an already-invoiced PO).
+      if (split && poKey) {
+        let touched = 0;
+        setInvoices(prev => prev.map(inv => { if ((inv.po || '').trim() === poKey) { touched++; return { ...inv, splitNo: split }; } return inv; }));
+        if (touched > 0) {
+          setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString() } : x));
+          return;
+        }
+      }
+      setErrorBox('No matching order or invoice found for this amendment.');
+      return;
+    }
     const updated: Order = { ...order };
     if (a.kind === 'cancellation' || a.cancel) {
       updated.status = 'Cancelled';
     } else {
       if (a.newShipmentDate) updated.shipmentDate = a.newShipmentDate;
       if (a.newDeliveryDate) updated.deliveryDate = a.newDeliveryDate;
+      if (split) updated.splitNumber = split;
       if (typeof a.newQuantityMt === 'number' && a.newQuantityMt > 0) {
         const newTotal = a.newQuantityMt;
         const lis = updated.lineItems.map((li, idx) => {
@@ -977,6 +1010,10 @@ export default function App() {
       }
     }
     setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
+    // Mirror the split number onto the PO's invoices, too (not on a cancellation).
+    if (split && poKey && !(a.kind === 'cancellation' || a.cancel)) {
+      setInvoices(prev => prev.map(inv => (inv.po || '').trim() === poKey ? { ...inv, splitNo: split } : inv));
+    }
     setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
   };
   const dismissAmendment = (a: PoAmendment) =>
@@ -1028,6 +1065,21 @@ export default function App() {
           if (!po) {
             logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
             continue;
+          }
+          // Safety net (mirrors the server guard): an internal Sucro sender or a
+          // "Stock Request" subject is never a NEW order — downgrade to an amendment
+          // so it updates an existing PO (split number / qty) instead of creating
+          // one. A customer PO forwarded via a Sucro order-desk group is preserved
+          // when an external customer domain was identified ("Stock Request" is
+          // unconditional).
+          if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other') {
+            const extDomain = String(po.customerDomain || '').toLowerCase();
+            const hasExternalCustomer = !!extDomain && !INTERNAL_SENDER_DOMAINS.some(d => extDomain === d || extDomain.endsWith('.' + d));
+            if (isStockRequestSubject(item?.subject) || (isInternalSenderEmail(item?.fromEmail) && !hasExternalCustomer)) {
+              po.documentType = 'amendment';
+              po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
+              if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }
+            }
           }
           // Order amendments/cancellations go to the review queue, not orders.
           if (po.documentType === 'amendment' || po.documentType === 'cancellation') {

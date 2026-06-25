@@ -66,6 +66,7 @@ const PO_SCHEMA = {
     carrier: { type: Type.STRING, description: 'Freight carrier company (e.g. "Contrans", "Pick Up", "Prepaid").' },
     carrierDomain: { type: Type.STRING, description: "The carrier's email domain, lowercase (e.g. contrans.ca). Empty if not derivable." },
     contractNumber: { type: Type.STRING, description: 'Contract / agreement number if referenced.' },
+    splitNumber: { type: Type.STRING, description: 'Split / shipment-split number (e.g. on an internal "Stock Request" note) to be attached to an existing PO or invoice. Capture exactly as printed.' },
     totalAmount: { type: Type.NUMBER },
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
     confidence: { type: Type.NUMBER, description: 'Overall extraction confidence 0..1.' },
@@ -83,6 +84,7 @@ const PO_SCHEMA = {
         newShipmentDate: { type: Type.STRING, description: 'New requested ship/pickup date, ISO YYYY-MM-DD.' },
         newDeliveryDate: { type: Type.STRING, description: 'New requested delivery date, ISO YYYY-MM-DD.' },
         newQuantityMt: { type: Type.NUMBER, description: 'New TOTAL order quantity in metric tonnes.' },
+        newSplitNumber: { type: Type.STRING, description: 'A split / shipment-split number to add to the existing PO or invoice (common on internal "Stock Request" notes).' },
         cancel: { type: Type.BOOLEAN, description: 'True when the order is being cancelled.' },
         summary: { type: Type.STRING, description: 'One-line plain-English summary of the requested change.' },
       },
@@ -135,6 +137,10 @@ Document classification (set documentType):
 - 'amendment' — a request to CHANGE an existing order, e.g. "change the ship date on PO 12345 to Jun 25", "increase PO 12345 to 40 MT", "move delivery to next week". Set amendsPoNumber to the referenced existing PO number and fill the amendment object with only the fields that change. lineItems may be empty.
 - 'cancellation' — a request to cancel an existing order, e.g. "please cancel PO 12345". Set amendsPoNumber and amendment.cancel = true.
 - 'other' — anything unrelated (newsletters, replies with no order content, signatures). Leave the order fields empty.
+
+INTERNAL emails are NOT new orders:
+- An email written BY internal Sucro staff — a personal address at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us / surco.ca (or a sucro/sucrocan subdomain) — is an INTERNAL message, not a customer purchase order. IMPORTANT exception: a customer's PO that is merely FORWARDED through a shared Sucro order-desk group (e.g. "via Order Desk SucroCan <Orderdesk@sucro.ca>") is still that customer's NEW order — tell them apart by whether an EXTERNAL buyer is identifiable (from the thread, Reply-To, signature, or an attached PO document). If an external buyer/customer is identifiable, classify 'new_order' with that customer. If it is Sucro staff passing along an internal update (a split number, a quantity or ship-date change) with NO external buyer, classify it 'amendment' (set amendsPoNumber to the existing PO it refers to) or 'other' — never 'new_order'.
+- An email whose SUBJECT contains "Stock Request" is ALWAYS an INTERNAL note that supplies a SPLIT NUMBER for an existing PO or invoice — it is NEVER a new order, regardless of sender. Classify it 'amendment', set amendsPoNumber to the referenced PO/invoice number, and put the split number in amendment.newSplitNumber AND the top-level splitNumber field.
 
 CRITICAL — who is the customer:
 - Sucro Can (any "Sucro" / "Sucro Can" / "Sucro Canada" / "Sucro Can Sourcing LLC" entity, or an address at 550 Sherman Ave N / 560 Ferguson Ave N, Hamilton ON, or an email at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us) is ALWAYS the vendor/supplier — NEVER the customer. This holds EVEN when the email was sent "via Order Desk SucroCan Canada <Orderdesk@sucro.ca>": that is just a shared group the order was forwarded through, not the buyer.

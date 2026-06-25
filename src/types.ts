@@ -485,12 +485,14 @@ export interface PoAmendment {
   newShipmentDate?: string;
   newDeliveryDate?: string;
   newQuantityMt?: number;
+  newSplitNumber?: string;     // split # from an internal / "Stock Request" email
   cancel?: boolean;
   summary?: string;            // model's one-line description
   // Before-values captured at match time, for the review diff:
   prevShipmentDate?: string;
   prevDeliveryDate?: string;
   prevQuantityMt?: number;
+  prevSplitNumber?: string;
   prevStatus?: string;
   status: 'pending' | 'applied' | 'dismissed' | 'unmatched';
   appliedAt?: string;

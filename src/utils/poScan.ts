@@ -39,6 +39,9 @@ export interface ExtractedPO {
   carrier?: string;
   carrierDomain?: string;
   contractNumber?: string;
+  /** Split / shipment-split number to attach to an existing PO or invoice
+   *  (e.g. supplied by an internal "Stock Request" email). */
+  splitNumber?: string;
   totalAmount?: number;
   notes?: string;
   confidence?: number;
@@ -51,6 +54,7 @@ export interface ExtractedPO {
     newShipmentDate?: string;
     newDeliveryDate?: string;
     newQuantityMt?: number;
+    newSplitNumber?: string;
     cancel?: boolean;
     summary?: string;
   };
