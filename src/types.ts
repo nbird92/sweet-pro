@@ -454,6 +454,9 @@ export interface InboxFeedItem {
   attachments?: { filename: string; mimeType: string }[];
   /** AI suggestion for order-related mail; 'none' for everything else. */
   suggestion?: 'new_po' | 'amendment' | 'cancellation' | 'none';
+  /** Sender bucket: customer (buyer), internal (Sucro employee) or logistics
+   *  (a known carrier). Internal/logistics senders never get a new_po suggestion. */
+  senderCategory?: 'customer' | 'internal' | 'logistics';
   poNumber?: string;           // referenced PO when order-related
   customer?: string;           // buyer identified from participant domains/signatures
   carrier?: string;            // freight carrier identified from participants/body

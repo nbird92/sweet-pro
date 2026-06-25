@@ -43,6 +43,9 @@ export interface ExtractHints {
   products?: string[];
   contracts?: string[];
   carriers?: string[];
+  /** Email domains of known freight carriers (from the carriers table) — used to
+   *  recognise a sender as logistics, not a customer. */
+  carrierDomains?: string[];
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 

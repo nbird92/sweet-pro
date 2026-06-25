@@ -925,6 +925,16 @@ export default function App() {
   const isOrderDeskForwardEmail = (fromEmail?: string): boolean => /order\s*desk|orderdesk@/i.test(String(fromEmail || ''));
   // A Sucro employee address: internal domain, but not the order-desk forwarder.
   const isInternalEmployeeEmail = (fromEmail?: string): boolean => isInternalSenderEmail(fromEmail) && !isOrderDeskForwardEmail(fromEmail);
+  // A logistics / carrier sender: the sender domain matches a known carrier's
+  // contact-email domain (contrans.ca, denalilogistics.ca, bluedotamericas.com…).
+  const isLogisticsSenderEmail = (fromEmail?: string): boolean => {
+    const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
+    if (!domain) return false;
+    return carriers.some(c => {
+      const cd = (c.contactEmail || '').toLowerCase().split('@')[1];
+      return !!cd && (domain === cd || domain.endsWith('.' + cd) || cd.endsWith('.' + domain));
+    });
+  };
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
 
   // Resolve an extracted carrier (name and/or email domain) to a Carrier record
@@ -1102,12 +1112,13 @@ export default function App() {
             continue;
           }
           // Safety net (mirrors the server guard): an email from a Sucro EMPLOYEE
-          // (internal domain, not the order-desk forwarder) or a "Stock Request"
-          // subject is never a NEW order — downgrade to an amendment so it updates
-          // an existing PO (split number / qty) instead of becoming a new PO. A
-          // customer PO forwarded via the Order Desk group is preserved.
+          // (internal domain, not the order-desk forwarder), a LOGISTICS carrier,
+          // or a "Stock Request" subject is never a NEW order — downgrade to an
+          // amendment so it updates an existing PO (carrier / split / qty) instead
+          // of becoming a new PO. A customer PO forwarded via the Order Desk group
+          // is preserved.
           if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other'
-              && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail))) {
+              && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail) || isLogisticsSenderEmail(item?.fromEmail))) {
             po.documentType = 'amendment';
             po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
             if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }

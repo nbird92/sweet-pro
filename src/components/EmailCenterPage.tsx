@@ -55,6 +55,18 @@ function amendmentChangeText(a: PoAmendment): string {
   return parts.join('   ·   ') || (a.summary || 'See email');
 }
 
+// Sender bucket chip for the inbox feed: customer / internal / logistics.
+function SenderCategoryChip({ category }: { category?: 'customer' | 'internal' | 'logistics' }) {
+  if (!category) return null;
+  const m = {
+    customer:  { label: 'Customer',  cls: 'bg-sky-100    text-sky-800'    },
+    internal:  { label: 'Internal',  cls: 'bg-slate-200  text-slate-700'  },
+    logistics: { label: 'Logistics', cls: 'bg-violet-100 text-violet-800' },
+  }[category];
+  if (!m) return null;
+  return <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase ${m.cls}`}>{m.label}</span>;
+}
+
 const TYPE_LABELS: Record<EmailDocumentType, string> = {
   order_confirmation: 'Order Confirmation',
   bol: 'Bill of Lading',
@@ -276,7 +288,10 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <tr className={`hover:bg-[#F9F9F9] cursor-pointer ${status ? 'opacity-60' : ''}`} onClick={() => setExpandedFeed(open ? null : e.id)}>
                       <td className="p-3 text-xs">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                       <td className="p-3 text-xs font-mono whitespace-nowrap">{e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'}</td>
-                      <td className="p-3 text-xs max-w-[180px] truncate" title={e.fromEmail}>{e.fromName || e.fromEmail || '—'}</td>
+                      <td className="p-3 text-xs max-w-[180px]" title={e.fromEmail}>
+                        <div className="truncate">{e.fromName || e.fromEmail || '—'}</div>
+                        <SenderCategoryChip category={e.senderCategory} />
+                      </td>
                       <td className="p-3 text-xs max-w-[280px] truncate" title={e.subject}>{e.subject || '(no subject)'}</td>
                       <td className="p-3 text-center">{e.hasAttachments ? <Paperclip size={12} className="inline opacity-60" /> : ''}</td>
                       <td className="p-3">

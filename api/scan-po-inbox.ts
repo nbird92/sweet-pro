@@ -73,6 +73,11 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   ].filter(Boolean);
   const contracts = contractSnap.docs.map(d => (d.data() as any).contractNumber).filter(Boolean);
   const carriers = (carrierSnap.docs || []).map((d: any) => d.data().name).filter(Boolean);
+  // Email domains of known carriers (e.g. contrans.ca, denalilogistics.ca) — used
+  // to recognise a sender as logistics rather than a customer.
+  const carrierDomains = Array.from(new Set((carrierSnap.docs || [])
+    .map((d: any) => String(d.data().contactEmail || '').toLowerCase().split('@')[1] || '')
+    .filter(Boolean)));
   // Ignore learned corrections older than 30 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.
   // The client physically deletes them; this is a belt-and-suspenders read guard.
@@ -89,6 +94,7 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
     products: Array.from(new Set(products)),
     contracts: Array.from(new Set(contracts)),
     carriers: Array.from(new Set(carriers)),
+    carrierDomains,
     learned,
   };
 }
@@ -111,6 +117,24 @@ function isOrderDeskForward(fromEmail: string | undefined): boolean {
 // Email from an employee is never a new-PO suggestion.
 function isInternalEmployee(fromEmail: string | undefined): boolean {
   return isInternalSender(fromEmail) && !isOrderDeskForward(fromEmail);
+}
+function domainOf(fromEmail: string | undefined): string {
+  return String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
+}
+// A LOGISTICS / carrier sender: the sender domain matches a known carrier's email
+// domain (e.g. contrans.ca, denalilogistics.ca, bluedotamericas.com).
+function isLogisticsSender(fromEmail: string | undefined, carrierDomains: string[]): boolean {
+  const domain = domainOf(fromEmail);
+  if (!domain) return false;
+  return carrierDomains.some(d => d && (domain === d || domain.endsWith('.' + d) || d.endsWith('.' + domain)));
+}
+// Categorize a sender into one of three groups. Internal employees and logistics
+// carriers never trigger a NEW-PO suggestion (they may update an existing PO);
+// everyone else (incl. the order-desk forwarder) is a customer.
+function senderCategoryOf(fromEmail: string | undefined, carrierDomains: string[]): 'customer' | 'internal' | 'logistics' {
+  if (isInternalEmployee(fromEmail)) return 'internal';
+  if (isLogisticsSender(fromEmail, carrierDomains)) return 'logistics';
+  return 'customer';
 }
 function isStockRequest(subject: string | undefined): boolean {
   return /stock\s*request/i.test(String(subject || ''));
@@ -176,6 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const db = getDb();
     const hints = await buildHints(db);
+    const carrierDomains = hints.carrierDomains || [];
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
     const feedRef = db.collection('inboxFeed');
@@ -225,22 +250,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
         };
 
-        const internalEmployee = isInternalEmployee(fromEmail);
+        const senderCategory = senderCategoryOf(fromEmail, carrierDomains);
+        const notCustomer = senderCategory !== 'customer'; // internal employee OR logistics
         const stockRequest = isStockRequest(subject);
         // Queue an extraction unless the model classified it as unrelated mail.
         const queueExtraction = async (extraction: any, sourceFile: string) => {
-          // An email from a Sucro EMPLOYEE (internal domain, not the order-desk
-          // forwarder) and any "Stock Request" note is NEVER a new order — at most
-          // it amends an existing PO (a split number / updated quantity). Downgrade
-          // any such new_order so it routes to the amendment review queue instead of
-          // becoming a new-PO suggestion. A customer PO FORWARDED via the shared
-          // Order Desk group address is preserved as a new order.
-          if (extraction && extraction.documentType === 'new_order' && (stockRequest || internalEmployee)) {
+          // An email from a Sucro EMPLOYEE or a LOGISTICS carrier (and any "Stock
+          // Request" note) is NEVER a new order — at most it amends an existing PO
+          // (a carrier, split number, or quantity). Downgrade any such new_order so
+          // it routes to the amendment review queue instead of becoming a new-PO
+          // suggestion. A customer PO FORWARDED via the shared Order Desk group
+          // address stays a customer email (eligible to be a new order).
+          if (extraction && extraction.documentType === 'new_order' && (stockRequest || notCustomer)) {
             extraction.documentType = 'amendment';
             extraction.amendsPoNumber = (extraction.amendsPoNumber || extraction.poNumber || '').trim();
             extraction.amendment = extraction.amendment || {};
             if (extraction.splitNumber && !extraction.amendment.newSplitNumber) extraction.amendment.newSplitNumber = extraction.splitNumber;
-            if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest ? 'Internal Stock Request — split number for an existing order/invoice' : 'Internal email — update to an existing order';
+            if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest
+              ? 'Internal Stock Request — split number for an existing order/invoice'
+              : (senderCategory === 'logistics' ? 'Carrier email — update to an existing order' : 'Internal email — update to an existing order');
           }
           noteSuggestion(extraction);
           if (!extraction || extraction.documentType === 'other') return;
@@ -314,9 +342,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString() });
         }
 
-        // A Sucro employee's email must never be a NEW-PO suggestion in the feed
-        // (it can still hint an amendment to an existing PO).
-        if (internalEmployee && (suggestion as string) === 'new_po') suggestion = suggestionPo ? 'amendment' : 'none';
+        // An internal-employee or logistics-carrier email must never be a NEW-PO
+        // suggestion in the feed (it can still hint an amendment to an existing PO).
+        if (notCustomer && (suggestion as string) === 'new_po') suggestion = suggestionPo ? 'amendment' : 'none';
 
         // Mirror the email into the read-only inbox feed (metadata + body + the
         // order suggestion) so operators can read/triage it inside the app.
@@ -334,6 +362,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           hasAttachments: allAttachments.length > 0,
           attachments: allAttachments,
           suggestion,
+          senderCategory,
           poNumber: suggestionPo || '',
           customer: suggestionCustomer || '',
           carrier: suggestionCarrier || '',
