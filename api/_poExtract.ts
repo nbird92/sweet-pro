@@ -147,7 +147,7 @@ Extraction rules:
 - Ship-to: shipToName / shipToAddress must be the DELIVERY / ship-to location where the goods are physically received (often labelled "Ship To", "Deliver To", "Delivery Address"). Do NOT use the bill-to, sold-to, invoice/remit-to, or company head-office address for ship-to — those are frequently different from the delivery site. Capture the ship-to city/province/postal as printed.
 - Vendor item code: each line's itemNumber is the BUYER's code for our product (a "Vendor Item #", "Material #", "Customer Part #", e.g. LC325X). Always capture it when present — it is the most reliable key for matching our catalog product.
 - Quantities: report quantity as the raw number and unit EXACTLY as printed (lb, lbs, kg, MT, cwt, short ton, ...). Provide quantityMt when you can, but the app recomputes MT in code, so a faithful quantity + unit matters most.
-- Pricing: report unitPrice as the RAW unit price exactly as printed, and priceBasis as the unit it is per (e.g. "per lb", "per 100 lb", "per cwt", "per kg", "per MT"). DO NOT pre-convert the price. The app converts unitPrice → $/MT in code (lb → kg → MT), so faithful unitPrice + priceBasis matter more than pricePerMt; still fill pricePerMt when obvious.
+- Pricing: report unitPrice as the RAW unit price exactly as printed, and priceBasis as the unit it is per (e.g. "per lb", "per 100 lb", "per cwt", "per kg", "per MT"). DO NOT pre-convert the price. The app converts unitPrice → $/MT in code (lb → kg → MT), so faithful unitPrice + priceBasis matter more than pricePerMt; still fill pricePerMt when obvious. When the PO gives NO clear per-unit price but DOES state a total/extended price for the line or order, leave unitPrice empty and instead capture that total in the line's amount (and the order total in totalAmount) — the app derives $/MT by dividing the total by the quantity. Never fabricate a per-unit price from a total yourself.
 - Dates must be ISO YYYY-MM-DD.
 - Normalize customer / product / contract names to the provided known lists ONLY when there is an obvious match; otherwise return the document's text verbatim.
 - Contract number: Sucro contract numbers follow the format S######.### (the letter S, six digits, a period, then three digits — e.g. S123456.001). If any value matching that pattern appears ANYWHERE on the PO (header, notes, line items, references), return it as contractNumber.
@@ -262,15 +262,56 @@ function mtPerBasis(text: string | undefined): number | null {
 }
 
 /** Recompute quantityMt and pricePerMt for one line item from its raw fields,
- *  overriding the model's arithmetic whenever the unit/basis is recognized. */
+ *  overriding the model's arithmetic whenever the unit/basis is recognized.
+ *
+ *  Pricing priority:
+ *   1. A CLEAR per-unit price (unitPrice + a recognized $/MT, $/kg, $/lb, ... basis)
+ *      is converted to $/MT and used as-is.
+ *   2. Otherwise, if the line carries an extended/total amount, derive
+ *      $/MT = line amount ÷ line quantity (in MT). */
 function deriveLineMetrics(li: any): void {
   if (!li || typeof li !== 'object') return;
   const qtyMt = typeof li.quantity === 'number' ? li.quantity * (mtPerBasis(li.unit) ?? NaN) : NaN;
   if (Number.isFinite(qtyMt) && qtyMt > 0) li.quantityMt = Math.round(qtyMt * 1000) / 1000;
+  // 1. Clear per-unit price.
   const basisMt = mtPerBasis(li.priceBasis) ?? mtPerBasis(li.unit);
-  if (typeof li.unitPrice === 'number' && basisMt != null && basisMt > 0) {
+  if (typeof li.unitPrice === 'number' && li.unitPrice > 0 && basisMt != null && basisMt > 0) {
     const perMt = li.unitPrice / basisMt;
     if (Number.isFinite(perMt) && perMt > 0) li.pricePerMt = Math.round(perMt * 100) / 100;
+  }
+  // 2. No clear per-unit price — derive it from the line total ÷ line quantity(MT).
+  if (!(typeof li.pricePerMt === 'number' && li.pricePerMt > 0)) {
+    const lineQtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0 ? li.quantityMt : NaN;
+    if (typeof li.amount === 'number' && li.amount > 0 && Number.isFinite(lineQtyMt)) {
+      const perMt = li.amount / lineQtyMt;
+      if (Number.isFinite(perMt) && perMt > 0) li.pricePerMt = Math.round(perMt * 100) / 100;
+    }
+  }
+}
+
+/** Recompute every line's metrics, then apply a document-level total-price
+ *  fallback: when a line still has no derivable per-unit price but the PO states
+ *  a single total order price (totalAmount) and exactly one line is unpriced,
+ *  derive that line's $/MT = total order price ÷ order quantity (in MT). */
+function deriveDocMetrics(doc: any): void {
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.lineItems)) return;
+  const lines = doc.lineItems;
+  lines.forEach(deriveLineMetrics);
+  const hasPerMt = (li: any) => typeof li?.pricePerMt === 'number' && li.pricePerMt > 0;
+  const unpriced = lines.filter((li: any) => !hasPerMt(li) && typeof li?.quantityMt === 'number' && li.quantityMt > 0);
+  const total = typeof doc.totalAmount === 'number' && doc.totalAmount > 0 ? doc.totalAmount : NaN;
+  // Only safe to attribute a single header total to a single unpriced line.
+  if (unpriced.length === 1 && Number.isFinite(total)) {
+    const li = unpriced[0];
+    // Subtract any sibling lines that already carry their own extended amount, so
+    // the header total isn't double-counted across a mixed PO.
+    const pricedAmt = lines.reduce((s: number, x: any) => s + (x !== li && typeof x?.amount === 'number' && x.amount > 0 ? x.amount : 0), 0);
+    const portion = total - pricedAmt > 0 ? total - pricedAmt : total;
+    const perMt = portion / li.quantityMt;
+    if (Number.isFinite(perMt) && perMt > 0) {
+      li.pricePerMt = Math.round(perMt * 100) / 100;
+      if (!(typeof li.amount === 'number' && li.amount > 0)) li.amount = Math.round(portion * 100) / 100;
+    }
   }
 }
 
@@ -321,8 +362,9 @@ export async function extractPO(
     .map(d => {
       const doc = { sourceFile: file.name, ...d };
       // Recompute MT quantities and $/MT prices in code (never trust the LLM's
-      // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably.
-      if (Array.isArray(doc.lineItems)) doc.lineItems.forEach(deriveLineMetrics);
+      // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably, and derive
+      // $/MT from a total order price ÷ quantity when no per-unit price is given.
+      deriveDocMetrics(doc);
       return doc;
     });
 }
