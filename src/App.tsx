@@ -5328,6 +5328,76 @@ export default function App() {
     return String(maxNum + 1).padStart(5, '0');
   };
 
+  // Recovery tool: rebuild the Customers table from the customer references that
+  // survive in orders, invoices, shipments, contracts and return orders (for use
+  // after a data-loss incident). Only ADDS customers whose name isn't already in
+  // the table — existing customers are never touched. Full street ship-to
+  // addresses aren't stored on orders, so ship-to LOCATION NAMES are recovered
+  // from contract destinations; street addresses must be re-entered or restored
+  // from a backup. Also downloads the rebuilt rows as a template CSV.
+  const rebuildCustomersFromHistory = () => {
+    const norm = (s?: string) => (s || '').trim();
+    const keyOf = (s?: string) => norm(s).toLowerCase();
+    const existingNames = new Set(customers.map(c => keyOf(c.name)));
+
+    type Agg = { name: string; numbers: Map<string, number>; locations: Map<string, number>; destinations: Set<string>; terms: Map<string, number>; margins: number[] };
+    const aggs = new Map<string, Agg>();
+    const getAgg = (name?: string): Agg | null => {
+      const k = keyOf(name);
+      if (!k) return null;
+      let a = aggs.get(k);
+      if (!a) { a = { name: norm(name), numbers: new Map(), locations: new Map(), destinations: new Set(), terms: new Map(), margins: [] }; aggs.set(k, a); }
+      return a;
+    };
+    const bump = (m: Map<string, number>, v?: string) => { const x = norm(v); if (x) m.set(x, (m.get(x) || 0) + 1); };
+
+    orders.forEach(o => { const a = getAgg(o.customer); if (a) bump(a.locations, o.location); });
+    invoices.forEach(i => { const a = getAgg(i.customer); if (a) bump(a.locations, i.location); });
+    [...hamiltonShipments, ...vancouverShipments].forEach(s => { getAgg(s.customer); });
+    returnOrders.forEach(r => { getAgg(r.customer); });
+    contracts.forEach(c => {
+      const a = getAgg(c.customerName); if (!a) return;
+      bump(a.numbers, c.customerNumber);
+      bump(a.locations, c.origin);
+      if (norm(c.destination)) a.destinations.add(norm(c.destination));
+      bump(a.terms, c.paymentTerms);
+      if (typeof c.margin === 'number' && c.margin > 0) a.margins.push(c.margin);
+    });
+
+    const mode = (m: Map<string, number>): string => { let best = '', n = -1; m.forEach((v, k) => { if (v > n) { n = v; best = k; } }); return best; };
+    const validLoc = (l: string) => (l === 'Hamilton' || l === 'Vancouver') ? l : '';
+
+    const rebuilt: Customer[] = [];
+    let nextNum = parseInt(getNextCustomerNumber(customers), 10) || (customers.length + 1);
+    aggs.forEach(a => {
+      if (existingNames.has(keyOf(a.name))) return;
+      const num = mode(a.numbers) || String(nextNum++).padStart(4, '0');
+      const shipTos: ShipToLocation[] = Array.from(a.destinations).map((d, i) => ({
+        id: `SHIPTO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${i}`,
+        locationCode: '', name: d, addressLine1: '',
+      }));
+      rebuilt.push({
+        // Unique id (random suffix) so a recovered number can never collide with
+        // and overwrite an existing customer's document.
+        id: `CUST-${num}-${Math.random().toString(36).slice(2, 6)}`,
+        name: a.name,
+        customerNumber: num,
+        defaultLocation: validLoc(mode(a.locations)) || 'Hamilton',
+        defaultMargin: a.margins.length ? Math.round(a.margins.reduce((s, x) => s + x, 0) / a.margins.length) : 250,
+        defaultPaymentTerms: mode(a.terms) || undefined,
+        shipToLocations: shipTos.length ? shipTos : undefined,
+      });
+    });
+
+    if (!rebuilt.length) { setErrorBox('No additional customers were found in orders, invoices, contracts, shipments or return orders — every referenced customer is already in the table.'); return; }
+    if (!window.confirm(`Rebuild ${rebuilt.length} customer(s) from orders / invoices / contracts and add them to the table? Existing customers are left unchanged. Full street ship-to addresses can't be recovered from this data (only ship-to location names from contracts).`)) return;
+    setCustomers(prev => [...prev, ...rebuilt]);
+    // Hand back a filled template CSV (same columns as the customer template).
+    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+    exportCSV(tplHeaders, rebuilt, 'customer_template_rebuilt.csv');
+    setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
+  };
+
   const addCustomer = () => {
     const custNum = getNextCustomerNumber(customers);
     const id = `CUST-${custNum}`;
@@ -6427,6 +6497,11 @@ export default function App() {
             <button onClick={() => exportCSV(customerCsvHeaders, customers, 'customers_export.csv')}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Download size={12} /> CSV
+            </button>
+            <button onClick={rebuildCustomersFromHistory}
+              title="Recover customers from orders, invoices, contracts, shipments and return orders (adds only missing names; existing customers untouched)"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              <RefreshCw size={12} /> Rebuild from Orders
             </button>
             <button
               onClick={addCustomer}
