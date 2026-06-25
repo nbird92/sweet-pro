@@ -927,12 +927,21 @@ export default function App() {
   const isInternalEmployeeEmail = (fromEmail?: string): boolean => isInternalSenderEmail(fromEmail) && !isOrderDeskForwardEmail(fromEmail);
   // A logistics / carrier sender: the sender domain matches a known carrier's
   // contact-email domain (contrans.ca, denalilogistics.ca, bluedotamericas.com…).
+  // Public / free-mail domains are excluded so a carrier with a gmail/outlook
+  // contact can't misclassify every customer on that provider as logistics; and
+  // we only match exact / sender-is-a-subdomain-of-carrier (never the reverse).
+  const PUBLIC_EMAIL_DOMAINS = new Set([
+    'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'hotmail.ca', 'live.com', 'live.ca', 'msn.com',
+    'yahoo.com', 'yahoo.ca', 'ymail.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'proton.me', 'protonmail.com',
+    'gmx.com', 'gmx.net', 'mail.com', 'zoho.com', 'yandex.com', 'qq.com', 'comcast.net', 'sbcglobal.net',
+    'bell.net', 'rogers.com', 'shaw.ca', 'telus.net', 'sympatico.ca', 'videotron.ca', 'cogeco.ca',
+  ]);
   const isLogisticsSenderEmail = (fromEmail?: string): boolean => {
     const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
     if (!domain) return false;
     return carriers.some(c => {
       const cd = (c.contactEmail || '').toLowerCase().split('@')[1];
-      return !!cd && (domain === cd || domain.endsWith('.' + cd) || cd.endsWith('.' + domain));
+      return !!cd && !PUBLIC_EMAIL_DOMAINS.has(cd) && (domain === cd || domain.endsWith('.' + cd));
     });
   };
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));

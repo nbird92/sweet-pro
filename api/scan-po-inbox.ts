@@ -77,7 +77,7 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   // to recognise a sender as logistics rather than a customer.
   const carrierDomains = Array.from(new Set((carrierSnap.docs || [])
     .map((d: any) => String(d.data().contactEmail || '').toLowerCase().split('@')[1] || '')
-    .filter(Boolean)));
+    .filter((dom: string) => dom && !PUBLIC_EMAIL_DOMAINS.has(dom))));
   // Ignore learned corrections older than 30 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.
   // The client physically deletes them; this is a belt-and-suspenders read guard.
@@ -103,6 +103,15 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
 // Sucro employee, never a customer purchase order. Includes the "surco.ca" /
 // "surco.us" spellings the team also uses.
 const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca', 'surco.us'];
+// Public / free-mail domains are NEVER treated as a carrier domain even if a
+// carrier's contact email happens to be on one — otherwise every customer using
+// that provider would be misclassified as logistics and barred from new POs.
+const PUBLIC_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'hotmail.ca', 'live.com', 'live.ca', 'msn.com',
+  'yahoo.com', 'yahoo.ca', 'ymail.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'proton.me', 'protonmail.com',
+  'gmx.com', 'gmx.net', 'mail.com', 'zoho.com', 'yandex.com', 'qq.com', 'comcast.net', 'sbcglobal.net',
+  'bell.net', 'rogers.com', 'shaw.ca', 'telus.net', 'sympatico.ca', 'videotron.ca', 'cogeco.ca',
+]);
 function isInternalSender(fromEmail: string | undefined): boolean {
   const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
   if (!domain) return false;
@@ -126,7 +135,10 @@ function domainOf(fromEmail: string | undefined): string {
 function isLogisticsSender(fromEmail: string | undefined, carrierDomains: string[]): boolean {
   const domain = domainOf(fromEmail);
   if (!domain) return false;
-  return carrierDomains.some(d => d && (domain === d || domain.endsWith('.' + d) || d.endsWith('.' + domain)));
+  // Exact match, or the sender is on a subdomain of a carrier domain. NOT the
+  // reverse (carrier on a subdomain of the sender) — that would let a carrier at
+  // dispatch@trucking.acme.com capture a customer at acme.com.
+  return carrierDomains.some(d => d && (domain === d || domain.endsWith('.' + d)));
 }
 // Categorize a sender into one of three groups. Internal employees and logistics
 // carriers never trigger a NEW-PO suggestion (they may update an existing PO);
