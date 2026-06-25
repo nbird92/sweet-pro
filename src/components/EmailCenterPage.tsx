@@ -160,9 +160,10 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   );
   const lastImport = poImports[0]?.importedAt;
   const importCounts = useMemo(() => {
-    const c = { total: poImportLog.length, created: 0, duplicate: 0, skipped: 0 };
+    const c = { total: poImportLog.length, created: 0, updated: 0, duplicate: 0, skipped: 0 };
     for (const e of poImportLog) {
       if (e.result === 'created') c.created++;
+      else if (e.result === 'updated') c.updated++;
       else if (e.result === 'duplicate') c.duplicate++;
       else c.skipped++;
     }
@@ -797,6 +798,7 @@ function FeedSuggestionPill({ suggestion, poNumber }: { suggestion?: InboxFeedIt
 function ImportResultPill({ result, note }: { result: PoImportLogEntry['result']; note?: string }) {
   const style =
     result === 'created'   ? 'bg-emerald-100 text-emerald-800' :
+    result === 'updated'   ? 'bg-sky-100     text-sky-800'     :
     result === 'duplicate' ? 'bg-amber-100   text-amber-800'   :
                              'bg-slate-100   text-slate-700';
   return (

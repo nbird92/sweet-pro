@@ -417,8 +417,8 @@ export interface PoImportLogEntry {
   orderBol?: string;           // BOL of the created order
   amount?: number;             // order amount
   productSummary?: string;     // products on the order
-  result: 'created' | 'duplicate' | 'skipped';
-  note?: string;               // reason when duplicate / skipped
+  result: 'created' | 'duplicate' | 'skipped' | 'updated';
+  note?: string;               // reason when duplicate / skipped / updated
 }
 
 /** An emailed PO awaiting operator review/approval. The Gmail scan extracts it

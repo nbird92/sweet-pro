@@ -922,6 +922,29 @@ export default function App() {
   };
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
 
+  // Resolve an extracted carrier (name and/or email domain) to a Carrier record
+  // from the carriers table — by name first, then by the domain of its contact
+  // email (so a Contrans/Denali email maps to the catalog carrier).
+  const resolveCarrierRecord = (carrierName?: string, carrierDomain?: string): Carrier | undefined => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const nm = norm(carrierName);
+    const dom = norm(carrierDomain);
+    if (nm) {
+      const exact = carriers.find(c => norm(c.name) === nm);
+      if (exact) return exact;
+      const partial = carriers.find(c => norm(c.name) && (nm.includes(norm(c.name)) || norm(c.name).includes(nm)));
+      if (partial) return partial;
+    }
+    if (dom) {
+      const byDom = carriers.find(c => {
+        const cd = norm((c.contactEmail || '').split('@')[1]);
+        return !!cd && (cd === dom || cd.endsWith('.' + dom) || dom.endsWith('.' + cd));
+      });
+      if (byDom) return byDom;
+    }
+    return undefined;
+  };
+
   // Turn an emailed amendment/cancellation extraction into a review-queue entry,
   // matching the existing order (or, for a split-only note, invoice) by PO number
   // and capturing its before-values.
@@ -1035,6 +1058,13 @@ export default function App() {
       const pendingImports: PoPendingImport[] = [];
       const built: Order[] = [];        // auto-approved orders (opt-in)
       const batchBols: string[] = [];   // BOLs reserved this batch for unique numbering
+      // Auto-enrichment patches applied (no approval) to EXISTING records when an
+      // email references their PO: carrier from a carrier email, and a split /
+      // contract number when the PO is missing one.
+      const orderPatch = new Map<string, Partial<Order>>();
+      const invoicePatch = new Map<string, Partial<Invoice>>();
+      const custPatch = new Map<string, Partial<Customer>>();
+      let learnedCarrier = false;
       const nowIso = new Date().toISOString();
       const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
       // PO numbers already awaiting review, so a re-scan doesn't queue the same
@@ -1081,9 +1111,68 @@ export default function App() {
               if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }
             }
           }
-          // Order amendments/cancellations go to the review queue, not orders.
+          // Auto-enrichment (no approval): when this email references an EXISTING
+          // order, fill the carrier (from a carrier email) and any MISSING split /
+          // contract number directly on that order (and its invoices).
+          {
+            const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
+            const order = refPo ? orders.find(o => (o.po || '').trim() === refPo) : undefined;
+            if (order) {
+              const cur = orderPatch.get(order.id) || {};
+              const changes: string[] = [];
+              // Carrier — a carrier email (carrier name and/or carrier domain) is
+              // authoritative about who hauls the load.
+              const carrierRec = resolveCarrierRecord(po.carrier, po.carrierDomain);
+              const carrierName = carrierRec?.name || (po.carrier || '').trim();
+              const fromCarrier = !!(po.carrierDomain || '').trim() || !!carrierRec;
+              if (carrierName && fromCarrier) {
+                const existing = (cur.carrier ?? order.carrier ?? '').trim();
+                if (existing.toLowerCase() !== carrierName.toLowerCase()) { cur.carrier = carrierName; changes.push(`carrier → ${carrierName}`); }
+                // Remember the carrier on the customer card when it has none, so the
+                // same customer's future orders pre-fill it.
+                const cust = customers.find(c => c.name === order.customer);
+                if (cust) {
+                  const dc = (custPatch.get(cust.id)?.defaultCarrierCode ?? cust.defaultCarrierCode ?? '').trim();
+                  if (!dc) custPatch.set(cust.id, { ...(custPatch.get(cust.id) || {}), defaultCarrierCode: carrierRec?.carrierNumber || carrierName });
+                }
+                // Learn the carrier by domain + raw name for the next extraction.
+                const cd = (po.carrierDomain || '').trim();
+                if (cd) { recordLearned('carrier', cd, carrierName); learnedCarrier = true; }
+                const craw = (po.carrier || '').trim();
+                if (craw && craw.toLowerCase() !== carrierName.toLowerCase()) { recordLearned('carrier', craw, carrierName); learnedCarrier = true; }
+              }
+              // Split number — only when the order is MISSING one.
+              const refSplit = (po.splitNumber || po.amendment?.newSplitNumber || '').trim();
+              if (refSplit && !((cur.splitNumber ?? order.splitNumber ?? '').trim())) { cur.splitNumber = refSplit; changes.push(`split → ${refSplit}`); }
+              // Contract number — only when the order is MISSING one.
+              const refContract = (po.contractNumber || '').trim();
+              if (refContract && !((cur.contractNumber ?? order.contractNumber ?? '').trim())) { cur.contractNumber = refContract; changes.push(`contract → ${refContract}`); }
+              if (Object.keys(cur).length) orderPatch.set(order.id, cur);
+              // Mirror the same fills onto the PO's invoices when they're blank.
+              invoices.forEach(inv => {
+                if ((inv.po || '').trim() !== refPo) return;
+                const ip = invoicePatch.get(inv.id) || {};
+                if (cur.carrier && !((ip.carrier ?? inv.carrier ?? '').trim())) ip.carrier = cur.carrier;
+                if (cur.splitNumber && !((ip.splitNo ?? inv.splitNo ?? '').trim())) ip.splitNo = cur.splitNumber;
+                if (cur.contractNumber && !((ip.contractNumber ?? inv.contractNumber ?? '').trim())) ip.contractNumber = cur.contractNumber;
+                if (Object.keys(ip).length) invoicePatch.set(inv.id, ip);
+              });
+              if (changes.length) logs.push({ ...logBase(item, po), poNumber: refPo, customer: order.customer, orderId: order.id, orderBol: order.bolNumber, result: 'updated', note: `Auto-updated existing PO ${refPo}: ${changes.join(', ')}` });
+            }
+          }
+          // Order amendments/cancellations go to the review queue, not orders. The
+          // carrier / split / contract fills above were applied without approval, so
+          // only DATE / QUANTITY changes and cancellations still need review. A
+          // split/contract that couldn't be auto-applied (no matching order) is still
+          // queued so the operator can act on it.
           if (po.documentType === 'amendment' || po.documentType === 'cancellation') {
-            amendments.push(buildAmendmentFromExtraction(po, item, nowIso));
+            const amend = po.amendment || {};
+            const isCancel = po.documentType === 'cancellation' || amend.cancel === true;
+            const hasReviewable = isCancel || !!amend.newShipmentDate || !!amend.newDeliveryDate || (typeof amend.newQuantityMt === 'number' && amend.newQuantityMt > 0);
+            const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
+            const matchedOrder = refPo ? orders.some(o => (o.po || '').trim() === refPo) : false;
+            const hasSplitOrContract = !!((po.splitNumber || amend.newSplitNumber || po.contractNumber || '').trim());
+            if (hasReviewable || (hasSplitOrContract && !matchedOrder)) amendments.push(buildAmendmentFromExtraction(po, item, nowIso));
             continue;
           }
           if (po.documentType === 'other') continue; // model-classified noise
@@ -1134,16 +1223,28 @@ export default function App() {
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
         }
       }
-      if (built.length) setOrders(prev => [...prev, ...built]);
+      // Apply auto-enrichment patches to existing orders, then append new orders.
+      if (built.length || orderPatch.size) {
+        setOrders(prev => {
+          let next = orderPatch.size ? prev.map(o => orderPatch.has(o.id) ? { ...o, ...orderPatch.get(o.id)! } : o) : prev;
+          if (built.length) next = [...next, ...built];
+          return next;
+        });
+      }
+      if (invoicePatch.size) setInvoices(prev => prev.map(i => invoicePatch.has(i.id) ? { ...i, ...invoicePatch.get(i.id)! } : i));
+      if (custPatch.size) setCustomers(prev => prev.map(c => custPatch.has(c.id) ? { ...c, ...custPatch.get(c.id)! } : c));
+      if (learnedCarrier) setPoLearned(loadLearned());
       if (pendingImports.length) setPoPendingImports(prev => [...prev, ...pendingImports].slice(-500));
       // Cap the persisted log so the whole-collection resync stays bounded.
       if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
       if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
       const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
-      if (built.length || pendingImports.length || pendingAmend) {
+      const autoUpdated = orderPatch.size;
+      if (built.length || pendingImports.length || pendingAmend || autoUpdated) {
         setPoIngestNotice(
           [
             built.length ? `${built.length} order${built.length === 1 ? '' : 's'} auto-created` : '',
+            autoUpdated ? `${autoUpdated} existing PO${autoUpdated === 1 ? '' : 's'} auto-updated` : '',
             pendingImports.length ? `${pendingImports.length} PO${pendingImports.length === 1 ? '' : 's'} to review` : '',
             pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
           ].filter(Boolean).join(' · ') + ' from emailed POs.',
@@ -17582,7 +17683,12 @@ export default function App() {
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Carrier</label>
-                          <input value={rev.carrier} onChange={(e) => updateReview(rev.id, { carrier: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                          <select value={rev.carrier || ''} onChange={(e) => updateReview(rev.id, { carrier: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">— Select carrier —</option>
+                            {/* Keep an extracted carrier that isn't in the table yet selectable. */}
+                            {rev.carrier && !carriers.some(c => c.name === rev.carrier) && <option value={rev.carrier}>{rev.carrier} (from email)</option>}
+                            {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                          </select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Shipping Terms</label>
