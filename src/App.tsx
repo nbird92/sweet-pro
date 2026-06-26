@@ -413,6 +413,11 @@ export default function App() {
     papsNo: string;
     customsEntryNo: string;
     notes: string;
+    // Shipment appointment — every PO needs a pick-up appointment. The appointment
+    // DATE is the shipmentDate (= pick-up date); apptTime is the pick-up time.
+    scheduleAppt: boolean;
+    apptTime: string;
+    apptBay: string;
     lines: POReviewLine[];
     created: boolean;
     /** When this review came from an emailed PO awaiting approval, the id of the
@@ -545,10 +550,10 @@ export default function App() {
       const byPrice = matchContractByPrice(cust, poPrice, po.currency);
       if (byPrice) { contract = byPrice; contractNumber = byPrice.contractNumber; }
     }
-    // Default the shipment date to the delivery date (these POs usually carry a
-    // delivery/receipt date; the order's ship date should match unless edited).
+    // The shipment date is the PICK-UP date (po.shipmentDate is the requested
+    // ship/pick-up date); fall back to the delivery date only if no pick-up date.
     const deliveryDate = po.deliveryDate || '';
-    const shipmentDate = deliveryDate || po.shipmentDate || '';
+    const shipmentDate = po.shipmentDate || deliveryDate || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
@@ -584,6 +589,11 @@ export default function App() {
       papsNo: '',
       customsEntryNo: '',
       notes: po.notes || '',
+      // Pre-fill the appointment from the pick-up time; schedule by default when a
+      // pick-up date is known.
+      scheduleAppt: !!shipmentDate,
+      apptTime: po.pickupTime || '',
+      apptBay: '',
       lines,
       created: false,
     };
@@ -696,6 +706,36 @@ export default function App() {
       customsEntryNo: rev.customsEntryNo.trim() || undefined,
     };
     setOrders(prev => [...prev, newOrder]);
+    // Schedule a shipment appointment for the new PO (every PO needs one). The
+    // appointment date is the shipment date (= pick-up date); time is the pick-up
+    // time. Filed in the Hamilton or Vancouver scheduler by the order's origin.
+    if (rev.scheduleAppt && (rev.shipmentDate || '').trim()) {
+      const apptDate = rev.shipmentDate.trim();
+      const apptLoc = location || customer.defaultLocation || '';
+      const apptShipments: Shipment[] = newOrder.lineItems.map(item => ({
+        id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        week: `Week ${getWeekNumber(apptDate)}`,
+        date: apptDate,
+        day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(apptDate + 'T12:00:00')),
+        time: rev.apptTime || '',
+        bay: rev.apptBay || '',
+        customer: newOrder.customer,
+        product: item.productName,
+        contractNumber: item.contractNumber,
+        po: newOrder.po,
+        bol: newOrder.bolNumber,
+        qty: item.totalWeight,
+        carrier: newOrder.carrier || rev.carrier || '',
+        arrive: '', start: '', out: '',
+        status: 'Confirmed',
+        notes: '', color: '',
+        location: apptLoc,
+      }));
+      const toHamilton = apptLoc.toLowerCase().includes('hamilton');
+      if (toHamilton) setHamiltonShipments(prev => [...prev, ...apptShipments]);
+      else setVancouverShipments(prev => [...prev, ...apptShipments]);
+      setScheduleLocation(toHamilton ? 'Hamilton' : 'Vancouver');
+    }
     // Remember the user's mappings so the next scan of this PO maps itself.
     // Product is learned by BOTH the description and the vendor item code (the
     // code is the more stable key — a buyer's "LC325X" outlives wording tweaks).
@@ -1169,6 +1209,13 @@ export default function App() {
               // Contract number — only when the order is MISSING one.
               const refContract = (po.contractNumber || '').trim();
               if (refContract && !((cur.contractNumber ?? order.contractNumber ?? '').trim())) { cur.contractNumber = refContract; changes.push(`contract → ${refContract}`); }
+              // Appointment time / pick-up date — a carrier (or any) email that
+              // states a new pick-up time / ship date updates the order's pickupTime
+              // and shipmentDate so the operator can (re)schedule the appointment.
+              const refPickup = (po.pickupTime || '').trim();
+              if (refPickup && (cur.pickupTime ?? order.pickupTime ?? '') !== refPickup) { cur.pickupTime = refPickup; changes.push(`pick-up time → ${refPickup}`); }
+              const refShipDate = (po.shipmentDate || '').trim();
+              if (refShipDate && (cur.shipmentDate ?? order.shipmentDate ?? '') !== refShipDate) { cur.shipmentDate = refShipDate; changes.push(`ship date → ${refShipDate}`); }
               if (Object.keys(cur).length) orderPatch.set(order.id, cur);
               // Mirror the same fills onto the PO's invoices when they're blank.
               invoices.forEach(inv => {
@@ -17850,6 +17897,36 @@ export default function App() {
                           <label className="text-[9px] uppercase font-bold opacity-50">Customs Entry No.</label>
                           <input value={rev.customsEntryNo} onChange={(e) => updateReview(rev.id, { customsEntryNo: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
                         </div>
+                      </div>
+
+                      {/* Shipment appointment — schedule a pick-up appointment for this
+                          PO. The date is the Shipment Date (= pick-up date) above. */}
+                      <div className="mb-3 border border-[#141414]/15 bg-[#F9F9F9] p-3">
+                        <label className="flex items-center gap-2 text-[11px] font-bold uppercase cursor-pointer">
+                          <input type="checkbox" checked={rev.scheduleAppt} disabled={rev.created} onChange={(e) => updateReview(rev.id, { scheduleAppt: e.target.checked })} />
+                          Schedule shipment appointment
+                        </label>
+                        {rev.scheduleAppt && (
+                          <div className="grid grid-cols-4 gap-3 mt-2">
+                            <div className="space-y-1">
+                              <label className="text-[9px] uppercase font-bold opacity-50">Appt Date (= pick-up)</label>
+                              <input type="date" value={rev.shipmentDate} onChange={(e) => updateReview(rev.id, { shipmentDate: e.target.value })} disabled={rev.created} className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] uppercase font-bold opacity-50">Pick-up Time {rev.source.pickupTime && <span className="opacity-60 normal-case">· read: "{rev.source.pickupTime}"</span>}</label>
+                              <input type="time" value={rev.apptTime} onChange={(e) => updateReview(rev.id, { apptTime: e.target.value })} disabled={rev.created} className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] uppercase font-bold opacity-50">Bay</label>
+                              <input value={rev.apptBay} onChange={(e) => updateReview(rev.id, { apptBay: e.target.value })} disabled={rev.created} placeholder="optional" className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] uppercase font-bold opacity-50">Scheduler</label>
+                              <div className="w-full px-2 py-1.5 text-xs bg-[#E4E3E0] border border-[#141414]/30">{rev.location ? (rev.location.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver') : '—'}</div>
+                            </div>
+                          </div>
+                        )}
+                        {rev.scheduleAppt && !rev.shipmentDate && <p className="text-[10px] text-amber-700 mt-1 font-bold">Set a pick-up date above to schedule the appointment.</p>}
                       </div>
 
                       {/* Line items */}
