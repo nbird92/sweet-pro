@@ -17826,8 +17826,12 @@ export default function App() {
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Shipping Terms</label>
-                          <select value={rev.shippingTerms} onChange={(e) => updateReview(rev.id, { shippingTerms: e.target.value as POReview['shippingTerms'] })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
-                            <option value="">—</option><option value="FOB">FOB</option><option value="FCA">FCA</option><option value="DAP">DAP</option><option value="DDP">DDP</option>
+                          {/* Populated from the Shipping Terms table on the Supply Chain page.
+                              A scanned value not in the table is kept as a fallback option. */}
+                          <select value={rev.shippingTerms} onChange={(e) => updateReview(rev.id, { shippingTerms: e.target.value as POReview['shippingTerms'] })} disabled={rev.created} title={shippingTermsList.find(t => t.name === rev.shippingTerms)?.description || ''} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">—</option>
+                            {shippingTermsList.filter(t => t.name).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                            {rev.shippingTerms && !shippingTermsList.some(t => t.name === rev.shippingTerms) && <option value={rev.shippingTerms}>{rev.shippingTerms} (scanned)</option>}
                           </select>
                         </div>
                         <div className="space-y-1">
