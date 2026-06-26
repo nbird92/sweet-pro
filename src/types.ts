@@ -302,7 +302,8 @@ export interface Carrier {
   id: string;
   carrierNumber: string;
   name: string;
-  contactEmail?: string;
+  contactEmail?: string;      // primary email (kept for PDFs / legacy; = contactEmails[0])
+  contactEmails?: string[];   // all of the carrier's email addresses
   contactPhone?: string;
   notes?: string;
   defaultLocationCode?: string;

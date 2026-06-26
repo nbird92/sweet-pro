@@ -76,7 +76,11 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   // Email domains of known carriers (e.g. contrans.ca, denalilogistics.ca) — used
   // to recognise a sender as logistics rather than a customer.
   const carrierDomains = Array.from(new Set((carrierSnap.docs || [])
-    .map((d: any) => String(d.data().contactEmail || '').toLowerCase().split('@')[1] || '')
+    .flatMap((d: any) => {
+      const data = d.data() || {};
+      const emails = [data.contactEmail, ...(Array.isArray(data.contactEmails) ? data.contactEmails : [])].filter(Boolean);
+      return emails.map((e: any) => String(e).toLowerCase().split('@')[1] || '');
+    })
     .filter((dom: string) => !!dom)));
   // Ignore learned corrections older than 30 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.

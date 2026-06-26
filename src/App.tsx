@@ -967,16 +967,19 @@ export default function App() {
   const isOrderDeskForwardEmail = (fromEmail?: string): boolean => /order\s*desk|orderdesk@/i.test(String(fromEmail || ''));
   // A Sucro employee address: internal domain, but not the order-desk forwarder.
   const isInternalEmployeeEmail = (fromEmail?: string): boolean => isInternalSenderEmail(fromEmail) && !isOrderDeskForwardEmail(fromEmail);
-  // A logistics / carrier sender: the sender domain matches a known carrier's
-  // contact-email domain in the carriers table (contrans.ca, denalilogistics.ca,
+  // Every email address on a carrier (primary + the contactEmails list), lowercased.
+  const carrierEmailsOf = (c: Carrier): string[] =>
+    Array.from(new Set([c.contactEmail, ...(c.contactEmails || [])].filter(Boolean).map(e => String(e).toLowerCase())));
+  // A logistics / carrier sender: the sender domain matches the domain of ANY of a
+  // known carrier's email addresses (contrans.ca, denalilogistics.ca,
   // bluedotamericas.com…) — exact, or the sender on a subdomain of it.
   const isLogisticsSenderEmail = (fromEmail?: string): boolean => {
     const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
     if (!domain) return false;
-    return carriers.some(c => {
-      const cd = (c.contactEmail || '').toLowerCase().split('@')[1];
+    return carriers.some(c => carrierEmailsOf(c).some(e => {
+      const cd = e.split('@')[1];
       return !!cd && (domain === cd || domain.endsWith('.' + cd));
-    });
+    }));
   };
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
 
@@ -994,10 +997,10 @@ export default function App() {
       if (partial) return partial;
     }
     if (dom) {
-      const byDom = carriers.find(c => {
-        const cd = norm((c.contactEmail || '').split('@')[1]);
+      const byDom = carriers.find(c => carrierEmailsOf(c).some(e => {
+        const cd = norm(e.split('@')[1]);
         return !!cd && (cd === dom || cd.endsWith('.' + dom) || dom.endsWith('.' + cd));
-      });
+      }));
       if (byDom) return byDom;
     }
     return undefined;
@@ -12135,12 +12138,32 @@ export default function App() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Contact Email</label>
-                    <input type="email" value={editingCarrier.contactEmail || ''}
-                      onChange={(e) => setEditingCarrier({ ...editingCarrier, contactEmail: e.target.value })}
-                      placeholder="email@example.com"
-                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Contact Emails <span className="opacity-50 normal-case font-normal">· any of these identifies the carrier's emails in the PO scan</span></label>
+                    {(() => {
+                      const emails = editingCarrier.contactEmails && editingCarrier.contactEmails.length
+                        ? editingCarrier.contactEmails
+                        : [editingCarrier.contactEmail || ''];
+                      const commit = (list: string[]) => {
+                        const next = list.length ? list : [''];
+                        setEditingCarrier({ ...editingCarrier, contactEmails: next, contactEmail: next.find(Boolean) || '' });
+                      };
+                      return (
+                        <>
+                          {emails.map((em, i) => (
+                            <div key={i} className="flex gap-2 mb-1">
+                              <input type="email" value={em} placeholder="email@example.com"
+                                onChange={(e) => { const l = [...emails]; l[i] = e.target.value; commit(l); }}
+                                className="flex-1 bg-white border border-[#141414] p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                              <button type="button" onClick={() => commit(emails.filter((_, j) => j !== i))} title="Remove email"
+                                className="px-2 border border-[#141414] hover:bg-red-500 hover:text-white transition-colors"><Trash2 size={14} /></button>
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => commit([...emails, ''])}
+                            className="text-[10px] font-bold uppercase text-emerald-700 hover:underline flex items-center gap-1"><Plus size={10} /> Add email</button>
+                        </>
+                      );
+                    })()}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Contact Phone</label>
