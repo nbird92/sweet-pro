@@ -657,11 +657,13 @@ export default function App() {
     if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
     const validLines = rev.lines.filter(l => l.productValue && l.qtyMt > 0);
     if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return null; }
-    // PO numbers must be unique across all orders (and within this batch).
+    // PO numbers must be unique across all orders AND invoices (and within this batch).
     const poTrim = (rev.po || '').trim();
-    if (poTrim && (orders.some(o => (o.po || '').trim().toLowerCase() === poTrim.toLowerCase())
-        || reservedPos.some(p => p.toLowerCase() === poTrim.toLowerCase()))) {
-      setErrorBox(`PO ${rev.po} already exists — PO numbers must be unique.`);
+    const poLc = poTrim.toLowerCase();
+    if (poTrim && (orders.some(o => (o.po || '').trim().toLowerCase() === poLc)
+        || invoices.some(i => (i.po || '').trim().toLowerCase() === poLc)
+        || reservedPos.some(p => p.toLowerCase() === poLc))) {
+      setErrorBox(`PO ${rev.po} already exists in an order or invoice — PO numbers must be unique.`);
       return null;
     }
     const lineItems = validLines.map(buildScanLineItem);
@@ -1082,10 +1084,17 @@ export default function App() {
       const custPatch = new Map<string, Partial<Customer>>();
       let learnedCarrier = false;
       const nowIso = new Date().toISOString();
-      const seenPo = new Set(orders.map(o => (o.po || '').trim()).filter(Boolean));
+      // PO numbers must be UNIQUE: an emailed PO whose number already exists in an
+      // ORDER or an INVOICE is never imported (matched case/space-insensitively).
+      const poKeyOf = (s?: string) => (s || '').trim().toLowerCase();
+      const seenPo = new Set([
+        ...orders.map(o => poKeyOf(o.po)),
+        ...invoices.map(i => poKeyOf(i.po)),
+      ].filter(Boolean));
+      const duplicatePos: string[] = []; // PO numbers skipped because they already exist
       // PO numbers already awaiting review, so a re-scan doesn't queue the same
       // emailed PO twice.
-      const pendingPoSet = new Set(poPendingImports.map(p => (p.poNumber || '').trim()).filter(Boolean));
+      const pendingPoSet = new Set(poPendingImports.map(p => poKeyOf(p.poNumber)).filter(Boolean));
       // Common log fields carried from the email + extraction for the dashboard.
       const logBase = (item: any, po: ExtractedPO | undefined) => ({
         id: `POLOG-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1194,11 +1203,13 @@ export default function App() {
             continue;
           }
           const poNum = (po.poNumber || '').trim();
-          if (poNum && seenPo.has(poNum)) {
-            logs.push({ ...logBase(item, po), result: 'duplicate', note: 'A matching PO number already exists in orders' });
+          const poKey = poKeyOf(poNum);
+          if (poNum && seenPo.has(poKey)) {
+            logs.push({ ...logBase(item, po), result: 'duplicate', note: 'PO number already exists in an order or invoice — must be unique' });
+            duplicatePos.push(poNum);
             continue;
           }
-          if (poNum && pendingPoSet.has(poNum)) continue; // already awaiting review
+          if (poNum && pendingPoSet.has(poKey)) continue; // already awaiting review
 
           // Opt-in auto-approval: a high-confidence PO whose customer matches a
           // known customer is created straight away, skipping review.
@@ -1210,7 +1221,7 @@ export default function App() {
           if (autoOk) {
             const order = buildOrderFromExtraction(po, batchBols);
             if (order) {
-              built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNum);
+              built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poKey);
               logs.push({ ...logBase(item, po), customer: order.customer, orderId: order.id, orderBol: order.bolNumber, amount: order.amount, productSummary: order.product, result: 'created', note: 'Auto-approved (high confidence, known customer)' });
               continue;
             }
@@ -1230,7 +1241,7 @@ export default function App() {
             customer: po.customerName || undefined,
             extraction: po,
           });
-          if (poNum) pendingPoSet.add(poNum);
+          if (poNum) pendingPoSet.add(poKey);
         } catch (e) {
           // The doc is already claimed/deleted, so always leave a dashboard trail.
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
@@ -1262,6 +1273,11 @@ export default function App() {
             pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
           ].filter(Boolean).join(' · ') + ' from emailed POs.',
         );
+      }
+      // Tell the operator about emailed POs that were rejected as duplicates.
+      if (duplicatePos.length) {
+        const uniq = Array.from(new Set(duplicatePos));
+        setErrorBox(`${uniq.length} emailed PO${uniq.length === 1 ? '' : 's'} ${uniq.length === 1 ? 'was' : 'were'} not imported because the PO number already exists in an order or invoice (PO numbers must be unique): ${uniq.join(', ')}.`);
       }
     } catch (e) {
       console.error('PO ingest failed:', e);
