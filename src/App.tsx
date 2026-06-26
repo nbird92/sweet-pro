@@ -2076,7 +2076,7 @@ export default function App() {
           const skuName = entry.skuname || entry.sku || entry.product || '';
           const origin = entry.origin || '';
           const destination = entry.destination || '';
-          const finalPrice = parseFloat(entry.finalprice || entry.price || '0') || 0;
+          const finalPrice = parseFloat(entry.pricemt || entry.finalprice || entry.price || '0') || 0;
           const currency = entry.currency || 'CAD';
           const notes = entry.notes || '';
           const shippingTerms = entry.shippingterms || '';
@@ -9650,7 +9650,7 @@ export default function App() {
       const filteredContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
       const inactiveCount = contracts.filter(c => c.active === false).length;
 
-      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'finalPrice', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
       const contractExportSheets = (): SheetSpec[] => [{
         sheetName: 'Contracts',
         title: 'Contract Management',
@@ -9666,7 +9666,7 @@ export default function App() {
           { header: 'End Date', key: 'endDate' },
           { header: 'Origin', key: 'origin' },
           { header: 'Destination', key: 'destination' },
-          { header: 'Final Price', key: 'finalPrice', format: 'currency' },
+          { header: 'Price/MT', key: 'finalPrice', format: 'currency' },
           { header: 'Currency', key: 'currency' },
           { header: 'FX Rate', key: 'fxRate', format: 'number' },
           { header: 'Raws', key: 'rawPriceUsdMt', format: 'number' },
@@ -9715,6 +9715,7 @@ export default function App() {
                   return {
                     ...c,
                     itasName: linkedItas,
+                    'Price/MT': c.finalPrice, // CSV column header is "Price/MT"
                     volumeOutstanding: undefined,
                     id: undefined,
                     active: undefined,
