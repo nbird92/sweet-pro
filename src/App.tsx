@@ -9948,7 +9948,7 @@ export default function App() {
                   <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
-                  <SortableHeader label="FX Rate" sortKey="fxRate" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Price/MT" sortKey="finalPrice" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Raws" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
@@ -9972,7 +9972,7 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.fxRate?.toFixed(2) || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>
                       {/* Raws — raw stored value, no MT↔cwt conversion. */}
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? c.rawPriceUsdMt : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
