@@ -111,6 +111,24 @@ export async function fetchAllData() {
   return Object.fromEntries(results) as Record<string, any[]>;
 }
 
+// Firestore rejects `undefined` ANYWHERE in a document — not just at the top
+// level, but nested inside objects and arrays (e.g. a ship-to location whose
+// city/province were left undefined). Recursively drop undefined object
+// properties and array elements before writing so a single nested undefined
+// can't blow up the whole sync.
+function stripUndefinedDeep(value: any): any {
+  if (Array.isArray(value)) return value.filter(v => v !== undefined).map(stripUndefinedDeep);
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefinedDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 // Sync an entire collection NON-DESTRUCTIVELY: UPSERT every provided doc (add +
 // update) and delete ONLY the docs the user actually removed. Each item MUST have
 // an `id` field used as the document ID.
@@ -161,9 +179,10 @@ export async function syncCollection<T extends { id: string }>(
   let count = 0;
   const rotate = () => { if (count >= batchSize) { batches.push(batch); batch = writeBatch(db); count = 0; } };
 
-  // Upsert every incoming doc (Firestore rejects `undefined`, so strip those).
+  // Upsert every incoming doc (Firestore rejects `undefined` at any depth, so
+  // strip those recursively).
   for (const item of data) {
-    const cleanItem = Object.fromEntries(Object.entries(item).filter(([, v]) => v !== undefined));
+    const cleanItem = stripUndefinedDeep(item);
     batch.set(doc(db, collectionName, item.id), cleanItem);
     count++;
     rotate();
