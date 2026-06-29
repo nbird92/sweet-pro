@@ -106,8 +106,7 @@ export function generateOrderConfirmationPdf({
   let y = 32;
 
   // ─── ORDER INFO ROW ───
-  // For Return Order Confirmations we also show the new return BOL and the
-  // original (outbound) BOL so the document is self-contained.
+  // Labels mirror the template sheet. Contract # lives in the Goods table below.
   const orderFields = isReturn
     ? [
         { label: 'Return BOL #', value: order.bolNumber || '' },
@@ -118,11 +117,11 @@ export function generateOrderConfirmationPdf({
     : [
         { label: 'Order Entry Date', value: order.date || '' },
         { label: 'Customer PO #', value: order.po || '' },
-        { label: 'Pick Up Date', value: order.shipmentDate || '' },
-        { label: 'Delivery Date', value: order.deliveryDate || '' },
+        { label: 'Requested Pick Up Date', value: order.shipmentDate || '' },
+        { label: 'Requested Delivery Date', value: order.deliveryDate || '' },
       ];
 
-  const fieldWidth = contentWidth / 4;
+  const fieldWidth = contentWidth / orderFields.length;
   orderFields.forEach((f, i) => {
     const x = leftCol + i * fieldWidth;
     doc.setFont('helvetica', 'bold');
@@ -233,11 +232,14 @@ export function generateOrderConfirmationPdf({
 
   y = Math.max(dy, sy) + 3;
 
-  // ─── GOODS SHIPPED TABLE ───
-  y = drawSectionHeader(doc, 'GOODS SHIPPED', y, contentWidth);
+  // ─── GOODS ORDERED TABLE ───
+  // Columns mirror the template sheet: Description | Contract # | Qty (Units) |
+  // Net Weight (kg) | Gross Weight (kg).
+  y = drawSectionHeader(doc, 'GOODS ORDERED', y, contentWidth);
 
   // Build line items data
   const lineItemsData: (string | number)[][] = [];
+  let totalUnits = 0;
   let totalNetWeight = 0;
   let totalGrossWeight = 0;
 
@@ -249,13 +251,17 @@ export function generateOrderConfirmationPdf({
     const itemNetWeight = netWeightKg * item.qty;
     const itemGrossWeight = grossWeightKg * item.qty;
 
+    totalUnits += item.qty;
     totalNetWeight += itemNetWeight;
     totalGrossWeight += itemGrossWeight;
 
+    // Per-line contract number, falling back to the order-level contract.
+    const lineContract = (item.contractNumber || '').trim() || (order.contractNumber || '').trim();
+
     lineItemsData.push([
-      item.totalWeight ? item.totalWeight.toFixed(2) : '',
-      item.qty.toString(),
       item.productName || '',
+      lineContract,
+      item.qty.toString(),
       itemNetWeight ? itemNetWeight.toFixed(2) : '',
       itemGrossWeight ? itemGrossWeight.toFixed(2) : '',
     ]);
@@ -264,9 +270,9 @@ export function generateOrderConfirmationPdf({
   autoTable(doc, {
     startY: y,
     margin: { left: leftCol, right: 14 },
-    head: [['Qty (MT)', 'Qty (Units)', 'Description Of Goods', 'Net Weight (Kg)', 'Gross Weight (Kg)']],
+    head: [['Description Of Goods Ordered', 'Contract #', 'Qty (Units)', 'Net Weight (kg)', 'Gross Weight (kg)']],
     body: lineItemsData,
-    foot: [['', '', 'Total', totalNetWeight ? totalNetWeight.toFixed(2) : '', totalGrossWeight ? totalGrossWeight.toFixed(2) : '']],
+    foot: [['Total', '', totalUnits ? totalUnits.toString() : '', totalNetWeight ? totalNetWeight.toFixed(2) : '', totalGrossWeight ? totalGrossWeight.toFixed(2) : '']],
     styles: {
       fontSize: 8,
       cellPadding: 3,
@@ -287,9 +293,9 @@ export function generateOrderConfirmationPdf({
       fontSize: 8,
     },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 22 },
-      1: { halign: 'center', cellWidth: 22 },
-      2: { cellWidth: 'auto' },
+      0: { cellWidth: 'auto' },
+      1: { cellWidth: 34 },
+      2: { halign: 'center', cellWidth: 24 },
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 },
     },
