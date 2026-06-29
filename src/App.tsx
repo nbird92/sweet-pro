@@ -663,6 +663,27 @@ export default function App() {
     };
   };
 
+  // Express a saved line item's quantity in UNITS. Orders synced/imported in MT
+  // store qty as the MT figure (e.g. the Google order sync keeps bulk/liquid qty
+  // in MT, netWeightPerUnit 0). Derive the true unit count from the line's total
+  // weight (always MT) and the product's catalog net weight. Falls back to the
+  // stored qty when there's no per-unit weight (true bulk/liquid, where the
+  // quantity is expressed in MT by convention). For correctly-entered orders
+  // totalWeight == qty × netWeight, so this returns the stored qty unchanged.
+  const lineItemUnits = (item: OrderLineItem): number => {
+    const qaProd = item.productKey
+      ? qaProducts.find(q => q.id === item.productKey)
+      : qaProducts.find(q => q.skuName === item.productName);
+    const skuProd = item.productKey
+      ? skus.find(s => s.id === item.productKey)
+      : skus.find(s => s.name === item.productName);
+    const netKg = qaProd?.netWeightKg || skuProd?.netWeightKg || skuProd?.netWeight || 0;
+    if (netKg > 0 && item.totalWeight > 0) {
+      return Math.round((item.totalWeight * 1000) / netKg);
+    }
+    return item.qty;
+  };
+
   const createOrderFromReview = (rev: POReview, reservedBols: string[] = [], reservedPos: string[] = []): string | null => {
     const customer = customers.find(c => c.id === rev.customerId);
     if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
@@ -17633,7 +17654,7 @@ export default function App() {
                         {orderLineItems.map((item, idx) => (
                           <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
                             <td className="p-2">{item.productDisplayName || productNameToDisplay(item.productName)}</td>
-                            <td className="p-2">{item.qty}</td>
+                            <td className="p-2">{lineItemUnits(item)}</td>
                             <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
                             <td className="p-2">{item.contractNumber}</td>
                             <td className="p-2">${(item.unitAmount || 0).toFixed(2)}</td>
@@ -17660,7 +17681,10 @@ export default function App() {
                                     productName: item.productName,
                                     productKey: item.productKey || matchingOpt?.key || '',
                                     productDisplayName: item.productDisplayName || matchingOpt?.label || '',
-                                    qty: item.qty,
+                                    // Show the quantity in UNITS — orders synced/imported in MT store
+                                    // qty as the MT figure, so derive the true unit count from the
+                                    // line's total weight and the product's catalog net weight.
+                                    qty: lineItemUnits(item),
                                     contractNumber: item.contractNumber,
                                   });
                                 }}
