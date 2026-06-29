@@ -260,6 +260,10 @@ function mtPerBasis(text: string | undefined): number | null {
   const s = String(text).toLowerCase()
     .replace(/metric\s*tonn?es?|metric\s*tons?/g, ' mt ')
     .replace(/short\s*tons?/g, ' shortton ')
+    // Strip digit-grouping commas FIRST so "1,000 KG" stays one number (1000),
+    // not "1" + "000" (which would parse the count as 0 and be discarded). A price
+    // "per 1,000 KG" is therefore correctly read as per MT, not per kg.
+    .replace(/(\d),(?=\d)/g, '$1')
     .replace(/[(),$]/g, ' ');
   // Optional leading count then a whole-word unit, e.g. "per 100 lb" = 100 x lb.
   // The leading (^|[\s/]) boundary stops "bag" from matching the "g" in gram.
@@ -271,6 +275,10 @@ function mtPerBasis(text: string | undefined): number | null {
   if (base == null || !(count > 0)) return null;
   return count * base;
 }
+
+// A sugar price per MT is realistically in the hundreds to low thousands; above
+// this it's effectively always a unit-conversion error (e.g. kg read as MT).
+const IMPLAUSIBLE_PER_MT = 50000;
 
 /** Recompute quantityMt and pricePerMt for one line item from its raw fields,
  *  overriding the model's arithmetic whenever the unit/basis is recognized.
@@ -297,6 +305,16 @@ function deriveLineMetrics(li: any): void {
       const perMt = li.amount / lineQtyMt;
       if (Number.isFinite(perMt) && perMt > 0) li.pricePerMt = Math.round(perMt * 100) / 100;
     }
+  }
+  // 3. Sanity guard: a sugar price/MT in the tens/hundreds of thousands is never
+  // real — it's almost always a kg-vs-MT mix-up (e.g. "$977.24 / 1,000 KG" read as
+  // $/kg → $977,240/MT). When the derived price is implausibly high but the line's
+  // extended amount ÷ quantity(MT) gives a sane number, trust the amount.
+  if (typeof li.pricePerMt === 'number' && li.pricePerMt > IMPLAUSIBLE_PER_MT
+      && typeof li.amount === 'number' && li.amount > 0
+      && typeof li.quantityMt === 'number' && li.quantityMt > 0) {
+    const checkPerMt = li.amount / li.quantityMt;
+    if (checkPerMt > 0 && checkPerMt <= IMPLAUSIBLE_PER_MT) li.pricePerMt = Math.round(checkPerMt * 100) / 100;
   }
 }
 
