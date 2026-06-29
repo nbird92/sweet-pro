@@ -2509,6 +2509,7 @@ export default function App() {
     const st = shipToLocationId ? customer?.shipToLocations?.find(l => l.id === shipToLocationId) : undefined;
     return {
       coa: (st?.coaEmail || '').trim(),
+      orderConfirmation: (st?.orderConfirmationEmail || '').trim(),
       customerService: (st?.customerServiceEmail || '').trim(),
       logistics: (st?.logisticsEmail || '').trim(),
     };
@@ -2698,9 +2699,9 @@ export default function App() {
   const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
     const routing = shipToEmailRouting(customer, order.shipToLocationId);
-    const recipientTo = (routing.customerService || customer?.customerServiceEmail || '').trim();
+    const recipientTo = (routing.orderConfirmation || routing.customerService || customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file (set one on the ship-to location or the customer).`);
+      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Order Confirmation / Customer Service email on file (set one on the ship-to location or the customer).`);
       return;
     }
     let pdfBlob: Blob;
@@ -4688,7 +4689,7 @@ export default function App() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   // Ship-To Location editor state — scoped to the open Edit Customer modal
   const [editingShipTo, setEditingShipTo] = useState<ShipToLocation | null>(null);
-  const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
+  const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', orderConfirmationEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
   const [showShipToForm, setShowShipToForm] = useState(false);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingFreightRate, setEditingFreightRate] = useState<FreightRate | null>(null);
@@ -16255,7 +16256,7 @@ export default function App() {
                           return !isNaN(num) && num > max ? num : max;
                         }, 0);
                         const nextCode = String(maxCode + 10).padStart(3, '0');
-                        setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
+                        setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', orderConfirmationEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
                         setShowShipToForm(true);
                       }}
                       className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
@@ -16291,9 +16292,10 @@ export default function App() {
                           <td className="px-3 py-2 text-[10px]">
                             {loc.phone || '—'}
                             {loc.coaEmail ? <><br /><span className="opacity-50">COA:</span> {loc.coaEmail}</> : null}
+                            {loc.orderConfirmationEmail ? <><br /><span className="opacity-50">OC:</span> {loc.orderConfirmationEmail}</> : null}
                             {loc.customerServiceEmail ? <><br /><span className="opacity-50">CS:</span> {loc.customerServiceEmail}</> : null}
                             {loc.logisticsEmail ? <><br /><span className="opacity-50">Log:</span> {loc.logisticsEmail}</> : null}
-                            {!loc.coaEmail && !loc.customerServiceEmail && !loc.logisticsEmail && loc.email ? <><br />{loc.email}</> : null}
+                            {!loc.coaEmail && !loc.orderConfirmationEmail && !loc.customerServiceEmail && !loc.logisticsEmail && loc.email ? <><br />{loc.email}</> : null}
                           </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap">
                             <button
@@ -16312,6 +16314,7 @@ export default function App() {
                                   phone: loc.phone || '',
                                   email: loc.email || '',
                                   coaEmail: loc.coaEmail || '',
+                                  orderConfirmationEmail: loc.orderConfirmationEmail || '',
                                   customerServiceEmail: loc.customerServiceEmail || '',
                                   logisticsEmail: loc.logisticsEmail || '',
                                   notes: loc.notes || '',
@@ -16392,8 +16395,12 @@ export default function App() {
                           <input type="email" value={shipToForm.coaEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, coaEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certificate of Analysis — falls back to customer" />
                         </div>
                         <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Order Confirmation Email</label>
+                          <input type="email" value={shipToForm.orderConfirmationEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, orderConfirmationEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Order Confirmation — falls back to Customer Service" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
                           <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
-                          <input type="email" value={shipToForm.customerServiceEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, customerServiceEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Order Confirmation / BOL — falls back to customer" />
+                          <input type="email" value={shipToForm.customerServiceEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, customerServiceEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="BOL / Return Order — falls back to customer" />
                         </div>
                         <div className="col-span-2 space-y-1">
                           <label className="text-[10px] uppercase font-bold opacity-50">Logistics Email</label>
