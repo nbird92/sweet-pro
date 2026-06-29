@@ -237,6 +237,11 @@ export function generateOrderConfirmationPdf({
   // Net Weight (kg) | Gross Weight (kg).
   y = drawSectionHeader(doc, 'GOODS ORDERED', y, contentWidth);
 
+  // Number formatters with thousands separators. Units allow up to 2 decimals
+  // (typically whole counts); weights are fixed at 2 decimals.
+  const fmtUnits = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const fmtKg = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   // Build line items data
   const lineItemsData: (string | number)[][] = [];
   let totalUnits = 0;
@@ -261,9 +266,9 @@ export function generateOrderConfirmationPdf({
     lineItemsData.push([
       item.productName || '',
       lineContract,
-      item.qty.toString(),
-      itemNetWeight ? itemNetWeight.toFixed(2) : '',
-      itemGrossWeight ? itemGrossWeight.toFixed(2) : '',
+      item.qty ? fmtUnits(item.qty) : '',
+      itemNetWeight ? fmtKg(itemNetWeight) : '',
+      itemGrossWeight ? fmtKg(itemGrossWeight) : '',
     ]);
   });
 
@@ -272,7 +277,7 @@ export function generateOrderConfirmationPdf({
     margin: { left: leftCol, right: 14 },
     head: [['Description Of Goods Ordered', 'Contract #', 'Qty (Units)', 'Net Weight (kg)', 'Gross Weight (kg)']],
     body: lineItemsData,
-    foot: [['Total', '', totalUnits ? totalUnits.toString() : '', totalNetWeight ? totalNetWeight.toFixed(2) : '', totalGrossWeight ? totalGrossWeight.toFixed(2) : '']],
+    foot: [['Total', '', totalUnits ? fmtUnits(totalUnits) : '', totalNetWeight ? fmtKg(totalNetWeight) : '', totalGrossWeight ? fmtKg(totalGrossWeight) : '']],
     styles: {
       fontSize: 8,
       cellPadding: 3,
@@ -295,7 +300,7 @@ export function generateOrderConfirmationPdf({
     columnStyles: {
       0: { cellWidth: 'auto' },
       1: { cellWidth: 34 },
-      2: { halign: 'center', cellWidth: 24 },
+      2: { halign: 'right', cellWidth: 24 },
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 },
     },

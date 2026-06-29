@@ -2591,6 +2591,10 @@ export default function App() {
     ctx: { customer?: Customer; carrier?: Carrier; shipperLocation?: Location; shipToLocation?: ShipToLocation },
   ): { tokens: Record<string, string>; lineItems: Array<Record<string, string>> } => {
     const { customer, carrier, shipperLocation, shipToLocation } = ctx;
+    // Thousands-separated number strings so the sheet output matches the in-code
+    // PDF: units up to 2 decimals, weights fixed at 2.
+    const fmtUnits = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const fmtKg = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     let totalUnits = 0, totalNet = 0, totalGross = 0;
     const lineItems = (order.lineItems || []).map(li => {
       const qa = qaProducts.find(p => p.skuName === li.productName);
@@ -2602,9 +2606,9 @@ export default function App() {
       return {
         description: li.productName || '',
         contract: (li.contractNumber || '').trim() || (order.contractNumber || '').trim(),
-        units: li.qty != null ? String(li.qty) : '',
-        net: net ? net.toFixed(2) : '',
-        gross: gross ? gross.toFixed(2) : '',
+        units: li.qty != null ? fmtUnits(li.qty) : '',
+        net: net ? fmtKg(net) : '',
+        gross: gross ? fmtKg(gross) : '',
       };
     });
     const deliverName = shipToLocation ? `${customer?.name || order.customer || ''} — ${shipToLocation.name}` : (customer?.name || order.customer || '');
@@ -2631,9 +2635,9 @@ export default function App() {
       shipper_city_province: shipperLocation ? [shipperLocation.city, shipperLocation.province].filter(Boolean).join(', ') : '',
       shipper_postal: shipperLocation?.postalCode || '',
       bol: order.bolNumber || '',
-      total_units: totalUnits ? String(totalUnits) : '',
-      total_net: totalNet ? totalNet.toFixed(2) : '',
-      total_gross: totalGross ? totalGross.toFixed(2) : '',
+      total_units: totalUnits ? fmtUnits(totalUnits) : '',
+      total_net: totalNet ? fmtKg(totalNet) : '',
+      total_gross: totalGross ? fmtKg(totalGross) : '',
     };
     return { tokens, lineItems };
   };
