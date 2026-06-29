@@ -1324,10 +1324,32 @@ export function parsedRowsToOrdersConfigured(
         continue;
       }
 
-      // New BOL, but this PO already belongs to another order → don't create a
-      // second order for it (preserves the importer's PO de-duplication; a PO is
-      // updated only via its own BOL match above).
+      // New BOL, but this PO already belongs to an existing order. The imported
+      // sheet is the source of truth for BOL numbers, so REPLACE the order's BOL
+      // with the imported one (matched on the customer PO) and fill any blanks.
+      // Guards: never steal a BOL already on another order, and touch each order
+      // at most once per run.
       if (poU && existingOrderByPo.has(poU)) {
+        const poOrder = existingOrderByPo.get(poU)!;
+        const currentBol = (poOrder.bolNumber || '').trim().toUpperCase();
+        if (bolU && bolU !== currentBol && !existingOrderByBol.has(bolU) && !updatedIds.has(poOrder.id)) {
+          const blank = (v: unknown) => v === undefined || v === null || v === '';
+          const patch: Partial<Order> = { bolNumber: r.bolNumber.trim() };
+          if (blank(poOrder.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
+          if (blank(poOrder.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
+          if (blank(poOrder.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
+          if (blank(poOrder.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
+          if (blank(poOrder.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
+          if (blank(poOrder.splitNumber) && r.splitNumber) patch.splitNumber = r.splitNumber;
+          if (blank(poOrder.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
+          if (blank(poOrder.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+          if (blank(poOrder.shipToLocationId) && shipToLocationId) patch.shipToLocationId = shipToLocationId;
+          const updated = stripUndefined({ ...poOrder, ...patch });
+          result.updatedOrders!.push(updated);
+          updatedIds.add(poOrder.id);
+          existingOrderByBol.set(bolU, updated); // keep map consistent for later rows
+          continue;
+        }
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'PO already exists in orders table' });
         continue;
       }

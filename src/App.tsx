@@ -13683,12 +13683,29 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    const updatedById = new Map(updatedOrders.map(o => [o.id, o]));
+                    const updatedById = new Map(updatedOrders.map((o): [string, Order] => [o.id, o]));
                     if (orderSyncPreview.newOrders.length > 0 || updatedById.size > 0) {
+                      // When a sync update REPLACES an order's BOL (matched by PO),
+                      // carry the change to its linked shipments / invoices / return
+                      // orders so they don't orphan on the old BOL.
+                      const bolRemap = new Map<string, string>(); // oldBol -> newBol
+                      orders.forEach(o => {
+                        const u = updatedById.get(o.id) as Order | undefined;
+                        const oldBol = (o.bolNumber || '').trim();
+                        const newBol = (u?.bolNumber || '').trim();
+                        if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, newBol);
+                      });
                       setOrders([
                         ...orders.map(o => updatedById.get(o.id) || o),
                         ...orderSyncPreview.newOrders,
                       ]);
+                      if (bolRemap.size) {
+                        const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
+                        setHamiltonShipments(prev => prev.map(remapShip));
+                        setVancouverShipments(prev => prev.map(remapShip));
+                        setInvoices(prev => prev.map(i => bolRemap.has((i.bolNumber || '').trim()) ? { ...i, bolNumber: bolRemap.get((i.bolNumber || '').trim())! } : i));
+                        setReturnOrders(prev => prev.map(r => bolRemap.has((r.originalBolNumber || '').trim()) ? { ...r, originalBolNumber: bolRemap.get((r.originalBolNumber || '').trim())! } : r));
+                      }
                     }
                     setOrderSyncPreview(null);
                   }}
