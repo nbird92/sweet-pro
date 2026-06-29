@@ -988,15 +988,26 @@ export async function fetchTabFromSheet(sheetId: string, tabName: string): Promi
 }
 
 
-/** Fetch the header row + first 5 sample rows of a tab for the column-mapping UI. */
+/** Fetch the header row + first 5 sample rows of a tab for the column-mapping UI.
+ *  Auto-detects WHICH row is the header: sheets often have a title/blank row 1
+ *  with the real headers in row 2. We pick the earliest of the first few rows
+ *  with the most non-empty cells (a title/blank row has few; the header row is
+ *  fully populated; data rows that follow can't win because ties keep the earlier
+ *  row), so a sheet whose headers live in row 2 maps correctly. */
 export async function fetchTabPreview(
   sheetId: string,
   tabName: string,
 ): Promise<{ headers: string[]; sampleRows: string[][] }> {
   const csv = await fetchTabFromSheet(sheetId, tabName);
   const rows = parseCSV(csv);
-  const headers = rows[0] || [];
-  const sampleRows = rows.slice(1, 6);
+  const nonEmpty = (r: string[]) => (r || []).reduce((n, c) => n + ((c || '').trim() ? 1 : 0), 0);
+  let headerIdx = 0;
+  const scan = Math.min(rows.length, 4);
+  for (let i = 1; i < scan; i++) {
+    if (nonEmpty(rows[i]) > nonEmpty(rows[headerIdx])) headerIdx = i;
+  }
+  const headers = rows[headerIdx] || [];
+  const sampleRows = rows.slice(headerIdx + 1, headerIdx + 6);
   return { headers, sampleRows };
 }
 

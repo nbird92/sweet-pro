@@ -12900,9 +12900,9 @@ export default function App() {
           };
           const autoMap = () => {
             if (orderSyncEditingTabIdx === null || !orderSyncTabHeaders) return;
-            // Search BOTH the header row and the next row (some sheets put the real
-            // headers in row 2 under a title/blank row 1).
-            updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders, orderSyncTabSample[0] || []));
+            // fetchTabPreview already resolved the real header row (e.g. row 2 under
+            // a title/blank row 1), so detect from it directly.
+            updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders));
           };
           // Preset storage is per-mode: orders → 'orderImportPresets',
           // invoices → 'invoiceImportPresets', shipments → 'shipmentImportPresets'.
