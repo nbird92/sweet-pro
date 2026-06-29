@@ -43,8 +43,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).send(lines.join('\n'));
   } catch (e: any) {
     const msg = String(e?.message || e);
-    // Surface the common case clearly: the sheet isn't shared with the SA.
-    if (/permission|403|not have access|forbidden/i.test(msg)) {
+    // The Google Sheets API isn't enabled in the service account's GCP project.
+    if (/has not been used|is disabled|service[_\s-]*disabled|accessnotconfigured|sheets\.googleapis\.com/i.test(msg)) {
+      return res.status(403).json({ error: `The Google Sheets API is not enabled for the service account's Google Cloud project. Enable it (APIs & Services → Library → "Google Sheets API"), wait a couple of minutes, then retry. (${msg})` });
+    }
+    // The sheet isn't shared with the service account.
+    if (/permission|not have access|forbidden|the caller does not have/i.test(msg)) {
       return res.status(403).json({ error: `The service account can't open this sheet. Share it with the service account email (GOOGLE_SERVICE_ACCOUNT_EMAIL) as a Viewer or Editor. (${msg})` });
     }
     return res.status(500).json({ error: msg });

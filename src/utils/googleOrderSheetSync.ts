@@ -948,6 +948,7 @@ export function extractSheetId(url: string): string | null {
  *  shared only with the service account imports without "Anyone with the link".
  *  Falls back to the public gviz CSV URL for sheets that are link-viewable. */
 export async function fetchTabFromSheet(sheetId: string, tabName: string): Promise<string> {
+  let saError: string | null = null;
   // 1. Service-account-backed server route (works on a privately-shared sheet).
   try {
     const params = new URLSearchParams({ sheetId, tab: tabName });
@@ -958,28 +959,32 @@ export async function fetchTabFromSheet(sheetId: string, tabName: string): Promi
     if (res.ok) {
       const text = await res.text();
       if (text && text.trim()) return text;
-    } else if (res.status === 403) {
-      // The endpoint reached Google but the service account lacks access — report
-      // that clearly instead of silently falling back to the (also-failing) public URL.
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body?.error || `The service account can't open this sheet. Share it with the service account email as Viewer or Editor.`);
+    } else {
+      const body = await res.json().catch(() => null);
+      saError = body?.error || `service-account import failed (HTTP ${res.status}).`;
     }
-    // Other non-OK (404 endpoint missing / 500 not configured) → fall through to public.
   } catch (e) {
-    // Re-throw the explicit "not shared with the service account" message; swallow
-    // network/endpoint errors so the public-URL fallback still gets a chance.
-    if (e instanceof Error && /service account/i.test(e.message)) throw e;
+    // Network / endpoint-missing (e.g. local dev) — fall through to the public URL.
+    saError = e instanceof Error ? e.message : String(e);
   }
 
-  // 2. Fallback: public gviz CSV (requires the sheet be link-viewable / published).
-  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
-  const res = await fetch(url, { method: 'GET' });
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch tab "${tabName}": HTTP ${res.status}. Either share the sheet with the service account email, or set it to "Anyone with the link can view".`,
-    );
-  }
-  return await res.text();
+  // 2. Fallback: public gviz CSV (only works when the sheet is link-viewable; a
+  //    private sheet redirects to an HTML login page, which we must NOT treat as data).
+  try {
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+    const res = await fetch(url, { method: 'GET' });
+    const ct = res.headers.get('content-type') || '';
+    const text = res.ok ? await res.text() : '';
+    if (text && !/^\s*</.test(text) && !ct.includes('text/html')) return text;
+  } catch { /* handled below */ }
+
+  // Both routes failed. Prefer the service-account message (that's the path set up
+  // for a private sheet) over the generic public-sharing one.
+  throw new Error(
+    saError
+      ? `Couldn't import tab "${tabName}". ${saError}`
+      : `Failed to fetch tab "${tabName}". Share it with the service account email, or set the sheet to "Anyone with the link can view".`,
+  );
 }
 
 
