@@ -61,6 +61,7 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
+import { renderSheetTemplatePdf } from './utils/renderTemplate';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
@@ -2561,6 +2562,87 @@ export default function App() {
    * pipeline; this just resolves the recipient, builds the message, and
    * generates the PDF.
    */
+  // Build the token map + line items for the Google-Sheet order-confirmation
+  // template. Token names match the {{tokens}} the operator places in the sheet.
+  const buildOrderConfirmationTokens = (
+    order: Order,
+    ctx: { customer?: Customer; carrier?: Carrier; shipperLocation?: Location; shipToLocation?: ShipToLocation },
+  ): { tokens: Record<string, string>; lineItems: Array<Record<string, string>> } => {
+    const { customer, carrier, shipperLocation, shipToLocation } = ctx;
+    let totalUnits = 0, totalNet = 0, totalGross = 0;
+    const lineItems = (order.lineItems || []).map(li => {
+      const qa = qaProducts.find(p => p.skuName === li.productName);
+      const netKg = qa?.netWeightKg || li.netWeightPerUnit || 0;
+      const grossKg = qa?.grossWeightKg || 0;
+      const net = netKg * li.qty;
+      const gross = grossKg * li.qty;
+      totalUnits += li.qty; totalNet += net; totalGross += gross;
+      return {
+        description: li.productName || '',
+        contract: (li.contractNumber || '').trim() || (order.contractNumber || '').trim(),
+        units: li.qty != null ? String(li.qty) : '',
+        net: net ? net.toFixed(2) : '',
+        gross: gross ? gross.toFixed(2) : '',
+      };
+    });
+    const deliverName = shipToLocation ? `${customer?.name || order.customer || ''} — ${shipToLocation.name}` : (customer?.name || order.customer || '');
+    const deliverAddr = shipToLocation ? [shipToLocation.addressLine1, shipToLocation.addressLine2].filter(Boolean).join(', ') : (customer?.address || '');
+    const deliverCityProv = shipToLocation ? [shipToLocation.city, shipToLocation.province].filter(Boolean).join(', ') : [customer?.city, customer?.province].filter(Boolean).join(', ');
+    const deliverPostal = shipToLocation ? (shipToLocation.postalCode || '') : (customer?.postalCode || '');
+    const tokens: Record<string, string> = {
+      order_date: order.date || '',
+      po: order.po || '',
+      pickup_date: order.shipmentDate || '',
+      delivery_date: order.deliveryDate || '',
+      consignee_name: customer?.name || order.customer || '',
+      consignee_tel: customer?.contactPhone || '',
+      consignee_email: customer?.contactEmail || customer?.salesContactEmail || '',
+      carrier_name: carrier?.name || order.carrier || '',
+      carrier_tel: carrier?.contactPhone || '',
+      carrier_email: carrier?.contactEmail || '',
+      deliver_name: deliverName,
+      deliver_address: deliverAddr,
+      deliver_city_province: deliverCityProv,
+      deliver_postal: deliverPostal,
+      shipper_name: shipperLocation?.name || order.location || '',
+      shipper_address: shipperLocation?.address || '',
+      shipper_city_province: shipperLocation ? [shipperLocation.city, shipperLocation.province].filter(Boolean).join(', ') : '',
+      shipper_postal: shipperLocation?.postalCode || '',
+      bol: order.bolNumber || '',
+      total_units: totalUnits ? String(totalUnits) : '',
+      total_net: totalNet ? totalNet.toFixed(2) : '',
+      total_gross: totalGross ? totalGross.toFixed(2) : '',
+    };
+    return { tokens, lineItems };
+  };
+
+  // Produce the order-confirmation PDF as a Blob. When an "Order Confirmation" QA
+  // template with a Google Sheet is configured, render LITERALLY from that sheet
+  // via the service account; otherwise fall back to the built-in PDF generator.
+  const orderConfirmationBlob = async (order: Order): Promise<{ blob: Blob; filename: string }> => {
+    const customer = customers.find(c => c.name === order.customer);
+    const carrier = carriers.find(c => c.name === order.carrier);
+    const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
+    const shipToLocation = order.shipToLocationId ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId) : undefined;
+    const filename = `Order_Confirmation_${order.bolNumber || 'draft'}_${(order.customer || 'customer').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+
+    const tmpl = qaTemplates.find(t => t.type === 'Order Confirmation' && (t.googleSheetUrl || '').trim());
+    const sheetId = tmpl ? extractSheetId(tmpl.googleSheetUrl) : null;
+    if (sheetId) {
+      try {
+        const { tokens, lineItems } = buildOrderConfirmationTokens(order, { customer, carrier, shipperLocation, shipToLocation });
+        const blob = await renderSheetTemplatePdf({ sheetId, tokens, lineItems });
+        return { blob, filename };
+      } catch (e) {
+        console.error('Order-confirmation template render failed; using the built-in PDF:', e);
+      }
+    }
+    const gen = generateOrderConfirmationPdf({ order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus });
+    const blob = await fetch(gen.blobUrl).then(r => r.blob());
+    setTimeout(() => URL.revokeObjectURL(gen.blobUrl), 5000);
+    return { blob, filename: gen.filename };
+  };
+
   const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
     const recipientTo = (customer?.customerServiceEmail || '').trim();
@@ -2568,20 +2650,12 @@ export default function App() {
       setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file.`);
       return;
     }
-    const carrier = carriers.find(c => c.name === order.carrier);
-    const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
-    const shipToLocation = order.shipToLocationId
-      ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId)
-      : undefined;
-
-    let blobUrl = '';
     let pdfBlob: Blob;
     let filename: string;
     try {
-      const gen = generateOrderConfirmationPdf({ order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus });
-      blobUrl = gen.blobUrl;
-      filename = gen.filename;
-      pdfBlob = await fetch(blobUrl).then(r => r.blob());
+      const r = await orderConfirmationBlob(order);
+      pdfBlob = r.blob;
+      filename = r.filename;
     } catch (e: any) {
       setErrorBox('Failed to generate the order confirmation PDF: ' + (e?.message || 'Unknown error'));
       return;
@@ -2614,7 +2688,6 @@ export default function App() {
       triggeredBy: opts?.triggeredBy || 'manual',
     });
 
-    if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
     if (!result.success) {
       setErrorBox(`Order confirmation email failed: ${result.error || 'Unknown error'} — see Email Center.`);
     }
@@ -2972,26 +3045,13 @@ export default function App() {
     }
   };
 
-  const handleGenerateOrderConfirmation = (order: Order) => {
+  const handleGenerateOrderConfirmation = async (order: Order) => {
     setGeneratingOrderConfirmation(order.id);
     try {
-      const customer = customers.find(c => c.name === order.customer);
-      const carrier = carriers.find(c => c.name === order.carrier);
-      const shipperLocation = locations.find(l => l.name === order.location || l.locationCode === order.location);
-      // Resolve ship-to location: order's selection wins; otherwise undefined so the PDF
-      // falls back to the customer's default address.
-      const shipToLocation = order.shipToLocationId
-        ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId)
-        : undefined;
-      const { blobUrl, filename } = generateOrderConfirmationPdf({
-        order,
-        customer,
-        carrier,
-        shipperLocation,
-        shipToLocation,
-        qaProducts,
-        skus,
-      });
+      // Renders LITERALLY from the configured "Order Confirmation" Google Sheet
+      // template when present; otherwise falls back to the built-in PDF generator.
+      const { blob, filename } = await orderConfirmationBlob(order);
+      const blobUrl = URL.createObjectURL(blob);
       // Revoke any previous blob URL to prevent memory leaks
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, templateType: 'Order Confirmation' });
