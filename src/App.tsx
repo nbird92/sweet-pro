@@ -17923,36 +17923,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Shipment appointment — schedule a pick-up appointment for this
-                          PO. The date is the Shipment Date (= pick-up date) above. */}
-                      <div className="mb-3 border border-[#141414]/15 bg-[#F9F9F9] p-3">
-                        <label className="flex items-center gap-2 text-[11px] font-bold uppercase cursor-pointer">
-                          <input type="checkbox" checked={rev.scheduleAppt} disabled={rev.created} onChange={(e) => updateReview(rev.id, { scheduleAppt: e.target.checked })} />
-                          Schedule shipment appointment
-                        </label>
-                        {rev.scheduleAppt && (
-                          <div className="grid grid-cols-4 gap-3 mt-2">
-                            <div className="space-y-1">
-                              <label className="text-[9px] uppercase font-bold opacity-50">Appt Date (= pick-up)</label>
-                              <input type="date" value={rev.shipmentDate} onChange={(e) => updateReview(rev.id, { shipmentDate: e.target.value })} disabled={rev.created} className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] uppercase font-bold opacity-50">Pick-up Time {rev.source.pickupTime && <span className="opacity-60 normal-case">· read: "{rev.source.pickupTime}"</span>}</label>
-                              <input type="time" value={rev.apptTime} onChange={(e) => updateReview(rev.id, { apptTime: e.target.value })} disabled={rev.created} className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] uppercase font-bold opacity-50">Bay</label>
-                              <input value={rev.apptBay} onChange={(e) => updateReview(rev.id, { apptBay: e.target.value })} disabled={rev.created} placeholder="optional" className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none" />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] uppercase font-bold opacity-50">Scheduler</label>
-                              <div className="w-full px-2 py-1.5 text-xs bg-[#E4E3E0] border border-[#141414]/30">{rev.location ? (rev.location.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver') : '—'}</div>
-                            </div>
-                          </div>
-                        )}
-                        {rev.scheduleAppt && !rev.shipmentDate && <p className="text-[10px] text-amber-700 mt-1 font-bold">Set a pick-up date above to schedule the appointment.</p>}
-                      </div>
-
                       {/* Line items */}
                       <div className="border border-[#141414]/15">
                         <table className="w-full text-xs">
@@ -17988,6 +17958,87 @@ export default function App() {
                             ))}
                           </tbody>
                         </table>
+                      </div>
+
+                      {/* Shipment appointment — mirrors the "Create Shipments from
+                          Order" scheduler: bay dropdown by location + clickable
+                          available time tiles. Pick-up date = shipment date. */}
+                      <div className="border border-[#141414]/15 bg-[#F9F9F9]">
+                        <label className="flex items-center gap-2 text-[11px] font-bold uppercase cursor-pointer p-3">
+                          <input type="checkbox" checked={rev.scheduleAppt} disabled={rev.created} onChange={(e) => updateReview(rev.id, { scheduleAppt: e.target.checked })} />
+                          Schedule shipment appointment
+                        </label>
+                        {rev.scheduleAppt && (() => {
+                          const apptLoc = rev.location || '';
+                          const locationData = apptLoc ? locations.find(l => l.name.toLowerCase().includes(apptLoc.toLowerCase())) : undefined;
+                          const validBays = locationData ? locationData.bays : [];
+                          const isHam = apptLoc.toLowerCase().includes('hamilton');
+                          const allLocShipments = isHam ? hamiltonShipments : vancouverShipments;
+                          const apptsForDay = rev.shipmentDate ? allLocShipments.filter(s => s.date === rev.shipmentDate).sort((a, b) => a.time.localeCompare(b.time)) : [];
+                          const bookedSlots = new Set(apptsForDay.map(s => `${s.time}|${s.bay}`));
+                          const getAvailBays = (slot: string) => validBays.filter(bay => !bookedSlots.has(`${slot}|${bay}`));
+                          const isSlotAvailable = (slot: string) => rev.apptBay ? !bookedSlots.has(`${slot}|${rev.apptBay}`) : getAvailBays(slot).length > 0;
+                          const allSlots = getLocationAllTimeSlots(apptLoc);
+                          const availSlots = allSlots.filter(isSlotAvailable);
+                          return (
+                            <div className="px-3 pb-3 space-y-3">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div className="space-y-0.5">
+                                  <label className="text-[9px] uppercase font-bold opacity-50">Location</label>
+                                  <select value={apptLoc} onChange={(e) => updateReview(rev.id, { location: e.target.value, locationTouched: true, apptBay: '', apptTime: '' })} disabled={rev.created} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                                    <option value="">Select Location</option>
+                                    {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                                    {apptLoc && !activeLocations.some(l => l.name === apptLoc) && <option value={apptLoc}>{apptLoc}</option>}
+                                  </select>
+                                </div>
+                                <div className="space-y-0.5">
+                                  <label className="text-[9px] uppercase font-bold opacity-50">Pick Up Date</label>
+                                  <input type="date" value={rev.shipmentDate} onChange={(e) => updateReview(rev.id, { shipmentDate: e.target.value, apptTime: '' })} disabled={rev.created} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                                </div>
+                                <div className="space-y-0.5">
+                                  <label className="text-[9px] uppercase font-bold opacity-50">Bay</label>
+                                  <select value={rev.apptBay} onChange={(e) => updateReview(rev.id, { apptBay: e.target.value, apptTime: '' })} disabled={rev.created} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                                    <option value="">Select Bay</option>
+                                    {validBays.map(bay => <option key={bay} value={bay}>{bay}</option>)}
+                                  </select>
+                                </div>
+                                <div className="space-y-0.5">
+                                  <label className="text-[9px] uppercase font-bold opacity-50">Pick-up Time</label>
+                                  <div className="w-full p-2 text-xs bg-[#E4E3E0] border border-[#141414]/30 font-mono">{rev.apptTime || '—'}{rev.source.pickupTime && rev.apptTime !== rev.source.pickupTime && <span className="opacity-50 ml-1 normal-case">· read: {rev.source.pickupTime}</span>}</div>
+                                </div>
+                              </div>
+                              {rev.shipmentDate ? (
+                                <div className="border border-[#141414] overflow-hidden">
+                                  <div className="bg-[#141414] text-[#E4E3E0] p-2 flex justify-between items-center">
+                                    <h4 className="text-[10px] font-bold uppercase">Schedule for {apptLoc || '—'} — {new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(new Date(rev.shipmentDate + 'T12:00:00'))}</h4>
+                                    <span className="text-[9px] opacity-60">{apptsForDay.length} booked · {availSlots.length} available</span>
+                                  </div>
+                                  <div className="p-2 bg-[#FAFAFA]">
+                                    <div className="text-[9px] uppercase font-bold opacity-50 mb-1.5">{rev.apptBay ? `Available times for ${rev.apptBay}` : 'Click an available time (bay shown for each)'}</div>
+                                    <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
+                                      {allSlots.map(slot => {
+                                        const available = isSlotAvailable(slot);
+                                        const isSelected = rev.apptTime === slot;
+                                        const availBays = getAvailBays(slot);
+                                        const bayLabel = !rev.apptBay && availBays.length > 0 && availBays.length < validBays.length ? availBays.map(b => b.replace(/BAY\s*/i, 'B').split(' ')[0]).join(',') : '';
+                                        return (
+                                          <button key={slot} type="button" disabled={rev.created || !available}
+                                            onClick={() => { if (available) updateReview(rev.id, { apptTime: slot }); }}
+                                            className={`py-1.5 px-2 text-[11px] font-mono border transition-all flex flex-col items-center ${isSelected ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold' : !available ? 'bg-red-50 text-red-300 border-red-200 cursor-not-allowed line-through' : 'bg-white text-[#141414] border-[#141414]/20 hover:border-[#141414] hover:bg-[#141414]/5 cursor-pointer'}`}>
+                                            <span>{slot}</span>
+                                            {bayLabel && <span className="text-[8px] opacity-50 leading-none">{bayLabel}</span>}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] text-amber-700 font-bold">Set a pick-up date to see available appointment times.</p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {!rev.created && (
