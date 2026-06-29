@@ -2479,6 +2479,20 @@ export default function App() {
    * Idempotency-keyed per (type, recordId) so retries land on the same
    * log row instead of creating duplicates.
    */
+  // Per-ship-to-location email routing. A ship-to location can override where its
+  // documents are addressed: a COA email (Certificate of Analysis), a Customer
+  // Service email (Order Confirmation / BOL / Return Order Confirmation), and a
+  // Logistics email that is CC'd on the shipping documents. Each value falls back
+  // to the customer-level address at the call site when the location leaves it blank.
+  const shipToEmailRouting = (customer: Customer | undefined, shipToLocationId: string | undefined) => {
+    const st = shipToLocationId ? customer?.shipToLocations?.find(l => l.id === shipToLocationId) : undefined;
+    return {
+      coa: (st?.coaEmail || '').trim(),
+      customerService: (st?.customerServiceEmail || '').trim(),
+      logistics: (st?.logisticsEmail || '').trim(),
+    };
+  };
+
   const runEmailSend = async (params: {
     type: EmailDocumentType;
     orderId?: string;
@@ -2486,6 +2500,7 @@ export default function App() {
     invoiceId?: string;
     customerName: string;
     recipientTo: string;
+    recipientCc?: string[];
     subject: string;
     html: string;
     pdfBlob: Blob;
@@ -2503,6 +2518,13 @@ export default function App() {
       return { success: false, error: 'No recipient address resolved.' };
     }
 
+    // CC = internal CC list (Email Center setting) plus any per-call recipients
+    // (e.g. a ship-to location's Logistics email), de-duplicated and minus the To.
+    const ccList = Array.from(new Set([
+      ...(emailSettings.internalCc || []),
+      ...(params.recipientCc || []),
+    ].map(a => a.trim()).filter(Boolean))).filter(a => a.toLowerCase() !== params.recipientTo.trim().toLowerCase());
+
     const logId = `EMAIL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const idemKey = idempotencyKey(params.type, params.idempotencyRecordId);
     const existing = emailLog.find(l => l.idempotencyKey === idemKey);
@@ -2515,7 +2537,7 @@ export default function App() {
       invoiceId: params.invoiceId,
       customerName: params.customerName,
       recipientTo: [params.recipientTo],
-      recipientCc: emailSettings.internalCc.length ? [...emailSettings.internalCc] : undefined,
+      recipientCc: ccList.length ? ccList : undefined,
       actualRecipientTo: emailSettings.testMode ? [emailSettings.testAddress] : [params.recipientTo],
       subject: params.subject,
       attachmentFilename: params.filename,
@@ -2532,7 +2554,7 @@ export default function App() {
 
     const result = await sendEmail({
       to: [params.recipientTo],
-      cc: emailSettings.internalCc.length ? emailSettings.internalCc : undefined,
+      cc: ccList.length ? ccList : undefined,
       subject: params.subject,
       html: params.html,
       attachment: params.pdfBlob,
@@ -2645,9 +2667,10 @@ export default function App() {
 
   const sendOrderConfirmationEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
-    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    const routing = shipToEmailRouting(customer, order.shipToLocationId);
+    const recipientTo = (routing.customerService || customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file.`);
+      setErrorBox(`Cannot send — ${order.customer || 'this customer'} has no Customer Service email on file (set one on the ship-to location or the customer).`);
       return;
     }
     let pdfBlob: Blob;
@@ -2682,6 +2705,7 @@ export default function App() {
       orderId: order.id,
       customerName: order.customer || '',
       recipientTo,
+      recipientCc: routing.logistics ? [routing.logistics] : undefined,
       subject, html,
       pdfBlob, filename,
       idempotencyRecordId: order.id,
@@ -2723,9 +2747,10 @@ export default function App() {
   /** Send the Bill of Lading PDF to the customer's customerServiceEmail. */
   const sendBolEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
-    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    const routing = shipToEmailRouting(customer, order.shipToLocationId);
+    const recipientTo = (routing.customerService || customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send BOL — ${order.customer || 'this customer'} has no Customer Service email on file.`);
+      setErrorBox(`Cannot send BOL — ${order.customer || 'this customer'} has no Customer Service email on file (set one on the ship-to location or the customer).`);
       return;
     }
     const shipment = shipmentForOrder(order);
@@ -2776,6 +2801,7 @@ export default function App() {
       shipmentId: shipment.id,
       customerName: order.customer || '',
       recipientTo,
+      recipientCc: routing.logistics ? [routing.logistics] : undefined,
       subject, html,
       pdfBlob, filename,
       idempotencyRecordId: order.id,
@@ -2875,9 +2901,10 @@ export default function App() {
   /** Email the Return Order Confirmation PDF to customerServiceEmail. */
   const sendReturnOrderConfirmationEmail = async (returnOrder: ReturnOrder, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === returnOrder.customer);
-    const recipientTo = (customer?.customerServiceEmail || '').trim();
+    const routing = shipToEmailRouting(customer, returnOrder.shipToLocationId);
+    const recipientTo = (routing.customerService || customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send — ${returnOrder.customer || 'this customer'} has no Customer Service email on file.`);
+      setErrorBox(`Cannot send — ${returnOrder.customer || 'this customer'} has no Customer Service email on file (set one on the ship-to location or the customer).`);
       return;
     }
     const carrier = carriers.find(c => c.name === returnOrder.carrier);
@@ -2927,6 +2954,7 @@ export default function App() {
       orderId: returnOrder.id,
       customerName: returnOrder.customer || '',
       recipientTo,
+      recipientCc: routing.logistics ? [routing.logistics] : undefined,
       subject, html,
       pdfBlob, filename,
       idempotencyRecordId: returnOrder.id,
@@ -2988,9 +3016,10 @@ export default function App() {
    *  the customer's quality dept), falling back to customerServiceEmail. */
   const sendCoaEmail = async (order: Order, opts?: { triggeredBy?: 'automation' | 'manual' | 'retry' }) => {
     const customer = customers.find(c => c.name === order.customer);
-    const recipientTo = ((customer?.qaContractEmail || customer?.customerServiceEmail) || '').trim();
+    const routing = shipToEmailRouting(customer, order.shipToLocationId);
+    const recipientTo = (routing.coa || customer?.qaContractEmail || customer?.customerServiceEmail || '').trim();
     if (!recipientTo) {
-      setErrorBox(`Cannot send COA — ${order.customer || 'this customer'} has no QA Contract / Customer Service email on file.`);
+      setErrorBox(`Cannot send COA — ${order.customer || 'this customer'} has no COA / QA Contract / Customer Service email on file (set one on the ship-to location or the customer).`);
       return;
     }
     const shipment = shipmentForOrder(order);
@@ -4629,7 +4658,7 @@ export default function App() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   // Ship-To Location editor state — scoped to the open Edit Customer modal
   const [editingShipTo, setEditingShipTo] = useState<ShipToLocation | null>(null);
-  const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', notes: '' });
+  const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
   const [showShipToForm, setShowShipToForm] = useState(false);
   const [editingSku, setEditingSku] = useState<SKU | null>(null);
   const [editingFreightRate, setEditingFreightRate] = useState<FreightRate | null>(null);
@@ -16196,7 +16225,7 @@ export default function App() {
                           return !isNaN(num) && num > max ? num : max;
                         }, 0);
                         const nextCode = String(maxCode + 10).padStart(3, '0');
-                        setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', notes: '' });
+                        setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
                         setShowShipToForm(true);
                       }}
                       className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
@@ -16229,7 +16258,13 @@ export default function App() {
                           <td className="px-3 py-2">{[loc.city, loc.province].filter(Boolean).join(', ') || '—'}</td>
                           <td className="px-3 py-2 font-mono">{loc.postalCode || '—'}</td>
                           <td className="px-3 py-2">{loc.country || '—'}</td>
-                          <td className="px-3 py-2 text-[10px]">{loc.phone || '—'}{loc.email ? <><br />{loc.email}</> : null}</td>
+                          <td className="px-3 py-2 text-[10px]">
+                            {loc.phone || '—'}
+                            {loc.coaEmail ? <><br /><span className="opacity-50">COA:</span> {loc.coaEmail}</> : null}
+                            {loc.customerServiceEmail ? <><br /><span className="opacity-50">CS:</span> {loc.customerServiceEmail}</> : null}
+                            {loc.logisticsEmail ? <><br /><span className="opacity-50">Log:</span> {loc.logisticsEmail}</> : null}
+                            {!loc.coaEmail && !loc.customerServiceEmail && !loc.logisticsEmail && loc.email ? <><br />{loc.email}</> : null}
+                          </td>
                           <td className="px-3 py-2 text-right whitespace-nowrap">
                             <button
                               type="button"
@@ -16246,6 +16281,9 @@ export default function App() {
                                   postalCode: loc.postalCode || '',
                                   phone: loc.phone || '',
                                   email: loc.email || '',
+                                  coaEmail: loc.coaEmail || '',
+                                  customerServiceEmail: loc.customerServiceEmail || '',
+                                  logisticsEmail: loc.logisticsEmail || '',
                                   notes: loc.notes || '',
                                 });
                                 setShowShipToForm(true);
@@ -16320,8 +16358,16 @@ export default function App() {
                           <input value={shipToForm.phone || ''} onChange={(e) => setShipToForm({ ...shipToForm, phone: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
                         </div>
                         <div className="col-span-2 space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">Email</label>
-                          <input type="email" value={shipToForm.email || ''} onChange={(e) => setShipToForm({ ...shipToForm, email: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          <label className="text-[10px] uppercase font-bold opacity-50">COA Email</label>
+                          <input type="email" value={shipToForm.coaEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, coaEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certificate of Analysis — falls back to customer" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Customer Service Email</label>
+                          <input type="email" value={shipToForm.customerServiceEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, customerServiceEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Order Confirmation / BOL — falls back to customer" />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Logistics Email</label>
+                          <input type="email" value={shipToForm.logisticsEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, logisticsEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="CC'd on shipping documents" />
                         </div>
                       </div>
                       <div className="flex gap-2 pt-1">

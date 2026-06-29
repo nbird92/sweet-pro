@@ -57,7 +57,10 @@ export interface ShipToLocation {
   country?: string;
   postalCode?: string;
   phone?: string;
-  email?: string;
+  email?: string;                 // legacy generic contact email (kept for back-compat)
+  coaEmail?: string;              // where this location's Certificate of Analysis is sent
+  customerServiceEmail?: string;  // where this location's Order Confirmation / BOL / Return Order Confirmation are sent
+  logisticsEmail?: string;        // CC'd on this location's shipping documents (Order Confirmation / BOL / Return Order)
   notes?: string;
 }
 
