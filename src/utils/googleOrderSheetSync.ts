@@ -1002,14 +1002,22 @@ export async function fetchTabPreview(
 
 /**
  * Best-effort column auto-detection from header text. Returns a ColumnMap
- * where each field points at the first header matching a known keyword
- * pattern, or undefined if nothing matches.
+ * where each field points at the first column whose header matches a known
+ * keyword pattern, or undefined if nothing matches.
+ *
+ * Accepts ONE OR MORE header rows: some sheets put a title/blank in row 1 and
+ * the real headers in row 2, so each field is matched against every provided
+ * row and resolves to the first column that matches in ANY of them.
  */
-export function autoDetectColumns(headers: string[]): ColumnMap {
-  const lower = headers.map(h => (h || '').trim().toLowerCase());
+export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
+  const rows = headerRows.filter(r => Array.isArray(r) && r.length > 0);
+  const lowerRows = (rows.length ? rows : [[]]).map(r => r.map(h => (h || '').trim().toLowerCase()));
+  const width = lowerRows.reduce((w, r) => Math.max(w, r.length), 0);
   const find = (test: (h: string) => boolean): number | undefined => {
-    const idx = lower.findIndex(test);
-    return idx >= 0 ? idx : undefined;
+    for (let c = 0; c < width; c++) {
+      if (lowerRows.some(lr => lr[c] !== undefined && test(lr[c]))) return c;
+    }
+    return undefined;
   };
   return {
     customer: find(h => /^customer$|^client$/.test(h) || h === 'customer name'),
