@@ -11067,7 +11067,7 @@ export default function App() {
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest">Invoice Details</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest">Edit Invoice</h3>
                   <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(editingInvoiceCard.status).bg, color: getStatusColor(editingInvoiceCard.status).text }}>{editingInvoiceCard.status}</span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -11077,32 +11077,52 @@ export default function App() {
                 </div>
               </div>
               <div className="p-6 space-y-5">
-                {/* Invoice-level fields */}
+                {/* Invoice-level fields (editable — committed on Save) */}
                 <div className="grid grid-cols-5 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice #</label>
+                    <input type="text" value={editingInvoiceCard.invoiceNumber || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, invoiceNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
-                    <div className="text-sm font-bold">{editingInvoiceCard.bolNumber}</div></div>
+                    <input type="text" value={editingInvoiceCard.bolNumber || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, bolNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
-                    <div className="text-sm font-bold">{editingInvoiceCard.customer}</div></div>
+                    <input type="text" value={editingInvoiceCard.customer || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customer: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
-                    <div className="text-sm">{editingInvoiceCard.po || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
-                    <div className="text-sm font-bold font-mono">{editingInvoiceCard.pricePerMt ? `$${editingInvoiceCard.pricePerMt.toFixed(2)}` : '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
-                    <div className="text-sm font-bold">${editingInvoiceCard.amount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div></div>
+                    <input type="text" value={editingInvoiceCard.po || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, po: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
+                    <select value={editingInvoiceCard.status} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, status: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]">
+                      <option value="Open">Open</option>
+                      <option value="Sent">Sent</option>
+                      <option value="Paid">Paid</option>
+                      <option value="Overdue">Overdue</option>
+                      <option value="Cancelled">Cancelled</option>
+                      <option value="Credit">Credit</option>
+                    </select></div>
                 </div>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice Date</label>
-                    <div className="text-sm">{editingInvoiceCard.date}</div></div>
+                    <input type="date" value={editingInvoiceCard.date || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, date: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
-                    <div className={`text-sm ${editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'text-red-600 font-bold' : ''}`}>{editingInvoiceCard.dueDate || '—'}</div></div>
+                    <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
-                    <div className="text-sm">{editingInvoiceCard.carrier || '—'}</div></div>
+                    <input type="text" value={editingInvoiceCard.carrier || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, carrier: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
-                    <div className="text-sm font-mono">{editingInvoiceCard.splitNo || '—'}</div></div>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
+                    <input type="text" value={editingInvoiceCard.splitNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, splitNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
-                    <div className="text-sm font-bold">{editingInvoiceCard.qty}</div></div>
+                    <input type="number" step="0.001" value={editingInvoiceCard.qty || ''} onChange={(e) => { const qty = parseFloat(e.target.value) || 0; const ppm = editingInvoiceCard.pricePerMt || 0; setEditingInvoiceCard({ ...editingInvoiceCard, qty, amount: ppm > 0 ? Math.round(ppm * qty * 100) / 100 : editingInvoiceCard.amount }); }} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
+                </div>
+                <div className="grid grid-cols-5 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
+                    <input type="number" step="0.01" value={editingInvoiceCard.pricePerMt ?? ''} onChange={(e) => { const ppm = parseFloat(e.target.value) || 0; setEditingInvoiceCard({ ...editingInvoiceCard, pricePerMt: ppm, amount: ppm > 0 ? Math.round(ppm * (editingInvoiceCard.qty || 0) * 100) / 100 : editingInvoiceCard.amount }); }} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                    <input type="number" step="0.01" value={editingInvoiceCard.amount || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, amount: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
+                    <input type="text" value={editingInvoiceCard.papsNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, papsNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
+                    <input type="text" value={editingInvoiceCard.customsEntryNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customsEntryNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due-date status</label>
+                    <div className={`text-sm py-1.5 ${editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'text-red-600 font-bold' : 'opacity-60'}`}>{editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'Overdue' : 'On time'}</div></div>
+                </div>
+                {/* Derived totals (read-only — driven by line items) */}
+                <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
                     <div className="text-sm font-bold">{((editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0) * 1000).toFixed(0) || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (MT)</label>
@@ -11119,12 +11139,6 @@ export default function App() {
                       return pallets > 0 ? pallets : '—';
                     })()}</div></div>
                 </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
-                    <div className="text-sm font-mono">{editingInvoiceCard.papsNo || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
-                    <div className="text-sm font-mono">{editingInvoiceCard.customsEntryNo || '—'}</div></div>
-                </div>
 
                 {/* Line Items with contract-dependent details */}
                 <div className="border border-[#141414] overflow-hidden">
@@ -11134,13 +11148,19 @@ export default function App() {
                   {/* Contract-dependent summary */}
                   <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
-                      <div className="text-sm font-mono font-bold">{editingInvoiceCard.contractNumber || '—'}</div></div>
+                      <input type="text" value={editingInvoiceCard.contractNumber || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, contractNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
-                      <div className="text-sm">{editingInvoiceCard.shippingTerms || '—'}</div></div>
+                      <select value={editingInvoiceCard.shippingTerms || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, shippingTerms: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]">
+                        <option value="">—</option>
+                        <option value="FOB">FOB</option>
+                        <option value="DAP">DAP</option>
+                        <option value="DDP">DDP</option>
+                        <option value="FCA">FCA</option>
+                      </select></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location (Origin)</label>
-                      <div className="text-sm">{editingInvoiceCard.location || '—'}</div></div>
+                      <input type="text" value={editingInvoiceCard.location || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, location: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
-                      <div className="text-sm">{editingInvoiceCard.product || '—'}</div></div>
+                      <input type="text" value={editingInvoiceCard.product || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   </div>
                   {(editingInvoiceCard.lineItems || []).length > 0 ? (
                     <table className="w-full text-xs">
@@ -11189,8 +11209,14 @@ export default function App() {
                 </div>
 
                 <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
-                  <button onClick={() => setEditingInvoiceCard(null)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Close</button>
+                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  <button onClick={() => {
+                    // Commit the edited working copy back to the invoices list (synced to Firestore).
+                    setInvoices(prev => prev.map(inv => inv.id === editingInvoiceCard.id ? { ...inv, ...editingInvoiceCard } : inv));
+                    setEditingInvoiceCard(null);
+                    resetModalState('invoice');
+                  }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Save Changes</button>
                 </div>
               </div>
             </motion.div>
