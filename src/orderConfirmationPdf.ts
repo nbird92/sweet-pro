@@ -304,9 +304,13 @@ export function generateOrderConfirmationPdf({
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 },
     },
-    // Add empty rows to fill at least 8 rows for consistent look
     didParseCell: (data) => {
-      // Nothing extra needed
+      // jsPDF-autotable applies columnStyles to the head/body but NOT the foot,
+      // so the Total row's numeric cells would stay left-aligned. Force the
+      // numeric columns (Qty / Net / Gross) right so the Total lines up under them.
+      if (data.section === 'foot' && data.column.index >= 2) {
+        data.cell.styles.halign = 'right';
+      }
     },
   });
 
