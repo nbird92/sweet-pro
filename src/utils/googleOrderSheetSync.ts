@@ -942,13 +942,41 @@ export function extractSheetId(url: string): string | null {
   return m ? m[1] : null;
 }
 
-/** Fetch a tab's CSV from an arbitrary sheet (no hardcoded ID). */
+/** Fetch a tab's CSV from an arbitrary sheet (no hardcoded ID).
+ *
+ *  Tries the SERVICE-ACCOUNT route first (`/api/sheet-tab`), so a PRIVATE sheet
+ *  shared only with the service account imports without "Anyone with the link".
+ *  Falls back to the public gviz CSV URL for sheets that are link-viewable. */
 export async function fetchTabFromSheet(sheetId: string, tabName: string): Promise<string> {
+  // 1. Service-account-backed server route (works on a privately-shared sheet).
+  try {
+    const params = new URLSearchParams({ sheetId, tab: tabName });
+    const headers: Record<string, string> = {};
+    const accessKey = (import.meta as any).env?.VITE_APP_ACCESS_KEY;
+    if (accessKey) headers['x-access-key'] = accessKey;
+    const res = await fetch(`/api/sheet-tab?${params.toString()}`, { headers });
+    if (res.ok) {
+      const text = await res.text();
+      if (text && text.trim()) return text;
+    } else if (res.status === 403) {
+      // The endpoint reached Google but the service account lacks access — report
+      // that clearly instead of silently falling back to the (also-failing) public URL.
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body?.error || `The service account can't open this sheet. Share it with the service account email as Viewer or Editor.`);
+    }
+    // Other non-OK (404 endpoint missing / 500 not configured) → fall through to public.
+  } catch (e) {
+    // Re-throw the explicit "not shared with the service account" message; swallow
+    // network/endpoint errors so the public-URL fallback still gets a chance.
+    if (e instanceof Error && /service account/i.test(e.message)) throw e;
+  }
+
+  // 2. Fallback: public gviz CSV (requires the sheet be link-viewable / published).
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
   const res = await fetch(url, { method: 'GET' });
   if (!res.ok) {
     throw new Error(
-      `Failed to fetch tab "${tabName}": HTTP ${res.status}. The sheet must be shared "Anyone with the link can view".`,
+      `Failed to fetch tab "${tabName}": HTTP ${res.status}. Either share the sheet with the service account email, or set it to "Anyone with the link can view".`,
     );
   }
   return await res.text();
