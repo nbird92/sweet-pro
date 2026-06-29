@@ -324,6 +324,9 @@ export default function App() {
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
   const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>(INITIAL_CUSTOMER_GROUPS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
+  // Invoice line-item editor (mirrors the order page's line-item editor).
+  const [invLineItem, setInvLineItem] = useState<{ productName: string; productKey: string; productDisplayName: string; qty: number; contractNumber: string }>({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+  const [editingInvLineIdx, setEditingInvLineIdx] = useState<number | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
   const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
@@ -682,6 +685,76 @@ export default function App() {
       return Math.round((item.totalWeight * 1000) / netKg);
     }
     return item.qty;
+  };
+
+  // Commit a new line-item list onto the invoice being edited and recompute the
+  // header totals from it: Qty (MT) = sum of total weights; Amount / $/MT are
+  // only overwritten when the lines carry pricing, so amount-only invoices keep
+  // their figures.
+  const applyInvoiceLineItems = (list: OrderLineItem[]) => {
+    if (!editingInvoiceCard) return;
+    const newQtyMt = list.reduce((s, li) => s + (li.totalWeight || 0), 0);
+    const totalLineAmt = list.reduce((s, li) => s + (li.lineAmount || 0), 0);
+    setEditingInvoiceCard({
+      ...editingInvoiceCard,
+      lineItems: list,
+      qty: Math.round(newQtyMt * 1000) / 1000,
+      amount: totalLineAmt > 0 ? Math.round(totalLineAmt * 100) / 100 : editingInvoiceCard.amount,
+      pricePerMt: totalLineAmt > 0 && newQtyMt > 0 ? Math.round((totalLineAmt / newQtyMt) * 100) / 100 : editingInvoiceCard.pricePerMt,
+    });
+  };
+
+  // Add or update a line item on the invoice being edited (mirrors
+  // submitOrderLineItem). Resolves the product's net weight for the weight math
+  // and prices from the contract line, else the invoice's current $/MT.
+  const submitInvoiceLineItem = () => {
+    if (!editingInvoiceCard) return;
+    if (!invLineItem.productName || invLineItem.qty <= 0) {
+      setErrorBox('Select a product and enter a quantity for the invoice line item.');
+      return;
+    }
+    let netWeightKg = 0;
+    if (invLineItem.productKey) {
+      const qaByKey = qaProducts.find(q => q.id === invLineItem.productKey);
+      const skuByKey = skus.find(s => s.id === invLineItem.productKey);
+      netWeightKg = qaByKey?.netWeightKg || skuByKey?.netWeightKg || skuByKey?.netWeight || 0;
+    }
+    if (!netWeightKg) {
+      const sku = skus.find(s => s.name === invLineItem.productName);
+      const qaByName = qaProducts.find(q => q.skuName === invLineItem.productName);
+      netWeightKg = qaByName?.netWeightKg || sku?.netWeightKg || sku?.netWeight || 0;
+    }
+    // When the product has no per-unit weight (bulk/liquid), the quantity is the
+    // MT figure directly (netWeightPerUnit 0); otherwise convert units -> MT.
+    const hasUnitWeight = netWeightKg > 0;
+    const totalWeight = hasUnitWeight ? (invLineItem.qty * netWeightKg) / 1000 : invLineItem.qty; // MT
+    let mtAmount = editingInvoiceCard.pricePerMt || 0;
+    if (invLineItem.contractNumber) {
+      const contract = contracts.find(c => c.contractNumber === invLineItem.contractNumber);
+      const cl = contract?.contractLines?.find(l => l.productName === invLineItem.productName);
+      if (cl) mtAmount = cl.finalPriceMt;
+      else if (contract) mtAmount = contract.finalPrice;
+    }
+    const existing = editingInvLineIdx !== null ? (editingInvoiceCard.lineItems || [])[editingInvLineIdx] : undefined;
+    const built: OrderLineItem = {
+      id: existing?.id || `LI-INV-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      productName: invLineItem.productName,
+      productDisplayName: invLineItem.productDisplayName || undefined,
+      productKey: invLineItem.productKey || undefined,
+      qty: invLineItem.qty,
+      contractNumber: invLineItem.contractNumber,
+      netWeightPerUnit: hasUnitWeight ? netWeightKg / 1000 : 0,
+      totalWeight,
+      unitAmount: hasUnitWeight ? (mtAmount * netWeightKg) / 1000 : mtAmount,
+      mtAmount,
+      lineAmount: totalWeight * mtAmount,
+    };
+    const list = [...(editingInvoiceCard.lineItems || [])];
+    if (editingInvLineIdx !== null) list[editingInvLineIdx] = built;
+    else list.push(built);
+    applyInvoiceLineItems(list);
+    setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+    setEditingInvLineIdx(null);
   };
 
   const createOrderFromReview = (rev: POReview, reservedBols: string[] = [], reservedPos: string[] = []): string | null => {
@@ -11073,7 +11146,7 @@ export default function App() {
                 <div className="flex items-center gap-1">
                   <button onClick={() => setModalMinimized('invoice', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
                   <button onClick={() => setModalMaximized('invoice', !getModalState('invoice').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('invoice').maximized ? 'Restore' : 'Maximize'}>{getModalState('invoice').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
                 </div>
               </div>
               <div className="p-6 space-y-5">
@@ -11174,48 +11247,111 @@ export default function App() {
                           <th className="p-3 text-left font-bold">$/MT</th>
                           <th className="p-3 text-left font-bold">Line Amount</th>
                           <th className="p-3 text-left font-bold">Contract #</th>
+                          <th className="p-3 text-center font-bold">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
-                        {(editingInvoiceCard.lineItems || []).map(item => (
+                        {(editingInvoiceCard.lineItems || []).map((item, idx) => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
-                            <td className="p-3">{item.qty}</td>
+                            <td className="p-3">{lineItemUnits(item)}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
                             <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
                             <td className="p-3">{item.mtAmount ? `$${item.mtAmount.toFixed(2)}` : '—'}</td>
                             <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
                             <td className="p-3 font-mono">{item.contractNumber}</td>
+                            <td className="p-3 text-center whitespace-nowrap">
+                              <button
+                                onClick={() => {
+                                  setEditingInvLineIdx(idx);
+                                  const opts = buildOrderProductOptions(item.productName);
+                                  const matchingOpt = (item.productKey ? opts.find(o => o.key === item.productKey) : undefined)
+                                    || (item.productDisplayName ? opts.find(o => o.label === item.productDisplayName) : undefined)
+                                    || opts.find(o => o.value === item.productName);
+                                  setInvLineItem({
+                                    productName: item.productName,
+                                    productKey: item.productKey || matchingOpt?.key || '',
+                                    productDisplayName: item.productDisplayName || matchingOpt?.label || '',
+                                    qty: lineItemUnits(item),
+                                    contractNumber: item.contractNumber,
+                                  });
+                                }}
+                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-all" title="Edit line item"
+                              ><Edit2 size={12} /></button>
+                              <button
+                                onClick={() => applyInvoiceLineItems((editingInvoiceCard.lineItems || []).filter((_, i) => i !== idx))}
+                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-all" title="Delete line item"
+                              ><Trash2 size={12} /></button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
                         <tr>
                           <td className="p-3 font-bold">Total</td>
-                          <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.qty, 0)}</td>
+                          <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + lineItemUnits(i), 0)}</td>
                           <td className="p-3"></td>
                           <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0).toFixed(2)}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
                           <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).some(i => i.lineAmount) ? `$${(editingInvoiceCard.lineItems || []).reduce((s, i) => s + (i.lineAmount || 0), 0).toFixed(2)}` : '—'}</td>
                           <td className="p-3"></td>
+                          <td className="p-3"></td>
                         </tr>
                       </tfoot>
                     </table>
                   ) : (
-                    <div className="p-4 text-[10px] opacity-40 italic">No line items available for this invoice.</div>
+                    <div className="p-4 text-[10px] opacity-40 italic">No line items yet — add one below.</div>
                   )}
+                  {/* Add / edit a line item (mirrors the order page editor) */}
+                  <div className="bg-[#F5F5F5] border-t border-[#141414]/10 p-3">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-5 space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Product</label>
+                        <select
+                          value={invLineItem.productKey}
+                          onChange={(e) => {
+                            const opts = buildOrderProductOptions(invLineItem.productName);
+                            const picked = opts.find(o => o.key === e.target.value);
+                            setInvLineItem({ ...invLineItem, productKey: e.target.value, productName: picked?.value || '', productDisplayName: picked?.label || '' });
+                          }}
+                          className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]"
+                        >
+                          <option value="">Select product…</option>
+                          {buildOrderProductOptions(invLineItem.productName).map(opt => (
+                            <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">QTY (units)</label>
+                        <input type="text" inputMode="decimal" value={invLineItem.qty || ''} onFocus={(e) => e.target.select()} onChange={(e) => setInvLineItem({ ...invLineItem, qty: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]" />
+                      </div>
+                      <div className="col-span-3 space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-50">Contract #</label>
+                        <input type="text" value={invLineItem.contractNumber} onChange={(e) => setInvLineItem({ ...invLineItem, contractNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs font-mono outline-none focus:border-[#141414]" />
+                      </div>
+                      <div className="col-span-2 flex gap-1">
+                        <button type="button" onClick={submitInvoiceLineItem} disabled={!invLineItem.productName || invLineItem.qty <= 0} className="flex-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30 flex items-center justify-center gap-1"><Plus size={12} /> {editingInvLineIdx !== null ? 'Update' : 'Add'}</button>
+                        {editingInvLineIdx !== null && (
+                          <button type="button" onClick={() => { setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="px-2 py-1.5 border border-[#141414] text-[11px] font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
-                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); }}
+                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }}
                     className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
                   <button onClick={() => {
                     // Commit the edited working copy back to the invoices list (synced to Firestore).
                     setInvoices(prev => prev.map(inv => inv.id === editingInvoiceCard.id ? { ...inv, ...editingInvoiceCard } : inv));
                     setEditingInvoiceCard(null);
                     resetModalState('invoice');
+                    setEditingInvLineIdx(null);
+                    setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                   }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Save Changes</button>
                 </div>
               </div>
