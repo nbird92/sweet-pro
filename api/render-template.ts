@@ -32,6 +32,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sheetId = String(body.sheetId || '').trim();
   const tokens: Record<string, string> = (body.tokens && typeof body.tokens === 'object') ? body.tokens : {};
   const lineItems: Array<Record<string, string>> = Array.isArray(body.lineItems) ? body.lineItems : [];
+  // Optional: which item fields / scalar tokens are numeric, so their cells get
+  // right-aligned in the output (text written via the API / find-replace would
+  // otherwise inherit the template's default left alignment).
+  const numericFields: string[] = Array.isArray(body.numericFields) ? body.numericFields.map(String) : [];
+  const numericTokens: string[] = Array.isArray(body.numericTokens) ? body.numericTokens.map(String) : [];
   if (!sheetId) return res.status(400).json({ error: 'sheetId is required.' });
 
   const jwt = new JWT({
@@ -74,12 +79,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // 0-based (row, col) cells to right-align after the content is written.
+    const alignRightCells: Array<{ r: number; c: number }> = [];
+    // Whole-cell scalar tokens flagged numeric (e.g. {{total_net}}) — full scan,
+    // since totals usually sit below the line-item row. Coordinates stay valid
+    // through find-replace (it rewrites cell content, never moves cells).
+    if (numericTokens.length) {
+      const numericSet = new Set(numericTokens);
+      for (let r = 0; r < grid.length; r++) {
+        const row = grid[r] || [];
+        for (let c = 0; c < row.length; c++) {
+          const m = String(row[c] ?? '').match(/^\s*\{\{\s*(\w+)\s*\}\}\s*$/);
+          if (m && numericSet.has(m[1])) alignRightCells.push({ r, c });
+        }
+      }
+    }
+
     // 4. Write each line item into a row (starting at the template row). The
     //    template row is overwritten by item 1; later items go in the rows below.
     //    When there are no items, the template row's tokens are cleared.
     const valueData: Array<{ range: string; values: string[][] }> = [];
     if (itemRow >= 0 && itemColField.size > 0) {
       const cols = Array.from(itemColField.keys());
+      const numericFieldSet = new Set(numericFields);
       const rowsToWrite = Math.max(lineItems.length, 1);
       for (let i = 0; i < rowsToWrite; i++) {
         const item = lineItems[i];
@@ -87,6 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const field = itemColField.get(c)!;
           const val = item ? String(item[field] ?? '') : '';
           valueData.push({ range: `${tabTitle}!${colLetter(c)}${itemRow + 1 + i}`, values: [[val]] });
+          if (numericFieldSet.has(field)) alignRightCells.push({ r: itemRow + i, c });
         }
       }
     }
@@ -98,10 +121,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 5. Replace scalar tokens everywhere.
-    const requests = Object.entries(tokens).map(([k, v]) => ({
+    // 5. Replace scalar tokens everywhere, then right-align the numeric cells.
+    const requests: any[] = Object.entries(tokens).map(([k, v]) => ({
       findReplace: { find: `{{${k}}}`, replacement: String(v ?? ''), matchCase: false, allSheets: true },
     }));
+    for (const { r, c } of alignRightCells) {
+      requests.push({
+        repeatCell: {
+          range: { sheetId: gid, startRowIndex: r, endRowIndex: r + 1, startColumnIndex: c, endColumnIndex: c + 1 },
+          cell: { userEnteredFormat: { horizontalAlignment: 'RIGHT' } },
+          fields: 'userEnteredFormat.horizontalAlignment',
+        },
+      });
+    }
     if (requests.length) {
       await jwt.request({
         url: `https://sheets.googleapis.com/v4/spreadsheets/${copyId}:batchUpdate`,

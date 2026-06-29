@@ -5,6 +5,10 @@ export async function renderSheetTemplatePdf(params: {
   sheetId: string;
   tokens: Record<string, string>;
   lineItems?: Array<Record<string, string>>;
+  /** Item field names whose cells should be right-aligned in the output. */
+  numericFields?: string[];
+  /** Scalar token keys whose cells should be right-aligned in the output. */
+  numericTokens?: string[];
 }): Promise<Blob> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const accessKey = (import.meta as any).env?.VITE_APP_ACCESS_KEY;

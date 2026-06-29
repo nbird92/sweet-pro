@@ -2657,7 +2657,12 @@ export default function App() {
     if (sheetId) {
       try {
         const { tokens, lineItems } = buildOrderConfirmationTokens(order, { customer, carrier, shipperLocation, shipToLocation });
-        const blob = await renderSheetTemplatePdf({ sheetId, tokens, lineItems });
+        const blob = await renderSheetTemplatePdf({
+          sheetId, tokens, lineItems,
+          // Right-align the quantity / weight columns and the totals in the sheet.
+          numericFields: ['units', 'net', 'gross'],
+          numericTokens: ['total_units', 'total_net', 'total_gross'],
+        });
         return { blob, filename };
       } catch (e) {
         console.error('Order-confirmation template render failed; using the built-in PDF:', e);
