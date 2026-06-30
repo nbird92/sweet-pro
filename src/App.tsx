@@ -1930,6 +1930,8 @@ export default function App() {
         // Set state and sync to Firebase with the same array — no race condition
         if (newCount > 0 || updatedCount > 0) {
           setInvoices(workingInvoices);
+          // Any order now sharing an invoiced BOL/PO is no longer an order.
+          removeOrdersInvoicedBy(workingInvoices);
           syncCollection(COLLECTIONS.invoices, workingInvoices).then(() => {
             lastSyncedData.current.invoices = JSON.stringify(workingInvoices);
             setSyncStatus('synced');
@@ -2112,6 +2114,8 @@ export default function App() {
         const removedCount = invoices.length - invoices.filter(inv => newInvoices.some(n => n.bolNumber === inv.bolNumber)).length;
 
         setInvoices(newInvoices);
+        // Any order now sharing an invoiced BOL/PO is no longer an order.
+        removeOrdersInvoicedBy(newInvoices);
         syncCollection(COLLECTIONS.invoices, newInvoices).then(() => {
           lastSyncedData.current.invoices = JSON.stringify(newInvoices);
           setSyncStatus('synced');
@@ -2950,6 +2954,21 @@ export default function App() {
   /** Build a draft return order from an existing invoice (or fallback order).
    *  Copies line items, pricing, qty, contract, etc. — caller fills in the
    *  reason and any overrides before saving. */
+  // Once a BOL or PO has been invoiced, it can no longer be an open order — drop
+  // any matching orders from the orders table. Driven off the FULL invoice list
+  // after an import. Cancelled/Credit invoices don't count as "invoiced".
+  const removeOrdersInvoicedBy = (invoiceList: Invoice[]) => {
+    const billed = invoiceList.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
+    const bols = new Set(billed.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+    const pos = new Set(billed.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+    if (!bols.size && !pos.size) return;
+    setOrders(prev => prev.filter(o => {
+      const ob = (o.bolNumber || '').trim().toUpperCase();
+      const op = (o.po || '').trim().toUpperCase();
+      return !((ob && bols.has(ob)) || (op && pos.has(op)));
+    }));
+  };
+
   const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
     const bolKey = (inv.bolNumber || '').trim().toUpperCase();
     const linkedOrder = orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey);
@@ -14007,10 +14026,13 @@ export default function App() {
                   onClick={() => {
                     // Apply backfilled fields to existing invoices (by id), then append the new ones.
                     const updatedById = new Map(invoiceSyncPreview.updatedInvoices.map(u => [u.id, u] as const));
-                    setInvoices(prev => [
-                      ...prev.map(inv => updatedById.get(inv.id) || inv),
+                    const merged = [
+                      ...invoices.map(inv => updatedById.get(inv.id) || inv),
                       ...invoiceSyncPreview.newInvoices,
-                    ]);
+                    ];
+                    setInvoices(merged);
+                    // Any order now sharing an invoiced BOL/PO is no longer an order.
+                    removeOrdersInvoicedBy(merged);
                     setInvoiceSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
