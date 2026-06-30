@@ -1300,33 +1300,27 @@ export function parsedRowsToOrdersConfigured(
         continue;
       }
 
-      // Matches an EXISTING order by BOL — the unique shipment identifier — and
-      // fills in only its blank fields. We deliberately do NOT match on PO here:
-      // one PO can span several BOLs, so a PO match could attach data to the
-      // wrong order. Never overwrites a field that already has a value.
-      const existingOrder = bolU ? (existingOrderByBol.get(bolU) || null) : null;
-      if (existingOrder) {
-        if (updatedIds.has(existingOrder.id)) {
-          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
-          continue;
-        }
-        const blank = (v: unknown) => v === undefined || v === null || v === '';
-        const patch: Partial<Order> = {};
-        if (blank(existingOrder.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
-        if (blank(existingOrder.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
-        if (blank(existingOrder.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
-        if (blank(existingOrder.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
-        if (blank(existingOrder.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
-        if (blank(existingOrder.splitNumber) && r.splitNumber) patch.splitNumber = r.splitNumber;
-        if (blank(existingOrder.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
-        if (blank(existingOrder.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
-        if (blank(existingOrder.shipToLocationId) && shipToLocationId) patch.shipToLocationId = shipToLocationId;
-
-        // Price/MT backfill: when the order carries no amount yet, set each
-        // unpriced line's $/MT from the sheet and recompute the order total.
-        if (pricePerMt > 0 && (!existingOrder.amount || existingOrder.amount === 0)) {
+      const blank = (v: unknown) => v === undefined || v === null || v === '';
+      // Shared "fill in only the blank fields" patch — never overwrites a value.
+      const fillBlanks = (o: Order): Partial<Order> => {
+        const p: Partial<Order> = {};
+        if (blank(o.contractNumber) && r.contractNumber) p.contractNumber = r.contractNumber;
+        if (blank(o.carrier) && carrierCanonical) p.carrier = carrierCanonical;
+        if (blank(o.shipmentDate) && r.shipmentDate) p.shipmentDate = r.shipmentDate;
+        if (blank(o.deliveryDate) && r.deliveryDate) p.deliveryDate = r.deliveryDate;
+        if (blank(o.location) && explicit?.defaultLocation) p.location = explicit.defaultLocation;
+        if (blank(o.splitNumber) && r.splitNumber) p.splitNumber = r.splitNumber;
+        if (blank(o.papsNo) && r.papsNo) p.papsNo = r.papsNo;
+        if (blank(o.customsEntryNo) && r.customsEntryNo) p.customsEntryNo = r.customsEntryNo;
+        if (blank(o.shipToLocationId) && shipToLocationId) p.shipToLocationId = shipToLocationId;
+        return p;
+      };
+      // Price/MT backfill: when the order carries no amount yet, set each unpriced
+      // line's $/MT from the sheet and recompute the order total.
+      const addPriceBackfill = (o: Order, patch: Partial<Order>) => {
+        if (pricePerMt > 0 && (!o.amount || o.amount === 0)) {
           let lineChanged = false;
-          const newLineItems = (existingOrder.lineItems || []).map(li => {
+          const newLineItems = (o.lineItems || []).map(li => {
             if (li.mtAmount && li.mtAmount > 0) return li; // already priced — leave it
             lineChanged = true;
             const tw = li.totalWeight || 0;
@@ -1337,43 +1331,51 @@ export function parsedRowsToOrdersConfigured(
             patch.amount = Math.round(newLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0) * 100) / 100;
           }
         }
+      };
 
+      const orderByBol = bolU ? (existingOrderByBol.get(bolU) || null) : null;
+      const orderByPo = poU ? (existingOrderByPo.get(poU) || null) : null;
+
+      // PO match drives the BOL: the customer PO is the stable reference and the
+      // imported sheet is authoritative for BOL numbers, so when this PO already
+      // belongs to an order, REPLACE that order's BOL with the imported one and
+      // fill any blanks. Defer to an exact-BOL match only when the imported BOL
+      // already identifies a DIFFERENT order (so a PO spanning several BOLs isn't
+      // mis-assigned to the wrong shipment).
+      if (orderByPo && (!orderByBol || orderByBol.id === orderByPo.id)) {
+        if (updatedIds.has(orderByPo.id)) {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
+          continue;
+        }
+        const patch = fillBlanks(orderByPo);
+        if (bolU && (orderByPo.bolNumber || '').trim().toUpperCase() !== bolU) patch.bolNumber = r.bolNumber.trim();
+        addPriceBackfill(orderByPo, patch);
         if (Object.keys(patch).length > 0) {
-          result.updatedOrders!.push(stripUndefined({ ...existingOrder, ...patch }));
-          updatedIds.add(existingOrder.id);
+          const updated = stripUndefined({ ...orderByPo, ...patch });
+          result.updatedOrders!.push(updated);
+          updatedIds.add(orderByPo.id);
+          if (bolU) existingOrderByBol.set(bolU, updated); // keep map consistent for later rows
         } else {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already has all the available info' });
         }
         continue;
       }
 
-      // New BOL, but this PO already belongs to an existing order. The imported
-      // sheet is the source of truth for BOL numbers, so REPLACE the order's BOL
-      // with the imported one (matched on the customer PO) and fill any blanks.
-      // Guards: never steal a BOL already on another order, and touch each order
-      // at most once per run.
-      if (poU && existingOrderByPo.has(poU)) {
-        const poOrder = existingOrderByPo.get(poU)!;
-        const currentBol = (poOrder.bolNumber || '').trim().toUpperCase();
-        if (bolU && bolU !== currentBol && !existingOrderByBol.has(bolU) && !updatedIds.has(poOrder.id)) {
-          const blank = (v: unknown) => v === undefined || v === null || v === '';
-          const patch: Partial<Order> = { bolNumber: r.bolNumber.trim() };
-          if (blank(poOrder.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
-          if (blank(poOrder.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
-          if (blank(poOrder.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
-          if (blank(poOrder.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
-          if (blank(poOrder.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
-          if (blank(poOrder.splitNumber) && r.splitNumber) patch.splitNumber = r.splitNumber;
-          if (blank(poOrder.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
-          if (blank(poOrder.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
-          if (blank(poOrder.shipToLocationId) && shipToLocationId) patch.shipToLocationId = shipToLocationId;
-          const updated = stripUndefined({ ...poOrder, ...patch });
-          result.updatedOrders!.push(updated);
-          updatedIds.add(poOrder.id);
-          existingOrderByBol.set(bolU, updated); // keep map consistent for later rows
+      // Exact BOL match (a different order than the PO match, or no PO match) —
+      // the unique shipment identifier; fill in only its blank fields.
+      if (orderByBol) {
+        if (updatedIds.has(orderByBol.id)) {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
           continue;
         }
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'PO already exists in orders table' });
+        const patch = fillBlanks(orderByBol);
+        addPriceBackfill(orderByBol, patch);
+        if (Object.keys(patch).length > 0) {
+          result.updatedOrders!.push(stripUndefined({ ...orderByBol, ...patch }));
+          updatedIds.add(orderByBol.id);
+        } else {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already has all the available info' });
+        }
         continue;
       }
 
