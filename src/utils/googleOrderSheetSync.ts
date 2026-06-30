@@ -1170,6 +1170,7 @@ export function parsedRowsToOrdersConfigured(
   skus: SKU[],
   qaProducts: QAProduct[],
   carriers: Carrier[],
+  existingInvoices: Invoice[] = [],
 ): OrderSyncResult {
   const tabByName = new Map<string, ConfiguredTab>();
   for (const t of configured) tabByName.set(t.tabName, t);
@@ -1191,6 +1192,12 @@ export function parsedRowsToOrdersConfigured(
   const addedBOLs = new Set<string>();
   const addedPOs = new Set<string>();
   const updatedIds = new Set<string>();
+
+  // BOLs / POs that have already been invoiced (excluding Cancelled / Credit) —
+  // an invoiced BOL or PO can no longer be an order, so skip those rows.
+  const billedInvoices = existingInvoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
+  const invoicedBols = new Set(billedInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+  const invoicedPos = new Set(billedInvoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
 
   for (const r of parsed) {
     try {
@@ -1227,6 +1234,13 @@ export function parsedRowsToOrdersConfigured(
       }
       const bolU = r.bolNumber.trim().toUpperCase();
       const poU = r.poNumber.trim().toUpperCase();
+
+      // Already invoiced? An invoiced BOL/PO can no longer be an order — skip
+      // (otherwise an order sync would re-create the order an invoice import removed).
+      if ((bolU && invoicedBols.has(bolU)) || (poU && invoicedPos.has(poU))) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'BOL/PO already invoiced — no longer an order' });
+        continue;
+      }
 
       // Per-tab defaults: explicit overrides from config > built-in tabDefaults
       const explicit = tabByName.get(r.tab);
@@ -1424,6 +1438,7 @@ export async function syncOrdersFromConfig(
     skus: SKU[];
     qaProducts: QAProduct[];
     carriers: Carrier[];
+    existingInvoices?: Invoice[];
   },
 ): Promise<OrderSyncResult> {
   const allParsed: ParsedOrderRow[] = [];
@@ -1451,6 +1466,7 @@ export async function syncOrdersFromConfig(
     ctx.skus,
     ctx.qaProducts,
     ctx.carriers,
+    ctx.existingInvoices || [],
   );
   result.errors.unshift(...fetchErrors);
   return result;

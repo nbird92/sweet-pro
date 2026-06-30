@@ -13480,7 +13480,7 @@ export default function App() {
               setIsSyncingOrdersSheet(true);
               try {
                 const preview = await syncOrdersFromConfig(toRun, {
-                  existingOrders: orders, customers, skus, qaProducts, carriers,
+                  existingOrders: orders, customers, skus, qaProducts, carriers, existingInvoices: invoices,
                 });
                 setOrderSyncPreview(preview);
                 setSyncMode(null);
