@@ -2974,6 +2974,39 @@ export default function App() {
     };
   };
 
+  // Build a return-order draft straight from an order (used when a searched BOL
+  // has no invoice yet). Pulls any matching invoice's amount as a fallback.
+  const buildReturnOrderDraftFromOrder = (order: Order): ReturnOrder => {
+    const inv = invoices.find(i => i.bolNumber === order.bolNumber);
+    return {
+      id: `RTN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      bolNumber: '', // assigned on save via generateReturnBolNumber
+      originalBolNumber: order.bolNumber || '',
+      originalInvoiceId: inv?.id,
+      customer: order.customer || '',
+      product: order.product || order.lineItems?.[0]?.productName || '',
+      contractNumber: order.contractNumber || '',
+      po: order.po || '',
+      date: new Date().toISOString().split('T')[0],
+      shipmentDate: '',
+      deliveryDate: '',
+      status: 'Open',
+      lineItems: (order.lineItems || []).map(li => ({
+        ...li,
+        id: `LI-RTN-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      })),
+      amount: order.amount || inv?.amount || 0,
+      carrier: order.carrier || '',
+      shippingTerms: (order.shippingTerms as any) || '',
+      location: order.location || '',
+      splitNumber: order.splitNumber || '',
+      currency: order.currency || 'CAD',
+      palletType: order.palletType || '',
+      shipToLocationId: order.shipToLocationId,
+      reasonForReturn: '',
+    };
+  };
+
   /** Preview the Return Order Confirmation PDF in the pdfPreview modal. */
   const handlePreviewReturnOrderConfirmation = (returnOrder: ReturnOrder) => {
     try {
@@ -11771,8 +11804,9 @@ export default function App() {
           const isEditing = !!editingReturnOrder;
           // BOL search runs against invoices first (so we can copy line items
           // + pricing), falling back to bare orders when no invoice exists.
+          // Available in both add and edit mode so a BOL can (re)populate fields.
           const searchTerm = returnOrderBolSearch.trim().toLowerCase();
-          const invoiceMatches = !isEditing && searchTerm
+          const invoiceMatches = searchTerm
             ? invoices.filter(inv =>
                 (inv.bolNumber || '').toLowerCase().includes(searchTerm) ||
                 (inv.customer  || '').toLowerCase().includes(searchTerm) ||
@@ -11780,9 +11814,30 @@ export default function App() {
                 (inv.po        || '').toLowerCase().includes(searchTerm)
               ).slice(0, 50)
             : [];
+          const invoiceBols = new Set(invoiceMatches.map(i => (i.bolNumber || '').toLowerCase()));
+          // Orders whose BOL isn't already covered by an invoice match.
+          const orderMatches = searchTerm
+            ? orders.filter(o =>
+                !!o.bolNumber && !invoiceBols.has((o.bolNumber || '').toLowerCase()) && (
+                  (o.bolNumber || '').toLowerCase().includes(searchTerm) ||
+                  (o.customer  || '').toLowerCase().includes(searchTerm) ||
+                  (o.product   || '').toLowerCase().includes(searchTerm) ||
+                  (o.po        || '').toLowerCase().includes(searchTerm)
+                )
+              ).slice(0, 50)
+            : [];
           const draft = returnOrderDraft;
           const setDraft = (patch: Partial<ReturnOrder>) =>
             setReturnOrderDraft(prev => prev ? { ...prev, ...patch } : prev);
+          // Apply a BOL-derived draft. In edit mode keep the return order's own
+          // identity (id, return BOL, status) and any reason already entered;
+          // otherwise replace the draft wholesale.
+          const useSource = (built: ReturnOrder) => {
+            setReturnOrderDraft(isEditing && returnOrderDraft
+              ? { ...built, id: returnOrderDraft.id, bolNumber: returnOrderDraft.bolNumber, status: returnOrderDraft.status, reasonForReturn: returnOrderDraft.reasonForReturn || built.reasonForReturn }
+              : built);
+            setReturnOrderBolSearch('');
+          };
           const canSave = !!draft && !!draft.originalBolNumber && !!draft.customer && !!draft.reasonForReturn?.trim();
           const close = () => {
             setIsAddingReturnOrder(false);
@@ -11816,55 +11871,72 @@ export default function App() {
                 </div>
 
                 <div className="p-6 space-y-5">
-                  {/* Step 1: BOL search (add mode only) */}
-                  {!isEditing && (
-                    <div className="space-y-2">
-                      <div className="text-[10px] uppercase font-bold opacity-50">Step 1 — Find the original BOL</div>
-                      <input
-                        type="text"
-                        value={returnOrderBolSearch}
-                        onChange={e => setReturnOrderBolSearch(e.target.value)}
-                        placeholder="Search by BOL #, Customer, Product, or PO"
-                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
-                      />
-                      {searchTerm && (
-                        <div className="border border-[#141414]/30 max-h-64 overflow-y-auto">
-                          <table className="w-full text-xs">
-                            <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
-                              <tr>
-                                <th className="p-2 text-left">BOL</th>
-                                <th className="p-2 text-left">Customer</th>
-                                <th className="p-2 text-left">Product</th>
-                                <th className="p-2 text-left">PO</th>
-                                <th className="p-2 text-right">Amount</th>
-                                <th className="p-2"></th>
+                  {/* BOL search — available in add and edit mode. Selecting a
+                      match auto-populates the fields from its invoice/order. */}
+                  <div className="space-y-2">
+                    <div className="text-[10px] uppercase font-bold opacity-50">{isEditing ? 'Re-link a BOL (optional) — re-populates the fields below' : 'Step 1 — Find the original BOL'}</div>
+                    <input
+                      type="text"
+                      value={returnOrderBolSearch}
+                      onChange={e => setReturnOrderBolSearch(e.target.value)}
+                      placeholder="Search by BOL #, Customer, Product, or PO"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                    />
+                    {searchTerm && (
+                      <div className="border border-[#141414]/30 max-h-64 overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
+                            <tr>
+                              <th className="p-2 text-left">BOL</th>
+                              <th className="p-2 text-left">Customer</th>
+                              <th className="p-2 text-left">Product</th>
+                              <th className="p-2 text-left">PO</th>
+                              <th className="p-2 text-left">Source</th>
+                              <th className="p-2 text-right">Amount</th>
+                              <th className="p-2"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#141414]/10">
+                            {invoiceMatches.length === 0 && orderMatches.length === 0 && (
+                              <tr><td colSpan={7} className="p-3 text-center italic opacity-50">No BOLs match — try a different search.</td></tr>
+                            )}
+                            {invoiceMatches.map(inv => (
+                              <tr key={inv.id} className="hover:bg-[#F9F9F9]">
+                                <td className="p-2 font-mono font-bold">{inv.bolNumber}</td>
+                                <td className="p-2">{inv.customer}</td>
+                                <td className="p-2">{inv.product}</td>
+                                <td className="p-2 font-mono">{inv.po || '—'}</td>
+                                <td className="p-2"><span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold uppercase rounded">Invoice</span></td>
+                                <td className="p-2 text-right font-mono">${(inv.amount || 0).toFixed(2)}</td>
+                                <td className="p-2">
+                                  <button
+                                    onClick={() => useSource(buildReturnOrderDraftFromInvoice(inv))}
+                                    className="px-2 py-1 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800"
+                                  >Use</button>
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody className="divide-y divide-[#141414]/10">
-                              {invoiceMatches.length === 0 && (
-                                <tr><td colSpan={6} className="p-3 text-center italic opacity-50">No invoices match — try a different search.</td></tr>
-                              )}
-                              {invoiceMatches.map(inv => (
-                                <tr key={inv.id} className="hover:bg-[#F9F9F9]">
-                                  <td className="p-2 font-mono font-bold">{inv.bolNumber}</td>
-                                  <td className="p-2">{inv.customer}</td>
-                                  <td className="p-2">{inv.product}</td>
-                                  <td className="p-2 font-mono">{inv.po || '—'}</td>
-                                  <td className="p-2 text-right font-mono">${(inv.amount || 0).toFixed(2)}</td>
-                                  <td className="p-2">
-                                    <button
-                                      onClick={() => setReturnOrderDraft(buildReturnOrderDraftFromInvoice(inv))}
-                                      className="px-2 py-1 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800"
-                                    >Use</button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                            ))}
+                            {orderMatches.map(o => (
+                              <tr key={o.id} className="hover:bg-[#F9F9F9]">
+                                <td className="p-2 font-mono font-bold">{o.bolNumber}</td>
+                                <td className="p-2">{o.customer}</td>
+                                <td className="p-2">{o.product || o.lineItems?.[0]?.productName || '—'}</td>
+                                <td className="p-2 font-mono">{o.po || '—'}</td>
+                                <td className="p-2"><span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 text-[9px] font-bold uppercase rounded">Order</span></td>
+                                <td className="p-2 text-right font-mono">${(o.amount || 0).toFixed(2)}</td>
+                                <td className="p-2">
+                                  <button
+                                    onClick={() => useSource(buildReturnOrderDraftFromOrder(o))}
+                                    className="px-2 py-1 bg-emerald-700 text-white text-[10px] font-bold uppercase hover:bg-emerald-800"
+                                  >Use</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Step 2: Draft details */}
                   {draft && (
