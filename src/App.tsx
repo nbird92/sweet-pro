@@ -86,6 +86,8 @@ import {
   syncOrdersFromConfig,
   syncInvoicesFromConfig,
   syncShipmentsFromConfig,
+  syncShipmentScheduleFromConfig,
+  DEFAULT_SHIPMENT_SCHEDULE_CONFIG,
   syncTransfersFromConfig,
   fetchTabPreview,
   extractSheetId,
@@ -104,6 +106,7 @@ import {
   type SheetImportConfig,
   type ConfiguredTab,
   type ColumnMap,
+  type ShipmentScheduleConfig,
 } from './utils/googleOrderSheetSync';
 import {
   fileToUpload,
@@ -4849,6 +4852,32 @@ export default function App() {
   });
   // Shipment-sync state (separate preset store from orders + invoices)
   const [shipmentSyncPreview, setShipmentSyncPreview] = useState<ShipmentSyncResult | null>(null);
+  // Shipment SCHEDULE-grid sync (wide multi-bay sheet — row 1 bays, row 2 fields,
+  // tab = location). null when the config modal is closed.
+  const [scheduleSyncConfig, setScheduleSyncConfig] = useState<ShipmentScheduleConfig | null>(null);
+  const [scheduleSyncUrl, setScheduleSyncUrl] = useState('');
+  const [isSyncingSchedule, setIsSyncingSchedule] = useState(false);
+  // Run the schedule-grid sync → stage results in the existing shipment preview.
+  const runScheduleSync = async () => {
+    if (!scheduleSyncConfig) return;
+    const sheetId = extractSheetId(scheduleSyncUrl) || scheduleSyncConfig.sheetId;
+    if (!sheetId) { setErrorBox('Paste the Google Sheet link first.'); return; }
+    const tabs = scheduleSyncConfig.tabs.filter(t => t.tabName.trim());
+    if (tabs.length === 0) { setErrorBox('Add at least one sheet tab (location) to import.'); return; }
+    setIsSyncingSchedule(true);
+    try {
+      const result = await syncShipmentScheduleFromConfig(
+        { ...scheduleSyncConfig, sheetId, tabs },
+        { existingShipments: [...hamiltonShipments, ...vancouverShipments], customers, skus, qaProducts, carriers },
+      );
+      setScheduleSyncConfig(null);
+      setShipmentSyncPreview(result);
+    } catch (e: any) {
+      setErrorBox('Schedule sync failed: ' + (e?.message || 'Unknown error'));
+    } finally {
+      setIsSyncingSchedule(false);
+    }
+  };
   const [shipmentSyncPresets, setShipmentSyncPresets] = useState<SheetImportConfig[]>(() => {
     try {
       const raw = localStorage.getItem('shipmentImportPresets');
@@ -6535,6 +6564,17 @@ export default function App() {
               title="Configure a Google Sheet source + column mapping, then pull new shipments for review."
             >
               <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync Shipments'}
+            </button>
+            <button
+              onClick={() => {
+                setScheduleSyncUrl('');
+                setScheduleSyncConfig({ ...DEFAULT_SHIPMENT_SCHEDULE_CONFIG, year: new Date().getFullYear(), tabs: [{ tabName: '', location: '' }] });
+              }}
+              disabled={isSyncingSchedule}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              title="Import a wide multi-bay SCHEDULE sheet (bays in row 1, fields in row 2, each tab a location) into the shipment schedule."
+            >
+              <Calendar size={12} /> {isSyncingSchedule ? 'Syncing…' : 'Sync Schedule'}
             </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
@@ -13603,6 +13643,56 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* Shipment SCHEDULE-grid Sync — config modal (wide multi-bay sheet) */}
+        {scheduleSyncConfig && (
+          <div className="fixed inset-0 z-[510] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Calendar size={14} /> Sync Shipment Schedule</h3>
+                <button onClick={() => setScheduleSyncConfig(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <p className="text-[11px] opacity-60">Imports a wide schedule sheet — <b>bays in row 1</b>, <b>field headers in row 2</b> — into the shipment schedule. Each sheet tab is one location; a shipment is created for every bay slot that has a customer.</p>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Google Sheet link</label>
+                  <input type="text" value={scheduleSyncUrl} onChange={e => setScheduleSyncUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs font-mono outline-none focus:bg-white" />
+                </div>
+                <div className="w-32 space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Schedule Year</label>
+                  <input type="number" value={scheduleSyncConfig.year || ''} onChange={e => setScheduleSyncConfig({ ...scheduleSyncConfig, year: parseInt(e.target.value) || new Date().getFullYear() })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs font-mono outline-none focus:bg-white" />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Tabs → Location</label>
+                    <button onClick={() => setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: [...scheduleSyncConfig.tabs, { tabName: '', location: '' }] })} className="text-[10px] font-bold uppercase flex items-center gap-1 px-2 py-1 border border-[#141414] hover:bg-[#141414] hover:text-white transition-all"><Plus size={11} /> Add Tab</button>
+                  </div>
+                  {scheduleSyncConfig.tabs.map((t, idx) => (
+                    <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                      <input type="text" value={t.tabName} onChange={e => { const tabs = [...scheduleSyncConfig.tabs]; tabs[idx] = { ...tabs[idx], tabName: e.target.value }; setScheduleSyncConfig({ ...scheduleSyncConfig, tabs }); }} placeholder="Sheet tab name" className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white" />
+                      <select value={t.location} onChange={e => { const tabs = [...scheduleSyncConfig.tabs]; tabs[idx] = { ...tabs[idx], location: e.target.value }; setScheduleSyncConfig({ ...scheduleSyncConfig, tabs }); }} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white">
+                        <option value="">Location…</option>
+                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                      <button onClick={() => { const tabs = scheduleSyncConfig.tabs.filter((_, i) => i !== idx); setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: tabs.length ? tabs : [{ tabName: '', location: '' }] }); }} className="p-1.5 text-red-500 hover:bg-red-50 transition-all" title="Remove tab"><Trash2 size={13} /></button>
+                    </div>
+                  ))}
+                  <p className="text-[10px] opacity-50">A location whose name contains “Vancouver” files those shipments under Vancouver; everything else goes to Hamilton.</p>
+                </div>
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setScheduleSyncConfig(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button onClick={runScheduleSync} disabled={isSyncingSchedule} className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40 flex items-center gap-2">
+                  {isSyncingSchedule ? 'Reading sheet…' : 'Preview Import'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
 
         {/* Shipment Sheet Sync — Preview / Confirm modal */}
         {shipmentSyncPreview && (

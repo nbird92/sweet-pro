@@ -1921,6 +1921,223 @@ export const DEFAULT_SHIPMENT_IMPORT_CONFIG: SheetImportConfig = {
 };
 
 /* ====================================================================== */
+/* Shipment SCHEDULE grid sync — a WIDE "schedule" sheet, different shape  */
+/* from the one-row-per-shipment sync above:                              */
+/*   • Row 1 holds BAY names, merged across each bay's column span.        */
+/*   • Row 2 holds the per-bay field headers (CUSTOMER/CLIENT, PRODUCT,    */
+/*     PO, BOL #, QTY, CARRIER, ARRIVE, START, OUT, + the bay's own        */
+/*     WEEK/DATE/DAY/TIME).                                                */
+/*   • The leftmost WEEK/DATE/DAY/TIME are the row's slot (used as a       */
+/*     fallback when a bay has no date of its own, e.g. DRY DOCKS).        */
+/*   • Each sheet TAB is a location.                                       */
+/* One shipment is produced per (row × bay that has a customer). Dates have */
+/* no year in the sheet, so the caller supplies one.                       */
+/* ====================================================================== */
+
+export interface ShipmentScheduleTab {
+  tabName: string;   // sheet tab to import
+  location: string;  // target location label stamped on every shipment from this tab
+}
+export interface ShipmentScheduleConfig {
+  name: string;
+  sheetId: string;
+  year: number;      // calendar year stamped on the sheet's month/day dates
+  tabs: ShipmentScheduleTab[];
+}
+
+const SCHED_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+/** Parse a "MMM D" / "MMM DD" schedule date (no year) into ISO using `year`. */
+function parseScheduleDate(raw: string, year: number): string {
+  const s = (raw || '').trim();
+  const m = s.match(/^([A-Za-z]{3,})\.?\s+(\d{1,2})$/);
+  if (!m) return '';
+  const mi = SCHED_MONTHS.indexOf(m[1].slice(0, 3).toLowerCase());
+  const day = parseInt(m[2], 10);
+  if (mi < 0 || !day || day > 31) return '';
+  return `${year}-${String(mi + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** Carry the previous non-empty value forward across blanks — expands the
+ *  merged-cell bay names (the value lands only in the merge's top-left cell). */
+function carryForward(row: string[]): string[] {
+  const out: string[] = [];
+  let last = '';
+  for (let c = 0; c < row.length; c++) {
+    const v = (row[c] || '').trim();
+    if (v) last = v;
+    out[c] = last;
+  }
+  return out;
+}
+
+/** Parse one schedule-grid tab into Shipment records. */
+export function parseShipmentScheduleGrid(
+  grid: string[][],
+  opts: { tabName: string; location: string; year: number },
+  ctx: { existingShipments: Shipment[]; customers: Customer[]; skus: SKU[]; qaProducts: QAProduct[]; carriers: Carrier[] },
+): ShipmentSyncResult {
+  const result: ShipmentSyncResult = { newShipments: [], skipped: [], errors: [] };
+  if (!grid || grid.length < 3) return result;
+
+  const isField = (cell: string, ...names: string[]) => {
+    const h = (cell || '').trim().toLowerCase();
+    return names.includes(h);
+  };
+  // Field-header row = first of the top 4 rows that has a customer + a product
+  // column. The bay/group names live in the row directly above it.
+  let fieldRowIdx = -1;
+  for (let r = 0; r < Math.min(grid.length, 4); r++) {
+    const row = grid[r] || [];
+    if (row.some(c => isField(c, 'customer', 'client')) && row.some(c => isField(c, 'product'))) { fieldRowIdx = r; break; }
+  }
+  if (fieldRowIdx < 1) {
+    result.errors.push({ tab: opts.tabName, rowIdx: 0, message: 'Could not find the field-header row (expected CUSTOMER/CLIENT + PRODUCT in row 2, with bays in row 1).' });
+    return result;
+  }
+  const fieldRow = (grid[fieldRowIdx] || []).map(c => (c || '').trim());
+  const groupRow = carryForward(grid[fieldRowIdx - 1] || []);
+  const width = Math.max(fieldRow.length, groupRow.length);
+
+  // group name -> { lowercased field name -> column index }
+  const groups = new Map<string, Record<string, number>>();
+  for (let c = 0; c < width; c++) {
+    const g = (groupRow[c] || '').trim();
+    const f = (fieldRow[c] || '').trim().toLowerCase();
+    if (!g || !f) continue;
+    if (!groups.has(g)) groups.set(g, {});
+    const map = groups.get(g)!;
+    if (!(f in map)) map[f] = c; // first occurrence wins
+  }
+
+  type Bay = { name: string; cust: number; bol: number; product?: number; po?: number; qty?: number; carrier?: number; arrive?: number; start?: number; out?: number; date?: number; time?: number };
+  const bays: Bay[] = [];
+  for (const [name, map] of groups) {
+    const cust = map['customer'] ?? map['client'];
+    const bol = map['bol #'] ?? map['bol'] ?? map['bol number'];
+    if (cust === undefined || bol === undefined) continue; // summary group, not a bay
+    bays.push({
+      name, cust, bol,
+      product: map['product'], po: map['po'], qty: map['qty'], carrier: map['carrier'],
+      arrive: map['arrive'], start: map['start'], out: map['out'],
+      date: map['date'], time: map['time'],
+    });
+  }
+  if (bays.length === 0) {
+    result.errors.push({ tab: opts.tabName, rowIdx: 0, message: 'No shipment bays found — a bay needs CUSTOMER/CLIENT and BOL columns.' });
+    return result;
+  }
+
+  // Leftmost row-slot DATE/TIME (no group above them) — fallback for bays
+  // (e.g. DRY DOCKS) that don't carry their own date/time.
+  let rowDateCol: number | undefined, rowTimeCol: number | undefined;
+  for (let c = 0; c < width; c++) {
+    if ((groupRow[c] || '').trim()) continue;
+    const f = (fieldRow[c] || '').trim().toLowerCase();
+    if (f === 'date' && rowDateCol === undefined) rowDateCol = c;
+    else if (f === 'time' && rowTimeCol === undefined) rowTimeCol = c;
+  }
+
+  const cell = (row: string[], idx: number | undefined) => idx === undefined ? '' : (row[idx] ?? '').trim();
+  const key = (s: { bol?: string; date?: string; time?: string; bay?: string; location?: string; customer?: string; po?: string }) =>
+    `${(s.location || '').toUpperCase()}|${(s.bay || '').toUpperCase()}|${s.date || ''}|${s.time || ''}|${(s.bol || '').toUpperCase()}|${(s.customer || '').toUpperCase()}|${(s.po || '').toUpperCase()}`;
+  const existingKeys = new Set(ctx.existingShipments.map(s => key(s as any)));
+  const addedKeys = new Set<string>();
+
+  for (let r = fieldRowIdx + 1; r < grid.length; r++) {
+    const row = grid[r] || [];
+    if (row.length === 0) continue;
+    for (const bay of bays) {
+      try {
+        const customerRaw = cell(row, bay.cust);
+        if (!customerRaw) continue; // bay empty this slot
+        // Repeated header row (printable schedules repeat the header block) —
+        // skip silently so the preview isn't flooded with bogus "bad date" skips.
+        const cl = customerRaw.toLowerCase();
+        if (cl === 'customer' || cl === 'client' || cl === 'product') continue;
+        const rawDate = cell(row, bay.date) || cell(row, rowDateCol);
+        const dateISO = parseScheduleDate(rawDate, opts.year);
+        if (!dateISO) {
+          result.skipped.push({ tab: opts.tabName, bolNumber: cell(row, bay.bol), reason: `Unparseable date "${rawDate}" — ${customerRaw} @ ${bay.name}` });
+          continue;
+        }
+        const time = cell(row, bay.time) || cell(row, rowTimeCol);
+        const bol = cell(row, bay.bol);
+        const po = cell(row, bay.po);
+        const customer = resolveCustomer(customerRaw, ctx.customers) || customerRaw;
+        const productRaw = cell(row, bay.product);
+        const productRefs = resolveProduct(productRaw, ctx.skus, ctx.qaProducts, undefined);
+        const carrier = resolveCarrier(cell(row, bay.carrier), ctx.carriers) || cell(row, bay.carrier);
+        const dObj = new Date(dateISO + 'T00:00:00Z');
+
+        const k = key({ bol, date: dateISO, time, bay: bay.name, location: opts.location, customer, po });
+        if (existingKeys.has(k) || addedKeys.has(k)) {
+          result.skipped.push({ tab: opts.tabName, bolNumber: bol, reason: `Already scheduled — ${bay.name} ${dateISO} ${time}` });
+          continue;
+        }
+
+        const newShipment: Shipment = stripUndefined({
+          id: `SHIP-SCHED-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          week: `Week ${isoWeekFromDate(dateISO)}`,
+          date: dateISO,
+          day: SHORT_DAY[dObj.getUTCDay()],
+          time: time || '',
+          bay: bay.name,
+          customer,
+          product: productRefs.productDisplayName || productRefs.productName || productRaw,
+          po,
+          bol,
+          qty: parseFloat(cell(row, bay.qty)) || 0,
+          carrier: carrier || '',
+          arrive: cell(row, bay.arrive),
+          start: cell(row, bay.start),
+          out: cell(row, bay.out),
+          status: 'Scheduled',
+          location: opts.location,
+        } as Shipment);
+        result.newShipments.push(newShipment);
+        addedKeys.add(k);
+      } catch (err) {
+        result.errors.push({ tab: opts.tabName, rowIdx: r + 1, message: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  return result;
+}
+
+/** Run a schedule-grid sync: fetch each tab's raw grid, parse, accumulate.
+ *  Later tabs dedup against shipments produced by earlier tabs in the run. */
+export async function syncShipmentScheduleFromConfig(
+  config: ShipmentScheduleConfig,
+  ctx: { existingShipments: Shipment[]; customers: Customer[]; skus: SKU[]; qaProducts: QAProduct[]; carriers: Carrier[] },
+): Promise<ShipmentSyncResult> {
+  const result: ShipmentSyncResult = { newShipments: [], skipped: [], errors: [] };
+  let runningExisting = [...ctx.existingShipments];
+  for (const tab of config.tabs) {
+    if (!tab.tabName.trim()) continue;
+    try {
+      const grid = parseCSV(await fetchTabFromSheet(config.sheetId, tab.tabName));
+      const r = parseShipmentScheduleGrid(
+        grid,
+        { tabName: tab.tabName, location: (tab.location || tab.tabName).trim(), year: config.year },
+        { ...ctx, existingShipments: runningExisting },
+      );
+      result.newShipments.push(...r.newShipments);
+      result.skipped.push(...r.skipped);
+      result.errors.push(...r.errors);
+      runningExisting = runningExisting.concat(r.newShipments);
+    } catch (err) {
+      result.errors.push({ tab: tab.tabName, rowIdx: 0, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+export const DEFAULT_SHIPMENT_SCHEDULE_CONFIG: ShipmentScheduleConfig = {
+  name: 'Shipment Schedule', sheetId: '', year: 0, tabs: [{ tabName: '', location: '' }],
+};
+
+/* ====================================================================== */
 /* Transfer sync — same fetch + parse pipeline, builds Transfer records.  */
 /* Tabular sheet layout: one inventory transfer per row. Unlike orders,   */
 /* transfers move between two of OUR locations (from → to) rather than to */
