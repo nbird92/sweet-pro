@@ -2951,7 +2951,11 @@ export default function App() {
    *  Copies line items, pricing, qty, contract, etc. — caller fills in the
    *  reason and any overrides before saving. */
   const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
-    const linkedOrder = orders.find(o => o.bolNumber === inv.bolNumber);
+    const bolKey = (inv.bolNumber || '').trim().toUpperCase();
+    const linkedOrder = orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey);
+    // Fall back to the linked order's line items when the invoice's are EMPTY or
+    // missing (an empty [] is truthy, so a plain `||` would wrongly keep it).
+    const sourceLineItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : (linkedOrder?.lineItems || []);
     return {
       id: `RTN-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       bolNumber: '', // assigned on save via generateReturnBolNumber
@@ -2965,9 +2969,9 @@ export default function App() {
       shipmentDate: '',
       deliveryDate: '',
       status: 'Open',
-      lineItems: (inv.lineItems || linkedOrder?.lineItems || []).map(li => ({
+      lineItems: sourceLineItems.map((li, idx) => ({
         ...li,
-        id: `LI-RTN-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `LI-RTN-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
       })),
       amount: inv.amount || 0,
       carrier: inv.carrier || linkedOrder?.carrier || '',
@@ -3120,10 +3124,20 @@ export default function App() {
 
     // 1. Assign R-BOL if it doesn't already have one.
     const bol = ro.bolNumber && /^R\d{6}$/.test(ro.bolNumber) ? ro.bolNumber : generateReturnBolNumber();
-    const totalWeightMT = ro.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+    // Resolve line items robustly: the return order's own, else the original
+    // invoice's, else the order linked by the original BOL (covers returns saved
+    // before the copy was hardened, and invoices that store an empty []).
+    const origInvoice = ro.originalInvoiceId ? invoices.find(i => i.id === ro.originalInvoiceId) : undefined;
+    const origBolKey = (ro.originalBolNumber || '').trim().toUpperCase();
+    const linkedOrderForRo = orders.find(o => (o.bolNumber || '').trim().toUpperCase() === origBolKey);
+    const creditLineItems =
+      (ro.lineItems && ro.lineItems.length) ? ro.lineItems :
+      (origInvoice?.lineItems && origInvoice.lineItems.length) ? origInvoice.lineItems :
+      (linkedOrderForRo?.lineItems || []);
+    const totalWeightMT = creditLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
 
     // 2. Update the return order — Completed, with the final BOL.
-    setReturnOrders(prev => prev.map(r => r.id === returnOrderId ? { ...r, bolNumber: bol, status: 'Completed' } : r));
+    setReturnOrders(prev => prev.map(r => r.id === returnOrderId ? { ...r, bolNumber: bol, status: 'Completed', lineItems: creditLineItems } : r));
 
     // 3. Create the credit invoice. We post a NEGATIVE amount so finance
     //    can offset the original sale. Tagged with status "Credit" so it's
@@ -3134,7 +3148,7 @@ export default function App() {
       id: creditInvoiceId,
       bolNumber: bol,
       customer: ro.customer,
-      product: ro.product || ro.lineItems.map(li => li.productName).join(', '),
+      product: ro.product || creditLineItems.map(li => li.productName).join(', '),
       po: ro.po,
       qty: totalWeightMT,
       carrier: ro.carrier || '',
@@ -3142,7 +3156,7 @@ export default function App() {
       shipmentId: ro.id,
       date: new Date().toISOString().split('T')[0],
       status: 'Credit',
-      lineItems: ro.lineItems,
+      lineItems: creditLineItems,
       shippingTerms: ro.shippingTerms || '',
       location: ro.location || '',
       contractNumber: ro.contractNumber || '',
@@ -7379,7 +7393,9 @@ export default function App() {
                   const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
                   // Get line items: from invoice directly, or look up linked order by BOL (memoised)
                   const linkedOrder = i.bolNumber ? ordersByBol.get(i.bolNumber) : undefined;
-                  const invoiceLineItems = i.lineItems || linkedOrder?.lineItems || [];
+                  // Empty [] is truthy, so fall back to the order only when the
+                  // invoice has no line items of its own.
+                  const invoiceLineItems = (i.lineItems && i.lineItems.length) ? i.lineItems : (linkedOrder?.lineItems || []);
                   const productOk = productMatches(i.product);
                   return (
                   <React.Fragment key={i.id}>
@@ -7488,6 +7504,17 @@ export default function App() {
                           </button>
                           <button onClick={() => toggleRow(i.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Expand details">
                             {expandedRows.has(i.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Delete invoice ${i.invoiceNumber || i.bolNumber || i.id}? This cannot be undone.`)) {
+                                setInvoices(prev => prev.filter(inv => inv.id !== i.id));
+                              }
+                            }}
+                            className="p-1 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                            title="Delete invoice"
+                          >
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </td>
