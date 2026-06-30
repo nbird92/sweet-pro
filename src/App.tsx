@@ -13724,10 +13724,14 @@ export default function App() {
               </div>
               <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
                 {/* Summary */}
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-4 gap-4">
                   <div className="border border-emerald-500/40 bg-emerald-50 p-3">
                     <div className="text-[10px] uppercase opacity-60">New Invoices</div>
                     <div className="text-2xl font-bold">{invoiceSyncPreview.newInvoices.length}</div>
+                  </div>
+                  <div className="border border-blue-500/40 bg-blue-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Updated (backfilled)</div>
+                    <div className="text-2xl font-bold">{invoiceSyncPreview.updatedInvoices.length}</div>
                   </div>
                   <div className="border border-amber-500/40 bg-amber-50 p-3">
                     <div className="text-[10px] uppercase opacity-60">Skipped</div>
@@ -13770,6 +13774,41 @@ export default function App() {
                               <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
                               <td className="p-2 text-right font-mono font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                               <td className="p-2">{inv.date}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Updated invoices (existing invoices with missing info backfilled) */}
+                {invoiceSyncPreview.updatedInvoices.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Updated — Missing Info Backfilled ({invoiceSyncPreview.updatedInvoices.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Invoice #</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Customer</th>
+                            <th className="p-2 text-left font-bold">PO</th>
+                            <th className="p-2 text-left font-bold">Contract #</th>
+                            <th className="p-2 text-right font-bold">Price/MT</th>
+                            <th className="p-2 text-right font-bold">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {invoiceSyncPreview.updatedInvoices.map(inv => (
+                            <tr key={inv.id} className="border-b border-[#141414]/5 hover:bg-blue-50/50">
+                              <td className="p-2 font-mono font-bold">{inv.invoiceNumber || '—'}</td>
+                              <td className="p-2 font-mono">{inv.bolNumber}</td>
+                              <td className="p-2">{inv.customer}</td>
+                              <td className="p-2 font-mono">{inv.po || '—'}</td>
+                              <td className="p-2 font-mono">{inv.contractNumber || '—'}</td>
+                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-right font-mono font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -13822,14 +13861,26 @@ export default function App() {
               <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
                 <button onClick={() => setInvoiceSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
                 <button
-                  disabled={invoiceSyncPreview.newInvoices.length === 0}
+                  disabled={invoiceSyncPreview.newInvoices.length === 0 && invoiceSyncPreview.updatedInvoices.length === 0}
                   onClick={() => {
-                    setInvoices([...invoices, ...invoiceSyncPreview.newInvoices]);
+                    // Apply backfilled fields to existing invoices (by id), then append the new ones.
+                    const updatedById = new Map(invoiceSyncPreview.updatedInvoices.map(u => [u.id, u] as const));
+                    setInvoices(prev => [
+                      ...prev.map(inv => updatedById.get(inv.id) || inv),
+                      ...invoiceSyncPreview.newInvoices,
+                    ]);
                     setInvoiceSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
                 >
-                  Import {invoiceSyncPreview.newInvoices.length} Invoice{invoiceSyncPreview.newInvoices.length === 1 ? '' : 's'}
+                  {(() => {
+                    const n = invoiceSyncPreview.newInvoices.length;
+                    const u = invoiceSyncPreview.updatedInvoices.length;
+                    const parts: string[] = [];
+                    if (n) parts.push(`Import ${n}`);
+                    if (u) parts.push(`Update ${u}`);
+                    return parts.length ? parts.join(' + ') : 'Apply';
+                  })()}
                 </button>
               </div>
             </motion.div>

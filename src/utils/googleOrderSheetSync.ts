@@ -1517,6 +1517,8 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
 
 export interface InvoiceSyncResult {
   newInvoices: Invoice[];
+  /** Existing invoices that had missing fields backfilled from the sheet. */
+  updatedInvoices: Invoice[];
   skipped: Array<{ tab: string; bolNumber: string; invoiceNumber: string; reason: string }>;
   errors: Array<{ tab: string; rowIdx: number; message: string }>;
 }
@@ -1534,16 +1536,20 @@ export function parsedRowsToInvoicesConfigured(
   const tabByName = new Map<string, ConfiguredTab>();
   for (const t of configured) tabByName.set(t.tabName, t);
 
-  const result: InvoiceSyncResult = { newInvoices: [], skipped: [], errors: [] };
+  const result: InvoiceSyncResult = { newInvoices: [], updatedInvoices: [], skipped: [], errors: [] };
 
-  // Dedupe sets — invoices keyed on invoiceNumber AND on bolNumber (so two
-  // rows that share either with an existing invoice don't double-import).
-  const existingInvoiceNumbers = new Set(
-    existingInvoices.map(i => (i.invoiceNumber || '').trim().toUpperCase()).filter(Boolean),
-  );
-  const existingInvoiceBols = new Set(
-    existingInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean),
-  );
+  // Existing-invoice lookups — keyed on invoiceNumber AND on bolNumber. A row
+  // that matches either backfills the existing invoice's blank fields (rather
+  // than being skipped) so missing PO numbers etc. get filled in.
+  const existingInvoiceByNumber = new Map<string, Invoice>();
+  const existingInvoiceByBol = new Map<string, Invoice>();
+  for (const i of existingInvoices) {
+    const n = (i.invoiceNumber || '').trim().toUpperCase();
+    const b = (i.bolNumber || '').trim().toUpperCase();
+    if (n && !existingInvoiceByNumber.has(n)) existingInvoiceByNumber.set(n, i);
+    if (b && !existingInvoiceByBol.has(b)) existingInvoiceByBol.set(b, i);
+  }
+  const updatedInvoiceIds = new Set<string>(); // each existing invoice touched at most once per run
   const addedInvoiceNumbers = new Set<string>();
   const addedInvoiceBols = new Set<string>();
 
@@ -1589,17 +1595,8 @@ export function parsedRowsToInvoicesConfigured(
       const invU = r.invoiceNumber.trim().toUpperCase();
       const bolU = r.bolNumber.trim().toUpperCase();
 
-      // 6. Dedup by invoice # and BOL
-      if (existingInvoiceNumbers.has(invU) || addedInvoiceNumbers.has(invU)) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice number already exists' });
-        continue;
-      }
-      if (existingInvoiceBols.has(bolU) || addedInvoiceBols.has(bolU)) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice already exists for this BOL' });
-        continue;
-      }
-
-      // Resolve catalog refs (same path as orders, so display matches).
+      // Resolve catalog refs (same path as orders, so display matches). Computed
+      // up-front because both the new-invoice and the backfill paths need them.
       const explicit = tabByName.get(r.tab);
       const builtIn = tabDefaults(r.tab);
       const tabFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
@@ -1621,6 +1618,57 @@ export function parsedRowsToInvoicesConfigured(
       // Try to inherit line items from a matching order (by BOL).
       const linkedOrder = ordersByBol.get(bolU);
       const lineItems = linkedOrder ? linkedOrder.lineItems : undefined;
+
+      // 6. Existing invoice (by invoice # or BOL)? Backfill only its BLANK
+      //    fields from the sheet — never overwrite a value already present.
+      const existingInv = existingInvoiceByNumber.get(invU) || existingInvoiceByBol.get(bolU) || null;
+      if (existingInv) {
+        if (updatedInvoiceIds.has(existingInv.id)) {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Existing invoice already updated earlier in this run' });
+          continue;
+        }
+        const blank = (v: unknown) => v === undefined || v === null || v === '';
+        const patch: Partial<Invoice> = {};
+        if (blank(existingInv.po) && r.poNumber) patch.po = r.poNumber;
+        if (blank(existingInv.invoiceNumber) && r.invoiceNumber) patch.invoiceNumber = r.invoiceNumber;
+        if (blank(existingInv.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
+        if (blank(existingInv.splitNo) && r.splitNumber) patch.splitNo = r.splitNumber;
+        if (blank(existingInv.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
+        if (blank(existingInv.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
+        if (blank(existingInv.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
+        if (blank(existingInv.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+        // Pricing backfill — price and amount filled independently, each only
+        // when the existing invoice is missing it (never overwrites a value).
+        if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
+        if (!existingInv.amount || existingInv.amount === 0) {
+          // Use the invoice's own $/MT when it has one, else the sheet's; × its qty.
+          const effPpm = (existingInv.pricePerMt && existingInv.pricePerMt > 0) ? existingInv.pricePerMt : pricePerMt;
+          const effQty = existingInv.qty || r.quantityMT;
+          const computed = Math.round(effPpm * effQty * 100) / 100;
+          if (computed > 0) patch.amount = computed;
+        }
+        // Line-item backfill from a matching order when the invoice has none.
+        if ((!existingInv.lineItems || existingInv.lineItems.length === 0) && lineItems && lineItems.length) {
+          patch.lineItems = lineItems;
+        }
+        if (Object.keys(patch).length > 0) {
+          result.updatedInvoices.push(stripUndefined({ ...existingInv, ...patch }));
+          updatedInvoiceIds.add(existingInv.id);
+        } else {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Existing invoice already has all the available info' });
+        }
+        continue;
+      }
+
+      // 7. In-run dedup for NEW invoices (two sheet rows sharing an invoice #/BOL).
+      if (addedInvoiceNumbers.has(invU)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice number already imported earlier in this run' });
+        continue;
+      }
+      if (addedInvoiceBols.has(bolU)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice already imported for this BOL earlier in this run' });
+        continue;
+      }
 
       const newInvoice: Invoice = {
         id: `INV-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
