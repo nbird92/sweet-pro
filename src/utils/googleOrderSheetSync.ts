@@ -1548,20 +1548,17 @@ export function parsedRowsToInvoicesConfigured(
 
   const result: InvoiceSyncResult = { newInvoices: [], updatedInvoices: [], skipped: [], errors: [] };
 
-  // Existing-invoice lookups — keyed on invoiceNumber AND on bolNumber. A row
-  // that matches either backfills the existing invoice's blank fields (rather
-  // than being skipped) so missing PO numbers etc. get filled in.
+  // Invoice NUMBER is the unique key — BOL numbers are intentionally shared
+  // across multiple invoices (and orders), so we do NOT dedup on BOL. A row
+  // whose invoice number matches an existing invoice backfills its blank fields;
+  // otherwise it's a new invoice (even when the BOL is already in use).
   const existingInvoiceByNumber = new Map<string, Invoice>();
-  const existingInvoiceByBol = new Map<string, Invoice>();
   for (const i of existingInvoices) {
     const n = (i.invoiceNumber || '').trim().toUpperCase();
-    const b = (i.bolNumber || '').trim().toUpperCase();
     if (n && !existingInvoiceByNumber.has(n)) existingInvoiceByNumber.set(n, i);
-    if (b && !existingInvoiceByBol.has(b)) existingInvoiceByBol.set(b, i);
   }
   const updatedInvoiceIds = new Set<string>(); // each existing invoice touched at most once per run
   const addedInvoiceNumbers = new Set<string>();
-  const addedInvoiceBols = new Set<string>();
 
   // BOL → Order lookup for line-item inheritance
   const ordersByBol = new Map<string, Order>();
@@ -1629,9 +1626,9 @@ export function parsedRowsToInvoicesConfigured(
       const linkedOrder = ordersByBol.get(bolU);
       const lineItems = linkedOrder ? linkedOrder.lineItems : undefined;
 
-      // 6. Existing invoice (by invoice # or BOL)? Backfill only its BLANK
+      // 6. Existing invoice (matched by invoice NUMBER only)? Backfill its BLANK
       //    fields from the sheet — never overwrite a value already present.
-      const existingInv = existingInvoiceByNumber.get(invU) || existingInvoiceByBol.get(bolU) || null;
+      const existingInv = existingInvoiceByNumber.get(invU) || null;
       if (existingInv) {
         if (updatedInvoiceIds.has(existingInv.id)) {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Existing invoice already updated earlier in this run' });
@@ -1671,13 +1668,10 @@ export function parsedRowsToInvoicesConfigured(
         continue;
       }
 
-      // 7. In-run dedup for NEW invoices (two sheet rows sharing an invoice #/BOL).
+      // 7. In-run dedup for NEW invoices — by invoice NUMBER only (BOLs may
+      //    legitimately repeat across rows).
       if (addedInvoiceNumbers.has(invU)) {
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice number already imported earlier in this run' });
-        continue;
-      }
-      if (addedInvoiceBols.has(bolU)) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Invoice already imported for this BOL earlier in this run' });
         continue;
       }
 
@@ -1706,7 +1700,6 @@ export function parsedRowsToInvoicesConfigured(
 
       result.newInvoices.push(stripUndefined(newInvoice));
       addedInvoiceNumbers.add(invU);
-      addedInvoiceBols.add(bolU);
     } catch (err) {
       result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
     }

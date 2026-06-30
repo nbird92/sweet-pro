@@ -1871,8 +1871,12 @@ export default function App() {
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
-          // Check if invoice with this BOL already exists — overwrite all fields from CSV
-          const existingIdx = workingInvoices.findIndex(inv => inv.bolNumber === bolNumber);
+          // Match an existing invoice by its UNIQUE invoice number (BOL numbers
+          // are shared across invoices, so we never match/overwrite by BOL). A
+          // row with no invoice number always creates a new invoice.
+          const existingIdx = invoiceNumber.trim()
+            ? workingInvoices.findIndex(inv => (inv.invoiceNumber || '').trim() === invoiceNumber.trim())
+            : -1;
           if (existingIdx !== -1) {
             updatedCount++;
             const inv = workingInvoices[existingIdx];
@@ -3527,11 +3531,13 @@ export default function App() {
           amount: parseFloat(i.amount) || 0
         }));
 
+        // De-dupe only by the unique record id (multiple invoices may share a
+        // shipment/BOL — they're distinct as long as their invoice numbers differ).
         const uniqueInvoices: Invoice[] = [];
-        const seenShipmentIds = new Set<string>();
+        const seenIds = new Set<string>();
         for (const inv of mapped) {
-          if (inv.shipmentId && seenShipmentIds.has(inv.shipmentId)) continue;
-          if (inv.shipmentId) seenShipmentIds.add(inv.shipmentId);
+          if (inv.id && seenIds.has(inv.id)) continue;
+          if (inv.id) seenIds.add(inv.id);
           uniqueInvoices.push(inv);
         }
 
