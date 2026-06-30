@@ -3590,7 +3590,20 @@ export default function App() {
           amount: parseFloat(o.amount) || 0,
           lineItems: Array.isArray(o.lineItems) ? o.lineItems : (typeof o.lineItems === 'string' ? JSON.parse(o.lineItems) : [])
         }));
-        setOrders(mapped);
+        // An invoiced BOL/PO can no longer be an order — drop any order whose BOL
+        // or PO matches an active (non-Cancelled/Credit) invoice. Runs on every
+        // load, including "Sync Now".
+        const billed = (data.invoices || []).filter((i: any) => i.status !== 'Cancelled' && i.status !== 'Credit');
+        const invBols = new Set(billed.map((i: any) => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+        const invPos = new Set(billed.map((i: any) => (i.po || '').trim().toUpperCase()).filter(Boolean));
+        const cleaned = mapped.filter((o: any) => {
+          const ob = (o.bolNumber || '').trim().toUpperCase();
+          const op = (o.po || '').trim().toUpperCase();
+          return !((ob && invBols.has(ob)) || (op && invPos.has(op)));
+        });
+        setOrders(cleaned);
+        // Keep lastSynced at what Firestore actually HAS (mapped) so the next
+        // auto-sync pushes the deletion of the invoiced orders we just filtered.
         lastSyncedData.current.orders = JSON.stringify(mapped);
       }
       if (data.conferences?.length) {
