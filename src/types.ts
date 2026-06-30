@@ -365,6 +365,7 @@ export interface Invoice {
   contractNumber?: string;
   papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
   customsEntryNo?: string;  // Customs entry number
+  reversals?: string;       // Reversal/credit reference or amount, from the sync sheet
 }
 
 export interface OrderLineItem {

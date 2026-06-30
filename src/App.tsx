@@ -7209,7 +7209,7 @@ export default function App() {
         return v;
       };
 
-      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'shippingTerms', 'location'];
+      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'reversals', 'shippingTerms', 'location'];
       const invoiceExportSheets = (): SheetSpec[] => [{
         sheetName: 'Invoices',
         title: 'Customer Invoices',
@@ -7228,6 +7228,7 @@ export default function App() {
           { header: 'Carrier', key: 'carrier' },
           { header: 'Status', key: 'status' },
           { header: 'Split No.', key: 'splitNo' },
+          { header: 'Reversals', key: 'reversals' },
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Location', key: 'location' },
         ],
@@ -7310,6 +7311,7 @@ export default function App() {
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Reversals" sortKey="reversals" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
@@ -7412,6 +7414,21 @@ export default function App() {
                             const v = e.target.value;
                             if (v !== (i.splitNo || '')) {
                               setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, splitNo: v } : inv));
+                            }
+                          }}
+                          placeholder="—"
+                          className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                        />
+                      </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          key={i.reversals || ''}
+                          defaultValue={i.reversals || ''}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== (i.reversals || '')) {
+                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, reversals: v } : inv));
                             }
                           }}
                           placeholder="—"
@@ -11224,6 +11241,8 @@ export default function App() {
                     <input type="text" value={editingInvoiceCard.papsNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, papsNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
                     <input type="text" value={editingInvoiceCard.customsEntryNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customsEntryNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
+                    <input type="text" value={editingInvoiceCard.reversals || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, reversals: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due-date status</label>
                     <div className={`text-sm py-1.5 ${editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'text-red-600 font-bold' : 'opacity-60'}`}>{editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'Overdue' : 'On time'}</div></div>
                 </div>

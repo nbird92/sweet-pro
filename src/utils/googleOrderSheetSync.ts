@@ -85,6 +85,8 @@ export interface ParsedOrderRow {
   papsNo: string;
   /** Customs entry number (orders + invoices). */
   customsEntryNo: string;
+  /** Reversals — credit/reversal reference or amount (invoices). */
+  reversals: string;
 }
 
 export interface OrderSyncResult {
@@ -262,6 +264,7 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       lotCode: '',
       papsNo: '',
       customsEntryNo: '',
+      reversals: '',
     });
   }
   return out;
@@ -324,6 +327,7 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       lotCode: lot, // Molasses lot # doubles as the transfer lot code
       papsNo: '',
       customsEntryNo: '',
+      reversals: '',
     });
   }
   return out;
@@ -889,6 +893,8 @@ export interface ColumnMap {
   papsNo?: number;
   /** Customs entry number (orders + invoices). */
   customsEntryNo?: number;
+  /** Reversals — credit/reversal reference or amount for an invoice. */
+  reversals?: number;
 }
 
 export interface ConfiguredTab {
@@ -1053,6 +1059,7 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     lotCode: find(h => h === 'lot' || h === 'lot #' || h === 'lot code' || h === 'lot no' || h === 'lot#'),
     papsNo: find(h => h === 'paps' || h === 'paps #' || h === 'paps no' || h === 'paps no.' || h === 'paps number'),
     customsEntryNo: find(h => /customs entry|entry no|entry number|entry #/.test(h) || h === 'customs entry' || h === 'customs no'),
+    reversals: find(h => /reversal/.test(h)),
   };
 }
 
@@ -1094,6 +1101,7 @@ export function parseConfiguredTab(
     const lotRaw = cell(row, cm.lotCode);
     const papsRaw = cell(row, cm.papsNo);
     const customsEntryRaw = cell(row, cm.customsEntryNo);
+    const reversalsRaw = cell(row, cm.reversals);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
@@ -1142,6 +1150,7 @@ export function parseConfiguredTab(
       lotCode: lotRaw,
       papsNo: papsRaw,
       customsEntryNo: customsEntryRaw,
+      reversals: reversalsRaw,
     });
   }
   return out;
@@ -1499,6 +1508,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'contractNumber', label: 'Contract Number' },
   { key: 'splitNumber', label: 'Split Number' },
   { key: 'pricePerMt', label: 'Price / MT (invoices)' },
+  { key: 'reversals', label: 'Reversals (invoices)' },
   { key: 'bay', label: 'Bay / Dock (shipments)' },
   { key: 'appointmentTime', label: 'Appointment Time (shipments)' },
   { key: 'invoiceNumber', label: 'Invoice Number' },
@@ -1637,6 +1647,7 @@ export function parsedRowsToInvoicesConfigured(
         if (blank(existingInv.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
         if (blank(existingInv.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
         if (blank(existingInv.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+        if (blank(existingInv.reversals) && r.reversals) patch.reversals = r.reversals;
         // Pricing backfill — price and amount filled independently, each only
         // when the existing invoice is missing it (never overwrites a value).
         if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
@@ -1690,6 +1701,7 @@ export function parsedRowsToInvoicesConfigured(
         ...(lineItems ? { lineItems } : {}),
         ...(r.papsNo ? { papsNo: r.papsNo } : {}),
         ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
+        ...(r.reversals ? { reversals: r.reversals } : {}),
       };
 
       result.newInvoices.push(stripUndefined(newInvoice));
