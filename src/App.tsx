@@ -1557,6 +1557,7 @@ export default function App() {
           const customerServiceEmail = entry.customerserviceemail || '';
           const defaultPaymentTerms = entry.defaultpaymentterms || entry.paymentterms || '';
           const defaultCarrierCode = entry.defaultcarriercode || entry.carriercode || '';
+          const chepAccountNumber = entry.chepaccountnumber || entry.chepaccount || entry.chep || '';
           const notes = entry.notes || '';
 
           // Match by name, ID, or customerNumber
@@ -1584,6 +1585,7 @@ export default function App() {
               customerServiceEmail: customerServiceEmail || c.customerServiceEmail,
               defaultPaymentTerms: defaultPaymentTerms || c.defaultPaymentTerms,
               defaultCarrierCode: defaultCarrierCode || c.defaultCarrierCode,
+              chepAccountNumber: chepAccountNumber || c.chepAccountNumber,
               notes: notes || c.notes,
             };
             continue;
@@ -1609,6 +1611,7 @@ export default function App() {
             customerServiceEmail: customerServiceEmail || undefined,
             defaultPaymentTerms: defaultPaymentTerms || undefined,
             defaultCarrierCode: defaultCarrierCode || undefined,
+            chepAccountNumber: chepAccountNumber || undefined,
             notes: notes || undefined,
           });
         }
@@ -5804,7 +5807,7 @@ export default function App() {
     if (!window.confirm(`Rebuild ${rebuilt.length} customer(s) from orders / invoices / contracts and add them to the table? Existing customers are left unchanged. Full street ship-to addresses can't be recovered from this data (only ship-to location names from contracts).`)) return;
     setCustomers(prev => [...prev, ...rebuilt]);
     // Hand back a filled template CSV (same columns as the customer template).
-    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
     exportCSV(tplHeaders, rebuilt, 'customer_template_rebuilt.csv');
     setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
@@ -6846,8 +6849,8 @@ export default function App() {
     if (activePage === 'Customers') {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
 
-      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
-      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'notes'];
+      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
+      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
       const customerExportSheets = (): SheetSpec[] => [
         {
           sheetName: 'Customers',
@@ -6866,6 +6869,7 @@ export default function App() {
             { header: 'Default Margin', key: 'defaultMargin' },
             { header: 'Payment Terms', key: 'defaultPaymentTerms' },
             { header: 'Default Carrier', key: 'defaultCarrierCode' },
+            { header: 'CHEP Account #', key: 'chepAccountNumber' },
             { header: 'Contact Email', key: 'contactEmail' },
             { header: 'Contact Phone', key: 'contactPhone' },
             { header: 'Notes', key: 'notes' },
@@ -6974,7 +6978,11 @@ export default function App() {
                 sortValue: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '',
                 render: (c) => c.salespersonId ? (people.find(p => p.id === c.salespersonId)?.name || 'Unknown') : '-',
               },
-              { key: 'defaultCarrierCode', label: 'Default Carrier', render: (c) => c.defaultCarrierCode || '-' },
+              {
+                key: 'defaultCarrierCode', label: 'Default Carrier',
+                sortValue: (c) => { const cr = carriers.find(x => x.carrierNumber === c.defaultCarrierCode || x.name === c.defaultCarrierCode); return cr?.name || c.defaultCarrierCode || ''; },
+                render: (c) => { const cr = carriers.find(x => x.carrierNumber === c.defaultCarrierCode || x.name === c.defaultCarrierCode); return cr?.name || c.defaultCarrierCode || '-'; },
+              },
             ]}
             rows={filteredCustomers}
             getRowKey={(c) => c.id}
@@ -15933,6 +15941,16 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">CHEP Account Number</label>
+                    <input
+                      type="text"
+                      value={newCustomer.chepAccountNumber || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, chepAccountNumber: e.target.value || undefined })}
+                      placeholder="e.g. 1234567"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
                     <input
                       type="email"
@@ -16652,6 +16670,16 @@ export default function App() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">CHEP Account Number</label>
+                    <input
+                      type="text"
+                      value={editingCustomer.chepAccountNumber || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, chepAccountNumber: e.target.value || undefined })}
+                      placeholder="e.g. 1234567"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>

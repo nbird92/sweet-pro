@@ -83,6 +83,7 @@ export interface Customer {
   notes?: string;
   salespersonId?: string;
   defaultCarrierCode?: string;
+  chepAccountNumber?: string;   // customer's CHEP pallet account number
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
   customerGroupId?: string;
