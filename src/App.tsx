@@ -8472,13 +8472,21 @@ export default function App() {
     }
 
     if (activePage === 'Email Center') {
+      // Only surface POs awaiting approval that aren't already in the orders
+      // table — a PO that's already an order no longer needs approval. Reactive:
+      // if that order is later removed, its PO reappears here for review.
+      const orderPoSet = new Set(orders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean));
+      const visiblePendingImports = poPendingImports.filter(p => {
+        const k = (p.poNumber || '').trim().toUpperCase();
+        return !k || !orderPoSet.has(k);
+      });
       return (
         <EmailCenterPage
           emailLog={emailLog}
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
           poImportLog={poImportLog}
-          poPendingImports={poPendingImports}
+          poPendingImports={visiblePendingImports}
           onReviewImports={reviewPendingImports}
           onDismissImport={dismissPendingImport}
           onDeleteImport={deleteImportLogEntry}
