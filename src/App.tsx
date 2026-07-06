@@ -5146,13 +5146,20 @@ export default function App() {
     else if (lower.includes('yellow')) detectedSugar = 'Yellow';
     else if (lower.includes('liquid')) detectedSugar = 'Liquid';
 
-    // Sugar type abbreviation in the string (e.g. "GC", "LC", "BR") — counts as a sugar hit
+    // Sugar type abbreviation in the string (e.g. "GC", "LC", "BR") — counts as a
+    // sugar hit. Handles both spaced tokens ("GC 45" → \bGC\b) and glued short-form
+    // codes where the abbreviation runs straight into the colour number
+    // ("GC100" → \bGC\d). Without the digit case, "GC100" never registered as
+    // Granulated and could be mis-scored to a Liquid product with the same colour.
     if (!detectedSugar) {
       for (const st of sugarTypes) {
         // Escape the abbreviation — it's user-editable and could contain regex
         // metacharacters, which would otherwise throw on new RegExp.
         const esc = (st.abbreviation || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (esc && new RegExp(`\\b${esc}\\b`).test(productName)) {
+        // The glued form allows an optional category letter (B/C) between the
+        // abbreviation and the colour, so both "GC100" (sugar "GC") and "G"+"C"+100
+        // (sugar "G", category "C") register as the same sugar type.
+        if (esc && (new RegExp(`\\b${esc}\\b`, 'i').test(productName) || new RegExp(`\\b${esc}[bc]?\\d`, 'i').test(productName))) {
           detectedSugar = st.name;
           break;
         }
