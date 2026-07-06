@@ -172,6 +172,7 @@ export interface TollingFee {
   location: string;       // Location name (from the Locations table)
   amountPerMt: number;    // Tolling fee amount per MT
   currency: string;       // e.g. "CAD", "USD"
+  taxRate?: number;       // Tax rate as a percentage (e.g. 13 for 13%); Tax = Net Amount × taxRate/100
   startDate?: string;     // ISO yyyy-mm-dd — fee effective from
   endDate?: string;       // ISO yyyy-mm-dd — fee effective to
 }

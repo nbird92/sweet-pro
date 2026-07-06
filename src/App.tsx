@@ -9398,27 +9398,55 @@ export default function App() {
           const rows = Array.from(g.rows.values()).map(r => {
             const fee = feeFor(r.pg, r.loc);
             const rate = fee?.amountPerMt || 0;
+            const taxRate = fee?.taxRate || 0;
+            const netAmount = r.mt * rate;      // Net Amount = MT × fee/MT
+            const tax = netAmount * (taxRate / 100); // Tax = Net Amount × tax rate
             return {
               productGroup: r.pg, location: r.loc,
               mt: Math.round(r.mt * 1000) / 1000,
-              totalFees: r.mt * rate,
+              netAmount,
+              tax,
+              totalFees: netAmount + tax,        // Total Tolling Fees = Net + Tax
               currency: fee?.currency || '',
               products: Array.from(r.products.entries())
                 .map(([name, pmt]) => ({ name, mt: Math.round(pmt * 1000) / 1000 }))
                 .sort((a, b) => b.mt - a.mt),
               invoices: Array.from(r.invoices.values())
-                .map(iv => ({ invoiceNumber: iv.invoiceNumber, customer: iv.customer, date: iv.date, po: iv.po, products: Array.from(iv.products).join(', '), mt: Math.round(iv.mt * 1000) / 1000, fees: iv.mt * rate }))
+                .map(iv => { const net = iv.mt * rate; const t = net * (taxRate / 100); return { invoiceNumber: iv.invoiceNumber, customer: iv.customer, date: iv.date, po: iv.po, products: Array.from(iv.products).join(', '), mt: Math.round(iv.mt * 1000) / 1000, netAmount: net, tax: t, fees: net + t }; })
                 .sort((a, b) => b.fees - a.fees || b.mt - a.mt),
             };
           }).sort((a, b) => b.totalFees - a.totalFees);
           const mt = rows.reduce((s, r) => s + r.mt, 0);
+          const netAmount = rows.reduce((s, r) => s + r.netAmount, 0);
+          const tax = rows.reduce((s, r) => s + r.tax, 0);
           const totalFees = rows.reduce((s, r) => s + r.totalFees, 0);
-          return { key, label: g.label, sortKey: g.sortKey, isCurrent: key === currentKey, mt: Math.round(mt * 1000) / 1000, totalFees, currency: rows.find(r => r.currency)?.currency || '', rows };
+          return { key, label: g.label, sortKey: g.sortKey, isCurrent: key === currentKey, mt: Math.round(mt * 1000) / 1000, netAmount, tax, totalFees, currency: rows.find(r => r.currency)?.currency || '', rows };
         }).sort((a, b) => b.sortKey.localeCompare(a.sortKey));
       })();
+      // Flat Excel export of the summary: one row per period × product-group row,
+      // plus a period TOTAL row, with MT / Net Amount / Tax / Total Tolling Fees.
+      const tollingSummaryExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Tolling Fees Summary',
+        title: 'Tolling Fees Summary',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | grouped ${tollingTimeframe}`,
+        columns: [
+          { header: 'Period', key: 'period' },
+          { header: 'Product Group', key: 'productGroup' },
+          { header: 'Location', key: 'location' },
+          { header: 'MT', key: 'mt', format: 'number' },
+          { header: 'Net Amount', key: 'netAmount', format: 'currency' },
+          { header: 'Tax', key: 'tax', format: 'currency' },
+          { header: 'Total Tolling Fees', key: 'total', format: 'currency' },
+          { header: 'Currency', key: 'currency' },
+        ],
+        rows: tollingPeriods.flatMap(g => [
+          ...g.rows.map(r => ({ period: g.label, productGroup: r.productGroup, location: r.location, mt: r.mt, netAmount: r.netAmount, tax: r.tax, total: r.totalFees, currency: r.currency })),
+          { period: g.label, productGroup: 'TOTAL', location: '', mt: g.mt, netAmount: g.netAmount, tax: g.tax, total: g.totalFees, currency: g.currency },
+        ]) as any[],
+      }];
       return (
         <div>
-          <PageBanner icon={<DollarSign size={18} />} title="Tolling Fees" count={tollingFees.length}>
+          <PageBanner icon={<DollarSign size={18} />} title="Tolling Fees" count={tollingFees.length} exportSheets={tollingSummaryExportSheets} exportFileName="Tolling_Fees_Summary">
             <button
               onClick={() => { setTollingFeeDraft({ id: `TF-${Date.now()}`, productGroup: '', location: '', amountPerMt: 0, currency: 'CAD', startDate: '', endDate: '' }); setTollingFeeMode('add'); }}
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
@@ -9481,6 +9509,7 @@ export default function App() {
                     <DetailRow label="Product Group" value={tollingFeeDraft.productGroup} bold />
                     <DetailRow label="Location" value={tollingFeeDraft.location} />
                     <DetailRow label="Tolling Fee / MT" value={`${(tollingFeeDraft.amountPerMt || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tollingFeeDraft.currency || ''}`.trim()} mono />
+                    <DetailRow label="Tax Rate" value={`${(tollingFeeDraft.taxRate || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}%`} mono />
                     <DetailRow label="Currency" value={tollingFeeDraft.currency} mono />
                     <DetailRow label="Start Date" value={tollingFeeDraft.startDate || '—'} />
                     <DetailRow label="End Date" value={tollingFeeDraft.endDate || '—'} />
@@ -9514,6 +9543,17 @@ export default function App() {
                         value={tollingFeeDraft.amountPerMt || ''}
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => setTollingFeeDraft(d => d ? { ...d, amountPerMt: parseFloat(e.target.value) || 0 } : d)}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
+                      />
+                    </DetailField>
+                    <DetailField label="Tax Rate (%)">
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={tollingFeeDraft.taxRate ?? ''}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setTollingFeeDraft(d => d ? { ...d, taxRate: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) } : d)}
+                        placeholder="e.g. 13"
                         className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono outline-none focus:bg-white"
                       />
                     </DetailField>
@@ -9558,6 +9598,8 @@ export default function App() {
                     <th className="p-3 bg-[#141414] w-6"></th>
                     <th className="p-3 bg-[#141414]">Period / Product Category</th>
                     <th className="p-3 bg-[#141414] text-right">MT</th>
+                    <th className="p-3 bg-[#141414] text-right">Net Amount</th>
+                    <th className="p-3 bg-[#141414] text-right">Tax</th>
                     <th className="p-3 bg-[#141414] text-right">Total Tolling Fees</th>
                   </tr>
                 </thead>
@@ -9569,6 +9611,8 @@ export default function App() {
                         <td className="p-3">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</td>
                         <td className="p-3 text-sm font-bold">{g.label}{g.isCurrent ? <span className="ml-2 text-[9px] uppercase font-bold text-emerald-700">current</span> : null}</td>
                         <td className="p-3 text-right text-sm font-mono font-bold">{g.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="p-3 text-right text-sm font-mono font-bold">{g.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{g.currency ? ` ${g.currency}` : ''}</td>
+                        <td className="p-3 text-right text-sm font-mono font-bold">{g.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{g.currency ? ` ${g.currency}` : ''}</td>
                         <td className="p-3 text-right text-sm font-mono font-bold">{g.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{g.currency ? ` ${g.currency}` : ''}</td>
                       </tr>,
                     ];
@@ -9593,6 +9637,8 @@ export default function App() {
                               {hasInvoices ? <span className="opacity-40"> · {r.invoices.length} invoice{r.invoices.length === 1 ? '' : 's'}</span> : null}
                             </td>
                             <td className="p-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="p-2 text-right font-mono">{r.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
+                            <td className="p-2 text-right font-mono">{r.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                             <td className="p-2 text-right font-mono">{r.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                           </tr>,
                         );
@@ -9611,17 +9657,19 @@ export default function App() {
                                 {iv.products ? <span className="opacity-50"> · {iv.products}</span> : null}
                               </td>
                               <td className="p-1.5 text-right font-mono">{iv.mt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-1.5 text-right font-mono">{iv.netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
+                              <td className="p-1.5 text-right font-mono">{iv.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                               <td className="p-1.5 text-right font-mono">{iv.fees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{r.currency ? ` ${r.currency}` : ''}</td>
                             </tr>,
                           ));
                         }
                       });
-                      if (g.rows.length === 0) out.push(<tr key={`${g.key}-empty`} className="bg-[#FAFAFA] text-xs"><td className="p-2"></td><td className="p-2 pl-8 italic opacity-50" colSpan={3}>No invoiced volume.</td></tr>);
+                      if (g.rows.length === 0) out.push(<tr key={`${g.key}-empty`} className="bg-[#FAFAFA] text-xs"><td className="p-2"></td><td className="p-2 pl-8 italic opacity-50" colSpan={5}>No invoiced volume.</td></tr>);
                     }
                     return out;
                   })}
                   {tollingPeriods.length === 0 && (
-                    <tr><td colSpan={4} className="p-8 text-center text-xs opacity-50 italic">No invoiced volume yet.</td></tr>
+                    <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No invoiced volume yet.</td></tr>
                   )}
                 </tbody>
               </table>
