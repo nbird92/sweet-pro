@@ -5041,7 +5041,7 @@ export default function App() {
   //   4. Match against the SKU's Packaging Format
   //   5. Fuzzy keyword match (sugar type, group, color, weight, category)
   // Returns { sku, qa } or { sku: null, qa: null } if no match.
-  const resolveProduct = (productName: string | undefined): { sku: SKU | null; qa: QAProduct | null } => {
+  const resolveProduct = (productName: string | undefined, opts?: { exact?: boolean }): { sku: SKU | null; qa: QAProduct | null } => {
     if (!productName) return { sku: null, qa: null };
 
     const findPairBySku = (s: SKU): { sku: SKU; qa: QAProduct | null } => ({
@@ -5133,6 +5133,11 @@ export default function App() {
       return fmt && fmt === normalized;
     });
     if (fmtMatch) return findPairBySku(fmtMatch);
+
+    // Exact-only callers stop here — no fuzzy guessing. This keeps distinct
+    // catalog variants that share a code apart (e.g. bulk "GC100" vs packaged
+    // "20kg GC100"), which the fuzzy scorer would otherwise treat as the same.
+    if (opts?.exact) return { sku: null, qa: null };
 
     // 5. Fuzzy keyword match
     const lower = normalized;
@@ -9362,11 +9367,12 @@ export default function App() {
           if (pg) {
             result = pg;
           } else {
-            // Robust catalog match before giving up: resolveProduct handles short-form
-            // codes (e.g. "GC45", "LC60"), case/spacing differences, format-only names
-            // and fuzzy keywords — so a product invoiced by its code still maps to the
-            // Product Group set on its catalog row instead of landing in "Ungrouped".
-            const { sku, qa } = resolveProduct(productName);
+            // EXACT catalog match only — short-form code, name or rendered
+            // shortform, no fuzzy guessing. This keeps distinct variants that
+            // share a code apart, e.g. bulk "GC100" (Bulk Granulated) vs packaged
+            // "20kg GC100" (Bagged); a fuzzy match would conflate them (same
+            // sugar + colour) and file one under the other's group.
+            const { sku, qa } = resolveProduct(productName, { exact: true });
             const matched = groupFromRecord(qa) || groupFromRecord(sku);
             if (matched) {
               result = matched;
