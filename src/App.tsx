@@ -577,6 +577,11 @@ export default function App() {
         contractNumber,
       };
     });
+    // Extraction found no line items — seed one blank editable row so the review
+    // card still shows Product / Qty / Price fields for manual entry.
+    if (lines.length === 0) {
+      lines.push({ productValue: '', productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: 0, pricePerMt: 0, contractNumber });
+    }
     return {
       id: `POREV-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       source: po,
@@ -8501,6 +8506,17 @@ export default function App() {
         const k = (p.poNumber || '').trim().toUpperCase();
         return !k || !orderPoSet.has(k);
       });
+      // Once an order has moved to the invoice table, its amendment suggestions are
+      // moot — hide any amendment whose PO or BOL matches an active invoice
+      // (Cancelled / Credit invoices don't count).
+      const billedInv = invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
+      const invoicedPoSet = new Set(billedInv.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+      const invoicedBolSet = new Set(billedInv.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+      const visibleAmendments = poAmendments.filter(a => {
+        const po = (a.poNumber || '').trim().toUpperCase();
+        const bol = (a.orderBol || '').trim().toUpperCase();
+        return !((po && invoicedPoSet.has(po)) || (bol && invoicedBolSet.has(bol)));
+      });
       return (
         <EmailCenterPage
           emailLog={emailLog}
@@ -8519,7 +8535,7 @@ export default function App() {
           onMarkInboxHandled={markInboxHandled}
           onReopenInbox={reopenInboxEmail}
           onRefreshInbox={loadInboxFeed}
-          poAmendments={poAmendments}
+          poAmendments={visibleAmendments}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}
           onScanInbox={scanInboxNow}
@@ -18699,6 +18715,15 @@ export default function App() {
                             ))}
                           </tbody>
                         </table>
+                        {!rev.created && (
+                          <button
+                            type="button"
+                            onClick={() => updateReview(rev.id, { lines: [...rev.lines, { productValue: '', productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: 0, pricePerMt: 0, contractNumber: rev.contractNumber }] })}
+                            className="w-full p-2 text-[10px] font-bold uppercase text-left border-t border-[#141414]/10 hover:bg-[#F5F5F5] transition-all flex items-center gap-1"
+                          >
+                            <Plus size={11} /> Add Product
+                          </button>
+                        )}
                       </div>
 
                       {/* Shipment appointment — mirrors the "Create Shipments from
