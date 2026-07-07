@@ -6259,23 +6259,41 @@ export default function App() {
       const completedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s =>
         !isCancelledShipment(s) && (s.status === 'Completed' || (!!s.date && s.date <= todayISO)));
 
+      // Normalize a shipment's week label ("Week 05" / "26" → "Week 5" / "Week 26");
+      // when the label is missing, DERIVE the week from the shipment date. A
+      // shipment with neither a week nor a date can't be placed — return '' and
+      // the caller skips it (previously those rendered as an unlabeled week row).
+      const weekOfShipment = (s: Shipment): string => {
+        const m = String(s.week || '').match(/(\d+)/);
+        if (m) return `Week ${parseInt(m[1], 10)}`;
+        if (s.date) {
+          const n = getWeekNumber(s.date);
+          if (Number.isFinite(n) && n > 0) return `Week ${n}`;
+        }
+        return '';
+      };
+
       // Weekly Totals — seeded with EVERY week up to the current week so the
       // tables/charts always run through today (zero rows for quiet weeks).
       const weeklyTotals: { [week: string]: { volume: number, tolling: number } } = {};
       const currentWeekNum = getWeekNumber(todayISO);
       for (let w = 1; w <= currentWeekNum; w++) weeklyTotals[`Week ${w}`] = { volume: 0, tolling: 0 };
       completedShipments.forEach(s => {
-        if (!weeklyTotals[s.week]) weeklyTotals[s.week] = { volume: 0, tolling: 0 };
-        weeklyTotals[s.week].volume += s.qty;
-        weeklyTotals[s.week].tolling += s.qty * config.refiningMarginCadMt;
+        const wk = weekOfShipment(s);
+        if (!wk) return; // no week, no date — nothing to place it under
+        if (!weeklyTotals[wk]) weeklyTotals[wk] = { volume: 0, tolling: 0 };
+        weeklyTotals[wk].volume += s.qty;
+        weeklyTotals[wk].tolling += s.qty * config.refiningMarginCadMt;
       });
 
       // Volume by Product
       const productVolume: { [week: string]: { [product: string]: number } } = {};
       completedShipments.forEach(s => {
-        if (!productVolume[s.week]) productVolume[s.week] = {};
-        if (!productVolume[s.week][s.product]) productVolume[s.week][s.product] = 0;
-        productVolume[s.week][s.product] += s.qty;
+        const wk = weekOfShipment(s);
+        if (!wk) return;
+        if (!productVolume[wk]) productVolume[wk] = {};
+        if (!productVolume[wk][s.product]) productVolume[wk][s.product] = 0;
+        productVolume[wk][s.product] += s.qty;
       });
 
       const sortedWeeks = Object.keys(weeklyTotals).sort((a, b) => {
