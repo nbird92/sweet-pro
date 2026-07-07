@@ -7499,7 +7499,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${i.product}` : ''}>{productShortformCached(i.product)}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.qty}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{(i.qty || 0).toFixed(2)}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
