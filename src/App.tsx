@@ -1237,7 +1237,6 @@ export default function App() {
         ...orders.map(o => poKeyOf(o.po)),
         ...invoices.map(i => poKeyOf(i.po)),
       ].filter(Boolean));
-      const duplicatePos: string[] = []; // PO numbers skipped because they already exist
       // PO numbers already awaiting review, so a re-scan doesn't queue the same
       // emailed PO twice.
       const pendingPoSet = new Set(poPendingImports.map(p => poKeyOf(p.poNumber)).filter(Boolean));
@@ -1359,7 +1358,6 @@ export default function App() {
           const poKey = poKeyOf(poNum);
           if (poNum && seenPo.has(poKey)) {
             logs.push({ ...logBase(item, po), result: 'duplicate', note: 'PO number already exists in an order or invoice — must be unique' });
-            duplicatePos.push(poNum);
             continue;
           }
           if (poNum && pendingPoSet.has(poKey)) continue; // already awaiting review
@@ -1427,11 +1425,8 @@ export default function App() {
           ].filter(Boolean).join(' · ') + ' from emailed POs.',
         );
       }
-      // Tell the operator about emailed POs that were rejected as duplicates.
-      if (duplicatePos.length) {
-        const uniq = Array.from(new Set(duplicatePos));
-        setErrorBox(`${uniq.length} emailed PO${uniq.length === 1 ? '' : 's'} ${uniq.length === 1 ? 'was' : 'were'} not imported because the PO number already exists in an order or invoice (PO numbers must be unique): ${uniq.join(', ')}.`);
-      }
+      // Duplicate-PO skips are recorded in the Email Import History log (result
+      // 'duplicate') — no popup; skipping an already-imported PO is normal.
     } catch (e) {
       console.error('PO ingest failed:', e);
     } finally {
