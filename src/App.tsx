@@ -6251,10 +6251,19 @@ export default function App() {
   const renderContent = () => {
     try {
     if (activePage === 'Dashboard') {
-      const completedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s => s.status === 'Completed');
-      
-      // Weekly Totals
+      const todayISO = new Date().toISOString().split('T')[0];
+      const isCancelledShipment = (s: Shipment) => (s.status || '').toLowerCase().includes('cancel');
+      // A shipment counts once it's explicitly Completed OR its date has passed —
+      // imported schedule rows keep status "Scheduled" even after they ship, which
+      // previously froze the dashboard at the last manually-completed week.
+      const completedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s =>
+        !isCancelledShipment(s) && (s.status === 'Completed' || (!!s.date && s.date <= todayISO)));
+
+      // Weekly Totals — seeded with EVERY week up to the current week so the
+      // tables/charts always run through today (zero rows for quiet weeks).
       const weeklyTotals: { [week: string]: { volume: number, tolling: number } } = {};
+      const currentWeekNum = getWeekNumber(todayISO);
+      for (let w = 1; w <= currentWeekNum; w++) weeklyTotals[`Week ${w}`] = { volume: 0, tolling: 0 };
       completedShipments.forEach(s => {
         if (!weeklyTotals[s.week]) weeklyTotals[s.week] = { volume: 0, tolling: 0 };
         weeklyTotals[s.week].volume += s.qty;
