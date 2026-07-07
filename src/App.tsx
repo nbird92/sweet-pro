@@ -6859,14 +6859,9 @@ export default function App() {
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || ''}>{(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || '—'}</td>
                                                         <td className="px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
+                                                          {/* No "Add Shipment" here — the slot is taken; adding is only
+                                                              offered on rows whose appointment time is still available. */}
                                                           <div className="flex gap-0.5">
-                                                            <button onClick={() => {
-                                                                setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
-                                                                setIsCreatingTransferShipment(false);
-                                                                setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer('');
-                                                                setIsAddingShipment(true);
-                                                              }}
-                                                              className="p-0.5 hover:bg-emerald-600 hover:text-white transition-all" title="Add Shipment"><Plus size={10} /></button>
                                                             <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
                                                             <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
                                                             <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
