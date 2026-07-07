@@ -19,6 +19,8 @@ export interface ExtractedLineItem {
   pricePerMt?: number;
   amount?: number;
   deliveryDate?: string;
+  /** Per-line delivery/appointment time (24h HH:MM) — set on call-off schedule rows. */
+  deliveryTime?: string;
 }
 
 export interface ExtractedPO {
@@ -48,6 +50,10 @@ export interface ExtractedPO {
   lineItems: ExtractedLineItem[];
   /** Classification of the email/document. Absent => treat as a new order. */
   documentType?: 'new_order' | 'amendment' | 'cancellation' | 'other';
+  /** True when this PO came from a CALL-OFF release (one bulk order number +
+   *  a delivery schedule). The server splits those into one PO per delivery,
+   *  numbered {order}-{week}{seq} (e.g. 9330104660-261). */
+  isCallOff?: boolean;
   /** For amendment/cancellation: the PO number of the existing order to change. */
   amendsPoNumber?: string;
   amendment?: {

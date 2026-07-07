@@ -73,6 +73,7 @@ const PO_SCHEMA = {
     totalAmount: { type: Type.NUMBER },
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
     confidence: { type: Type.NUMBER, description: 'Overall extraction confidence 0..1.' },
+    isCallOff: { type: Type.BOOLEAN, description: 'True for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of scheduled deliveries (one row per delivery with quantity + date + time).' },
     documentType: {
       type: Type.STRING,
       format: 'enum',
@@ -107,6 +108,7 @@ const PO_SCHEMA = {
           pricePerMt: { type: Type.NUMBER, description: 'Price normalized to $/MT when derivable.' },
           amount: { type: Type.NUMBER, description: 'Line extended/total price.' },
           deliveryDate: { type: Type.STRING, description: 'Per-line delivery date, ISO YYYY-MM-DD' },
+          deliveryTime: { type: Type.STRING, description: 'Per-line delivery/appointment time as 24h HH:MM (e.g. "18:00:00" -> "18:00").' },
         },
         required: ['description', 'quantity'],
       },
@@ -144,6 +146,12 @@ Document classification (set documentType):
 INTERNAL emails are NOT new orders:
 - An email written BY internal Sucro staff — a personal address at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us / surco.ca (or a sucro/sucrocan subdomain) — is an INTERNAL message, not a customer purchase order. IMPORTANT exception: a customer's PO that is merely FORWARDED through a shared Sucro order-desk group (e.g. "via Order Desk SucroCan <Orderdesk@sucro.ca>") is still that customer's NEW order — tell them apart by whether an EXTERNAL buyer is identifiable (from the thread, Reply-To, signature, or an attached PO document). If an external buyer/customer is identifiable, classify 'new_order' with that customer. If it is Sucro staff passing along an internal update (a split number, a quantity or ship-date change) with NO external buyer, classify it 'amendment' (set amendsPoNumber to the existing PO it refers to) or 'other' — never 'new_order'.
 - An email whose SUBJECT contains "Stock Request" is ALWAYS an INTERNAL note that supplies a SPLIT NUMBER for an existing PO or invoice — it is NEVER a new order, regardless of sender. Classify it 'amendment', set amendsPoNumber to the referenced PO/invoice number, and put the split number in amendment.newSplitNumber AND the top-level splitNumber field.
+
+CALL-OFF / delivery-schedule releases (e.g. Ferrero "CALL OFF" PDFs):
+- Some customers release ONE bulk order number and a TABLE of scheduled deliveries — one row per delivery with a quantity, a delivery date, and a delivery time. Recognize these by a "CALL OFF" title or a delivery-schedule table under a single order number.
+- Return the WHOLE document as ONE 'new_order' entry with isCallOff = true. poNumber = the bulk order number only (e.g. "UP Order nr.: 9330104660" -> "9330104660") — do NOT invent per-delivery PO numbers; the app generates them from the delivery week.
+- Emit ONE lineItems[] entry PER delivery row: repeat the article description + itemNumber on every line, quantity + unit exactly as printed (e.g. 38,000.000 KG), deliveryDate = that row's date (ISO), deliveryTime = that row's time as 24h HH:MM. Never merge delivery rows, even when their quantities are identical.
+- The "TOTAL QTY" on a call-off is the whole bulk order (not this schedule) — do not use it for line quantities and leave totalAmount empty.
 
 CRITICAL — who is the customer:
 - Sucro Can (any "Sucro" / "Sucro Can" / "Sucro Canada" / "Sucro Can Sourcing LLC" entity, or an address at 550 Sherman Ave N / 560 Ferguson Ave N, Hamilton ON, or an email at sucro.ca / sucrocan.ca / sucrocan.com / sucro.us) is ALWAYS the vendor/supplier — NEVER the customer. This holds EVEN when the email was sent "via Order Desk SucroCan Canada <Orderdesk@sucro.ca>": that is just a shared group the order was forwarded through, not the buyer.
@@ -344,6 +352,54 @@ function deriveDocMetrics(doc: any): void {
   }
 }
 
+/** ISO week number for a YYYY-MM-DD date (same convention as the app). */
+function isoWeekOf(dateISO: string): number {
+  const d = new Date(dateISO + 'T00:00:00Z');
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const diff = target.getTime() - firstThursday.getTime();
+  return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
+}
+
+/** Split a CALL-OFF release (one bulk order number + a schedule of deliveries)
+ *  into one PO per delivery. PO numbers follow the customer's convention:
+ *  {bulk order nr}-{ISO week of the delivery}{chronological # within that week} —
+ *  e.g. the first week-26 delivery of order 9330104660 becomes 9330104660-261,
+ *  the second 9330104660-262. Numbering is chronological per document, so a
+ *  re-sent call-off reproduces the same numbers for unchanged rows (already-
+ *  imported ones are then skipped downstream by the PO-uniqueness rule and only
+ *  newly added deliveries import). Deterministic in code — the model only reads
+ *  the rows; it never does the week/sequence arithmetic. */
+export function expandCallOffDoc(doc: any): any[] {
+  if (!doc || doc.isCallOff !== true) return [doc];
+  const lines = Array.isArray(doc.lineItems) ? doc.lineItems.filter((l: any) => l && typeof l === 'object') : [];
+  const dated = lines.filter((l: any) => typeof l.deliveryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.deliveryDate));
+  const base = String(doc.poNumber || '').trim().replace(/[-_/\s]+$/, '');
+  if (!base || dated.length < 2) return [doc]; // nothing to split
+  const timeOf = (l: any) => String(l.deliveryTime || '').trim();
+  const sorted = [...dated].sort((a: any, b: any) =>
+    `${a.deliveryDate} ${timeOf(a)}`.localeCompare(`${b.deliveryDate} ${timeOf(b)}`));
+  const seqByWeek = new Map<number, number>();
+  return sorted.map((l: any) => {
+    const week = isoWeekOf(l.deliveryDate);
+    const seq = (seqByWeek.get(week) || 0) + 1;
+    seqByWeek.set(week, seq);
+    const time = timeOf(l).replace(/^(\d{1,2}:\d{2})(:\d{2})?$/, '$1');
+    return {
+      ...doc,
+      documentType: 'new_order',
+      poNumber: `${base}-${week}${seq}`,
+      deliveryDate: l.deliveryDate,
+      shipmentDate: l.deliveryDate,
+      totalAmount: undefined, // the call-off total is the whole bulk order, not this delivery
+      notes: [doc.notes, time ? `Delivery time ${time}` : ''].filter(Boolean).join(' · '),
+      lineItems: [l],
+    };
+  });
+}
+
 /** Extract ALL purchase orders found in one uploaded file via Gemini. A single
  *  file can hold several POs (e.g. one per page of a multi-page PDF), so this
  *  returns an ARRAY — one parsed object per PO, each tagged with sourceFile.
@@ -395,5 +451,8 @@ export async function extractPO(
       // $/MT from a total order price ÷ quantity when no per-unit price is given.
       deriveDocMetrics(doc);
       return doc;
-    });
+    })
+    // Split call-off releases into one PO per scheduled delivery, numbered
+    // {order}-{week}{seq} per the customer's convention (e.g. 9330104660-261).
+    .flatMap(doc => expandCallOffDoc(doc));
 }
