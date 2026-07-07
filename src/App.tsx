@@ -9441,9 +9441,14 @@ export default function App() {
             const rk = `${pg}|||${loc}`;
             const cur = g!.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
             cur.mt += mt || 0;
-            // Track which invoiced products fed this row so the Ungrouped bucket can
-            // show exactly which products failed to resolve to a Product Group.
-            const nm = (productName || '').trim() || '(no product name)';
+            // Track which invoiced products fed this row — shown as the product
+            // SHORT NAME (e.g. GC100, LC100), not the raw invoiced text ("Bulk").
+            // productKey pins the exact catalog variant; otherwise resolve by name.
+            // Falls back to the raw text when nothing matches, so the Ungrouped
+            // bucket still reveals exactly what failed to resolve.
+            const rawNm = (productName || '').trim();
+            const shortNm = (productKey ? lineItemToShortform({ productKey, productName: rawNm }) : productToShortform(rawNm)) || rawNm;
+            const nm = (shortNm || '').trim() || '(no product name)';
             cur.products.set(nm, (cur.products.get(nm) || 0) + (mt || 0));
             // Track the invoices behind this total so the row can be drilled into.
             const invKey = inv.id || inv.invoiceNumber || `${inv.customer}|${inv.date}|${inv.po}`;
