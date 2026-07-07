@@ -2729,7 +2729,7 @@ export default function App() {
       const gross = grossKg * li.qty;
       totalUnits += li.qty; totalNet += net; totalGross += gross;
       return {
-        description: li.productName || '',
+        description: li.productDisplayName || productNameToDisplay(li.productName) || li.productName || '',
         contract: (li.contractNumber || '').trim() || (order.contractNumber || '').trim(),
         units: li.qty != null ? fmtUnits(li.qty) : '',
         net: net ? fmtKg(net) : '',
@@ -2793,7 +2793,10 @@ export default function App() {
         console.error('Order-confirmation template render failed; using the built-in PDF:', e);
       }
     }
-    const gen = generateOrderConfirmationPdf({ order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus });
+    const gen = generateOrderConfirmationPdf({
+      order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus,
+      displayProductName: (li) => li.productDisplayName || productNameToDisplay(li.productName),
+    });
     const blob = await fetch(gen.blobUrl).then(r => r.blob());
     setTimeout(() => URL.revokeObjectURL(gen.blobUrl), 5000);
     return { blob, filename: gen.filename };
@@ -3075,6 +3078,7 @@ export default function App() {
         documentType: 'return_order_confirmation',
         reasonForReturn: returnOrder.reasonForReturn,
         originalBolNumber: returnOrder.originalBolNumber,
+        displayProductName: (li) => li.productDisplayName || productNameToDisplay(li.productName),
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, templateType: 'Return Order Confirmation' });
@@ -3110,6 +3114,7 @@ export default function App() {
         documentType: 'return_order_confirmation',
         reasonForReturn: returnOrder.reasonForReturn,
         originalBolNumber: returnOrder.originalBolNumber,
+        displayProductName: (li) => li.productDisplayName || productNameToDisplay(li.productName),
       });
       blobUrl = gen.blobUrl;
       filename = gen.filename;

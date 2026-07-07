@@ -20,6 +20,10 @@ interface GenerateOrderConfirmationParams {
   /** BOL of the original outbound shipment this return references — shown
    *  next to the new return BOL number for cross-reference. */
   originalBolNumber?: string;
+  /** Renders the FULL display name for a line item (naming-formula aware).
+   *  Without it, the raw stored productName is printed — which can be a
+   *  format-only word like "Bulk". */
+  displayProductName?: (item: { productKey?: string; productDisplayName?: string; productName: string }) => string;
 }
 
 // Colors
@@ -74,6 +78,7 @@ export function generateOrderConfirmationPdf({
   documentType,
   reasonForReturn,
   originalBolNumber,
+  displayProductName,
 }: GenerateOrderConfirmationParams): { blobUrl: string; filename: string } {
   const isReturn = documentType === 'return_order_confirmation';
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
@@ -263,8 +268,16 @@ export function generateOrderConfirmationPdf({
     // Per-line contract number, falling back to the order-level contract.
     const lineContract = (item.contractNumber || '').trim() || (order.contractNumber || '').trim();
 
+    // Full product name for the customer-facing document: the caller's
+    // naming-formula renderer first, then the display name captured at
+    // selection time, then the raw stored name.
+    const goodsName = (displayProductName ? displayProductName(item) : '')
+      || item.productDisplayName
+      || item.productName
+      || '';
+
     lineItemsData.push([
-      item.productName || '',
+      goodsName,
       lineContract,
       item.qty ? fmtUnits(item.qty) : '',
       itemNetWeight ? fmtKg(itemNetWeight) : '',
