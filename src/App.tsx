@@ -8502,9 +8502,25 @@ export default function App() {
       // table — a PO that's already an order no longer needs approval. Reactive:
       // if that order is later removed, its PO reappears here for review.
       const orderPoSet = new Set(orders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean));
+      const invoicePoSet = new Set(invoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
       const visiblePendingImports = poPendingImports.filter(p => {
+        // A PO that already exists in the ORDERS or INVOICES table is never a new PO.
         const k = (p.poNumber || '').trim().toUpperCase();
-        return !k || !orderPoSet.has(k);
+        if (k && (orderPoSet.has(k) || invoicePoSet.has(k))) return false;
+        // Carrier / internal emails never suggest NEW POs (they can only amend).
+        if (isInternalEmployeeEmail(p.fromEmail) || isLogisticsSenderEmail(p.fromEmail)) return false;
+        return true;
+      });
+      // Live sender categorization — the cron stamps senderCategory at scan time,
+      // so emails scanned BEFORE a carrier's address was added to the Carriers
+      // table keep a stale "Customer" chip. Recompute from the live carrier table
+      // + internal domains; keep the stored value when there's no sender address.
+      const categorizedInboxFeed = inboxFeed.map(e => {
+        if (!e.fromEmail) return e;
+        const cat = isInternalEmployeeEmail(e.fromEmail) ? 'internal' as const
+          : isLogisticsSenderEmail(e.fromEmail) ? 'logistics' as const
+          : 'customer' as const;
+        return cat === e.senderCategory ? e : { ...e, senderCategory: cat };
       });
       // Once an order has moved to the invoice table, its amendment suggestions are
       // moot — hide any amendment whose PO or BOL matches an active invoice
@@ -8528,7 +8544,7 @@ export default function App() {
           onDismissImport={dismissPendingImport}
           onDeleteImport={deleteImportLogEntry}
           onClearImportHistory={clearImportHistory}
-          inboxFeed={inboxFeed}
+          inboxFeed={categorizedInboxFeed}
           inboxTriage={inboxTriage}
           onReviewFeedPo={reviewFeedPo}
           onDismissInbox={dismissInboxEmail}
