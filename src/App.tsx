@@ -561,6 +561,19 @@ export default function App() {
     // ship/pick-up date); fall back to the delivery date only if no pick-up date.
     const deliveryDate = po.deliveryDate || '';
     const shipmentDate = po.shipmentDate || deliveryDate || '';
+    // Currency: the matched contract's currency wins; else the single currency
+    // shared by ALL of this customer's active contracts; else the customer
+    // card's default currency; else whatever was scanned off the document.
+    const custContractCurrencies = cust
+      ? Array.from(new Set(contractsForCustomer(cust)
+          .filter(c => c.active !== false)
+          .map(c => (c.currency || '').trim().toUpperCase())
+          .filter(Boolean)))
+      : [];
+    const currency = (contract?.currency || '').trim().toUpperCase()
+      || (custContractCurrencies.length === 1 ? custContractCurrencies[0] : '')
+      || (cust?.defaultCurrency || '').trim().toUpperCase()
+      || (po.currency || '').trim().toUpperCase();
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
@@ -594,7 +607,7 @@ export default function App() {
       shipmentDate,
       deliveryDate,
       carrier: po.carrier || '',
-      currency: (po.currency || '').toUpperCase(),
+      currency,
       shippingTerms: normShipTerms(po.shippingTerms),
       contractNumber,
       contractRaw: po.contractNumber || '',
@@ -1558,6 +1571,7 @@ export default function App() {
           const defaultPaymentTerms = entry.defaultpaymentterms || entry.paymentterms || '';
           const defaultCarrierCode = entry.defaultcarriercode || entry.carriercode || '';
           const chepAccountNumber = entry.chepaccountnumber || entry.chepaccount || entry.chep || '';
+          const defaultCurrency = (entry.defaultcurrency || entry.currency || '').toUpperCase();
           const notes = entry.notes || '';
 
           // Match by name, ID, or customerNumber
@@ -1586,6 +1600,7 @@ export default function App() {
               defaultPaymentTerms: defaultPaymentTerms || c.defaultPaymentTerms,
               defaultCarrierCode: defaultCarrierCode || c.defaultCarrierCode,
               chepAccountNumber: chepAccountNumber || c.chepAccountNumber,
+              defaultCurrency: defaultCurrency || c.defaultCurrency,
               notes: notes || c.notes,
             };
             continue;
@@ -1612,6 +1627,7 @@ export default function App() {
             defaultPaymentTerms: defaultPaymentTerms || undefined,
             defaultCarrierCode: defaultCarrierCode || undefined,
             chepAccountNumber: chepAccountNumber || undefined,
+            defaultCurrency: defaultCurrency || undefined,
             notes: notes || undefined,
           });
         }
@@ -5819,7 +5835,7 @@ export default function App() {
     if (!window.confirm(`Rebuild ${rebuilt.length} customer(s) from orders / invoices / contracts and add them to the table? Existing customers are left unchanged. Full street ship-to addresses can't be recovered from this data (only ship-to location names from contracts).`)) return;
     setCustomers(prev => [...prev, ...rebuilt]);
     // Hand back a filled template CSV (same columns as the customer template).
-    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
+    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
     exportCSV(tplHeaders, rebuilt, 'customer_template_rebuilt.csv');
     setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
@@ -6888,8 +6904,8 @@ export default function App() {
     if (activePage === 'Customers') {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
 
-      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
-      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'notes'];
+      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
+      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
       const customerExportSheets = (): SheetSpec[] => [
         {
           sheetName: 'Customers',
@@ -6909,6 +6925,7 @@ export default function App() {
             { header: 'Payment Terms', key: 'defaultPaymentTerms' },
             { header: 'Default Carrier', key: 'defaultCarrierCode' },
             { header: 'CHEP Account #', key: 'chepAccountNumber' },
+            { header: 'Default Currency', key: 'defaultCurrency' },
             { header: 'Contact Email', key: 'contactEmail' },
             { header: 'Contact Phone', key: 'contactPhone' },
             { header: 'Notes', key: 'notes' },
@@ -16087,6 +16104,18 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Currency</label>
+                    <select
+                      value={newCustomer.defaultCurrency || ''}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, defaultCurrency: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select...</option>
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
                     <input
                       type="email"
@@ -16816,6 +16845,18 @@ export default function App() {
                       placeholder="e.g. 1234567"
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Currency</label>
+                    <select
+                      value={editingCustomer.defaultCurrency || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultCurrency: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select...</option>
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
@@ -18675,7 +18716,11 @@ export default function App() {
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Currency</label>
-                          <input value={rev.currency} onChange={(e) => updateReview(rev.id, { currency: e.target.value.toUpperCase() })} disabled={rev.created} placeholder="CAD" className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none" />
+                          <select value={rev.currency} onChange={(e) => updateReview(rev.id, { currency: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs outline-none">
+                            <option value="">Select…</option>
+                            <option value="CAD">CAD</option>
+                            <option value="USD">USD</option>
+                          </select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Carrier</label>

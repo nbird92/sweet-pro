@@ -84,6 +84,7 @@ export interface Customer {
   salespersonId?: string;
   defaultCarrierCode?: string;
   chepAccountNumber?: string;   // customer's CHEP pallet account number
+  defaultCurrency?: string;     // 'CAD' | 'USD' — fallback currency when no contract currency is known
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
   customerGroupId?: string;
