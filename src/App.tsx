@@ -6526,11 +6526,15 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
-                  {sortedWeeks.flatMap(week => 
-                    Object.entries(productVolume[week]).map(([prod, vol], i) => (
+                  {/* sortedWeeks includes zero-seeded quiet weeks that have no
+                      productVolume entry — guard with || {} (Object.entries on
+                      undefined threw "Cannot convert undefined or null to object"
+                      during load, flashing the page-error fallback). */}
+                  {sortedWeeks.flatMap(week =>
+                    Object.entries(productVolume[week] || {}).map(([prod, vol], i) => (
                       <tr key={`${week}-${prod}`} className="hover:bg-[#F9F9F9]">
                         {i === 0 ? (
-                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10" rowSpan={Object.keys(productVolume[week]).length}>
+                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10" rowSpan={Object.keys(productVolume[week] || {}).length}>
                             {week}
                           </td>
                         ) : null}
