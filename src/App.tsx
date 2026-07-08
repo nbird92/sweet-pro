@@ -998,6 +998,11 @@ export default function App() {
       const feed = await fetchCollection<InboxFeedItem>(COLLECTIONS.inboxFeed);
       setInboxFeed(feed);
     } catch (e) { console.warn('inbox feed load failed:', e); }
+    // Importer heartbeat — same cadence as the feed poll.
+    try {
+      const st = await fetchCollection<any>('appStatus');
+      setPoScanStatus(st.find((s: any) => s.id === 'poInboxScan') || null);
+    } catch (e) { console.warn('scan status load failed:', e); }
   };
   // Operator triage state (client-owned, synced). Absence of an entry = "open".
   const setInboxTriageStatus = (id: string, status: 'handled' | 'dismissed') =>
@@ -3387,6 +3392,10 @@ export default function App() {
   // Persistent dashboard of POs imported from the Gmail inbox scan (Email Center).
   const [poImportLog, setPoImportLog] = useState<PoImportLogEntry[]>([]);
   const [poPendingImports, setPoPendingImports] = useState<PoPendingImport[]>([]);
+  // Email-importer heartbeat (written by /api/scan-po-inbox on every run) —
+  // drives the green/red status light in the top corner.
+  const [poScanStatus, setPoScanStatus] = useState<{ lastRunAt?: string; ok?: boolean; scanned?: number; queued?: number; remaining?: number; partial?: boolean; errors?: Array<{ where?: string; message?: string }> } | null>(null);
+  const [showScanStatus, setShowScanStatus] = useState(false);
   const [inboxFeed, setInboxFeed] = useState<InboxFeedItem[]>([]);
   const [inboxTriage, setInboxTriage] = useState<InboxTriage[]>([]);
   // Review queue of emailed order amendments/cancellations (Email Center).
@@ -17546,13 +17555,15 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  {/* Numeric fields are uncontrolled (commit on blur) so typing a
+                      decimal point isn't eaten by the parse-per-keystroke re-render. */}
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Base Rate</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={newSupplyChain.baseRate || ""}
+                        defaultValue={newSupplyChain.baseRate || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => { const baseRate = parseFloat(e.target.value) || 0; setNewSupplyChain(prev => ({ ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad })); }}
+                        onBlur={(e) => { const baseRate = parseFloat(e.target.value) || 0; setNewSupplyChain(prev => ({ ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad })); }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
                   </div>
@@ -17560,9 +17571,9 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Fuel Surcharge (%)</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={newSupplyChain.fuelSurchargePct ?? ""}
+                        defaultValue={newSupplyChain.fuelSurchargePct ?? ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setNewSupplyChain(prev => ({ ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad })); }}
+                        onBlur={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setNewSupplyChain(prev => ({ ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad })); }}
                       placeholder="e.g. 30"
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
@@ -17582,9 +17593,10 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Total Cost ({newSupplyChain.currency || 'CAD'}){(newSupplyChain.baseRate || 0) > 0 ? ' — base × fuel' : ''}</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={newSupplyChain.totalCostCad || ""}
+                        key={`nsc-total-${newSupplyChain.totalCostCad}`}
+                        defaultValue={newSupplyChain.totalCostCad || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSupplyChain({ ...newSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
+                        onBlur={(e) => { const v = parseFloat(e.target.value) || 0; setNewSupplyChain(prev => ({ ...prev, totalCostCad: v })); }}
                         disabled={(newSupplyChain.baseRate || 0) > 0}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono disabled:opacity-60"
                     />
@@ -17593,9 +17605,9 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={newSupplyChain.weightPerLoadMt || ""}
+                        defaultValue={newSupplyChain.weightPerLoadMt || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSupplyChain({ ...newSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
+                        onBlur={(e) => { const v = parseFloat(e.target.value) || 0; setNewSupplyChain(prev => ({ ...prev, weightPerLoadMt: v })); }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -17662,13 +17674,16 @@ export default function App() {
                       )}
                     </select>
                   </div>
+                  {/* Numeric fields are uncontrolled (commit on blur) so typing a
+                      decimal point isn't eaten by the parse-per-keystroke re-render. */}
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Base Rate</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={editingSupplyChain.baseRate || ""}
+                        key={`esc-base-${editingSupplyChain.id}`}
+                        defaultValue={editingSupplyChain.baseRate || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => { const baseRate = parseFloat(e.target.value) || 0; setEditingSupplyChain(prev => prev ? { ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad } : prev); }}
+                        onBlur={(e) => { const baseRate = parseFloat(e.target.value) || 0; setEditingSupplyChain(prev => prev ? { ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad } : prev); }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
                   </div>
@@ -17676,9 +17691,10 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Fuel Surcharge (%)</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={editingSupplyChain.fuelSurchargePct ?? ""}
+                        key={`esc-fuel-${editingSupplyChain.id}`}
+                        defaultValue={editingSupplyChain.fuelSurchargePct ?? ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setEditingSupplyChain(prev => prev ? { ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad } : prev); }}
+                        onBlur={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setEditingSupplyChain(prev => prev ? { ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad } : prev); }}
                       placeholder="e.g. 30"
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
@@ -17698,9 +17714,10 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Total Cost ({editingSupplyChain.currency || 'CAD'}){(editingSupplyChain.baseRate || 0) > 0 ? ' — base × fuel' : ''}</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={editingSupplyChain.totalCostCad || ""}
+                        key={`esc-total-${editingSupplyChain.id}-${editingSupplyChain.totalCostCad}`}
+                        defaultValue={editingSupplyChain.totalCostCad || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
+                        onBlur={(e) => { const v = parseFloat(e.target.value) || 0; setEditingSupplyChain(prev => prev ? { ...prev, totalCostCad: v } : prev); }}
                         disabled={(editingSupplyChain.baseRate || 0) > 0}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono disabled:opacity-60"
                     />
@@ -17709,9 +17726,10 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
                     <input
                       type="text" inputMode="decimal"
-                        value={editingSupplyChain.weightPerLoadMt || ""}
+                        key={`esc-wt-${editingSupplyChain.id}`}
+                        defaultValue={editingSupplyChain.weightPerLoadMt || ""}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, weightPerLoadMt: parseFloat(e.target.value) || 0 })}
+                        onBlur={(e) => { const v = parseFloat(e.target.value) || 0; setEditingSupplyChain(prev => prev ? { ...prev, weightPerLoadMt: v } : prev); }}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -17832,6 +17850,56 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* Email-importer status light — green when the 15-minute inbox scan is
+            running cleanly, red when it's stale (>20 min) or its last run had
+            errors. Click for details. */}
+        {user && (() => {
+          const st = poScanStatus;
+          const ageMs = st?.lastRunAt ? Date.now() - Date.parse(st.lastRunAt) : Infinity;
+          const stale = !Number.isFinite(ageMs) || ageMs > 20 * 60 * 1000;
+          const errs = st?.errors || [];
+          const healthy = !!st && st.ok !== false && !stale && errs.length === 0;
+          const ageMin = Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs / 60000)) : null;
+          return (
+            <div className="fixed top-3 right-4 z-[95]">
+              <button
+                onClick={() => setShowScanStatus(v => !v)}
+                title={healthy ? 'Email importer running normally' : 'Email importer needs attention — click for details'}
+                className="flex items-center gap-1.5 bg-white/95 border border-[#141414]/20 shadow px-2.5 py-1 rounded-full hover:border-[#141414] transition-all"
+              >
+                <span className={`w-2.5 h-2.5 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
+                <span className="text-[9px] font-bold uppercase tracking-widest opacity-70">Importer</span>
+              </button>
+              {showScanStatus && (
+                <div className="mt-2 w-96 max-h-[60vh] overflow-y-auto bg-white border border-[#141414] shadow-[6px_6px_0px_0px_rgba(20,20,20,1)] p-4 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold uppercase tracking-widest text-[10px]">Email Importer</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${healthy ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{healthy ? 'Running' : 'Attention'}</span>
+                  </div>
+                  {!st && <div className="text-red-600">No importer heartbeat yet — waiting for the first 15-minute scan to report in.</div>}
+                  {st && (
+                    <>
+                      <div className="opacity-70">Last run: {st.lastRunAt ? new Date(st.lastRunAt).toLocaleString() : '—'}{ageMin != null ? ` (${ageMin} min ago)` : ''}</div>
+                      {stale && <div className="text-red-600 font-bold">No run in {ageMin != null ? `${ageMin} minutes` : 'a while'} — expected every 15 minutes. Check the Vercel cron for /api/scan-po-inbox.</div>}
+                      <div className="opacity-70">Scanned {st.scanned ?? 0} · queued {st.queued ?? 0}{st.remaining ? ` · ${st.remaining} remaining` : ''}{st.partial ? ' · partial run' : ''}</div>
+                      {errs.length > 0 ? (
+                        <div className="space-y-1">
+                          <div className="font-bold text-red-700 uppercase text-[10px]">Errors ({errs.length})</div>
+                          {errs.slice(0, 10).map((er, i) => (
+                            <div key={i} className="text-red-600 break-words">{er.where ? <span className="font-mono opacity-70">{er.where}: </span> : null}{er.message || 'Unknown error'}</div>
+                          ))}
+                          {errs.length > 10 && <div className="opacity-50 italic">…and {errs.length - 10} more</div>}
+                        </div>
+                      ) : (!stale && <div className="text-emerald-700">Last run completed without errors.</div>)}
+                    </>
+                  )}
+                  <div className="pt-1 border-t border-[#141414]/10 opacity-50">Runs every 15 minutes via the Vercel cron; the app also drains the queue every 5 minutes while open.</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {errorBox && (
           <div className="fixed inset-0 z-[2000] flex items-center-safe justify-center p-6 bg-[#141414]/20 backdrop-blur-sm overflow-y-auto">

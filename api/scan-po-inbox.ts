@@ -57,6 +57,30 @@ function getDb() {
   return getFirestore(getAdminApp(), 'sweetpro');
 }
 
+/** Best-effort heartbeat: record every run's outcome so the app can show a
+ *  green/red importer status light. Never throws — a status-write failure
+ *  must not break the scan itself. */
+async function writeScanStatus(ok: boolean, summary: any, errorMsg?: string): Promise<void> {
+  try {
+    const db = getDb();
+    await db.collection('appStatus').doc('poInboxScan').set({
+      id: 'poInboxScan',
+      lastRunAt: new Date().toISOString(),
+      ok,
+      scanned: summary?.scanned ?? 0,
+      queued: summary?.queued ?? 0,
+      remaining: summary?.remaining ?? 0,
+      partial: !!summary?.partial,
+      errors: [
+        ...(errorMsg ? [{ where: 'run', message: errorMsg }] : []),
+        ...(Array.isArray(summary?.errors) ? summary.errors.slice(0, 20) : []),
+      ],
+    });
+  } catch (e) {
+    console.warn('scan status write failed:', e instanceof Error ? e.message : e);
+  }
+}
+
 async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints> {
   const [custSnap, skuSnap, qaSnap, contractSnap, carrierSnap, learnedSnap] = await Promise.all([
     db.collection('customers').get(),
@@ -392,9 +416,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('inbox feed prune failed:', e instanceof Error ? e.message : e);
     }
 
+    await writeScanStatus(summary.errors.length === 0, summary);
     return res.status(200).json({ ok: true, ...summary });
   } catch (e) {
     console.error('PO inbox scan error:', e);
+    await writeScanStatus(false, summary, e instanceof Error ? e.message : String(e));
     return res.status(500).json({ error: e instanceof Error ? e.message : String(e), ...summary });
   }
 }
