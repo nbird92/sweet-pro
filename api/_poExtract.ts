@@ -54,6 +54,7 @@ const PO_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     poNumber: { type: Type.STRING, description: 'The purchase order number exactly as printed.' },
+    bolNumber: { type: Type.STRING, description: 'A BOL / Bill of Lading number referenced by the email (e.g. B6900117, L2055339, T400363) — carriers often confirm appointments against the BOL instead of the PO.' },
     customerName: { type: Type.STRING, description: 'The BUYER that issued the PO (never Sucro Can).' },
     customerNumber: { type: Type.STRING, description: 'Customer/account number if present.' },
     customerDomain: { type: Type.STRING, description: "The customer's email domain from the participants, lowercase (e.g. ca.nestle.com). Empty if not derivable." },
@@ -158,6 +159,7 @@ CRITICAL — who is the customer:
 - The CUSTOMER is the EXTERNAL company that placed the order (the buyer). The input may include the email's From / Reply-To / To / Cc / Subject headers, signatures, and a multi-message thread — USE THEM. Identify the customer from the participant email DOMAINS and signatures: a participant at, e.g., @ca.nestle.com identifies the customer as "Nestle". Prefer the company behind the Reply-To / external sender / signature over a group address. Normalize to the known customers list when there's an obvious match; otherwise return the company's plain name.
 - Freight carriers / dispatchers (e.g. Contrans / "Contrans Tank Group", emails at contrans.ca, Denali, "CTT Burford Dispatch", a "Dispatcher" signature) are the CARRIER, never the customer. Put the carrier company in the carrier field.
 - A freight carrier / dispatcher email that merely references or confirms an EXISTING PO (a pickup or dispatch confirmation, "BOL/PO #…", trailer or load details) is NOT a new order. Classify it 'amendment' (or 'other' if there is no actionable change), set amendsPoNumber to the referenced PO number, and ALWAYS fill carrier + carrierDomain — the app uses these to attach the carrier to that PO automatically.
+- When a carrier CONFIRMS a pick-up / appointment time (e.g. "appt confirmed 0600 June 30 for B6900117"), ALWAYS fill pickupTime (24h HH:MM) and shipmentDate (ISO date), and capture the referenced BOL in bolNumber (and/or the PO in amendsPoNumber) — the app books the shipment appointment from these automatically.
 - Also set customerDomain to the customer's email domain (e.g. ca.nestle.com) and carrierDomain to the carrier's email domain (e.g. contrans.ca), taken from the participant addresses. These let the app remember "this domain = this customer/carrier" for next time.
 - In a thread, a LATER message that changes an already-stated order (e.g. "PO 4581816652 for 0600 on June 30", "move to 1400", "please cancel PO ...") is an amendment/cancellation of that PO — return it as a separate documents[] entry with documentType amendment/cancellation and amendsPoNumber set.
 

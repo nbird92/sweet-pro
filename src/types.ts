@@ -503,6 +503,13 @@ export interface PoAmendment {
   newSplitNumber?: string;     // split # from an internal / "Stock Request" email
   cancel?: boolean;
   summary?: string;            // model's one-line description
+  /** Appointment suggestion — set when a carrier-confirmed appointment time
+   *  could NOT be booked automatically (slot taken). Applying the amendment
+   *  books the suggested (or requested, if freed) time. */
+  requestedApptDate?: string;  // ISO date of the requested appointment
+  requestedApptTime?: string;  // requested time (24h HH:MM) that was unavailable
+  suggestedApptTime?: string;  // nearest free slot the app suggests instead
+  apptLocation?: string;       // Hamilton / Vancouver scheduler the slot is in
   // Before-values captured at match time, for the review diff:
   prevShipmentDate?: string;
   prevDeliveryDate?: string;

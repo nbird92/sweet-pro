@@ -26,6 +26,8 @@ export interface ExtractedLineItem {
 export interface ExtractedPO {
   sourceFile?: string;
   poNumber: string;
+  /** BOL referenced by the email (carriers often confirm appointments by BOL). */
+  bolNumber?: string;
   customerName: string;
   customerNumber?: string;
   customerDomain?: string;

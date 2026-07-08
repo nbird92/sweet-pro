@@ -1189,6 +1189,27 @@ export default function App() {
       setErrorBox('No matching order or invoice found for this amendment.');
       return;
     }
+    // Appointment suggestion — approving books the suggested slot (or the
+    // originally requested one, if it has since freed up).
+    if (a.requestedApptDate && (a.suggestedApptTime || a.requestedApptTime)) {
+      const tryTimes = Array.from(new Set([a.suggestedApptTime, a.requestedApptTime].filter(Boolean))) as string[];
+      for (const t of tryTimes) {
+        const plan = planOrderAppointment(order, a.requestedApptDate, t, order.carrier || '');
+        if (plan.status === 'exists') {
+          setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
+          return;
+        }
+        if (plan.status === 'created') {
+          if (plan.toHamilton) setHamiltonShipments(prev => [...prev, ...plan.shipments]);
+          else setVancouverShipments(prev => [...prev, ...plan.shipments]);
+          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, pickupTime: plan.time, shipmentDate: a.requestedApptDate } : o));
+          setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
+          return;
+        }
+      }
+      setErrorBox('That appointment slot is no longer available — book a time directly on the shipment schedule, then dismiss this suggestion.');
+      return;
+    }
     const updated: Order = { ...order };
     if (a.kind === 'cancellation' || a.cancel) {
       updated.status = 'Cancelled';
@@ -1224,6 +1245,76 @@ export default function App() {
   const dismissAmendment = (a: PoAmendment) =>
     setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'dismissed' } : x));
 
+  // Plan a shipment appointment for an order at a carrier-confirmed date/time.
+  // PURE — returns the Shipment records to add when a bay is free at that slot,
+  // 'exists' when the BOL already has an appointment that day, or 'unavailable'
+  // with the nearest free standard slot to suggest. extraBooked lets a batch run
+  // account for appointments it has planned but not yet committed to state.
+  const planOrderAppointment = (
+    order: Order,
+    dateISO: string,
+    timeRaw: string,
+    carrierName: string,
+    extraBooked: Shipment[] = [],
+  ): { status: 'exists' }
+    | { status: 'created'; toHamilton: boolean; shipments: Shipment[]; time: string; bay: string; location: string }
+    | { status: 'unavailable'; time: string; suggestedTime?: string; location: string } => {
+    const tm = (timeRaw || '').trim().match(/^(\d{1,2}):?(\d{2})/);
+    const time = tm ? `${tm[1].padStart(2, '0')}:${tm[2]}` : '';
+    const apptLoc = order.location || '';
+    const toHamilton = !apptLoc.toLowerCase().includes('vancouver'); // default Hamilton
+    const bucketName = toHamilton ? 'Hamilton' : 'Vancouver';
+    if (!time || !dateISO) return { status: 'unavailable', time: timeRaw || '', location: bucketName };
+    const list = [...(toHamilton ? hamiltonShipments : vancouverShipments), ...extraBooked];
+    // Already booked for this BOL that day — nothing to do.
+    if ((order.bolNumber || '').trim() && list.some(s => (s.bol || '').trim() === order.bolNumber.trim() && s.date === dateISO)) {
+      return { status: 'exists' };
+    }
+    const locationObj = locations.find(l => l.name.toLowerCase().includes(bucketName.toLowerCase()));
+    const bays = locationObj?.bays?.length ? locationObj.bays : ['BAY 1', 'BAY 2'];
+    const slots = generateTimeSlots(
+      locationObj?.appointmentStartTime || '06:00',
+      locationObj?.appointmentEndTime || '18:00',
+      locationObj?.appointmentDuration || 30,
+    );
+    const booked = new Set(list.filter(s => s.date === dateISO).map(s => `${s.time}|${s.bay}`));
+    const freeBayAt = (t: string) => bays.find(b => !booked.has(`${t}|${b}`));
+    const bay = freeBayAt(time);
+    if (bay) {
+      const items = order.lineItems?.length ? order.lineItems : [null];
+      const shipments: Shipment[] = items.map((item: OrderLineItem | null) => ({
+        id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        week: `Week ${getWeekNumber(dateISO)}`,
+        date: dateISO,
+        day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(dateISO + 'T12:00:00')),
+        time,
+        bay,
+        customer: order.customer,
+        product: item?.productName || order.product || '',
+        contractNumber: item?.contractNumber || order.contractNumber,
+        po: order.po,
+        bol: order.bolNumber,
+        qty: item ? item.totalWeight : (order.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0),
+        carrier: carrierName || order.carrier || '',
+        arrive: '', start: '', out: '',
+        status: 'Confirmed',
+        notes: '', color: '',
+        location: apptLoc || bucketName,
+      }));
+      return { status: 'created', toHamilton, shipments, time, bay, location: bucketName };
+    }
+    // Requested slot is full — suggest the nearest free standard slot (later wins ties).
+    const toMin = (t: string) => { const m = t.match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : NaN; };
+    const req = toMin(time);
+    const free = slots.filter(t => freeBayAt(t));
+    const suggestedTime = free.sort((a, b) => {
+      const da = Math.abs(toMin(a) - req), db = Math.abs(toMin(b) - req);
+      if (da !== db) return da - db;
+      return toMin(b) - toMin(a); // tie → prefer the later slot
+    })[0];
+    return { status: 'unavailable', time, suggestedTime, location: bucketName };
+  };
+
   // Drain the incomingPoOrders queue (written by the Gmail cron) into real Open
   // orders, logging each to the Email Center dashboard. Each queue doc is CLAIMED
   // atomically (claimDoc deletes it inside a transaction) so two open browser
@@ -1246,6 +1337,10 @@ export default function App() {
       const orderPatch = new Map<string, Partial<Order>>();
       const invoicePatch = new Map<string, Partial<Invoice>>();
       const custPatch = new Map<string, Partial<Customer>>();
+      // Shipment appointments auto-booked from carrier confirmations this run
+      // (applied to the schedule after the loop; also consulted for availability
+      // so two emails in one batch can't double-book the same slot).
+      const apptAdds: Shipment[] = [];
       let learnedCarrier = false;
       const nowIso = new Date().toISOString();
       // PO numbers must be UNIQUE: an emailed PO whose number already exists in an
@@ -1301,7 +1396,11 @@ export default function App() {
           // contract number directly on that order (and its invoices).
           {
             const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
-            const order = refPo ? orders.find(o => (o.po || '').trim() === refPo) : undefined;
+            // Carriers often confirm against the BOL rather than the PO — match
+            // the order by PO first, then by the referenced BOL (e.g. B6900117).
+            const refBol = (po.bolNumber || '').trim().toUpperCase();
+            const order = (refPo ? orders.find(o => (o.po || '').trim() === refPo) : undefined)
+              || (refBol ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
             if (order) {
               const cur = orderPatch.get(order.id) || {};
               const changes: string[] = [];
@@ -1339,6 +1438,38 @@ export default function App() {
               if (refPickup && (cur.pickupTime ?? order.pickupTime ?? '') !== refPickup) { cur.pickupTime = refPickup; changes.push(`pick-up time → ${refPickup}`); }
               const refShipDate = (po.shipmentDate || '').trim();
               if (refShipDate && (cur.shipmentDate ?? order.shipmentDate ?? '') !== refShipDate) { cur.shipmentDate = refShipDate; changes.push(`ship date → ${refShipDate}`); }
+              // Carrier-confirmed appointment time → book the shipment appointment
+              // automatically. When the requested slot is taken, queue an amendment
+              // suggesting the nearest free slot for operator approval instead.
+              const carrierConfirmed = fromCarrier || isLogisticsSenderEmail(item?.fromEmail);
+              const apptDate = refShipDate || (cur.shipmentDate ?? order.shipmentDate ?? '');
+              if (carrierConfirmed && refPickup && apptDate) {
+                const plan = planOrderAppointment(order, apptDate, refPickup, carrierName || order.carrier || '', apptAdds);
+                if (plan.status === 'created') {
+                  apptAdds.push(...plan.shipments);
+                  changes.push(`appointment booked ${apptDate} ${plan.time} @ ${plan.bay}`);
+                } else if (plan.status === 'unavailable') {
+                  amendments.push({
+                    id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                    createdAt: nowIso,
+                    receivedAt: item?.receivedAt,
+                    fromEmail: item?.fromEmail,
+                    subject: item?.subject,
+                    sourceFile: item?.sourceFile,
+                    poNumber: (order.po || refPo) || undefined,
+                    customer: order.customer,
+                    orderId: order.id,
+                    orderBol: order.bolNumber,
+                    kind: 'amendment',
+                    summary: `Requested appointment ${plan.time} on ${apptDate} is NOT available${plan.suggestedTime ? ` — suggested ${plan.suggestedTime} (${plan.location})` : ' — no free slots that day'}`,
+                    requestedApptDate: apptDate,
+                    requestedApptTime: plan.time,
+                    ...(plan.suggestedTime ? { suggestedApptTime: plan.suggestedTime } : {}),
+                    apptLocation: plan.location,
+                    status: 'pending',
+                  });
+                }
+              }
               if (Object.keys(cur).length) orderPatch.set(order.id, cur);
               // Mirror the same fills onto the PO's invoices when they're blank.
               invoices.forEach(inv => {
@@ -1426,6 +1557,13 @@ export default function App() {
       }
       if (invoicePatch.size) setInvoices(prev => prev.map(i => invoicePatch.has(i.id) ? { ...i, ...invoicePatch.get(i.id)! } : i));
       if (custPatch.size) setCustomers(prev => prev.map(c => custPatch.has(c.id) ? { ...c, ...custPatch.get(c.id)! } : c));
+      // File carrier-confirmed appointments into the schedule (Hamilton/Vancouver).
+      if (apptAdds.length) {
+        const ham = apptAdds.filter(s => !(s.location || '').toLowerCase().includes('vancouver'));
+        const van = apptAdds.filter(s => (s.location || '').toLowerCase().includes('vancouver'));
+        if (ham.length) setHamiltonShipments(prev => [...prev, ...ham]);
+        if (van.length) setVancouverShipments(prev => [...prev, ...van]);
+      }
       if (learnedCarrier) setPoLearned(loadLearned());
       if (pendingImports.length) setPoPendingImports(prev => [...prev, ...pendingImports].slice(-500));
       // Cap the persisted log so the whole-collection resync stays bounded.

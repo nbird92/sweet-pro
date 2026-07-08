@@ -52,6 +52,9 @@ function amendmentChangeText(a: PoAmendment): string {
   if (a.newDeliveryDate) parts.push(`Delivery ${a.prevDeliveryDate || '—'} → ${a.newDeliveryDate}`);
   if (typeof a.newQuantityMt === 'number') parts.push(`Qty ${a.prevQuantityMt != null ? a.prevQuantityMt.toFixed(2) : '—'} → ${a.newQuantityMt.toFixed(2)} MT`);
   if (a.newSplitNumber) parts.push(`Split ${a.prevSplitNumber || '—'} → ${a.newSplitNumber}`);
+  if (a.requestedApptDate && a.requestedApptTime) {
+    parts.push(`Appt ${a.requestedApptDate} ${a.requestedApptTime} unavailable${a.suggestedApptTime ? ` → suggest ${a.suggestedApptTime}` : ' (no free slots)'}${a.apptLocation ? ` @ ${a.apptLocation}` : ''}`);
+  }
   return parts.join('   ·   ') || (a.summary || 'See email');
 }
 
