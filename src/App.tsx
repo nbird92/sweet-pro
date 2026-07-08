@@ -3413,8 +3413,12 @@ export default function App() {
     component: '',
     provider: '',
     totalCostCad: 0,
-    weightPerLoadMt: 1
+    weightPerLoadMt: 1,
+    currency: 'CAD',
   });
+  // Total Cost from a base rate + fuel surcharge %: base × (1 + %/100).
+  const supplyChainTotal = (baseRate?: number, fuelPct?: number): number =>
+    Math.round((baseRate || 0) * (1 + (fuelPct || 0) / 100) * 100) / 100;
 
   // Track last synced data to avoid redundant syncs
   const lastSyncedData = useRef<Record<string, string>>({
@@ -9795,13 +9799,19 @@ export default function App() {
           columns: [
             { header: 'Component', key: 'component' },
             { header: 'Carrier', key: 'provider' },
-            { header: 'Total Cost (CAD)', key: 'totalCostCad', format: 'currency' },
+            { header: 'Base Rate', key: 'baseRate', format: 'currency' },
+            { header: 'Fuel Surcharge (%)', key: 'fuelSurchargePct', format: 'number' },
+            { header: 'Currency', key: 'currency' },
+            { header: 'Total Cost', key: 'totalCostCad', format: 'currency' },
             { header: 'Weight / Load (MT)', key: 'weightPerLoadMt', format: 'number' },
-            { header: 'Cost / MT (CAD)', key: 'costPerMt', format: 'currency' },
+            { header: 'Cost / MT', key: 'costPerMt', format: 'currency' },
           ],
           rows: supplyChain.map(item => ({
             component: item.component,
             provider: item.provider,
+            baseRate: item.baseRate,
+            fuelSurchargePct: item.fuelSurchargePct,
+            currency: item.currency || 'CAD',
             totalCostCad: item.totalCostCad,
             weightPerLoadMt: item.weightPerLoadMt,
             costPerMt: item.totalCostCad / (item.weightPerLoadMt || 1),
@@ -9953,14 +9963,24 @@ export default function App() {
               { key: 'component', label: 'Component', bold: true },
               { key: 'provider', label: 'Carrier' },
               {
-                key: 'totalCostCad', label: 'Total Cost (CAD)', align: 'right', mono: true,
-                render: (i) => `CAD $${i.totalCostCad.toLocaleString()}`,
+                key: 'baseRate', label: 'Base Rate', align: 'right', mono: true,
+                render: (i) => i.baseRate ? `$${i.baseRate.toLocaleString()}` : '—',
+                sortValue: (i) => i.baseRate || 0,
+              },
+              {
+                key: 'fuelSurchargePct', label: 'Fuel %', align: 'right', mono: true,
+                render: (i) => i.fuelSurchargePct != null ? `${i.fuelSurchargePct}%` : '—',
+                sortValue: (i) => i.fuelSurchargePct || 0,
+              },
+              {
+                key: 'totalCostCad', label: 'Total Cost', align: 'right', mono: true,
+                render: (i) => `${i.currency || 'CAD'} $${i.totalCostCad.toLocaleString()}`,
                 sortValue: (i) => i.totalCostCad,
               },
               { key: 'weightPerLoadMt', label: 'Weight / Load (MT)', align: 'right', mono: true },
               {
                 key: 'costPerMt', label: 'Cost / MT', align: 'right', mono: true, bold: true,
-                render: (i) => `CAD $${(i.totalCostCad / (i.weightPerLoadMt || 1)).toFixed(2)}`,
+                render: (i) => `${i.currency || 'CAD'} $${(i.totalCostCad / (i.weightPerLoadMt || 1)).toFixed(2)}`,
                 sortValue: (i) => i.totalCostCad / (i.weightPerLoadMt || 1),
               },
             ]}
@@ -9972,7 +9992,7 @@ export default function App() {
             emptyMessage="No supply chain components added yet."
             footer={
               <tr className="bg-[#F5F5F5] font-black border-t border-[#141414]">
-                <td colSpan={4} className="p-4 text-xs uppercase tracking-widest text-right border-r border-[#141414]/10">Total Supply Chain Cost / MT</td>
+                <td colSpan={6} className="p-4 text-xs uppercase tracking-widest text-right border-r border-[#141414]/10">Total Supply Chain Cost / MT</td>
                 <td className="p-4 text-sm text-indigo-600 text-right">CAD ${totalCostPerMt.toFixed(2)}</td>
               </tr>
             }
@@ -17527,18 +17547,51 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Total Cost (CAD)</label>
-                    <input 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Base Rate</label>
+                    <input
+                      type="text" inputMode="decimal"
+                        value={newSupplyChain.baseRate || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => { const baseRate = parseFloat(e.target.value) || 0; setNewSupplyChain(prev => ({ ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad })); }}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Fuel Surcharge (%)</label>
+                    <input
+                      type="text" inputMode="decimal"
+                        value={newSupplyChain.fuelSurchargePct ?? ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setNewSupplyChain(prev => ({ ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad })); }}
+                      placeholder="e.g. 30"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Currency</label>
+                    <select
+                      value={newSupplyChain.currency || 'CAD'}
+                      onChange={(e) => setNewSupplyChain({ ...newSupplyChain, currency: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Total Cost ({newSupplyChain.currency || 'CAD'}){(newSupplyChain.baseRate || 0) > 0 ? ' — base × fuel' : ''}</label>
+                    <input
                       type="text" inputMode="decimal"
                         value={newSupplyChain.totalCostCad || ""}
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => setNewSupplyChain({ ...newSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                        disabled={(newSupplyChain.baseRate || 0) > 0}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono disabled:opacity-60"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={newSupplyChain.weightPerLoadMt || ""}
                         onFocus={(e) => e.target.select()}
@@ -17610,18 +17663,51 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Total Cost (CAD)</label>
-                    <input 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Base Rate</label>
+                    <input
+                      type="text" inputMode="decimal"
+                        value={editingSupplyChain.baseRate || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => { const baseRate = parseFloat(e.target.value) || 0; setEditingSupplyChain(prev => prev ? { ...prev, baseRate, totalCostCad: baseRate > 0 ? supplyChainTotal(baseRate, prev.fuelSurchargePct) : prev.totalCostCad } : prev); }}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Fuel Surcharge (%)</label>
+                    <input
+                      type="text" inputMode="decimal"
+                        value={editingSupplyChain.fuelSurchargePct ?? ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => { const fuelSurchargePct = e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0); setEditingSupplyChain(prev => prev ? { ...prev, fuelSurchargePct, totalCostCad: (prev.baseRate || 0) > 0 ? supplyChainTotal(prev.baseRate, fuelSurchargePct) : prev.totalCostCad } : prev); }}
+                      placeholder="e.g. 30"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Currency</label>
+                    <select
+                      value={editingSupplyChain.currency || 'CAD'}
+                      onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, currency: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Total Cost ({editingSupplyChain.currency || 'CAD'}){(editingSupplyChain.baseRate || 0) > 0 ? ' — base × fuel' : ''}</label>
+                    <input
                       type="text" inputMode="decimal"
                         value={editingSupplyChain.totalCostCad || ""}
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => setEditingSupplyChain({ ...editingSupplyChain, totalCostCad: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                        disabled={(editingSupplyChain.baseRate || 0) > 0}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono disabled:opacity-60"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Weight Per Load (MT)</label>
-                    <input 
+                    <input
                       type="text" inputMode="decimal"
                         value={editingSupplyChain.weightPerLoadMt || ""}
                         onFocus={(e) => e.target.select()}

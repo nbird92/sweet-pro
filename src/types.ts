@@ -141,6 +141,9 @@ export interface SupplyChainComponent {
   provider: string;
   totalCostCad: number;
   weightPerLoadMt: number;
+  baseRate?: number;         // base rate; Total Cost = baseRate × (1 + fuelSurchargePct/100)
+  fuelSurchargePct?: number; // fuel surcharge percentage applied to the base rate
+  currency?: string;         // 'CAD' | 'USD' — currency the rate is quoted in
 }
 
 export interface FreightRate {
