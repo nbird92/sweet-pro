@@ -574,11 +574,32 @@ export default function App() {
       || (custContractCurrencies.length === 1 ? custContractCurrencies[0] : '')
       || (cust?.defaultCurrency || '').trim().toUpperCase()
       || (po.currency || '').trim().toUpperCase();
+    // KG/lb/etc → MT factor, so a unit price or line total can be converted in
+    // code when the extractor didn't already give $/MT.
+    const mtPerUnit = (u?: string): number => {
+      const s = (u || '').trim().toLowerCase();
+      if (/^(mt|tonne|tonnes|metric)/.test(s)) return 1;
+      if (/^(kg|kilogram)/.test(s)) return 0.001;
+      if (/^(lb|lbs|pound)/.test(s)) return 0.00045359237;
+      if (/^cwt/.test(s)) return 0.045359237;
+      return 0;
+    };
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
+      const factor = mtPerUnit(li.unit);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
-        : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
+        : (factor > 0 && typeof li.quantity === 'number' ? li.quantity * factor : 0);
+      // Price safety net: the model sometimes reads a tabular PO's Unit Price /
+      // Line Total column but leaves pricePerMt blank. Recover $/MT from
+      // (1) unitPrice × its unit, else (2) line amount ÷ quantity(MT).
+      let pricePerMt = typeof li.pricePerMt === 'number' && li.pricePerMt > 0 ? li.pricePerMt : 0;
+      if (!pricePerMt && typeof li.unitPrice === 'number' && li.unitPrice > 0 && factor > 0) {
+        pricePerMt = li.unitPrice / factor;
+      }
+      if (!pricePerMt && typeof li.amount === 'number' && li.amount > 0 && qtyMt > 0) {
+        pricePerMt = li.amount / qtyMt;
+      }
       return {
         productValue: prod?.value || '',
         productKey: prod?.key || '',
@@ -586,7 +607,7 @@ export default function App() {
         productRaw: li.description || '',
         productCodeRaw: li.itemNumber || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
-        pricePerMt: typeof li.pricePerMt === 'number' ? Math.round(li.pricePerMt * 100) / 100 : 0,
+        pricePerMt: pricePerMt > 0 ? Math.round(pricePerMt * 100) / 100 : 0,
         contractNumber,
       };
     });
@@ -1093,14 +1114,28 @@ export default function App() {
     Array.from(new Set([c.contactEmail, ...(c.contactEmails || [])].filter(Boolean).map(e => String(e).toLowerCase())));
   // A logistics / carrier sender: the sender domain matches the domain of ANY of a
   // known carrier's email addresses (contrans.ca, denalilogistics.ca,
-  // bluedotamericas.com…) — exact, or the sender on a subdomain of it.
+  // bluedotamericas.com…) — exact, or the sender on a subdomain of it — OR the
+  // domain's core label matches a carrier's NAME (so "contrans.ca" resolves to
+  // the "Contrans" carrier even before its record has an @contrans.ca contact
+  // email). The latter is the common reason carriers still read as customers.
   const isLogisticsSenderEmail = (fromEmail?: string): boolean => {
     const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
     if (!domain) return false;
-    return carriers.some(c => carrierEmailsOf(c).some(e => {
+    if (carriers.some(c => carrierEmailsOf(c).some(e => {
       const cd = e.split('@')[1];
       return !!cd && (domain === cd || domain.endsWith('.' + cd));
-    }));
+    }))) return true;
+    // Core label of the domain (contrans.ca → "contrans", mail.denali.com → "denali").
+    const labels = domain.split('.').filter(Boolean);
+    const core = labels.length >= 2 ? labels[labels.length - 2] : (labels[0] || '');
+    if (core.length < 4) return false;
+    return carriers.some(c => {
+      const nameNorm = (c.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (nameNorm.length < 4) return false;
+      const tokens = (c.name || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 4);
+      return tokens.includes(core)
+        || (core.length >= 5 && (nameNorm.startsWith(core) || core.startsWith(nameNorm)));
+    });
   };
   const isStockRequestSubject = (subject?: string): boolean => /stock\s*request/i.test(String(subject || ''));
 

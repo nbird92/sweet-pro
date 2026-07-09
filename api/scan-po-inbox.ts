@@ -150,21 +150,33 @@ function domainOf(fromEmail: string | undefined): string {
   return String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
 }
 // A LOGISTICS / carrier sender: the sender domain matches a known carrier's email
-// domain (e.g. contrans.ca, denalilogistics.ca, bluedotamericas.com).
-function isLogisticsSender(fromEmail: string | undefined, carrierDomains: string[]): boolean {
+// domain (e.g. contrans.ca, denalilogistics.ca, bluedotamericas.com), OR the
+// domain's core label matches a carrier NAME (so "contrans.ca" resolves to the
+// "Contrans" carrier even when its record has no @contrans.ca contact email —
+// the common reason carriers still read as customers).
+function isLogisticsSender(fromEmail: string | undefined, carrierDomains: string[], carrierNames: string[] = []): boolean {
   const domain = domainOf(fromEmail);
   if (!domain) return false;
   // Exact match, or the sender is on a subdomain of a carrier domain. NOT the
   // reverse (carrier on a subdomain of the sender) — that would let a carrier at
   // dispatch@trucking.acme.com capture a customer at acme.com.
-  return carrierDomains.some(d => d && (domain === d || domain.endsWith('.' + d)));
+  if (carrierDomains.some(d => d && (domain === d || domain.endsWith('.' + d)))) return true;
+  const labels = domain.split('.').filter(Boolean);
+  const core = labels.length >= 2 ? labels[labels.length - 2] : (labels[0] || '');
+  if (core.length < 4) return false;
+  return carrierNames.some(n => {
+    const nameNorm = (n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (nameNorm.length < 4) return false;
+    const tokens = (n || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 4);
+    return tokens.includes(core) || (core.length >= 5 && (nameNorm.startsWith(core) || core.startsWith(nameNorm)));
+  });
 }
 // Categorize a sender into one of three groups. Internal employees and logistics
 // carriers never trigger a NEW-PO suggestion (they may update an existing PO);
 // everyone else (incl. the order-desk forwarder) is a customer.
-function senderCategoryOf(fromEmail: string | undefined, carrierDomains: string[]): 'customer' | 'internal' | 'logistics' {
+function senderCategoryOf(fromEmail: string | undefined, carrierDomains: string[], carrierNames: string[] = []): 'customer' | 'internal' | 'logistics' {
   if (isInternalEmployee(fromEmail)) return 'internal';
-  if (isLogisticsSender(fromEmail, carrierDomains)) return 'logistics';
+  if (isLogisticsSender(fromEmail, carrierDomains, carrierNames)) return 'logistics';
   return 'customer';
 }
 function isStockRequest(subject: string | undefined): boolean {
@@ -232,6 +244,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const db = getDb();
     const hints = await buildHints(db);
     const carrierDomains = hints.carrierDomains || [];
+    const carrierNames = hints.carriers || [];
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
     const feedRef = db.collection('inboxFeed');
@@ -281,7 +294,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           else if (dt === 'cancellation' && suggestion === 'none') { suggestion = 'cancellation'; suggestionPo = (extraction.amendsPoNumber || extraction.poNumber || '').trim() || suggestionPo; }
         };
 
-        const senderCategory = senderCategoryOf(fromEmail, carrierDomains);
+        const senderCategory = senderCategoryOf(fromEmail, carrierDomains, carrierNames);
         const notCustomer = senderCategory !== 'customer'; // internal employee OR logistics
         const stockRequest = isStockRequest(subject);
         // Queue an extraction unless the model classified it as unrelated mail.
