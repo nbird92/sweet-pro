@@ -329,6 +329,9 @@ export default function App() {
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
   const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>(INITIAL_CUSTOMER_GROUPS);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
+  // Read-only "Invoice Details" view shown first on row click (mirrors the order
+  // details card); an Edit Invoice button opens editingInvoiceCard.
+  const [viewingInvoiceCard, setViewingInvoiceCard] = useState<Invoice | null>(null);
   // Invoice line-item editor (mirrors the order page's line-item editor).
   const [invLineItem, setInvLineItem] = useState<{ productName: string; productKey: string; productDisplayName: string; qty: number; contractNumber: string }>({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
   const [editingInvLineIdx, setEditingInvLineIdx] = useState<number | null>(null);
@@ -7870,7 +7873,7 @@ export default function App() {
                     <tr
                       className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer"
                       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
-                      onClick={() => setEditingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '', papsNo: i.papsNo || linkedOrder?.papsNo || '', customsEntryNo: i.customsEntryNo || linkedOrder?.customsEntryNo || '' })}>
+                      onClick={() => setViewingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '', papsNo: i.papsNo || linkedOrder?.papsNo || '', customsEntryNo: i.customsEntryNo || linkedOrder?.customsEntryNo || '' })}>
                       <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         {/*
                           Uncontrolled input: defaultValue + onBlur. Typing no
@@ -12099,6 +12102,165 @@ export default function App() {
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
+
+      {/* Invoice Details Modal — read-only view shown on row click; mirrors the
+          order details card. "Edit Invoice" opens the editable modal. */}
+      <AnimatePresence>
+        {viewingInvoiceCard && (() => {
+          const inv = viewingInvoiceCard;
+          const items = inv.lineItems || [];
+          const totalMt = (typeof inv.qty === 'number' && inv.qty > 0)
+            ? inv.qty
+            : items.reduce((s, li) => s + (li.totalWeight || 0), 0);
+          return (
+          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="shrink-0 bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Invoice Details</h3>
+                <button onClick={() => setViewingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                {/* Invoice-level fields */}
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice #</label>
+                    <div className="text-sm font-bold font-mono">{inv.invoiceNumber || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
+                    <div className="text-sm font-bold">{inv.bolNumber || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
+                    <div className="text-sm font-bold">{inv.customer || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
+                    <div className="text-sm">{inv.po || '—'}</div></div>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
+                    <div className="text-sm">{inv.status || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice Date</label>
+                    <div className="text-sm">{inv.date || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
+                    <div className="text-sm">{inv.dueDate || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
+                    <div className="text-sm">{inv.carrier || '—'}</div></div>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
+                    <div className="text-sm font-bold">{(inv.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
+                    <div className="text-sm font-bold">{(totalMt * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
+                    <div className="text-sm font-mono">{typeof inv.pricePerMt === 'number' ? `$${inv.pricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                    <div className="text-sm font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                    <div className="text-sm font-mono">{inv.splitNo || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
+                    <div className="text-sm font-mono">{inv.papsNo || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
+                    <div className="text-sm font-mono">{inv.customsEntryNo || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
+                    <div className="text-sm">{inv.reversals || '—'}</div></div>
+                </div>
+
+                {/* Line Items & Contract Details — same layout as the order card. */}
+                <div className="border border-[#141414] overflow-hidden">
+                  <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center">
+                    <h4 className="text-xs font-bold uppercase">Line Items &amp; Contract Details ({items.length})</h4>
+                  </div>
+                  <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
+                      <div className="text-sm font-mono font-bold">{inv.contractNumber || '—'}</div></div>
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
+                      <div className="text-sm">{inv.shippingTerms || '—'}</div></div>
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location (Origin)</label>
+                      <div className="text-sm">{inv.location || '—'}</div></div>
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
+                      <div className="text-sm">{inv.product || '—'}</div></div>
+                  </div>
+                  {items.length > 0 ? (() => {
+                    const rows = items.map(item => {
+                      const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
+                      const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
+                      const resolved = resolveProduct(item.productName);
+                      const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
+                      const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
+                      const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
+                      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
+                      const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
+                      const lineAmount = item.lineAmount || (totalWeight * mtAmount);
+                      const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
+                      return { item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
+                    });
+                    const totalQty = rows.reduce((s, r) => s + r.item.qty, 0);
+                    const totalWeightSum = rows.reduce((s, r) => s + r.totalWeight, 0);
+                    const totalLineAmount = rows.reduce((s, r) => s + r.lineAmount, 0);
+                    return (
+                    <table className="w-full text-xs">
+                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
+                        <tr>
+                          <th className="p-3 text-left font-bold">Product</th>
+                          <th className="p-3 text-left font-bold">QTY (units)</th>
+                          <th className="p-3 text-left font-bold">Weight/Unit (MT)</th>
+                          <th className="p-3 text-left font-bold">Total Weight (MT)</th>
+                          <th className="p-3 text-left font-bold">$/Unit</th>
+                          <th className="p-3 text-left font-bold">$/MT</th>
+                          <th className="p-3 text-left font-bold">Line Amount</th>
+                          <th className="p-3 text-left font-bold">Contract #</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#141414]/10">
+                        {rows.map(({ item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber }) => (
+                          <tr key={item.id} className="hover:bg-[#141414]/5">
+                            <td className="p-3">{lineItemToShortform(item)}</td>
+                            <td className="p-3">{item.qty}</td>
+                            <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
+                            <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
+                            <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{mtAmount ? `$${mtAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{lineAmount ? `$${lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3 font-mono">{contractNumber || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
+                        <tr>
+                          <td className="p-3 font-bold">Total</td>
+                          <td className="p-3 font-bold">{totalQty}</td>
+                          <td className="p-3"></td>
+                          <td className="p-3 font-bold">{totalWeightSum.toFixed(2)}</td>
+                          <td className="p-3"></td>
+                          <td className="p-3"></td>
+                          <td className="p-3 font-bold">{totalLineAmount ? `$${totalLineAmount.toFixed(2)}` : '—'}</td>
+                          <td className="p-3"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                    );
+                  })() : (
+                    <div className="p-4 text-[10px] opacity-40 italic">No line items on this invoice.</div>
+                  )}
+                </div>
+              </div>
+              <div className="shrink-0 border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-end gap-2">
+                <button onClick={() => setViewingInvoiceCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all">Close</button>
+                <button
+                  onClick={() => { setEditingInvoiceCard(inv); setViewingInvoiceCard(null); }}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+                >
+                  <Edit2 size={14} /> Edit Invoice
+                </button>
+              </div>
+            </motion.div>
+          </div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Order Card Modal */}
