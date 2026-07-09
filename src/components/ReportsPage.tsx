@@ -28,6 +28,7 @@ import type {
   SugarType,
   ProductGroup,
   NamingFormula,
+  Contract,
 } from '../types';
 import { resolveShortForm } from '../utils/namingFormulaResolver';
 
@@ -36,6 +37,7 @@ import { resolveShortForm } from '../utils/namingFormulaResolver';
 interface ReportsPageProps {
   invoices: Invoice[];
   orders: Order[];
+  contracts: Contract[];
   customers: Customer[];
   customerForecasts: CustomerForecast[];
   fiscalYears: FiscalYear[];
@@ -65,6 +67,7 @@ function formatCurrency(n: number): string {
 export default function ReportsPage({
   invoices,
   orders,
+  contracts,
   customers,
   customerForecasts,
   fiscalYears,
@@ -240,6 +243,8 @@ export default function ReportsPage({
   const [projSort, setProjSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'projRevenue', dir: 'desc' });
   const [grpSearch, setGrpSearch] = useState('');
   const [grpSort, setGrpSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
+  // Customer report — dropdown to focus a single customer ('' = all).
+  const [reportCustomerId, setReportCustomerId] = useState<string>('');
 
   const toggleSort = (setter: React.Dispatch<React.SetStateAction<{ key: string; dir: 'asc' | 'desc' }>>) => (key: string) => {
     setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' });
@@ -1356,6 +1361,52 @@ export default function ReportsPage({
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REPORT: Customer report — sales volume, qty on order, contracts & balances
+  // ═══════════════════════════════════════════════════════════════════════════
+  const customerReport = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
+      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
+      : (inv.qty || 0);
+    const ordMt = (o: Order) => (o.lineItems && o.lineItems.length)
+      ? o.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
+      : 0;
+    // "On order" = confirmed demand not yet invoiced (Open / Confirmed).
+    const onOrder = (o: Order) => o.status === 'Open' || o.status === 'Confirmed';
+
+    const rows = customers.map(cust => {
+      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
+      const num = norm(cust.customerNumber);
+      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
+
+      const salesMt = invoices.filter(i => nameHit(i.customer)).reduce((s, i) => s + invMt(i), 0);
+      const custOrders = orders.filter(o => onOrder(o) && nameHit(o.customer));
+      const onOrderMt = custOrders.reduce((s, o) => s + ordMt(o), 0);
+
+      const custContracts = contracts.filter(ct => ct.active !== false
+        && ((num && norm(ct.customerNumber) === num) || names.has(norm(ct.customerName))));
+      const contractRows = custContracts.map(ct => {
+        const cn = norm(ct.contractNumber);
+        const qtyOnOrder = cn
+          ? orders.filter(o => onOrder(o) && norm(o.contractNumber) === cn).reduce((s, o) => s + ordMt(o), 0)
+          : 0;
+        const contractVol = ct.contractVolume || 0;
+        const taken = ct.volumeTaken || 0;
+        const remaining = ct.volumeOutstanding != null ? ct.volumeOutstanding : Math.max(0, contractVol - taken);
+        return { contractNumber: ct.contractNumber || '—', product: ct.skuName || '—', contractVol, taken, remaining, qtyOnOrder };
+      }).sort((a, b) => b.remaining - a.remaining);
+      const remainingTotal = contractRows.reduce((s, c) => s + c.remaining, 0);
+
+      return { id: cust.id, customer: cust.name || '(unnamed)', salesMt, onOrderMt, contractCount: custContracts.length, remainingTotal, contractRows };
+    }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0);
+
+    return rows.sort((a, b) => b.salesMt - a.salesMt);
+  }, [customers, invoices, orders, contracts, resolveCustomerName]);
+
+  const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
+  const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
+
   return (
     <div className="space-y-8">
       {/* Page Header */}
@@ -1379,6 +1430,101 @@ export default function ReportsPage({
             Export All to Excel
           </button>
         </div>
+      </div>
+
+      {/* ═══════════════ REPORT: Customer Report ═══════════════ */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between flex-wrap gap-3">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+            <Users size={14} />
+            Customer Report
+          </h3>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest opacity-60">Customer</span>
+            <select
+              value={reportCustomerId}
+              onChange={(e) => setReportCustomerId(e.target.value)}
+              className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 outline-none"
+            >
+              <option value="">All Customers</option>
+              {[...customerReport].sort((a, b) => a.customer.localeCompare(b.customer)).map(r => (
+                <option key={r.id} value={r.id}>{r.customer}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="border border-[#141414] border-t-0 overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
+                <th className="p-3">Customer</th>
+                <th className="p-3 text-right">Sales Volume (MT)</th>
+                <th className="p-3 text-right">Qty on Order (MT)</th>
+                <th className="p-3 text-right">Contracts</th>
+                <th className="p-3 text-right">Remaining Balance (MT)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {customerReportRows.map(r => (
+                <tr key={r.id} className="hover:bg-[#F9F9F9]">
+                  <td className="p-3 font-bold">{r.customer}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.salesMt)}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.onOrderMt)}</td>
+                  <td className="p-3 text-right font-mono">{r.contractCount}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.remainingTotal)}</td>
+                </tr>
+              ))}
+              {customerReportRows.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center opacity-50 italic">No customer activity.</td></tr>
+              )}
+              {customerReportRows.length > 1 && (
+                <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                  <td className="p-3 uppercase tracking-widest">Total</td>
+                  <td className="p-3 text-right font-mono">{formatNum(customerReportRows.reduce((s, r) => s + r.salesMt, 0))}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(customerReportRows.reduce((s, r) => s + r.onOrderMt, 0))}</td>
+                  <td className="p-3 text-right font-mono">{customerReportRows.reduce((s, r) => s + r.contractCount, 0)}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(customerReportRows.reduce((s, r) => s + r.remainingTotal, 0))}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Contract-level detail — shown when a single customer is selected. */}
+        {selectedCustomerRow && (
+          <div className="border border-[#141414] border-t-0 overflow-x-auto">
+            <div className="bg-[#2a2a2a] text-[#E4E3E0] px-4 py-2 text-[10px] font-bold uppercase tracking-widest">
+              Contracts — {selectedCustomerRow.customer}
+            </div>
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
+                  <th className="p-3">Contract #</th>
+                  <th className="p-3">Product</th>
+                  <th className="p-3 text-right">Contract Vol (MT)</th>
+                  <th className="p-3 text-right">Delivered (MT)</th>
+                  <th className="p-3 text-right">Remaining Balance (MT)</th>
+                  <th className="p-3 text-right">Qty on Order (MT)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {selectedCustomerRow.contractRows.map((c, i) => (
+                  <tr key={`${c.contractNumber}-${i}`} className="hover:bg-[#F9F9F9]">
+                    <td className="p-3 font-mono font-bold">{c.contractNumber}</td>
+                    <td className="p-3">{c.product}</td>
+                    <td className="p-3 text-right font-mono">{formatNum(c.contractVol)}</td>
+                    <td className="p-3 text-right font-mono">{formatNum(c.taken)}</td>
+                    <td className="p-3 text-right font-mono">{formatNum(c.remaining)}</td>
+                    <td className="p-3 text-right font-mono">{formatNum(c.qtyOnOrder)}</td>
+                  </tr>
+                ))}
+                {selectedCustomerRow.contractRows.length === 0 && (
+                  <tr><td colSpan={6} className="p-6 text-center opacity-50 italic">No active contracts for this customer.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ═══════════════ REPORT 1: Sales Volume by Customer Group ═══════════════ */}

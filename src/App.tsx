@@ -9577,6 +9577,7 @@ export default function App() {
         <ReportsPage
           invoices={invoices}
           orders={orders}
+          contracts={contracts}
           customers={customers}
           customerForecasts={customerForecasts}
           fiscalYears={fiscalYears}
@@ -9963,6 +9964,25 @@ export default function App() {
                     }
                     return out;
                   })}
+                  {tollingPeriods.length > 0 && (() => {
+                    const gMt = tollingPeriods.reduce((s, g) => s + g.mt, 0);
+                    const gNet = tollingPeriods.reduce((s, g) => s + g.netAmount, 0);
+                    const gTax = tollingPeriods.reduce((s, g) => s + g.tax, 0);
+                    const gTot = tollingPeriods.reduce((s, g) => s + g.totalFees, 0);
+                    const currs = Array.from(new Set(tollingPeriods.map(g => g.currency).filter(Boolean)));
+                    const cur = currs.length === 1 ? ` ${currs[0]}` : '';
+                    const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    return (
+                      <tr className="bg-[#141414] text-[#E4E3E0] text-xs font-black border-t-2 border-[#141414]">
+                        <td className="p-3"></td>
+                        <td className="p-3 uppercase tracking-widest">Grand Total (all periods)</td>
+                        <td className="p-3 text-right font-mono">{fmt(gMt)}</td>
+                        <td className="p-3 text-right font-mono">{fmt(gNet)}{cur}</td>
+                        <td className="p-3 text-right font-mono">{fmt(gTax)}{cur}</td>
+                        <td className="p-3 text-right font-mono">{fmt(gTot)}{cur}</td>
+                      </tr>
+                    );
+                  })()}
                   {tollingPeriods.length === 0 && (
                     <tr><td colSpan={6} className="p-8 text-center text-xs opacity-50 italic">No invoiced volume yet.</td></tr>
                   )}
