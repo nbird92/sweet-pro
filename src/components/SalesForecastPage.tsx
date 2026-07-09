@@ -30,6 +30,7 @@ import type {
   Invoice,
   Order,
   Shipment,
+  TollingFee,
 } from '../types';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ interface SalesForecastPageProps {
   invoices: Invoice[];
   orders: Order[];
   shipments: Shipment[];
+  tollingFees: TollingFee[];
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -139,6 +141,7 @@ export default function SalesForecastPage({
   invoices,
   orders,
   shipments,
+  tollingFees,
 }: SalesForecastPageProps) {
   // ── Top Controls ────────────────────────────────────────────────────────
   const [selectedFiscalYearId, setSelectedFiscalYearId] = useState<string>(
@@ -264,6 +267,69 @@ export default function SalesForecastPage({
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
   }, [mergedForecasts, skus]);
+
+  // ── Forecast by Product Group (rollup of the product rows) ──────────────
+  const productGroupForecastRows = useMemo(() => {
+    const groupOf = (productName: string): string => {
+      const sku = skus.find(s => s.name === productName);
+      if (!sku) return 'Ungrouped';
+      const qa = qaProducts.find(q => q.skuId === sku.id);
+      return (qa?.productGroup || sku.productGroup || 'Ungrouped');
+    };
+    const map = new Map<string, { group: string; annual: number; products: Map<string, number> }>();
+    for (const row of productForecastRows) {
+      const g = groupOf(row.productName) || 'Ungrouped';
+      const cur = map.get(g) || { group: g, annual: 0, products: new Map<string, number>() };
+      cur.annual += row.annual;
+      cur.products.set(row.productName, (cur.products.get(row.productName) || 0) + row.annual);
+      map.set(g, cur);
+    }
+    return Array.from(map.values())
+      .map(g => ({
+        group: g.group,
+        annual: g.annual,
+        products: Array.from(g.products.entries()).map(([productName, annual]) => ({ productName, annual })).sort((a, b) => b.annual - a.annual),
+      }))
+      .sort((a, b) => b.annual - a.annual);
+  }, [productForecastRows, skus, qaProducts]);
+
+  // ── Tolling Forecast: forecast MT × the tolling fee for its product group +
+  //    location (+ tax), for the selected fiscal year. Projects future tolling
+  //    revenue from the customer forecasts. Aggregated by product group + location
+  //    (the granularity tolling fees are set at). ──────────────────────────────
+  const tollingForecastRows = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const skuNames = new Set(skus.map(s => s.name));
+    const groupOf = (productName: string): string => {
+      const sku = skus.find(s => s.name === productName);
+      if (!sku) return 'Ungrouped';
+      const qa = qaProducts.find(q => q.skuId === sku.id);
+      return (qa?.productGroup || sku.productGroup || 'Ungrouped');
+    };
+    const feeFor = (group: string, location: string): TollingFee | undefined =>
+      tollingFees.find(t => norm(t.productGroup) === norm(group) && norm(t.location) === norm(location))
+      || tollingFees.find(t => norm(t.productGroup) === norm(group));
+    const map = new Map<string, { group: string; location: string; mt: number }>();
+    for (const cf of mergedForecasts) {
+      for (const line of cf.lines) {
+        if (!skuNames.has(line.productName)) continue;
+        const g = groupOf(line.productName);
+        const key = `${g}|${line.location}`;
+        const mt = line.entries.reduce((s, e) => s + e.value, 0);
+        const cur = map.get(key) || { group: g, location: line.location, mt: 0 };
+        cur.mt += mt;
+        map.set(key, cur);
+      }
+    }
+    return Array.from(map.values()).map(r => {
+      const fee = feeFor(r.group, r.location);
+      const rate = fee?.amountPerMt || 0;
+      const taxRate = fee?.taxRate || 0;
+      const net = r.mt * rate;
+      const tax = net * (taxRate / 100);
+      return { ...r, rate, net, tax, total: net + tax, currency: fee?.currency || '' };
+    }).sort((a, b) => b.total - a.total);
+  }, [mergedForecasts, skus, qaProducts, tollingFees]);
 
   // ── Product view modal data ─────────────────────────────────────────────
   const productViewData = useMemo(() => {
@@ -966,6 +1032,105 @@ export default function SalesForecastPage({
                   </td>
                 </tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Forecast by Product Group ─────────────────────────────────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-widest">
+            {typeLabel} by Product Group
+          </h2>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414]">
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Product Group / Product</th>
+                <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Annual {typeLabel} (MT)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {productGroupForecastRows.flatMap((g) => [
+                <tr key={g.group} className="border-b border-[#141414]/20 bg-[#F5F5F5] font-bold">
+                  <td className="px-4 py-2 uppercase tracking-wide">{g.group}</td>
+                  <td className="px-4 py-2 text-right font-mono">{g.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                </tr>,
+                ...g.products.map((p) => (
+                  <tr key={`${g.group}|${p.productName}`} className="border-b border-gray-200 hover:bg-gray-50">
+                    <td className="px-4 py-1.5 pl-8 opacity-80">{p.productName}</td>
+                    <td className="px-4 py-1.5 text-right font-mono opacity-80">{p.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                  </tr>
+                )),
+              ])}
+              {productGroupForecastRows.length === 0 && (
+                <tr><td colSpan={2} className="px-4 py-8 text-center text-gray-400">No product {typeLabel.toLowerCase()} data yet.</td></tr>
+              )}
+              {productGroupForecastRows.length > 0 && (
+                <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                  <td className="px-4 py-2 uppercase tracking-widest">Total</td>
+                  <td className="px-4 py-2 text-right font-mono">{productGroupForecastRows.reduce((s, g) => s + g.annual, 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Tolling Forecast ──────────────────────────────────────────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-widest">Tolling Forecast</h2>
+          <span className="text-[10px] uppercase tracking-widest opacity-60">Forecast MT × tolling fee (+ tax)</span>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414] text-[10px] uppercase tracking-widest font-bold opacity-60">
+                <th className="text-left px-4 py-2">Product Group</th>
+                <th className="text-left px-4 py-2">Location</th>
+                <th className="text-right px-4 py-2">Forecast (MT)</th>
+                <th className="text-right px-4 py-2">Fee / MT</th>
+                <th className="text-right px-4 py-2">Net Amount</th>
+                <th className="text-right px-4 py-2">Tax</th>
+                <th className="text-right px-4 py-2">Total Tolling</th>
+                <th className="text-left px-4 py-2">Currency</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tollingForecastRows.map((r) => (
+                <tr key={`${r.group}|${r.location}`} className="border-b border-gray-200 hover:bg-gray-50">
+                  <td className="px-4 py-2 font-medium">{r.group}</td>
+                  <td className="px-4 py-2">{locationName(r.location)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{r.mt.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                  <td className="px-4 py-2 text-right font-mono">{r.rate ? r.rate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                  <td className="px-4 py-2 text-right font-mono">{r.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2 text-right font-mono">{r.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold">{r.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="px-4 py-2">{r.currency || '—'}</td>
+                </tr>
+              ))}
+              {tollingForecastRows.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No forecast volume to toll yet.</td></tr>
+              )}
+              {tollingForecastRows.length > 0 && (() => {
+                const currs = Array.from(new Set(tollingForecastRows.map(r => r.currency).filter(Boolean)));
+                const cur = currs.length === 1 ? ` ${currs[0]}` : '';
+                const f2 = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return (
+                  <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                    <td className="px-4 py-2 uppercase tracking-widest" colSpan={2}>Total</td>
+                    <td className="px-4 py-2 text-right font-mono">{tollingForecastRows.reduce((s, r) => s + r.mt, 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
+                    <td className="px-4 py-2"></td>
+                    <td className="px-4 py-2 text-right font-mono">{f2(tollingForecastRows.reduce((s, r) => s + r.net, 0))}{cur}</td>
+                    <td className="px-4 py-2 text-right font-mono">{f2(tollingForecastRows.reduce((s, r) => s + r.tax, 0))}{cur}</td>
+                    <td className="px-4 py-2 text-right font-mono">{f2(tollingForecastRows.reduce((s, r) => s + r.total, 0))}{cur}</td>
+                    <td className="px-4 py-2"></td>
+                  </tr>
+                );
+              })()}
             </tbody>
           </table>
         </div>

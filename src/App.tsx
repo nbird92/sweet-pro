@@ -8961,6 +8961,7 @@ export default function App() {
           invoices={invoices}
           orders={orders}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
+          tollingFees={tollingFees}
         />
       );
     }
