@@ -11919,9 +11919,14 @@ export default function App() {
                 {/* Derived totals (read-only — driven by line items) */}
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
-                    <div className="text-sm font-bold">{((editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0) * 1000).toFixed(0) || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (MT)</label>
-                    <div className="text-sm font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0).toFixed(2) || '—'}</div></div>
+                    <div className="text-sm font-bold">{(() => {
+                      // KG = invoiced Quantity (MT) × 1000; fall back to the line-item
+                      // weight sum when the invoice has no qty set.
+                      const mt = (typeof editingInvoiceCard.qty === 'number' && editingInvoiceCard.qty > 0)
+                        ? editingInvoiceCard.qty
+                        : (editingInvoiceCard.lineItems || []).reduce((s, i) => s + (i.totalWeight || 0), 0);
+                      return (mt * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 });
+                    })()}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Pallets</label>
                     <div className="text-sm font-bold">{(() => {
                       let pallets = 0;
