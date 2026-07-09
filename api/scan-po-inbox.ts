@@ -30,7 +30,7 @@ import {
  *   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
  * Optional env:
  *   PO_EXTRACT_MODEL  (default gemini-2.5-flash)
- *   PO_INBOX_QUERY    (default "has:attachment newer_than:3d")
+ *   PO_INBOX_QUERY    (default "newer_than:1d")
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
 
@@ -229,7 +229,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Default no longer requires an attachment so amendment emails (often plain
   // text, no attachment) are also scanned. The model classifies each as
   // new_order / amendment / cancellation / other; only non-'other' is queued.
-  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'newer_than:3d');
+  // 1-day window keeps the 15-min cron cheap (~96 overlapping runs still cover
+  // every email); the manual "Re-import last 3 days" widens it on demand.
+  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'newer_than:1d');
   const maxOverride = typeof req.query.max === 'string' ? parseInt(req.query.max, 10) : NaN;
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';

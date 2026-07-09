@@ -1654,8 +1654,10 @@ export default function App() {
       const token = await user.getIdToken();
       // force=1 re-reads emails already recorded in processedPoEmails (used by the
       // "Re-import last 3 days" action). The client still skips POs whose order
-      // already exists, so a forced re-scan never creates duplicate orders.
-      const qs = opts?.force ? '?force=1' : '';
+      // already exists, so a forced re-scan never creates duplicate orders. The
+      // scheduled cron uses a 1-day window; the manual re-import widens back to
+      // 3 days so the operator can pull anything the tighter window missed.
+      const qs = opts?.force ? '?force=1&q=newer_than:3d' : '';
       const res = await fetch(`/api/scan-po-inbox${qs}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
