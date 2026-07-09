@@ -1,6 +1,11 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 
-interface Props { children: ReactNode }
+interface Props {
+  children: ReactNode;
+  /** When set, render this instead of the full-screen fallback (e.g. to isolate
+   *  one item in a list so a single bad row doesn't blank the surrounding UI). */
+  fallback?: ReactNode | ((error: Error) => ReactNode);
+}
 interface State { error: Error | null }
 
 /**
@@ -27,6 +32,10 @@ export default class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     const c = this as unknown as { state: State; props: Props; setState: (s: State) => void };
     if (c.state.error) {
+      const fb = c.props.fallback;
+      if (fb !== undefined) {
+        return typeof fb === 'function' ? (fb as (e: Error) => ReactNode)(c.state.error) : fb;
+      }
       return (
         <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-mono flex items-center justify-center p-6">
           <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full p-8 space-y-4">

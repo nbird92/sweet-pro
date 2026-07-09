@@ -57,6 +57,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
@@ -19005,7 +19006,8 @@ export default function App() {
                     // that customer's available contracts; otherwise show all.
                     const customerContracts = selectedCustomer ? contractsForCustomer(selectedCustomer) : contracts;
                     return (
-                    <div key={rev.id} className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : poExists ? 'border-amber-500' : 'border-[#141414]/30'} p-4 space-y-3`}>
+                    <ErrorBoundary key={rev.id} fallback={<div className="border border-red-400 bg-red-50 p-4 text-xs text-red-700 font-bold">This PO couldn't be displayed — its scanned data is malformed. Dismiss it from the queue or re-scan the email. The other POs are unaffected.</div>}>
+                    <div className={`border ${rev.created ? 'border-emerald-500 bg-emerald-50/40' : poExists ? 'border-amber-500' : 'border-[#141414]/30'} p-4 space-y-3`}>
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] font-bold uppercase tracking-wide flex items-center gap-2">
                           <Sparkles size={12} className="opacity-60" />
@@ -19184,12 +19186,15 @@ export default function App() {
                         </label>
                         {rev.scheduleAppt && (() => {
                           const apptLoc = rev.location || '';
-                          const locationData = apptLoc ? locations.find(l => l.name.toLowerCase().includes(apptLoc.toLowerCase())) : undefined;
-                          const validBays = locationData ? locationData.bays : [];
+                          const locationData = apptLoc ? locations.find(l => (l.name || '').toLowerCase().includes(apptLoc.toLowerCase())) : undefined;
+                          const validBays = locationData ? (locationData.bays || []) : [];
                           const isHam = apptLoc.toLowerCase().includes('hamilton');
                           const allLocShipments = isHam ? hamiltonShipments : vancouverShipments;
-                          const apptsForDay = rev.shipmentDate ? allLocShipments.filter(s => s.date === rev.shipmentDate).sort((a, b) => a.time.localeCompare(b.time)) : [];
-                          const bookedSlots = new Set(apptsForDay.map(s => `${s.time}|${s.bay}`));
+                          // Null-safe sort: an imported shipment can have an empty time —
+                          // a.time.localeCompare(...) on undefined would throw and crash
+                          // the whole review modal ("Review all" renders every scheduler).
+                          const apptsForDay = rev.shipmentDate ? allLocShipments.filter(s => s.date === rev.shipmentDate).sort((a, b) => (a.time || '').localeCompare(b.time || '')) : [];
+                          const bookedSlots = new Set(apptsForDay.map(s => `${s.time || ''}|${s.bay || ''}`));
                           const getAvailBays = (slot: string) => validBays.filter(bay => !bookedSlots.has(`${slot}|${bay}`));
                           const isSlotAvailable = (slot: string) => rev.apptBay ? !bookedSlots.has(`${slot}|${rev.apptBay}`) : getAvailBays(slot).length > 0;
                           const allSlots = getLocationAllTimeSlots(apptLoc);
@@ -19261,6 +19266,7 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                    </ErrorBoundary>
                     );
                   })}
                 </div>
