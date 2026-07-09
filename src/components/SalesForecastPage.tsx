@@ -331,6 +331,33 @@ export default function SalesForecastPage({
     }).sort((a, b) => b.total - a.total);
   }, [mergedForecasts, skus, qaProducts, tollingFees]);
 
+  // ── Packaging material needs from forecast (BOM × forecast units) ──────────
+  // For each forecast product, convert forecast MT → selling units via the QA
+  // product's net weight, then multiply each Bill-of-Materials line's per-unit
+  // quantity (grossed up by its shrinkage %). Aggregated by material.
+  const packagingNeeds = useMemo(() => {
+    const map = new Map<string, { materialName: string; materialCode: string; category: string; unit: string; supplier: string; qty: number }>();
+    let skippedNoWeight = 0;
+    for (const row of productForecastRows) {
+      const sku = skus.find(s => s.name === row.productName);
+      const qa = qaProducts.find(q => q.skuName === row.productName || (sku && q.skuId === sku.id));
+      const bom = qa?.billOfMaterials || [];
+      const netKg = qa?.netWeightKg || 0;
+      if (!bom.length) continue;
+      if (netKg <= 0) { skippedNoWeight++; continue; }
+      const units = (row.annual * 1000) / netKg; // forecast MT → kg → selling units
+      for (const item of bom) {
+        const per = (item.quantity || 0) * (1 + (item.shrinkage || 0) / 100);
+        if (per <= 0) continue;
+        const key = `${(item.materialName || '').trim().toLowerCase()}|${(item.unit || '').trim().toLowerCase()}`;
+        const cur = map.get(key) || { materialName: item.materialName || '(unnamed)', materialCode: item.materialCode || '', category: item.category || '', unit: item.unit || '', supplier: item.supplier || '', qty: 0 };
+        cur.qty += units * per;
+        map.set(key, cur);
+      }
+    }
+    return { rows: Array.from(map.values()).sort((a, b) => b.qty - a.qty), skippedNoWeight };
+  }, [productForecastRows, skus, qaProducts]);
+
   // ── Product view modal data ─────────────────────────────────────────────
   const productViewData = useMemo(() => {
     if (!viewingProduct || !selectedFY) return [] as { customerName: string; values: number[] }[];
@@ -1134,6 +1161,46 @@ export default function SalesForecastPage({
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── Packaging Material Requirements (from forecast BOM) ───────────── */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h2 className="text-xs font-bold uppercase tracking-widest">Packaging Material Requirements</h2>
+          <span className="text-[10px] uppercase tracking-widest opacity-60">Forecast units × Bill of Materials (+ shrinkage)</span>
+        </div>
+        <div className="overflow-x-auto border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-[#141414] text-[10px] uppercase tracking-widest font-bold opacity-60">
+                <th className="text-left px-4 py-2">Material</th>
+                <th className="text-left px-4 py-2">Code</th>
+                <th className="text-left px-4 py-2">Category</th>
+                <th className="text-left px-4 py-2">Supplier</th>
+                <th className="text-right px-4 py-2">Required Qty</th>
+                <th className="text-left px-4 py-2">Unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {packagingNeeds.rows.map((m) => (
+                <tr key={`${m.materialName}|${m.unit}`} className="border-b border-gray-200 hover:bg-gray-50">
+                  <td className="px-4 py-2 font-medium">{m.materialName}</td>
+                  <td className="px-4 py-2 font-mono">{m.materialCode || '—'}</td>
+                  <td className="px-4 py-2">{m.category || '—'}</td>
+                  <td className="px-4 py-2">{m.supplier || '—'}</td>
+                  <td className="px-4 py-2 text-right font-mono font-bold">{m.qty.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  <td className="px-4 py-2">{m.unit || '—'}</td>
+                </tr>
+              ))}
+              {packagingNeeds.rows.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No Bill-of-Materials packaging linked to forecast products yet. Add a BOM (and net weight) on QA products to see requirements here.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {packagingNeeds.skippedNoWeight > 0 && (
+          <p className="text-[10px] opacity-50 italic mt-1">{packagingNeeds.skippedNoWeight} forecast product(s) have a BOM but no net weight set, so they can't be converted to units — set net weight on those QA products to include them.</p>
+        )}
       </div>
 
       {/* ── Forecast by Period View ───────────────────────────────────────── */}

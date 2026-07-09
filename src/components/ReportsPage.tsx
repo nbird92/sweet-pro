@@ -1407,6 +1407,66 @@ export default function ReportsPage({
   const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
   const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REPORT: Outstanding contract volume vs future forecast (by product)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const contractVsForecast = useMemo(() => {
+    const contractByProduct = new Map<string, number>();
+    for (const ct of contracts) {
+      if (ct.active === false) continue;
+      const rem = ct.volumeOutstanding != null ? ct.volumeOutstanding : Math.max(0, (ct.contractVolume || 0) - (ct.volumeTaken || 0));
+      const p = (ct.skuName || '').trim() || '(unspecified)';
+      contractByProduct.set(p, (contractByProduct.get(p) || 0) + rem);
+    }
+    const forecastByProduct = new Map<string, number>();
+    for (const cf of customerForecasts) {
+      for (const line of cf.lines) {
+        const mt = line.entries.reduce((s, e) => s + e.value, 0);
+        const p = (line.productName || '').trim() || '(unspecified)';
+        forecastByProduct.set(p, (forecastByProduct.get(p) || 0) + mt);
+      }
+    }
+    const products = new Set([...contractByProduct.keys(), ...forecastByProduct.keys()]);
+    return [...products].map(p => {
+      const contracted = contractByProduct.get(p) || 0;
+      const forecast = forecastByProduct.get(p) || 0;
+      return { product: p, contracted, forecast, gap: forecast - contracted };
+    }).filter(r => r.contracted > 0 || r.forecast > 0).sort((a, b) => b.contracted - a.contracted);
+  }, [contracts, customerForecasts]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // REPORT: Forecast accuracy — forecast vs actual invoiced (by customer)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const forecastAccuracy = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
+      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
+      : (inv.qty || 0);
+    const fc = new Map<string, { name: string; forecast: number }>();
+    for (const cf of customerForecasts) {
+      const k = norm(cf.customerName);
+      if (!k) continue;
+      const prev = fc.get(k) || { name: cf.customerName, forecast: 0 };
+      prev.forecast += cf.annualForecast || 0;
+      fc.set(k, prev);
+    }
+    const act = new Map<string, number>();
+    for (const inv of invoices) {
+      const k = norm(resolveCustomerName(inv.customer));
+      if (!k) continue;
+      act.set(k, (act.get(k) || 0) + invMt(inv));
+    }
+    const keys = new Set([...fc.keys(), ...act.keys()]);
+    return [...keys].map(k => {
+      const forecast = fc.get(k)?.forecast || 0;
+      const actual = act.get(k) || 0;
+      const name = fc.get(k)?.name || k;
+      const variance = actual - forecast;
+      const accuracy = forecast > 0 ? Math.max(0, (1 - Math.abs(variance) / forecast) * 100) : (actual > 0 ? 0 : 100);
+      return { customer: name, forecast, actual, variance, accuracy };
+    }).filter(r => r.forecast > 0 || r.actual > 0).sort((a, b) => b.forecast - a.forecast);
+  }, [customerForecasts, invoices, resolveCustomerName]);
+
   return (
     <div className="space-y-8">
       {/* Page Header */}
@@ -1924,6 +1984,88 @@ export default function ReportsPage({
             </div>
           </div>
         )}
+      </div>
+
+      {/* ═══════════════ REPORT: Outstanding Contract Volume vs Forecast ═══════════════ */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+            <Package size={14} />
+            Outstanding Contract Volume vs Future Forecast
+          </h3>
+          <span className="text-[10px] uppercase tracking-widest opacity-60">By product</span>
+        </div>
+        <div className="border border-[#141414] border-t-0 overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
+                <th className="p-3">Product</th>
+                <th className="p-3 text-right">Outstanding Contract (MT)</th>
+                <th className="p-3 text-right">Future Forecast (MT)</th>
+                <th className="p-3 text-right">Forecast − Contract (MT)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {contractVsForecast.map(r => (
+                <tr key={r.product} className="hover:bg-[#F9F9F9]">
+                  <td className="p-3 font-bold">{r.product}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.contracted)}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.forecast)}</td>
+                  <td className={`p-3 text-right font-mono font-bold ${r.gap < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{r.gap >= 0 ? '+' : ''}{formatNum(r.gap)}</td>
+                </tr>
+              ))}
+              {contractVsForecast.length === 0 && (
+                <tr><td colSpan={4} className="p-6 text-center opacity-50 italic">No contract or forecast volume.</td></tr>
+              )}
+              {contractVsForecast.length > 0 && (
+                <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                  <td className="p-3 uppercase tracking-widest">Total</td>
+                  <td className="p-3 text-right font-mono">{formatNum(contractVsForecast.reduce((s, r) => s + r.contracted, 0))}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(contractVsForecast.reduce((s, r) => s + r.forecast, 0))}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(contractVsForecast.reduce((s, r) => s + r.gap, 0))}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ═══════════════ REPORT: Forecast Accuracy ═══════════════ */}
+      <div>
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+            <BarChart3 size={14} />
+            Forecast Accuracy — Forecast vs Actual Invoiced
+          </h3>
+          <span className="text-[10px] uppercase tracking-widest opacity-60">By customer · total forecast vs total invoiced</span>
+        </div>
+        <div className="border border-[#141414] border-t-0 overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
+                <th className="p-3">Customer</th>
+                <th className="p-3 text-right">Forecast (MT)</th>
+                <th className="p-3 text-right">Actual Invoiced (MT)</th>
+                <th className="p-3 text-right">Variance (MT)</th>
+                <th className="p-3 text-right">Accuracy</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {forecastAccuracy.map(r => (
+                <tr key={r.customer} className="hover:bg-[#F9F9F9]">
+                  <td className="p-3 font-bold">{r.customer}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.forecast)}</td>
+                  <td className="p-3 text-right font-mono">{formatNum(r.actual)}</td>
+                  <td className={`p-3 text-right font-mono ${r.variance < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{r.variance >= 0 ? '+' : ''}{formatNum(r.variance)}</td>
+                  <td className="p-3 text-right font-mono font-bold">{r.forecast > 0 ? `${r.accuracy.toFixed(0)}%` : '—'}</td>
+                </tr>
+              ))}
+              {forecastAccuracy.length === 0 && (
+                <tr><td colSpan={5} className="p-6 text-center opacity-50 italic">No forecast or invoiced volume.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
