@@ -116,6 +116,7 @@ import {
   matchProduct,
   matchContract,
   matchShipToLocation,
+  findLearned,
   loadLearned,
   recordLearned,
   saveLearned,
@@ -572,6 +573,104 @@ export default function App() {
     return isNaN(d.getTime()) ? t : new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(d);
   };
 
+  // ── Smarter scanned-product resolver ──────────────────────────────────────
+  // Layered on top of the learned mappings:
+  //  (1) match by the buyer's vendor item code, then the description (learned);
+  //  (2) a hard sugar-FORM guard so a "liquid / brix" line can never resolve to a
+  //      granulated SKU (and vice-versa);
+  //  (3) bias toward products this customer has actually been invoiced/ordered for
+  //      (customer + location history);
+  //  (4) leave the product BLANK when no match is confident, so a weak guess isn't
+  //      silently auto-selected — and mis-learned — on approval.
+  type ScanOpt = { value: string; label: string; key: string; location: string };
+  const nrm = (s?: string) => (s || '').trim().toLowerCase();
+  const tokenSim = (a: string, b: string): number => {
+    const na = nrm(a).replace(/[^a-z0-9]+/g, ''), nb = nrm(b).replace(/[^a-z0-9]+/g, '');
+    if (!na || !nb) return 0;
+    if (na === nb) return 1;
+    if (na.includes(nb) || nb.includes(na)) return 0.85;
+    const ta = new Set((a.toLowerCase().match(/[a-z0-9]+/g) || []));
+    const tb = new Set((b.toLowerCase().match(/[a-z0-9]+/g) || []));
+    if (!ta.size || !tb.size) return 0;
+    let inter = 0; ta.forEach(t => { if (tb.has(t)) inter++; });
+    return inter / Math.max(ta.size, tb.size);
+  };
+  // Sugar FORM of a free-text string. Liquid is checked BEFORE granulated so a
+  // "liquid … white" line reads as liquid. '' when indeterminate.
+  const detectSugarForm = (s?: string): string => {
+    const t = nrm(s);
+    if (!t) return '';
+    if (/molass/.test(t)) return 'molasses';
+    if (/\bliquid\b|\bbrix\b|\bsyrup\b|invert|sucrose\s*\d/.test(t)) return 'liquid';
+    if (/icing|powder|confection|10x/.test(t)) return 'icing';
+    if (/\bbrown\b|demerara/.test(t)) return 'brown';
+    if (/\byellow\b/.test(t)) return 'yellow';
+    if (/granulat|\bwhite\b|\bfine\b|\bgran\b|berry|caster/.test(t)) return 'granulated';
+    return '';
+  };
+  const optionSugarForm = (o: ScanOpt): string => {
+    const qa = qaProducts.find(q => q.id === o.key) || qaProducts.find(q => q.skuName === o.value);
+    const sku = skus.find(s => s.id === o.key) || skus.find(s => s.name === o.value);
+    return detectSugarForm(qa?.sugarType || sku?.sugarType) || detectSugarForm(o.label) || detectSugarForm(o.value);
+  };
+  // What this customer has historically bought — by SKU key and by product name,
+  // weighted up when the historical origin location matches.
+  const customerProductAffinity = (cust: Customer | null | undefined, location?: string) => {
+    const keys = new Map<string, number>();
+    const names = new Map<string, number>();
+    if (!cust) return { keys, names };
+    const nameSet = new Set([cust.name, cust.itasCustomerName].map(nrm).filter(Boolean));
+    const loc = nrm(location);
+    const consider = (lineItems: Array<{ productKey?: string; productDisplayName?: string; productName?: string }>, itemCustomer?: string, itemLoc?: string) => {
+      if (!nameSet.has(nrm(itemCustomer))) return;
+      const w = loc && nrm(itemLoc) === loc ? 3 : 1;
+      for (const li of lineItems) {
+        if (li?.productKey) keys.set(li.productKey, (keys.get(li.productKey) || 0) + w);
+        const nm = nrm(li?.productDisplayName || li?.productName);
+        if (nm) names.set(nm, (names.get(nm) || 0) + w);
+      }
+    };
+    for (const inv of invoices) consider(inv.lineItems?.length ? inv.lineItems : [{ productName: inv.product }], inv.customer, inv.location);
+    for (const o of orders) consider(o.lineItems?.length ? o.lineItems : [{ productName: o.product }], o.customer, o.location);
+    return { keys, names };
+  };
+  const resolveScannedProduct = (description: string | undefined, itemCode: string | undefined, cust: Customer | null | undefined, location: string | undefined, opts: ScanOpt[]): ScanOpt | null => {
+    const byValue = (v: string | null) => (v ? (opts.find(o => o.value === v) || null) : null);
+    // 1) Learned by the buyer's vendor item code (strongest — survives wording).
+    if (itemCode && itemCode.trim()) {
+      const hit = byValue(findLearned(poLearned, 'product', itemCode));
+      if (hit) return hit;
+    }
+    // 2) Learned by the description text.
+    if (description && description.trim()) {
+      const hit = byValue(findLearned(poLearned, 'product', description));
+      if (hit) return hit;
+    }
+    if (!description || !description.trim()) return null;
+    // 3) Score with a sugar-form guard + customer/location affinity.
+    const rawForm = detectSugarForm(description);
+    const aff = customerProductAffinity(cust, location);
+    let best: ScanOpt | null = null;
+    let bestScore = 0;
+    for (const o of opts) {
+      const oForm = optionSugarForm(o);
+      if (rawForm && oForm && rawForm !== oForm) continue; // never cross sugar form
+      let score = Math.max(tokenSim(description, o.label), tokenSim(description, o.value));
+      const affW = aff.keys.get(o.key) || aff.names.get(nrm(o.value)) || 0;
+      if (affW > 0) score += 0.4 + Math.min(0.3, affW * 0.05); // strong customer prior
+      if (rawForm && oForm && rawForm === oForm) score += 0.15; // right-form bonus
+      if (score > bestScore) { bestScore = score; best = o; }
+    }
+    // 4) Confidence gate — auto-select only a confident match; else leave blank.
+    if (best && bestScore >= 0.5) return best;
+    // Fallback: if the customer (at this location) has bought exactly ONE product
+    // in the line's sugar form, use it — a very strong single-product prior.
+    const inForm = (o: ScanOpt) => { const f = optionSugarForm(o); return !rawForm || !f || f === rawForm; };
+    const histOpts = opts.filter(o => inForm(o) && (aff.keys.get(o.key) || aff.names.get(nrm(o.value))));
+    if (histOpts.length === 1) return histOpts[0];
+    return null;
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (poRaw: ExtractedPO): POReview => {
     // Never trust the extraction to be well-formed — a null/partial object here
@@ -622,8 +721,11 @@ export default function App() {
       if (/^cwt/.test(s)) return 0.045359237;
       return 0;
     };
+    // Origin location for the order — also used to weight the customer's product
+    // history (products bought at this location score higher).
+    const origin = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
       const factor = mtPerUnit(li.unit);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
@@ -659,7 +761,7 @@ export default function App() {
       source: po,
       customerId: cust?.id || '',
       customerRaw: po.customerName || '',
-      location: contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '',
+      location: origin,
       locationTouched: false,
       shipToLocationId: matchShipToForCustomer(cust?.id || '', po),
       po: po.poNumber || '',
@@ -1097,8 +1199,9 @@ export default function App() {
     const contract = matchContract(po.contractNumber, contracts, poLearned);
     const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
     const opts = buildOrderProductOptions();
+    const origin = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = matchProduct(li.description, opts, poLearned, li.itemNumber);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);

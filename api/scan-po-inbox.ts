@@ -108,10 +108,10 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
       return emails.map((e: any) => String(e).toLowerCase().split('@')[1] || '');
     })
     .filter((dom: string) => !!dom)));
-  // Ignore learned corrections older than 30 days (matches the client TTL) so a
+  // Ignore learned corrections older than 60 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.
   // The client physically deletes them; this is a belt-and-suspenders read guard.
-  const LEARNED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  const LEARNED_TTL_MS = 60 * 24 * 60 * 60 * 1000;
   const nowMs = Date.now();
   const learned = (learnedSnap.docs || []).map((d: any) => d.data()).filter((l: any) => {
     if (!l?.field || !l?.from || !l?.to) return false;

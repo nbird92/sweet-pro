@@ -315,7 +315,7 @@ const LEARN_KEY = 'poFieldMappings';
 
 /** Learned corrections expire this many days after they were last recorded
  *  (re-recording the same correction refreshes the window). */
-export const LEARNED_TTL_DAYS = 30;
+export const LEARNED_TTL_DAYS = 60;
 
 /** Drop mappings older than the TTL. Undated (legacy) entries are stamped with
  *  the current time and kept, so they expire 30 days from now rather than
