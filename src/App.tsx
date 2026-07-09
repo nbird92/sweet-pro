@@ -543,6 +543,35 @@ export default function App() {
     return best;
   };
 
+  // Validate/normalize a date to ISO YYYY-MM-DD, or '' if unparseable. Guards
+  // against malformed extracted dates that would otherwise throw "Invalid time
+  // value" the moment they're formatted (e.g. in the appointment scheduler).
+  const toIsoDateSafe = (s?: string): string => {
+    const t = (s || '').trim();
+    if (!t) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+      const d = new Date(t + 'T00:00:00');
+      return isNaN(d.getTime()) ? '' : t;
+    }
+    const d = new Date(t);
+    return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+  };
+  // Weekday name for an ISO date ('' if invalid) — never throws.
+  const safeWeekday = (iso?: string): string => {
+    const t = (iso || '').trim();
+    if (!t) return '';
+    const d = new Date(t + 'T12:00:00');
+    return isNaN(d.getTime()) ? '' : new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(d);
+  };
+  // Friendly appointment date label ("Monday, Jul 19") — falls back to the raw
+  // string, never throws.
+  const safeApptLabel = (iso?: string): string => {
+    const t = (iso || '').trim();
+    if (!t) return '—';
+    const d = new Date(t + 'T12:00:00');
+    return isNaN(d.getTime()) ? t : new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(d);
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (poRaw: ExtractedPO): POReview => {
     // Never trust the extraction to be well-formed — a null/partial object here
@@ -565,8 +594,11 @@ export default function App() {
     }
     // The shipment date is the PICK-UP date (po.shipmentDate is the requested
     // ship/pick-up date); fall back to the delivery date only if no pick-up date.
-    const deliveryDate = po.deliveryDate || '';
-    const shipmentDate = po.shipmentDate || deliveryDate || '';
+    // Normalize to a VALID ISO YYYY-MM-DD (or blank) — the model sometimes returns
+    // a non-ISO / malformed date, which later throws "Invalid time value" when the
+    // scheduler formats new Date(date + 'T12:00:00').
+    const deliveryDate = toIsoDateSafe(po.deliveryDate);
+    const shipmentDate = toIsoDateSafe(po.shipmentDate) || deliveryDate;
     // Currency: the matched contract's currency wins; else the single currency
     // shared by ALL of this customer's active contracts; else the customer
     // card's default currency; else whatever was scanned off the document.
@@ -859,7 +891,7 @@ export default function App() {
         id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         week: `Week ${getWeekNumber(apptDate)}`,
         date: apptDate,
-        day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(apptDate + 'T12:00:00')),
+        day: safeWeekday(apptDate),
         time: rev.apptTime || '',
         bay: rev.apptBay || '',
         customer: newOrder.customer,
@@ -1337,7 +1369,7 @@ export default function App() {
         id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         week: `Week ${getWeekNumber(dateISO)}`,
         date: dateISO,
-        day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(dateISO + 'T12:00:00')),
+        day: safeWeekday(dateISO),
         time,
         bay,
         customer: order.customer,
@@ -15145,7 +15177,7 @@ export default function App() {
                           onChange={(e) => {
                             const date = e.target.value;
                             const week = `Week ${getWeekNumber(date)}`;
-                            const day = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(date + 'T12:00:00'));
+                            const day = safeWeekday(date);
                             setEditingShipment({...editingShipment, date, week, day});
                           }}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
@@ -19229,7 +19261,7 @@ export default function App() {
                               {rev.shipmentDate ? (
                                 <div className="border border-[#141414] overflow-hidden">
                                   <div className="bg-[#141414] text-[#E4E3E0] p-2 flex justify-between items-center">
-                                    <h4 className="text-[10px] font-bold uppercase">Schedule for {apptLoc || '—'} — {new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(new Date(rev.shipmentDate + 'T12:00:00'))}</h4>
+                                    <h4 className="text-[10px] font-bold uppercase">Schedule for {apptLoc || '—'} — {safeApptLabel(rev.shipmentDate)}</h4>
                                     <span className="text-[9px] opacity-60">{apptsForDay.length} booked · {availSlots.length} available</span>
                                   </div>
                                   <div className="p-2 bg-[#FAFAFA]">
@@ -20364,7 +20396,7 @@ export default function App() {
                         <div className="border border-[#141414] overflow-hidden">
                           <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center">
                             <h4 className="text-xs font-bold uppercase">
-                              Schedule for {shipmentCreationData.location} — {new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).format(new Date(shipmentCreationData.date + 'T12:00:00'))}
+                              Schedule for {shipmentCreationData.location} — {safeApptLabel(shipmentCreationData.date)}
                             </h4>
                             <span className="text-[10px] opacity-60">{appointmentsForDay.length} booked · {availableTimeSlots.length} available</span>
                           </div>
@@ -20528,7 +20560,7 @@ export default function App() {
                                 id: `SHIP-${Date.now()}-${Math.random()}`,
                                 week: `Week ${getWeekNumber(shipmentCreationData.date)}`,
                                 date: shipmentCreationData.date,
-                                day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(shipmentCreationData.date + 'T12:00:00')),
+                                day: safeWeekday(shipmentCreationData.date),
                                 time: shipmentCreationData.time,
                                 bay: shipmentCreationData.bay,
                                 customer: order.customer,
@@ -20564,7 +20596,7 @@ export default function App() {
                                 id: `SHIP-${Date.now()}-${Math.random()}`,
                                 week: `Week ${getWeekNumber(shipmentCreationData.date)}`,
                                 date: shipmentCreationData.date,
-                                day: new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date(shipmentCreationData.date + 'T12:00:00')),
+                                day: safeWeekday(shipmentCreationData.date),
                                 time: shipmentCreationData.time,
                                 bay: shipmentCreationData.bay,
                                 customer: `Transfer: ${transfer.from} → ${transfer.to}`,
