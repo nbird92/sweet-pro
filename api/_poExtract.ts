@@ -420,7 +420,7 @@ export function expandCallOffDoc(doc: any): any[] {
 export async function extractPO(
   file: UploadFile,
   hints: ExtractHints | undefined,
-  opts: { apiKey: string; model?: string },
+  opts: { apiKey: string; model?: string; fallbackModel?: string },
 ): Promise<any[]> {
   const parts = await partsForFile(file);
   const ht = hintsText(hints);
@@ -428,21 +428,34 @@ export async function extractPO(
   parts.push({ text: 'Extract this purchase order into the required JSON schema.' });
 
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
-  const response = await generateWithRetry(ai, {
-    model: opts.model || DEFAULT_MODEL,
-    contents: [{ role: 'user', parts }],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: 'application/json',
-      responseSchema: PO_BATCH_SCHEMA,
-      temperature: 0,
-      // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
-      // block of reasoning tokens on every call. Structured PO extraction against
-      // a fixed schema doesn't need it — disable thinking to cut cost sharply.
-      // Overridable via PO_EXTRACT_THINKING_BUDGET for a specific hard document.
-      thinkingConfig: { thinkingBudget: Number(process.env.PO_EXTRACT_THINKING_BUDGET ?? 0) },
-    },
-  });
+  const config = {
+    systemInstruction: SYSTEM_PROMPT,
+    responseMimeType: 'application/json',
+    responseSchema: PO_BATCH_SCHEMA,
+    temperature: 0,
+    // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
+    // block of reasoning tokens on every call. Structured PO extraction against
+    // a fixed schema doesn't need it — disable thinking to cut cost sharply.
+    // Overridable via PO_EXTRACT_THINKING_BUDGET for a specific hard document.
+    thinkingConfig: { thinkingBudget: Number(process.env.PO_EXTRACT_THINKING_BUDGET ?? 0) },
+  };
+  const primaryModel = opts.model || DEFAULT_MODEL;
+  let response: any;
+  try {
+    response = await generateWithRetry(ai, { model: primaryModel, contents: [{ role: 'user', parts }], config });
+  } catch (e: any) {
+    // A configured model can be retired (404 / NOT_FOUND / "no longer available").
+    // Don't let that break the scan — fall back to the full model when one is
+    // provided and differs from the one that just failed.
+    const msg = String(e?.message || e);
+    const status = e?.status ?? e?.code;
+    const modelGone = status === 404 || /not[_\s-]*found|no longer available|is not found|does not exist|unsupported model/i.test(msg);
+    if (modelGone && opts.fallbackModel && opts.fallbackModel !== primaryModel) {
+      response = await generateWithRetry(ai, { model: opts.fallbackModel, contents: [{ role: 'user', parts }], config });
+    } else {
+      throw e;
+    }
+  }
 
   const text = response.text;
   if (!text || !text.trim()) {

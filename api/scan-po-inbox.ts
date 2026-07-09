@@ -226,9 +226,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // model for document/image attachments (where reading accuracy matters most)
   // and for escalating a body-only order. Set PO_EXTRACT_LITE_MODEL='' (empty)
   // to disable the hybrid and use the full model everywhere.
+  // Use a rolling "-latest" alias so a retired lite snapshot doesn't 404; the
+  // body call also auto-falls-back to the full model if the lite model is
+  // unavailable. Set PO_EXTRACT_LITE_MODEL='' to disable the hybrid entirely.
   const liteModel = process.env.PO_EXTRACT_LITE_MODEL !== undefined
     ? (process.env.PO_EXTRACT_LITE_MODEL || model)
-    : 'gemini-2.5-flash-lite';
+    : 'gemini-flash-lite-latest';
 
   // Optional one-off overrides via query string (still gated by CRON_SECRET) for
   // ad-hoc tests, e.g. ?q=in:inbox&max=50&force=1 to scan the last 50 emails
@@ -375,7 +378,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const bodyFile = { name: '(email)', mimeType: 'text/plain', dataBase64: Buffer.from(bodyText, 'utf8').toString('base64') };
                 // Cheap first pass on the lite model (classification + simple
                 // body-stated orders).
-                let docs = await extractPO(bodyFile, hints, { apiKey, model: liteModel });
+                let docs = await extractPO(bodyFile, hints, { apiKey, model: liteModel, fallbackModel: model });
                 // Escalate to the full model ONLY when the cheap pass flagged an
                 // order AND the body itself is the order (no doc attachment to
                 // carry it) — that's the one place body reading accuracy matters.

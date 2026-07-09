@@ -956,6 +956,19 @@ export default function App() {
     const lineItems = validLines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
     const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
+    // Contract volume guard: when a KNOWN contract is selected, block the order if
+    // it exceeds the contract's remaining volume. No contract (or a scanned code
+    // not in the catalog) → no restriction; the order can still be created.
+    if (matchedContract) {
+      const remaining = matchedContract.volumeOutstanding != null
+        ? matchedContract.volumeOutstanding
+        : Math.max(0, (matchedContract.contractVolume || 0) - (matchedContract.volumeTaken || 0));
+      const orderMt = lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      if (orderMt > remaining + 1e-6) {
+        setErrorBox(`Not enough contract volume on ${matchedContract.contractNumber}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining, but this order is ${orderMt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT. Reduce the quantity or choose a different contract.`);
+        return null;
+      }
+    }
     const lineContracts = Array.from(new Set(lineItems.map(li => li.contractNumber).filter(Boolean)));
     const contractNumber = rev.contractNumber || lineContracts.join(', ');
     const location = rev.location || matchedContract?.origin || customer.defaultLocation || '';
@@ -9833,8 +9846,19 @@ export default function App() {
             cur.invoices.set(invKey, ia);
             g!.rows.set(rk, cur);
           };
-          if (inv.lineItems && inv.lineItems.length) inv.lineItems.forEach(li => add(li.productName, li.productKey, li.totalWeight));
-          else add(inv.product, undefined, inv.qty);
+          // MT is the INVOICED quantity — the invoice table's Quantity (MT) field
+          // (inv.qty), not the ordered line weight. For a multi-product invoice the
+          // invoiced qty is split across products proportionally by line weight so
+          // the per-product breakdown still sums to the invoiced total. Falls back
+          // to the summed line weights only when the invoice has no qty set.
+          const lineWtSum = (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
+          const invMt = (typeof inv.qty === 'number' && inv.qty > 0) ? inv.qty : lineWtSum;
+          if (inv.lineItems && inv.lineItems.length) {
+            if (lineWtSum > 0) inv.lineItems.forEach(li => add(li.productName, li.productKey, invMt * ((li.totalWeight || 0) / lineWtSum)));
+            else add(inv.lineItems[0].productName, inv.lineItems[0].productKey, invMt);
+          } else {
+            add(inv.product, undefined, invMt);
+          }
         }
         return Array.from(groups.entries()).map(([key, g]) => {
           const rows = Array.from(g.rows.values()).map(r => {
