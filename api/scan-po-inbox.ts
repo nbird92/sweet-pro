@@ -29,7 +29,9 @@ import {
  *   GOOGLE_PRIVATE_KEY                   (gmail.readonly scope authorized in Admin)
  *   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY
  * Optional env:
- *   PO_EXTRACT_MODEL  (default gemini-2.5-flash)
+ *   PO_EXTRACT_MODEL       (default gemini-2.5-flash — attachments & escalation)
+ *   PO_EXTRACT_LITE_MODEL  (default gemini-2.5-flash-lite — email-body pass;
+ *                           set empty to disable the hybrid and use the full model)
  *   PO_INBOX_QUERY    (default "newer_than:1d")
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
@@ -220,6 +222,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured.' });
   if (!inbox) return res.status(500).json({ error: 'PO_INBOX_ADDRESS not configured.' });
   const model = process.env.PO_EXTRACT_MODEL || DEFAULT_MODEL;
+  // Hybrid: a cheaper model for the email-body classification pass; the full
+  // model for document/image attachments (where reading accuracy matters most)
+  // and for escalating a body-only order. Set PO_EXTRACT_LITE_MODEL='' (empty)
+  // to disable the hybrid and use the full model everywhere.
+  const liteModel = process.env.PO_EXTRACT_LITE_MODEL !== undefined
+    ? (process.env.PO_EXTRACT_LITE_MODEL || model)
+    : 'gemini-2.5-flash-lite';
 
   // Optional one-off overrides via query string (still gated by CRON_SECRET) for
   // ad-hoc tests, e.g. ?q=in:inbox&max=50&force=1 to scan the last 50 emails
@@ -363,8 +372,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             try {
               const bodyText = [emailContext(msg.payload), getMessageBody(msg.payload, { keepQuoted: true })].filter(Boolean).join('\n\n');
               if (bodyText && bodyText.trim().length > 20) {
-                const bodyB64 = Buffer.from(bodyText, 'utf8').toString('base64');
-                const docs = await extractPO({ name: '(email)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+                const bodyFile = { name: '(email)', mimeType: 'text/plain', dataBase64: Buffer.from(bodyText, 'utf8').toString('base64') };
+                // Cheap first pass on the lite model (classification + simple
+                // body-stated orders).
+                let docs = await extractPO(bodyFile, hints, { apiKey, model: liteModel });
+                // Escalate to the full model ONLY when the cheap pass flagged an
+                // order AND the body itself is the order (no doc attachment to
+                // carry it) — that's the one place body reading accuracy matters.
+                // Attachment emails get the full model below, so no re-run there;
+                // 'other' mail stays cheap on lite.
+                if (liteModel !== model && docAtts.length === 0
+                    && docs.some(d => d?.documentType && d.documentType !== 'other')) {
+                  try { docs = await extractPO(bodyFile, hints, { apiKey, model }); } catch { /* keep the lite result */ }
+                }
                 noteOrder(docs);
                 for (const extraction of docs) await queueExtraction(extraction, '(email body)');
               }
