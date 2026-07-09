@@ -3725,6 +3725,9 @@ export default function App() {
   // Confirm + summary popup shown before Complete & Bill actually runs.
   // Holds the order being confirmed; null hides the dialog.
   const [completeAndBillConfirm, setCompleteAndBillConfirm] = useState<Order | null>(null);
+  // Same, but triggered from the shipment scheduler — bills the linked order using
+  // the shipment's SCALED qty as the invoiced quantity. Null hides the dialog.
+  const [shipmentBillConfirm, setShipmentBillConfirm] = useState<Shipment | null>(null);
 
   // Return Orders ----------------------------------------------------------
   const [returnOrders, setReturnOrders] = useState<ReturnOrder[]>([]);
@@ -5120,7 +5123,7 @@ export default function App() {
     }
   };
 
-  const completeAndBillOrder = (orderId: string) => {
+  const completeAndBillOrder = (orderId: string, opts?: { invoiceQtyMt?: number; shipmentId?: string }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status === 'Completed') return;
 
@@ -5131,9 +5134,13 @@ export default function App() {
     const ordContractNum = order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
     const contract = contracts.find(c => c.contractNumber === ordContractNum);
     const totalWeight = order.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
+    // When billed from a shipment, the SCALED qty (MT) is the actual weighed/shipped
+    // amount and becomes the invoiced Quantity (MT) — and drives the invoice amount
+    // and the contract volume drawdown. Falls back to the ordered weight otherwise.
+    const billQty = (opts?.invoiceQtyMt && opts.invoiceQtyMt > 0) ? opts.invoiceQtyMt : totalWeight;
     const invoiceAmount = contract
-      ? totalWeight * contract.finalPrice  // totalWeight is in MT, finalPrice is $/MT
-      : totalWeight * config.refiningMarginCadMt; // fallback
+      ? billQty * contract.finalPrice  // billQty is in MT, finalPrice is $/MT
+      : billQty * config.refiningMarginCadMt; // fallback
 
     const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newInvoice: Invoice = {
@@ -5142,7 +5149,7 @@ export default function App() {
       customer: order.customer,
       product: order.product || order.lineItems.map(li => li.productName).join(', '),
       po: order.po,
-      qty: totalWeight,
+      qty: billQty,
       carrier: order.carrier || '',
       amount: invoiceAmount,
       shipmentId: orderId,
@@ -5191,7 +5198,7 @@ export default function App() {
     if (contract) {
       setContracts(prevContracts => prevContracts.map(c => {
         if (c.contractNumber === ordContractNum) {
-          const newVolumeTaken = c.volumeTaken + totalWeight;
+          const newVolumeTaken = c.volumeTaken + billQty;
           return {
             ...c,
             volumeTaken: newVolumeTaken,
@@ -5200,6 +5207,13 @@ export default function App() {
         }
         return c;
       }));
+    }
+
+    // Mark the linked shipment Completed when billed from the scheduler.
+    if (opts?.shipmentId) {
+      const sid = opts.shipmentId;
+      setHamiltonShipments(prev => prev.map(s => s.id === sid ? { ...s, status: 'Completed' } : s));
+      setVancouverShipments(prev => prev.map(s => s.id === sid ? { ...s, status: 'Completed' } : s));
     }
 
     // Auto-send BOL + COA emails when their respective trigger toggles
@@ -13153,6 +13167,115 @@ export default function App() {
             </div>
           );
         })()}
+
+        {/* Complete & Bill confirmation — triggered from the shipment scheduler.
+            Bills the linked order using the shipment's SCALED qty as the invoiced
+            quantity. Blank shipment fields are flagged red; a missing scaled qty
+            blocks billing. */}
+        {shipmentBillConfirm && (() => {
+          const ship = shipmentBillConfirm;
+          const order = orders.find(o => o.bolNumber === ship.bol)
+            || (pendingCompleteOrderId ? orders.find(o => o.id === pendingCompleteOrderId) : undefined);
+          const contractNum = order?.contractNumber || ship.contractNumber || '';
+          const contract = contracts.find(c => c.contractNumber === contractNum);
+          const scaled = ship.scaledQty;
+          const hasScaled = typeof scaled === 'number' && scaled > 0;
+          const invoiceAmount = hasScaled
+            ? (contract ? scaled! * contract.finalPrice : scaled! * config.refiningMarginCadMt)
+            : 0;
+          const close = () => { setShipmentBillConfirm(null); setPendingCompleteOrderId(null); };
+          // Editable shipment fields — any blank one is highlighted so the operator
+          // knows what's missing before billing.
+          const fields: Array<{ label: string; value: string; required?: boolean }> = [
+            { label: 'Scaled Qty (MT)', value: hasScaled ? String(scaled) : '', required: true },
+            { label: 'Carrier', value: (ship.carrier || '').trim() },
+            { label: 'Trailer No', value: (ship.trailerNo || '').trim() },
+            { label: 'Arrive', value: (ship.arrive || '').trim() },
+            { label: 'Start', value: (ship.start || '').trim() },
+            { label: 'Out', value: (ship.out || '').trim() },
+            { label: 'Lot Number(s)', value: ((ship.lotNumbers || []).join(', ') || ship.lotNumber || '').trim() },
+            { label: 'Seal Number(s)', value: (ship.sealNumbers || []).join(', ').trim() },
+            { label: 'Delivery Date', value: (ship.deliveryDate || '').trim() },
+          ];
+          const blanks = fields.filter(f => !f.value);
+          return (
+            <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="bg-emerald-700 text-white px-6 py-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+                    <CheckCircle2 size={16} /> Confirm Complete &amp; Bill
+                  </h3>
+                  <button onClick={close} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+                <div className="p-6 space-y-5">
+                  {!order && (
+                    <div className="border border-red-400 bg-red-50 text-red-700 text-xs font-bold px-3 py-2">No order found for BOL {ship.bol}. Bill from the order menu instead.</div>
+                  )}
+                  <p className="text-sm">
+                    You are about to <strong>complete</strong> this shipment and create the corresponding <strong>invoice</strong> — the <strong>Scaled Qty (MT)</strong> becomes the invoiced Quantity (MT). This cannot be undone from the tables.
+                  </p>
+                  <div className="border border-[#141414]/20 bg-[#F5F5F5]">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-[10px] uppercase font-bold tracking-widest">Shipment Summary</div>
+                    <table className="w-full text-sm">
+                      <tbody className="divide-y divide-[#141414]/10">
+                        <SummaryRow label="BOL Number" value={ship.bol || '—'} mono />
+                        <SummaryRow label="Customer" value={ship.customer || '—'} bold />
+                        <SummaryRow label="PO Number" value={ship.po || order?.po || '—'} mono />
+                        <SummaryRow label="Contract #" value={contractNum || '—'} mono />
+                        <SummaryRow label="Product" value={productToShortform(ship.product) || ship.product || '—'} />
+                        <SummaryRow label="Ordered Qty (MT)" value={`${(ship.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`} mono />
+                        <SummaryRow label="Scaled Qty → Invoiced (MT)" value={hasScaled ? `${scaled!.toLocaleString(undefined, { maximumFractionDigits: 3 })}` : 'MISSING'} mono bold />
+                        <SummaryRow label="Invoice Amount" value={hasScaled ? `$${invoiceAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${order?.currency || 'CAD'}` : '—'} bold />
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Blank-field checklist — missing fields are flagged red. */}
+                  <div className="border border-[#141414]/20">
+                    <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-[10px] uppercase font-bold tracking-widest flex justify-between">
+                      <span>Shipment Fields</span>
+                      <span className={blanks.length ? 'text-amber-300' : 'text-emerald-300'}>{blanks.length ? `${blanks.length} blank` : 'all set'}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-px bg-[#141414]/10">
+                      {fields.map(f => (
+                        <div key={f.label} className={`p-2.5 ${f.value ? 'bg-white' : 'bg-red-50'}`}>
+                          <div className={`text-[9px] uppercase font-bold ${f.value ? 'opacity-50' : 'text-red-600'}`}>{f.label}{f.required && !f.value ? ' *' : ''}</div>
+                          <div className={`text-xs font-mono ${f.value ? '' : 'text-red-600 font-bold'}`}>{f.value || '— missing —'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {!hasScaled && (
+                    <div className="border border-red-400 bg-red-50 text-red-700 text-xs font-bold px-3 py-2">
+                      Scaled Qty (MT) is required — a shipment can't be completed &amp; billed without it. Enter the scaled weight on the shipment, then bill.
+                    </div>
+                  )}
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex justify-end gap-2">
+                  <button onClick={close} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white">Cancel</button>
+                  <button
+                    disabled={!order || !hasScaled}
+                    onClick={() => {
+                      if (!order || !hasScaled) return;
+                      completeAndBillOrder(order.id, { invoiceQtyMt: scaled!, shipmentId: ship.id });
+                      close();
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <CheckCircle2 size={14} /> Confirm — Complete &amp; Bill
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Add / Edit Carrier Modal */}
@@ -15599,24 +15722,31 @@ export default function App() {
                       >
                         <FileText size={14} /> Preview BOL
                       </button>
-                      {pendingCompleteOrderId && (
-                        <button
-                          onClick={() => {
-                            // Save shipment changes first
-                            const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
-                            const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
-                            setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
-                            // Then complete & bill the order
-                            completeAndBillOrder(pendingCompleteOrderId);
-                            setIsAddingShipment(false);
-                            setEditingShipment(null);
-                            setPendingCompleteOrderId(null);
-                          }}
-                          className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-emerald-700 transition-all"
-                        >
-                          <FileText size={14} /> Complete &amp; Bill
-                        </button>
-                      )}
+                      {(() => {
+                        // Complete & Bill is available when the shipment's order is
+                        // Confirmed (only confirmed orders can be billed) — or when
+                        // this editor was opened from the order's own Complete & Bill.
+                        const linkedOrder = orders.find(o => o.bolNumber === editingShipment.bol);
+                        const canBill = !!pendingCompleteOrderId || linkedOrder?.status === 'Confirmed';
+                        if (!canBill) return null;
+                        return (
+                          <button
+                            onClick={() => {
+                              // Save shipment edits, then open the Confirm popup (which
+                              // enforces the scaled-qty rule and highlights blanks).
+                              const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
+                              const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
+                              setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
+                              setShipmentBillConfirm(editingShipment);
+                              setIsAddingShipment(false);
+                              setEditingShipment(null);
+                            }}
+                            className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-emerald-700 transition-all"
+                          >
+                            <CheckCircle2 size={14} /> Complete &amp; Bill
+                          </button>
+                        );
+                      })()}
                       <button
                         onClick={() => editingShipment && handleGenerateCoa(editingShipment)}
                         className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
