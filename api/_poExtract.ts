@@ -205,6 +205,15 @@ async function xlsxToText(buf: Buffer): Promise<string> {
   return out.join('\n');
 }
 
+// Cost cap: bound how much text (email thread / spreadsheet / csv) is sent to
+// Gemini. A PO's actionable content is near the top; a 200-page quoted thread or
+// a huge sheet would otherwise bill enormous input tokens. Overridable via
+// PO_EXTRACT_MAX_TEXT_CHARS.
+const MAX_TEXT_CHARS = Math.max(4000, Number(process.env.PO_EXTRACT_MAX_TEXT_CHARS ?? 40000));
+function capText(t: string): string {
+  return t.length > MAX_TEXT_CHARS ? t.slice(0, MAX_TEXT_CHARS) + '\n…[truncated for length]' : t;
+}
+
 /** Build the Gemini content parts for one uploaded file. */
 async function partsForFile(file: UploadFile): Promise<any[]> {
   const mime = mediaTypeFor(file.mimeType);
@@ -216,9 +225,9 @@ async function partsForFile(file: UploadFile): Promise<any[]> {
   const name = (file.name || '').toLowerCase();
   if (name.endsWith('.xlsx') || name.endsWith('.xls') || mime.includes('spreadsheet') || mime.includes('excel')) {
     const text = await xlsxToText(buf);
-    return [label, { text: `Spreadsheet contents (tab-separated):\n${text}` }];
+    return [label, { text: `Spreadsheet contents (tab-separated):\n${capText(text)}` }];
   }
-  return [label, { text: `File contents:\n${buf.toString('utf8')}` }];
+  return [label, { text: `File contents:\n${capText(buf.toString('utf8'))}` }];
 }
 
 function hintsText(hints?: ExtractHints): string {
@@ -427,6 +436,11 @@ export async function extractPO(
       responseMimeType: 'application/json',
       responseSchema: PO_BATCH_SCHEMA,
       temperature: 0,
+      // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
+      // block of reasoning tokens on every call. Structured PO extraction against
+      // a fixed schema doesn't need it — disable thinking to cut cost sharply.
+      // Overridable via PO_EXTRACT_THINKING_BUDGET for a specific hard document.
+      thinkingConfig: { thinkingBudget: Number(process.env.PO_EXTRACT_THINKING_BUDGET ?? 0) },
     },
   });
 

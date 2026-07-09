@@ -543,7 +543,12 @@ export default function App() {
   };
 
   // Turn a raw extraction into an editable review card with best-effort mappings.
-  const reviewFromExtraction = (po: ExtractedPO): POReview => {
+  const reviewFromExtraction = (poRaw: ExtractedPO): POReview => {
+    // Never trust the extraction to be well-formed — a null/partial object here
+    // would throw and (since the review modal isn't inside a page try/catch)
+    // blank the whole app. Normalize to a safe shape first.
+    const po: ExtractedPO = (poRaw && typeof poRaw === 'object' ? poRaw : ({} as ExtractedPO));
+    if (!Array.isArray(po.lineItems)) po.lineItems = [];
     const opts = buildOrderProductOptions();
     // Customer: by name/number, else inferred from the ship-to address.
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned)
@@ -978,14 +983,24 @@ export default function App() {
   // for manual uploads. Each becomes an editable review card tagged with its
   // pendingImportId, so approving (Create Open Order) clears it from the queue.
   const reviewPendingImports = (imports: PoPendingImport[]) => {
-    const list = (imports || []).filter(Boolean);
-    if (!list.length) return;
+    // Only imports that actually carry an extraction — a queue doc with a
+    // missing/blank extraction would otherwise throw while building its review
+    // card and blank the whole app ("Review all" maps over ALL of them).
+    const list = (imports || []).filter(imp => imp && imp.extraction && typeof imp.extraction === 'object');
+    if (!list.length) { setErrorBox('No reviewable POs — these queue entries have no readable extraction data.'); return; }
     setPoScanFiles([]);
     setPoScanError(null);
-    setPoReviews(list.map(imp => ({
-      ...reviewFromExtraction(imp.extraction as ExtractedPO),
-      pendingImportId: imp.id,
-    })));
+    // Build each card defensively so one bad extraction can't take out the rest.
+    const reviews = list.map(imp => {
+      try {
+        return { ...reviewFromExtraction(imp.extraction as ExtractedPO), pendingImportId: imp.id };
+      } catch (e) {
+        console.error('Failed to build review card for pending import', imp.id, e);
+        return null;
+      }
+    }).filter(Boolean) as POReview[];
+    if (!reviews.length) { setErrorBox('Could not build review cards for these POs (unreadable extraction data).'); return; }
+    setPoReviews(reviews);
     setIsScanningPO(true);
   };
 

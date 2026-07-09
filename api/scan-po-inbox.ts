@@ -179,6 +179,11 @@ function senderCategoryOf(fromEmail: string | undefined, carrierDomains: string[
   if (isLogisticsSender(fromEmail, carrierDomains, carrierNames)) return 'logistics';
   return 'customer';
 }
+// Cheap keyword gate: does this text look order-related at all? Used to skip a
+// paid Gemini call on obvious non-orders (newsletters, out-of-office, replies).
+// Deliberately broad — real POs / amendments / carrier confirmations always hit
+// one of these — so the filter errs toward scanning.
+const ORDER_SIGNAL = /\b(p\.?\s?o\.?|purchase\s*order|sales\s*order|\border\b|bol\b|b\/l|bill of lading|contract|pick\s?up|delivery|deliver|dispatch|ship(?:ment|ping|per)?|schedul|appointment|appt|confirm|cancel|amend|revis|quantity|\bqty\b|tonne|\bmt\b|metric\s*ton|\bload\b|call\s?off|stock\s*request|release|trailer|carrier)\b/i;
 function isStockRequest(subject: string | undefined): boolean {
   return /stock\s*request/i.test(String(subject || ''));
 }
@@ -229,7 +234,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';
 
-  const summary = { scanned: 0, skipped: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
+  const summary = { scanned: 0, skipped: 0, bodySkipped: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
 
   // Each Gemini extraction takes a few seconds, so a backlog can exceed the
   // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
@@ -340,16 +345,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // 1. Email BODY — full thread + participant headers (From/Reply-To/To/Cc/
           //    Subject) so the customer + carrier are identifiable even when the
           //    message came "via" a Sucro group address.
-          try {
-            const bodyText = [emailContext(msg.payload), getMessageBody(msg.payload, { keepQuoted: true })].filter(Boolean).join('\n\n');
-            if (bodyText && bodyText.trim().length > 20) {
-              const bodyB64 = Buffer.from(bodyText, 'utf8').toString('base64');
-              const docs = await extractPO({ name: '(email)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
-              noteOrder(docs);
-              for (const extraction of docs) await queueExtraction(extraction, '(email body)');
+          //
+          // COST GATE: only spend a Gemini call on the body when it shows order
+          // intent (a PO / order / delivery / carrier-confirmation keyword) OR it's
+          // a customer email with NO document attachment (the body is then the only
+          // place an order could live). This skips newsletters, out-of-office,
+          // internal chatter and plain cover notes — which would otherwise each be
+          // billed just to be classified "other". Attachments are ALWAYS scanned
+          // below, so an attached PO is never missed regardless of this gate. The
+          // email is still recorded in the inbox feed either way (every email is
+          // "scanned"); only the paid extraction is skipped.
+          const bodyHasSignal = ORDER_SIGNAL.test(`${subject}\n${feedBody}`);
+          const scanBody = bodyHasSignal || (senderCategory === 'customer' && docAtts.length === 0);
+          if (scanBody) {
+            try {
+              const bodyText = [emailContext(msg.payload), getMessageBody(msg.payload, { keepQuoted: true })].filter(Boolean).join('\n\n');
+              if (bodyText && bodyText.trim().length > 20) {
+                const bodyB64 = Buffer.from(bodyText, 'utf8').toString('base64');
+                const docs = await extractPO({ name: '(email)', mimeType: 'text/plain', dataBase64: bodyB64 }, hints, { apiKey, model });
+                noteOrder(docs);
+                for (const extraction of docs) await queueExtraction(extraction, '(email body)');
+              }
+            } catch (e) {
+              summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
             }
-          } catch (e) {
-            summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
+          } else {
+            summary.bodySkipped++;
           }
 
           // 2. Document attachments — ALWAYS scanned (the PO is frequently in an
