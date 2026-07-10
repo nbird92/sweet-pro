@@ -87,6 +87,13 @@ export interface ParsedOrderRow {
   customsEntryNo: string;
   /** Reversals — credit/reversal reference or amount (invoices). */
   reversals: string;
+  /** Transfer-sync extras — remaining transfer-table columns. */
+  brix: string;
+  silo: string;
+  trailerNo: string;
+  portOfEntry: string;
+  htsCode: string;
+  countryOfOrigin: string;
 }
 
 export interface OrderSyncResult {
@@ -265,6 +272,12 @@ function parseStandardOrderTab(rows: string[][], tab: string): ParsedOrderRow[] 
       papsNo: '',
       customsEntryNo: '',
       reversals: '',
+      brix: '',
+      silo: '',
+      trailerNo: '',
+      portOfEntry: '',
+      htsCode: '',
+      countryOfOrigin: '',
     });
   }
   return out;
@@ -328,6 +341,12 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
       papsNo: '',
       customsEntryNo: '',
       reversals: '',
+      brix: '',
+      silo: '',
+      trailerNo: '',
+      portOfEntry: '',
+      htsCode: '',
+      countryOfOrigin: '',
     });
   }
   return out;
@@ -895,6 +914,13 @@ export interface ColumnMap {
   customsEntryNo?: number;
   /** Reversals — credit/reversal reference or amount for an invoice. */
   reversals?: number;
+  /** Transfer-sync extras — every remaining transfer-table column. */
+  brix?: number;
+  silo?: number;
+  trailerNo?: number;
+  portOfEntry?: number;
+  htsCode?: number;
+  countryOfOrigin?: number;
 }
 
 export interface ConfiguredTab {
@@ -1070,6 +1096,12 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     papsNo: find(h => h === 'paps' || h === 'paps #' || h === 'paps no' || h === 'paps no.' || h === 'paps number'),
     customsEntryNo: find(h => /customs entry|entry no|entry number|entry #/.test(h) || h === 'customs entry' || h === 'customs no'),
     reversals: find(h => /reversal/.test(h)),
+    brix: find(h => h === 'brix' || /brix/.test(h)),
+    silo: find(h => h === 'silo' || /silo|tank/.test(h)),
+    trailerNo: find(h => h === 'trailer' || h === 'trailer #' || h === 'trailer no' || /trailer/.test(h)),
+    portOfEntry: find(h => /port of entry|port/.test(h)),
+    htsCode: find(h => /hts|harmonized|tariff/.test(h)),
+    countryOfOrigin: find(h => /country of origin|country|origin country/.test(h)),
   };
 }
 
@@ -1115,6 +1147,12 @@ export function parseConfiguredTab(
     const papsRaw = cell(row, cm.papsNo);
     const customsEntryRaw = cell(row, cm.customsEntryNo);
     const reversalsRaw = cell(row, cm.reversals);
+    const brixRaw = cell(row, cm.brix);
+    const siloRaw = cell(row, cm.silo);
+    const trailerRaw = cell(row, cm.trailerNo);
+    const portOfEntryRaw = cell(row, cm.portOfEntry);
+    const htsCodeRaw = cell(row, cm.htsCode);
+    const countryRaw = cell(row, cm.countryOfOrigin);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
@@ -1164,6 +1202,12 @@ export function parseConfiguredTab(
       papsNo: papsRaw,
       customsEntryNo: customsEntryRaw,
       reversals: reversalsRaw,
+      brix: brixRaw,
+      silo: siloRaw,
+      trailerNo: trailerRaw,
+      portOfEntry: portOfEntryRaw,
+      htsCode: htsCodeRaw,
+      countryOfOrigin: countryRaw,
     });
   }
   return out;
@@ -2272,6 +2316,13 @@ export function parsedRowsToTransfersConfigured(
         splitNumber: r.splitNumber || undefined,
         papsNo: r.papsNo || undefined,
         customsEntryNo: r.customsEntryNo || undefined,
+        customer: r.customerName || undefined,
+        brix: r.brix || undefined,
+        silo: r.silo || undefined,
+        trailerNo: r.trailerNo || undefined,
+        portOfEntry: r.portOfEntry || undefined,
+        htsCode: r.htsCode || undefined,
+        countryOfOrigin: r.countryOfOrigin || undefined,
       };
       const isEmpty = (v: any) => v === undefined || v === null || v === '' || (typeof v === 'number' && v === 0);
 
@@ -2310,13 +2361,10 @@ export function parsedRowsToTransfersConfigured(
         product: productRefs.productDisplayName || productRefs.productName,
         amount: r.quantityMT,
         status: 'Pending',
-        ...(r.poNumber ? { po: r.poNumber } : {}),
-        ...(r.lotCode ? { lotCode: r.lotCode } : {}),
-        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
-        ...(r.splitNumber ? { splitNumber: r.splitNumber } : {}),
-        ...(r.papsNo ? { papsNo: r.papsNo } : {}),
-        ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
+        ...fields,
+        // status is authoritative for a NEW transfer; fields doesn't carry it.
       };
+      newTransfer.status = 'Pending';
 
       result.newTransfers.push(stripUndefined(newTransfer));
       if (numU) { existingNums.add(numU); }
@@ -2388,11 +2436,22 @@ export const TRANSFER_FIELDS: Array<{ key: keyof ColumnMap; label: string; requi
   { key: 'fromLocation', label: 'From (origin)', required: true },
   { key: 'toLocation', label: 'To (destination)', required: true },
   { key: 'product', label: 'Product' },
+  { key: 'customer', label: 'Customer' },
   { key: 'quantityMT', label: 'Amount (MT)', required: true },
   { key: 'carrier', label: 'Carrier' },
   { key: 'shipmentDate', label: 'Shipment Date', required: true },
   { key: 'deliveryDate', label: 'Arrival Date' },
   { key: 'poNumber', label: 'PO Number' },
+  { key: 'contractNumber', label: 'Contract #' },
+  { key: 'splitNumber', label: 'Split #' },
   { key: 'lotCode', label: 'Lot Code' },
+  { key: 'countryOfOrigin', label: 'Country of Origin' },
+  { key: 'brix', label: 'Brix' },
+  { key: 'silo', label: 'Silo' },
+  { key: 'trailerNo', label: 'Trailer #' },
+  { key: 'papsNo', label: 'PAPS #' },
+  { key: 'customsEntryNo', label: 'Customs Entry #' },
+  { key: 'portOfEntry', label: 'Port of Entry' },
+  { key: 'htsCode', label: 'HTS Code' },
   { key: 'status', label: 'Status / Cancellation' },
 ];
