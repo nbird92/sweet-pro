@@ -59,7 +59,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc } from './firebaseDb';
+import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc, deleteDocs } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -7685,7 +7685,40 @@ export default function App() {
             <button
               onClick={() => {
                 if (transfers.length === 0) return;
+                // Dedup by the MOVEMENT (from|to|product|date|po|amount|lot),
+                // ignoring the transfer number — re-syncs generated a fresh unique
+                // number per copy, so number-based dedup can't catch them. Keeps
+                // the first occurrence of each movement.
+                const seen = new Set<string>();
+                const norm = (s?: string) => (s || '').trim().toUpperCase();
+                const deduped = transfers.filter(t => {
+                  const key = `${norm(t.from)}|${norm(t.to)}|${norm(t.product)}|${t.shipmentDate || ''}|${norm(t.po)}|${t.amount || 0}|${norm(t.lotCode)}`;
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+                const removed = transfers.length - deduped.length;
+                if (removed === 0) { setErrorBox('No duplicate transfers found.'); return; }
+                if (window.confirm(`Remove ${removed} duplicate transfer${removed === 1 ? '' : 's'}? ${deduped.length} unique transfer${deduped.length === 1 ? '' : 's'} will remain. This cannot be undone.`)) {
+                  // Delete the duplicate docs directly (the auto-sync's mass-delete
+                  // guard would otherwise refuse to remove this many).
+                  const keepIds = new Set(deduped.map(t => t.id));
+                  deleteDocs(COLLECTIONS.transfers, transfers.filter(t => !keepIds.has(t.id)).map(t => t.id)).catch(() => {});
+                  setTransfers(deduped);
+                }
+              }}
+              disabled={transfers.length === 0}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Remove duplicate transfers (same from/to/product/date/PO/amount), keeping one of each."
+            >
+              <Trash2 size={12} /> Remove Duplicates
+            </button>
+            <button
+              onClick={() => {
+                if (transfers.length === 0) return;
                 if (window.confirm(`Delete ALL ${transfers.length} transfer${transfers.length === 1 ? '' : 's'}? This cannot be undone.`)) {
+                  // Direct delete so the purge persists past the mass-delete guard.
+                  deleteDocs(COLLECTIONS.transfers, transfers.map(t => t.id)).catch(() => {});
                   setTransfers([]);
                 }
               }}

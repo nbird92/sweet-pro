@@ -2340,7 +2340,12 @@ export function parsedRowsToTransfersConfigured(
         continue;
       }
 
-      const comp = compositeKey({ from, to, product: productRefs.productName, date: r.shipmentDate, po: r.poNumber });
+      // IMPORTANT: use the SAME product value that gets stored on the transfer
+      // (the display name) so the composite matches existingComposites, which is
+      // built from t.product. Using productName here instead let numberless
+      // transfers re-import as duplicates on every sync run.
+      const storedProduct = productRefs.productDisplayName || productRefs.productName;
+      const comp = compositeKey({ from, to, product: storedProduct, date: r.shipmentDate, po: r.poNumber });
       if (!numU && (existingComposites.has(comp) || addedComposites.has(comp))) {
         result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'An identical transfer already exists (same from/to/product/date/PO)' });
         continue;
