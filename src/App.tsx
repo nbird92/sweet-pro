@@ -5755,6 +5755,8 @@ export default function App() {
         const get = (entry: any, ...keys: string[]): string => { for (const k of keys) { const v = entry[k]; if (v !== undefined && v !== '') return String(v).trim(); } return ''; };
         const normDate = (d: string): string => { if (!d) return ''; const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d; };
         const added: Transfer[] = [];
+        const working: Transfer[] = [...transfers];
+        let updatedCount = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = parseCSVRow(lines[i]);
           const entry: any = {};
@@ -5766,7 +5768,7 @@ export default function App() {
           const lotCode = get(entry, 'lotcode', 'lot');
           const lc = lotCodes.find(l => l.lotNumber === lotCode);
           const num = get(entry, 'transferno', 'transfernumber', 'transfer');
-          added.push({
+          const candidate: Transfer = {
             id: `TRF-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             transferNumber: num || `TRF-${new Date().getFullYear()}-${String(transfers.length + added.length + 1).padStart(3, '0')}`,
             from, to, product,
@@ -5789,11 +5791,31 @@ export default function App() {
             arrivalDate: normDate(get(entry, 'arrivaldate', 'arrival')),
             status: get(entry, 'status') || 'Pending',
             notes: get(entry, 'notes') || undefined,
-          });
+          };
+          // Dedup by Transfer No.: an existing transfer with the same number is
+          // UPDATED — only its empty/missing fields are filled from the CSV row;
+          // populated fields are left untouched. A new number is added.
+          const key = (candidate.transferNumber || '').trim().toLowerCase();
+          const existingIdx = key ? working.findIndex(t => (t.transferNumber || '').trim().toLowerCase() === key) : -1;
+          if (existingIdx >= 0) {
+            const cur = working[existingIdx] as any;
+            const cand = candidate as any;
+            const isEmpty = (v: any) => v === undefined || v === null || v === '' || (typeof v === 'number' && v === 0);
+            const merged: any = { ...cur };
+            for (const k of Object.keys(cand)) {
+              if (k === 'id' || k === 'transferNumber') continue;
+              if (isEmpty(cur[k]) && !isEmpty(cand[k])) merged[k] = cand[k];
+            }
+            working[existingIdx] = merged;
+            updatedCount++;
+          } else {
+            working.push(candidate);
+            added.push(candidate);
+          }
         }
-        if (added.length === 0) { setErrorBox('No transfer rows found in the CSV.'); return; }
-        setTransfers(prev => [...prev, ...added]);
-        setPoIngestNotice(`${added.length} transfer${added.length === 1 ? '' : 's'} imported from CSV.`);
+        if (added.length === 0 && updatedCount === 0) { setErrorBox('No transfer rows found in the CSV.'); return; }
+        setTransfers(working);
+        setPoIngestNotice(`Transfers CSV: ${added.length} added${updatedCount ? `, ${updatedCount} updated` : ''}.`);
       } catch (err) {
         setErrorBox('Failed to import transfers CSV: ' + (err instanceof Error ? err.message : String(err)));
       }
@@ -7659,6 +7681,19 @@ export default function App() {
               title="Import transfers from a CSV file matching the template."
             >
               <Upload size={12} /> Import CSV
+            </button>
+            <button
+              onClick={() => {
+                if (transfers.length === 0) return;
+                if (window.confirm(`Delete ALL ${transfers.length} transfer${transfers.length === 1 ? '' : 's'}? This cannot be undone.`)) {
+                  setTransfers([]);
+                }
+              }}
+              disabled={transfers.length === 0}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/30 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Delete every transfer from the table."
+            >
+              <Trash2 size={12} /> Clear All
             </button>
             <button
               onClick={() => {
