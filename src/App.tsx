@@ -9958,13 +9958,21 @@ export default function App() {
           if (pg) {
             result = pg;
           } else {
-            // EXACT catalog match only — short-form code, name or rendered
-            // shortform, no fuzzy guessing. This keeps distinct variants that
-            // share a code apart, e.g. bulk "GC100" (Bulk Granulated) vs packaged
-            // "20kg GC100" (Bagged); a fuzzy match would conflate them (same
-            // sugar + colour) and file one under the other's group.
-            const { sku, qa } = resolveProduct(productName, { exact: true });
-            const matched = groupFromRecord(qa) || groupFromRecord(sku);
+            // EXACT catalog match first — keeps distinct variants that share a
+            // code apart, e.g. bulk "GC100" (Bulk Granulated) vs packaged
+            // "20kg GC100" (Bagged).
+            const exact = resolveProduct(productName, { exact: true });
+            let matched = groupFromRecord(exact.qa) || groupFromRecord(exact.sku);
+            // Exact failed — fall back to a FUZZY match JUST to determine the
+            // GROUP (not the exact SKU). A close match to any variant of the same
+            // product still gives the right product group, which is far better
+            // than dropping an invoice whose product has a group into "Ungrouped"
+            // (common for sheet-synced invoices whose product is a plain string
+            // with no productKey that doesn't exactly render a catalog shortform).
+            if (!matched) {
+              const fuzzy = resolveProduct(productName);
+              matched = groupFromRecord(fuzzy.qa) || groupFromRecord(fuzzy.sku);
+            }
             if (matched) {
               result = matched;
             } else {
