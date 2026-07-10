@@ -9985,7 +9985,7 @@ export default function App() {
           return result;
         };
         type InvAgg = { invoiceNumber: string; customer: string; date: string; po: string; mt: number; products: Set<string> };
-        type Grp = { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number>; invoices: Map<string, InvAgg> }> };
+        type Grp = { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; internalTransfer: boolean; mt: number; products: Map<string, number>; invoices: Map<string, InvAgg> }> };
         const groups = new Map<string, Grp>();
         const getGroup = (d: Date): Grp => {
           const p = periodOf(d);
@@ -10000,8 +10000,10 @@ export default function App() {
         const addRow = (g: Grp, loc: string, source: { key: string; number: string; customer: string; date: string; po: string }, productName: string | undefined, productKey: string | undefined, mt: number, fromTransfer: boolean) => {
           const pg = resolveGroup(productName, productKey);
           if (!fromTransfer && feeFor(pg, loc)?.internalTransfer) return;
-          const rk = `${pg}|||${loc}`;
-          const cur = g.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
+          // Transfer volume is kept in its OWN category so invoices and transfers
+          // never merge into one row (label suffixed "(Internal Transfers)" below).
+          const rk = `${pg}|||${loc}|||${fromTransfer ? 'T' : 'I'}`;
+          const cur = g.rows.get(rk) || { pg, loc, internalTransfer: fromTransfer, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
           cur.mt += mt || 0;
           // Product SHORT NAME (e.g. GC100, LC100), not the raw text ("Bulk").
           const rawNm = (productName || '').trim();
@@ -10062,7 +10064,9 @@ export default function App() {
             const netAmount = r.mt * rate;      // Net Amount = MT × fee/MT
             const tax = netAmount * (taxRate / 100); // Tax = Net Amount × tax rate
             return {
-              productGroup: r.pg, location: r.loc,
+              // Transfer-sourced rows get their own category so they read as
+              // separate from invoiced volume in the same product group.
+              productGroup: r.internalTransfer ? `${r.pg} (Internal Transfers)` : r.pg, location: r.loc,
               mt: Math.round(r.mt * 1000) / 1000,
               netAmount,
               tax,
