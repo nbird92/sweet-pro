@@ -1,0 +1,47 @@
+name: PO Inbox Scan (fallback cron)
+
+# Plan-independent backup for the Vercel cron. Vercel's Hobby plan only runs
+# cron jobs once per day, so this GitHub Actions schedule keeps the email
+# importer draining every ~15 minutes on any plan. (GitHub may delay scheduled
+# runs by several minutes under load — that's expected and harmless.)
+#
+# Enable it by adding two repository secrets (Settings → Secrets and variables
+# → Actions):
+#   PO_SCAN_URL   e.g. https://<your-app>.vercel.app/api/scan-po-inbox
+#   CRON_SECRET   the same value set in the Vercel project env var CRON_SECRET
+# Until PO_SCAN_URL is set, each run no-ops (it won't fail).
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch: {}       # allow manual "Run workflow"
+
+# Never let two overlapping runs pile up.
+concurrency:
+  group: po-scan-cron
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/scan-po-inbox
+        env:
+          PO_SCAN_URL: ${{ secrets.PO_SCAN_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PO_SCAN_URL:-}" ]; then
+            echo "PO_SCAN_URL secret not set — skipping (configure it to enable this fallback)."
+            exit 0
+          fi
+          code=$(curl -sS -m 300 -o /tmp/scan.out -w "%{http_code}" \
+            -X POST "$PO_SCAN_URL" \
+            -H "Authorization: Bearer ${CRON_SECRET:-}")
+          echo "HTTP $code"
+          head -c 2000 /tmp/scan.out || true
+          echo ""
+          if [ "$code" != "200" ]; then
+            echo "::error::scan-po-inbox returned HTTP $code"
+            exit 1
+          fi
