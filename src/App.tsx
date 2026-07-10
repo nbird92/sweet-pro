@@ -5723,7 +5723,10 @@ export default function App() {
       if (ct.active === false) return false;
       const cn = (ct.customerNumber || '').trim();
       const nm = (ct.customerName || '').trim();
-      return ids.has(cn) || numbers.has(cn) || names.has(nm);
+      // The primary customer / group siblings, OR a customer explicitly allowed to
+      // draw on this contract (e.g. Ventura on a Nestle contract).
+      return ids.has(cn) || numbers.has(cn) || names.has(nm)
+        || (ct.allowedCustomerIds || []).includes(cust.id);
     });
   };
 
@@ -16195,6 +16198,38 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                </div>
+
+                {/* Allowed to Draw — extra customers authorized to use this contract */}
+                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Allowed to Draw — Additional Customers</div>
+                  <p className="text-[10px] opacity-50">The primary customer{editingContract.customerName ? ` (${editingContract.customerName})` : ''} and its customer group can always draw on this contract. Add other customers who may also use it — e.g. Ventura on a Nestle contract.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(editingContract.allowedCustomerIds || []).map(id => {
+                      const c = customers.find(x => x.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 bg-white border border-[#141414] px-2 py-1 text-xs font-bold">
+                          {c?.name || id}
+                          <button type="button" onClick={() => setEditingContract({ ...editingContract, allowedCustomerIds: (editingContract.allowedCustomerIds || []).filter(x => x !== id) })} className="opacity-60 hover:opacity-100" title="Remove"><X size={11} /></button>
+                        </span>
+                      );
+                    })}
+                    {(editingContract.allowedCustomerIds || []).length === 0 && <span className="text-[10px] opacity-40 italic">None added.</span>}
+                  </div>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      if (!id) return;
+                      setEditingContract({ ...editingContract, allowedCustomerIds: Array.from(new Set([...(editingContract.allowedCustomerIds || []), id])) });
+                    }}
+                    className="w-full bg-white border border-[#141414] p-3 text-sm outline-none"
+                  >
+                    <option value="">+ Add a customer allowed to draw…</option>
+                    {customersSorted
+                      .filter(c => c.name !== editingContract.customerName && !(editingContract.allowedCustomerIds || []).includes(c.id))
+                      .map(c => <option key={c.id} value={c.id}>{c.name}{c.customerNumber ? ` (${c.customerNumber})` : ''}</option>)}
+                  </select>
                 </div>
 
                 {/* Contract Lines Section */}

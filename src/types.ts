@@ -209,6 +209,9 @@ export interface Contract {
   palletType?: 'CHEP' | 'One Way' | '';
   margin?: number; // Margin in CAD/MT
   active?: boolean; // Contract active status (defaults to true)
+  /** Additional customer IDs allowed to draw on this contract beyond the primary
+   *  customer / its group — e.g. Ventura authorized to use Nestle's contracts. */
+  allowedCustomerIds?: string[];
   contractLines?: ContractLine[]; // Product-specific lines with differentials
   contractDate?: string; // ISO date the contract was signed/created (display + CSV)
   itasName?: string; // ITAS-system customer name, mirrored onto the contract for CSV portability
