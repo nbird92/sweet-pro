@@ -254,10 +254,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
   // persisted per message (processedPoEmails + incomingPoOrders), so the next
   // run — or the 15-min cron — continues where this one left off.
-  // Budget sits ~50s under the 300s maxDuration (vercel.json, Pro plan) to leave
-  // room for the in-flight message's extraction + Firestore writes + response.
+  // Budget sits ~100s under the 300s maxDuration (vercel.json, Pro plan): a single
+  // in-flight message can still be slow (multiple Gemini calls + rate-limit
+  // backoff), and if the whole run overruns 300s Vercel HARD-KILLS it before the
+  // heartbeat is written — which is exactly what makes the importer look "stale"
+  // even though it's actually running. The wider headroom keeps every run
+  // finishing cleanly (partial:true) and reporting its status. Tunable via env.
   const startMs = Date.now();
-  const BUDGET_MS = 250000;
+  const BUDGET_MS = Number(process.env.PO_SCAN_BUDGET_MS ?? 200000);
 
   try {
     const db = getDb();
