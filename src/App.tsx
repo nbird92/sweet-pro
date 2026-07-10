@@ -9974,10 +9974,15 @@ export default function App() {
         const currentKey = periodOf(now).key;
         const norm = (s?: string) => (s || '').trim().toLowerCase();
         // Match a tolling fee by product group (case/space-insensitive), preferring
-        // an exact location match, else the group's fee at any location.
-        const feeFor = (pg: string, loc: string): TollingFee | undefined =>
-          tollingFees.find(t => norm(t.productGroup) === norm(pg) && norm(t.location) === norm(loc))
-          || tollingFees.find(t => norm(t.productGroup) === norm(pg));
+        // an exact location match, else the group's fee at any location. When
+        // `internal` is given, only fees with a matching Internal Transfer flag are
+        // considered — so a group with BOTH an invoice fee (e.g. $210) and an
+        // internal-transfer fee (e.g. $175) picks the right one for each source.
+        const feeFor = (pg: string, loc: string, internal?: boolean): TollingFee | undefined => {
+          const flagOk = (t: TollingFee) => internal === undefined || (!!t.internalTransfer === internal);
+          return tollingFees.find(t => flagOk(t) && norm(t.productGroup) === norm(pg) && norm(t.location) === norm(loc))
+            || tollingFees.find(t => flagOk(t) && norm(t.productGroup) === norm(pg));
+        };
         // Resolve an invoiced product to its Product Group: catalog first, then a
         // keyword match against the tolling-fee group names (so "Bulk Liquid Sucrose"
         // maps to the "Liquid" fee even when its catalog group is unset).
@@ -10032,7 +10037,11 @@ export default function App() {
         // comes from completed transfers instead.
         const addRow = (g: Grp, loc: string, source: { key: string; number: string; customer: string; date: string; po: string }, productName: string | undefined, productKey: string | undefined, mt: number, fromTransfer: boolean) => {
           const pg = resolveGroup(productName, productKey);
-          if (!fromTransfer && feeFor(pg, loc)?.internalTransfer) return;
+          // Skip an invoice only when the group is Internal-Transfer ONLY (an
+          // internal fee exists but no invoice fee) — then its volume comes from
+          // transfers. If it also has a normal invoice fee, keep the invoice and
+          // toll it at that fee.
+          if (!fromTransfer && !feeFor(pg, loc, false) && feeFor(pg, loc, true)) return;
           // Transfer volume is kept in its OWN category so invoices and transfers
           // never merge into one row (label suffixed "(Internal Transfers)" below).
           const rk = `${pg}|||${loc}|||${fromTransfer ? 'T' : 'I'}`;
@@ -10091,7 +10100,7 @@ export default function App() {
         }
         return Array.from(groups.entries()).map(([key, g]) => {
           const rows = Array.from(g.rows.values()).map(r => {
-            const fee = feeFor(r.pg, r.loc);
+            const fee = feeFor(r.pg, r.loc, r.internalTransfer);
             const rate = fee?.amountPerMt || 0;
             const taxRate = fee?.taxRate || 0;
             const netAmount = r.mt * rate;      // Net Amount = MT × fee/MT
