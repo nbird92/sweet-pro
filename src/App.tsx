@@ -9977,50 +9977,74 @@ export default function App() {
           return result;
         };
         type InvAgg = { invoiceNumber: string; customer: string; date: string; po: string; mt: number; products: Set<string> };
-        const groups = new Map<string, { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number>; invoices: Map<string, InvAgg> }> }>();
+        type Grp = { label: string; sortKey: string; rows: Map<string, { pg: string; loc: string; mt: number; products: Map<string, number>; invoices: Map<string, InvAgg> }> };
+        const groups = new Map<string, Grp>();
+        const getGroup = (d: Date): Grp => {
+          const p = periodOf(d);
+          let g = groups.get(p.key);
+          if (!g) { g = { label: p.label, sortKey: p.sortKey, rows: new Map() }; groups.set(p.key, g); }
+          return g;
+        };
+        // Shared row aggregator. `source` describes the invoice OR transfer behind
+        // the volume (shown in the drill-down). An invoice contribution to a row
+        // whose matched fee is marked Internal Transfer is SKIPPED — that volume
+        // comes from completed transfers instead.
+        const addRow = (g: Grp, loc: string, source: { key: string; number: string; customer: string; date: string; po: string }, productName: string | undefined, productKey: string | undefined, mt: number, fromTransfer: boolean) => {
+          const pg = resolveGroup(productName, productKey);
+          if (!fromTransfer && feeFor(pg, loc)?.internalTransfer) return;
+          const rk = `${pg}|||${loc}`;
+          const cur = g.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
+          cur.mt += mt || 0;
+          // Product SHORT NAME (e.g. GC100, LC100), not the raw text ("Bulk").
+          const rawNm = (productName || '').trim();
+          const shortNm = (productKey ? lineItemToShortform({ productKey, productName: rawNm }) : productToShortform(rawNm)) || rawNm;
+          const nm = (shortNm || '').trim() || '(no product name)';
+          cur.products.set(nm, (cur.products.get(nm) || 0) + (mt || 0));
+          const ia = cur.invoices.get(source.key) || { invoiceNumber: source.number, customer: source.customer, date: source.date, po: source.po, mt: 0, products: new Set<string>() };
+          ia.mt += mt || 0;
+          ia.products.add(nm);
+          cur.invoices.set(source.key, ia);
+          g.rows.set(rk, cur);
+        };
+
+        // Invoices — the default volume source.
         for (const inv of invoices) {
           if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
           const d = new Date(inv.date + 'T12:00:00');
           if (isNaN(d.getTime())) continue;
-          const p = periodOf(d);
-          let g = groups.get(p.key);
-          if (!g) { g = { label: p.label, sortKey: p.sortKey, rows: new Map() }; groups.set(p.key, g); }
+          const g = getGroup(d);
           const loc = inv.location || '';
-          const add = (productName?: string, productKey?: string, mt?: number) => {
-            const pg = resolveGroup(productName, productKey);
-            const rk = `${pg}|||${loc}`;
-            const cur = g!.rows.get(rk) || { pg, loc, mt: 0, products: new Map<string, number>(), invoices: new Map<string, InvAgg>() };
-            cur.mt += mt || 0;
-            // Track which invoiced products fed this row — shown as the product
-            // SHORT NAME (e.g. GC100, LC100), not the raw invoiced text ("Bulk").
-            // productKey pins the exact catalog variant; otherwise resolve by name.
-            // Falls back to the raw text when nothing matches, so the Ungrouped
-            // bucket still reveals exactly what failed to resolve.
-            const rawNm = (productName || '').trim();
-            const shortNm = (productKey ? lineItemToShortform({ productKey, productName: rawNm }) : productToShortform(rawNm)) || rawNm;
-            const nm = (shortNm || '').trim() || '(no product name)';
-            cur.products.set(nm, (cur.products.get(nm) || 0) + (mt || 0));
-            // Track the invoices behind this total so the row can be drilled into.
-            const invKey = inv.id || inv.invoiceNumber || `${inv.customer}|${inv.date}|${inv.po}`;
-            const ia = cur.invoices.get(invKey) || { invoiceNumber: inv.invoiceNumber || inv.bolNumber || inv.id || '(no number)', customer: inv.customer || '', date: inv.date || '', po: inv.po || '', mt: 0, products: new Set<string>() };
-            ia.mt += mt || 0;
-            ia.products.add(nm);
-            cur.invoices.set(invKey, ia);
-            g!.rows.set(rk, cur);
-          };
+          const source = { key: inv.id || inv.invoiceNumber || `${inv.customer}|${inv.date}|${inv.po}`, number: inv.invoiceNumber || inv.bolNumber || inv.id || '(no number)', customer: inv.customer || '', date: inv.date || '', po: inv.po || '' };
           // MT is the INVOICED quantity — the invoice table's Quantity (MT) field
-          // (inv.qty), not the ordered line weight. For a multi-product invoice the
-          // invoiced qty is split across products proportionally by line weight so
-          // the per-product breakdown still sums to the invoiced total. Falls back
-          // to the summed line weights only when the invoice has no qty set.
+          // (inv.qty), split across products proportionally by line weight when
+          // multi-product; falls back to the summed line weights when qty is unset.
           const lineWtSum = (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
           const invMt = (typeof inv.qty === 'number' && inv.qty > 0) ? inv.qty : lineWtSum;
           if (inv.lineItems && inv.lineItems.length) {
-            if (lineWtSum > 0) inv.lineItems.forEach(li => add(li.productName, li.productKey, invMt * ((li.totalWeight || 0) / lineWtSum)));
-            else add(inv.lineItems[0].productName, inv.lineItems[0].productKey, invMt);
+            if (lineWtSum > 0) inv.lineItems.forEach(li => addRow(g, loc, source, li.productName, li.productKey, invMt * ((li.totalWeight || 0) / lineWtSum), false));
+            else addRow(g, loc, source, inv.lineItems[0].productName, inv.lineItems[0].productKey, invMt, false);
           } else {
-            add(inv.product, undefined, invMt);
+            addRow(g, loc, source, inv.product, undefined, invMt, false);
           }
+        }
+
+        // Completed transfers — included ONLY for product groups that have an
+        // Internal Transfer tolling fee. Filed under that fee's location, on the
+        // transfer's completion (arrival) date, using the transfer Amount (MT).
+        for (const tr of transfers) {
+          if ((tr.status || '').toLowerCase() !== 'completed') continue;
+          const dateStr = tr.arrivalDate || tr.shipmentDate;
+          if (!dateStr) continue;
+          const d = new Date(dateStr + 'T12:00:00');
+          if (isNaN(d.getTime())) continue;
+          const pg = resolveGroup(tr.product, undefined);
+          const itFee = tollingFees.find(t => t.internalTransfer && norm(t.productGroup) === norm(pg) && (norm(t.location) === norm(tr.to) || norm(t.location) === norm(tr.from)))
+            || tollingFees.find(t => t.internalTransfer && norm(t.productGroup) === norm(pg));
+          if (!itFee) continue;
+          const loc = itFee.location || tr.to || tr.from || '';
+          const g = getGroup(d);
+          const source = { key: `TR|${tr.id}`, number: tr.transferNumber || '(transfer)', customer: `${tr.from || ''} → ${tr.to || ''}`.trim(), date: dateStr, po: tr.po || '' };
+          addRow(g, loc, source, tr.product, undefined, tr.amount || 0, true);
         }
         return Array.from(groups.entries()).map(([key, g]) => {
           const rows = Array.from(g.rows.values()).map(r => {
@@ -10106,6 +10130,7 @@ export default function App() {
                   sortValue: (t) => t.taxRate || 0,
                 },
                 { key: 'currency', label: 'Currency', mono: true, render: (t) => t.currency || '—' },
+                { key: 'internalTransfer', label: 'Transfer', render: (t) => t.internalTransfer ? 'Internal Transfer' : '—', sortValue: (t) => t.internalTransfer ? 1 : 0 },
                 { key: 'startDate', label: 'Start Date', render: (t) => t.startDate || '—' },
                 { key: 'endDate', label: 'End Date', render: (t) => t.endDate || '—' },
               ]}
@@ -10147,6 +10172,7 @@ export default function App() {
                     <DetailRow label="Tolling Fee / MT" value={`${(tollingFeeDraft.amountPerMt || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tollingFeeDraft.currency || ''}`.trim()} mono />
                     <DetailRow label="Tax Rate" value={`${(tollingFeeDraft.taxRate || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}%`} mono />
                     <DetailRow label="Currency" value={tollingFeeDraft.currency} mono />
+                    <DetailRow label="Internal Transfer" value={tollingFeeDraft.internalTransfer ? 'Yes — tolled from completed transfers' : 'No'} />
                     <DetailRow label="Start Date" value={tollingFeeDraft.startDate || '—'} />
                     <DetailRow label="End Date" value={tollingFeeDraft.endDate || '—'} />
                   </>
@@ -10209,6 +10235,18 @@ export default function App() {
                     <DetailField label="End Date">
                       <input type="date" value={tollingFeeDraft.endDate || ''} onChange={(e) => setTollingFeeDraft(d => d ? { ...d, endDate: e.target.value } : d)} className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white" />
                     </DetailField>
+                    <div className="col-span-2">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!tollingFeeDraft.internalTransfer}
+                          onChange={(e) => setTollingFeeDraft(d => d ? { ...d, internalTransfer: e.target.checked } : d)}
+                          className="w-4 h-4"
+                        />
+                        <span className="font-bold">Internal Transfer</span>
+                        <span className="text-[11px] opacity-60">— toll this group's volume from completed transfers instead of invoices.</span>
+                      </label>
+                    </div>
                   </div>
                 )
               )}

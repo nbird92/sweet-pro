@@ -177,6 +177,9 @@ export interface TollingFee {
   amountPerMt: number;    // Tolling fee amount per MT
   currency: string;       // e.g. "CAD", "USD"
   taxRate?: number;       // Tax rate as a percentage (e.g. 13 for 13%); Tax = Net Amount × taxRate/100
+  /** When true, this fee's tolled volume comes from COMPLETED TRANSFERS (matched
+   *  by product group + location) instead of invoices. */
+  internalTransfer?: boolean;
   startDate?: string;     // ISO yyyy-mm-dd — fee effective from
   endDate?: string;       // ISO yyyy-mm-dd — fee effective to
 }
