@@ -15433,14 +15433,19 @@ export default function App() {
               <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
                 <button onClick={() => setTransferSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
                 <button
-                  disabled={transferSyncPreview.newTransfers.length === 0}
+                  disabled={transferSyncPreview.newTransfers.length === 0 && (transferSyncPreview.updatedTransfers?.length || 0) === 0}
                   onClick={() => {
-                    setTransfers([...transfers, ...transferSyncPreview.newTransfers]);
+                    // Replace existing transfers whose gaps were filled, then append the new ones.
+                    const upById = new Map((transferSyncPreview.updatedTransfers || []).map(t => [t.id, t]));
+                    setTransfers([
+                      ...transfers.map(t => upById.get(t.id) || t),
+                      ...transferSyncPreview.newTransfers,
+                    ]);
                     setTransferSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
                 >
-                  Import {transferSyncPreview.newTransfers.length} Transfer{transferSyncPreview.newTransfers.length === 1 ? '' : 's'}
+                  Import {transferSyncPreview.newTransfers.length} new{(transferSyncPreview.updatedTransfers?.length || 0) > 0 ? ` · Update ${transferSyncPreview.updatedTransfers.length}` : ''}
                 </button>
               </div>
             </motion.div>

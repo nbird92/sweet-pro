@@ -2177,6 +2177,10 @@ export const DEFAULT_SHIPMENT_SCHEDULE_CONFIG: ShipmentScheduleConfig = {
 
 export interface TransferSyncResult {
   newTransfers: Transfer[];
+  /** Existing transfers whose empty/missing fields were filled from the sheet
+   *  (matched by transfer number). Each is the full merged record; the caller
+   *  replaces its existing transfer of the same id. */
+  updatedTransfers: Transfer[];
   skipped: Array<{ tab: string; transferNumber: string; reason: string }>;
   errors: Array<{ tab: string; rowIdx: number; message: string }>;
 }
@@ -2192,15 +2196,20 @@ export function parsedRowsToTransfersConfigured(
   const tabByName = new Map<string, ConfiguredTab>();
   for (const t of configured) tabByName.set(t.tabName, t);
 
-  const result: TransferSyncResult = { newTransfers: [], skipped: [], errors: [] };
+  const result: TransferSyncResult = { newTransfers: [], updatedTransfers: [], skipped: [], errors: [] };
 
   // Dedup: rows that carry a transfer number are keyed on it; rows without one
   // fall back to a composite of from|to|product|date|po so re-running the sync
   // doesn't duplicate the same movement.
-  const existingNums = new Set(
-    existingTransfers.map(t => (t.transferNumber || '').trim().toUpperCase()).filter(Boolean),
-  );
-  const addedNums = new Set<string>();
+  const existingByNum = new Map<string, Transfer>();
+  for (const t of existingTransfers) {
+    const k = (t.transferNumber || '').trim().toUpperCase();
+    if (k && !existingByNum.has(k)) existingByNum.set(k, t);
+  }
+  const existingNums = new Set(existingByNum.keys());
+  // Track which existing transfers we've already updated this run (and hold the
+  // running merged copy so several sheet rows can each fill different gaps).
+  const updatedByNum = new Map<string, Transfer>();
   const compositeKey = (t: { from: string; to: string; product: string; date: string; po: string }) =>
     `${t.from.toUpperCase()}|${t.to.toUpperCase()}|${t.product.toUpperCase()}|${t.date}|${t.po.toUpperCase()}`;
   const existingComposites = new Set(
@@ -2241,15 +2250,44 @@ export function parsedRowsToTransfersConfigured(
       }
 
       const numU = (r.transferNumber || '').trim().toUpperCase();
-      if (numU && (existingNums.has(numU) || addedNums.has(numU))) {
-        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Transfer number already exists' });
-        continue;
-      }
 
       const explicit = tabByName.get(r.tab);
       const expectedFormat = explicit?.expectedFormat;
       const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
       const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+
+      // Fields carried from this sheet row (used to build a new transfer OR to
+      // fill an existing one's gaps).
+      const fields: Partial<Transfer> = {
+        from,
+        to,
+        shipmentDate: r.shipmentDate,
+        arrivalDate: r.deliveryDate || r.shipmentDate,
+        carrier: carrierCanonical || '',
+        product: productRefs.productDisplayName || productRefs.productName,
+        amount: r.quantityMT,
+        po: r.poNumber || undefined,
+        lotCode: r.lotCode || undefined,
+        contractNumber: r.contractNumber || undefined,
+        splitNumber: r.splitNumber || undefined,
+        papsNo: r.papsNo || undefined,
+        customsEntryNo: r.customsEntryNo || undefined,
+      };
+      const isEmpty = (v: any) => v === undefined || v === null || v === '' || (typeof v === 'number' && v === 0);
+
+      // An existing transfer with the same number is UPDATED — only its
+      // empty/missing fields are filled from the sheet; populated fields stay.
+      if (numU && (existingNums.has(numU) || updatedByNum.has(numU))) {
+        const base = updatedByNum.get(numU) || existingByNum.get(numU)!;
+        const merged: any = { ...base };
+        let changed = false;
+        for (const [k, v] of Object.entries(fields)) {
+          if (isEmpty((merged as any)[k]) && !isEmpty(v)) { merged[k] = v; changed = true; }
+        }
+        if (changed) updatedByNum.set(numU, merged as Transfer);
+        else result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Transfer already exists with no missing fields to fill' });
+        continue;
+      }
 
       const comp = compositeKey({ from, to, product: productRefs.productName, date: r.shipmentDate, po: r.poNumber });
       if (!numU && (existingComposites.has(comp) || addedComposites.has(comp))) {
@@ -2274,15 +2312,20 @@ export function parsedRowsToTransfersConfigured(
         status: 'Pending',
         ...(r.poNumber ? { po: r.poNumber } : {}),
         ...(r.lotCode ? { lotCode: r.lotCode } : {}),
+        ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(r.splitNumber ? { splitNumber: r.splitNumber } : {}),
+        ...(r.papsNo ? { papsNo: r.papsNo } : {}),
+        ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
       };
 
       result.newTransfers.push(stripUndefined(newTransfer));
-      if (numU) addedNums.add(numU);
+      if (numU) { existingNums.add(numU); }
       addedComposites.add(comp);
     } catch (err) {
       result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
     }
   }
+  result.updatedTransfers = Array.from(updatedByNum.values()).map(t => stripUndefined(t) as Transfer);
   return result;
 }
 
