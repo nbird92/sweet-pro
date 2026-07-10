@@ -1868,6 +1868,7 @@ export default function App() {
   const invoiceReplaceFileInputRef = useRef<HTMLInputElement>(null);
   const contractFileInputRef = useRef<HTMLInputElement>(null);
   const customerFileInputRef = useRef<HTMLInputElement>(null);
+  const transferFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportCustomerCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -5730,6 +5731,76 @@ export default function App() {
     });
   };
 
+  // ── Transfer CSV import ───────────────────────────────────────────────────
+  const TRANSFER_CSV_HEADERS = ['Transfer No.', 'From', 'To', 'Product', 'Customer', 'PO No.', 'Contract #', 'Split #', 'Lot Code', 'Country of Origin', 'Amount (MT)', 'Brix', 'Silo', 'Carrier', 'Trailer #', 'PAPS #', 'Customs Entry #', 'Port of Entry', 'HTS Code', 'Shipment Date', 'Arrival Date', 'Status', 'Notes'];
+  const downloadTransferTemplate = () => {
+    const example = ['TRF-2026-001', 'Hamilton', 'Vancouver', 'Bulk Liquid Sucrose', '', 'PO-12345', '', '', 'LOT-2026-001', '', '22', '', '', 'Contrans', '', '', '', '', '', '2026-07-10', '2026-07-17', 'Pending', ''];
+    const csv = [TRANSFER_CSV_HEADERS.join(','), example.join(',')].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'Transfers_Template.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const handleImportTransferCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = ''; // allow re-importing the same file
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = (ev.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) { setErrorBox('CSV is empty or has no data rows.'); return; }
+        const headers = parseCSVRow(lines[0]).map(normalizeHeader);
+        const get = (entry: any, ...keys: string[]): string => { for (const k of keys) { const v = entry[k]; if (v !== undefined && v !== '') return String(v).trim(); } return ''; };
+        const normDate = (d: string): string => { if (!d) return ''; const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : d; };
+        const added: Transfer[] = [];
+        for (let i = 1; i < lines.length; i++) {
+          const values = parseCSVRow(lines[i]);
+          const entry: any = {};
+          headers.forEach((h, idx) => { entry[h] = values[idx] || ''; });
+          const product = get(entry, 'product');
+          const from = get(entry, 'from', 'origin');
+          const to = get(entry, 'to', 'destination');
+          if (!product && !from && !to) continue;
+          const lotCode = get(entry, 'lotcode', 'lot');
+          const lc = lotCodes.find(l => l.lotNumber === lotCode);
+          const num = get(entry, 'transferno', 'transfernumber', 'transfer');
+          added.push({
+            id: `TRF-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            transferNumber: num || `TRF-${new Date().getFullYear()}-${String(transfers.length + added.length + 1).padStart(3, '0')}`,
+            from, to, product,
+            customer: get(entry, 'customer') || undefined,
+            po: get(entry, 'pono', 'po') || undefined,
+            contractNumber: get(entry, 'contract', 'contractnumber') || undefined,
+            splitNumber: get(entry, 'split', 'splitnumber') || undefined,
+            lotCode,
+            countryOfOrigin: get(entry, 'countryoforigin', 'country') || lc?.countryOfOrigin || undefined,
+            amount: parseFloat(get(entry, 'amountmt', 'amount', 'qty')) || 0,
+            brix: get(entry, 'brix') || lc?.brix || undefined,
+            silo: get(entry, 'silo') || lc?.silo || undefined,
+            carrier: get(entry, 'carrier'),
+            trailerNo: get(entry, 'trailer', 'trailerno') || undefined,
+            papsNo: get(entry, 'paps', 'papsno') || undefined,
+            customsEntryNo: get(entry, 'customsentry', 'customsentryno', 'customs') || undefined,
+            portOfEntry: get(entry, 'portofentry', 'port') || undefined,
+            htsCode: get(entry, 'htscode', 'hts') || undefined,
+            shipmentDate: normDate(get(entry, 'shipmentdate', 'shipdate')),
+            arrivalDate: normDate(get(entry, 'arrivaldate', 'arrival')),
+            status: get(entry, 'status') || 'Pending',
+            notes: get(entry, 'notes') || undefined,
+          });
+        }
+        if (added.length === 0) { setErrorBox('No transfer rows found in the CSV.'); return; }
+        setTransfers(prev => [...prev, ...added]);
+        setPoIngestNotice(`${added.length} transfer${added.length === 1 ? '' : 's'} imported from CSV.`);
+      } catch (err) {
+        setErrorBox('Failed to import transfers CSV: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // Sorted, alphabetized customer list for dropdowns (case-insensitive by name)
   const customersSorted = React.useMemo(
     () => [...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })),
@@ -7527,10 +7598,21 @@ export default function App() {
           { header: 'From', key: 'from' },
           { header: 'To', key: 'to' },
           { header: 'Product', key: 'product' },
+          { header: 'Customer', key: 'customer' },
           { header: 'PO No.', key: 'po' },
+          { header: 'Contract #', key: 'contractNumber' },
+          { header: 'Split #', key: 'splitNumber' },
           { header: 'Lot Code', key: 'lotCode' },
+          { header: 'Country of Origin', key: 'countryOfOrigin' },
           { header: 'Amount (MT)', key: 'amount', format: 'number' },
+          { header: 'Brix', key: 'brix' },
+          { header: 'Silo', key: 'silo' },
           { header: 'Carrier', key: 'carrier' },
+          { header: 'Trailer #', key: 'trailerNo' },
+          { header: 'PAPS #', key: 'papsNo' },
+          { header: 'Customs Entry #', key: 'customsEntryNo' },
+          { header: 'Port of Entry', key: 'portOfEntry' },
+          { header: 'HTS Code', key: 'htsCode' },
           { header: 'Shipment Date', key: 'shipmentDate' },
           { header: 'Arrival Date', key: 'arrivalDate' },
           { header: 'Status', key: 'status' },
@@ -7565,6 +7647,20 @@ export default function App() {
               <FileText size={12} /> {isSyncingTransferSheet ? 'Syncing…' : 'Sync Transfers'}
             </button>
             <button
+              onClick={downloadTransferTemplate}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              title="Download a CSV template with the expected columns."
+            >
+              <Download size={12} /> Template
+            </button>
+            <button
+              onClick={() => transferFileInputRef.current?.click()}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              title="Import transfers from a CSV file matching the template."
+            >
+              <Upload size={12} /> Import CSV
+            </button>
+            <button
               onClick={() => {
                 setEditingTransfer(null);
                 setNewTransferLegs([]);
@@ -7597,10 +7693,21 @@ export default function App() {
               { key: 'from', label: 'From' },
               { key: 'to', label: 'To' },
               { key: 'product', label: 'Product', bold: true },
+              { key: 'customer', label: 'Customer', render: (t) => t.customer || '—' },
               { key: 'po', label: 'PO No.', render: (t) => t.po || '—' },
+              { key: 'contractNumber', label: 'Contract #', mono: true, render: (t) => t.contractNumber || '—' },
+              { key: 'splitNumber', label: 'Split #', mono: true, render: (t) => t.splitNumber || '—' },
               { key: 'lotCode', label: 'Lot Code', mono: true, render: (t) => t.lotCode || '—' },
+              { key: 'countryOfOrigin', label: 'Country of Origin', render: (t) => t.countryOfOrigin || '—' },
               { key: 'amount', label: 'Amount (MT)', align: 'right', bold: true },
+              { key: 'brix', label: 'Brix', render: (t) => t.brix || '—' },
+              { key: 'silo', label: 'Silo', render: (t) => t.silo || '—' },
               { key: 'carrier', label: 'Carrier' },
+              { key: 'trailerNo', label: 'Trailer #', mono: true, render: (t) => t.trailerNo || '—' },
+              { key: 'papsNo', label: 'PAPS #', mono: true, render: (t) => t.papsNo || '—' },
+              { key: 'customsEntryNo', label: 'Customs Entry #', mono: true, render: (t) => t.customsEntryNo || '—' },
+              { key: 'portOfEntry', label: 'Port of Entry', render: (t) => t.portOfEntry || '—' },
+              { key: 'htsCode', label: 'HTS Code', mono: true, render: (t) => t.htsCode || '—' },
               {
                 key: 'legs', label: 'Legs', sortable: false,
                 render: (t) => t.legs && t.legs.length > 0 ? (
@@ -11654,6 +11761,13 @@ export default function App() {
         type="file"
         ref={customerFileInputRef}
         onChange={handleImportCustomerCSV}
+        accept=".csv"
+        className="sr-only"
+      />
+      <input
+        type="file"
+        ref={transferFileInputRef}
+        onChange={handleImportTransferCSV}
         accept=".csv"
         className="sr-only"
       />
@@ -21273,21 +21387,36 @@ export default function App() {
                   const form = e.target as HTMLFormElement;
                   const data = new FormData(form);
                   const totalLegAmount = newTransferLegs.reduce((s, l) => s + l.amount, 0);
+                  const g = (k: string) => ((data.get(k) as string) || '').trim();
+                  const lotCode = g('lotCode');
+                  const lc = lotCodes.find(l => l.lotNumber === lotCode);
                   const t: Transfer = {
                     id: `TRF-${Date.now()}`,
                     transferNumber: `TRF-${new Date().getFullYear()}-${String(transfers.length + 1).padStart(3, '0')}`,
                     from: data.get('from') as string,
                     to: data.get('to') as string,
                     product: data.get('product') as string,
-                    po: (data.get('po') as string) || undefined,
-                    lotCode: data.get('lotCode') as string || '',
+                    po: g('po') || undefined,
+                    lotCode: lotCode || '',
                     amount: newTransferLegs.length > 0 ? totalLegAmount : (parseFloat(data.get('amount') as string) || 0),
                     carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : (data.get('carrier') as string),
                     shipmentDate: data.get('shipmentDate') as string,
                     arrivalDate: data.get('arrivalDate') as string,
-                    notes: data.get('notes') as string || '',
+                    notes: g('notes'),
                     status: 'Pending',
                     legs: newTransferLegs.length > 0 ? newTransferLegs : undefined,
+                    customer: g('customer') || undefined,
+                    contractNumber: g('contractNumber') || undefined,
+                    splitNumber: g('splitNumber') || undefined,
+                    // Brix / Silo / Country of Origin: from the form, else derived from the lot code.
+                    brix: g('brix') || lc?.brix || undefined,
+                    silo: g('silo') || lc?.silo || undefined,
+                    countryOfOrigin: g('countryOfOrigin') || lc?.countryOfOrigin || undefined,
+                    papsNo: g('papsNo') || undefined,
+                    trailerNo: g('trailerNo') || undefined,
+                    customsEntryNo: g('customsEntryNo') || undefined,
+                    portOfEntry: g('portOfEntry') || undefined,
+                    htsCode: g('htsCode') || undefined,
                   };
                   setTransfers([...transfers, t]);
                   setIsAddingTransfer(false);
@@ -21311,7 +21440,7 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
                       <select name="product" required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                         <option value="">Select Product</option>
-                        {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                        {buildOrderProductOptions().map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
                       </select>
                     </div>
                     {newTransferLegs.length === 0 && (
@@ -21329,8 +21458,11 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
-                      <input name="lotCode" type="text" placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                      <label className="text-[10px] uppercase font-bold opacity-60">Lot Code <span className="text-[8px] opacity-40">(sets country/silo/brix)</span></label>
+                      <select name="lotCode" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                        <option value="">Select Lot Code</option>
+                        {lotCodes.map(l => <option key={l.id} value={l.lotNumber}>{l.lotNumber}</option>)}
+                      </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
@@ -21354,6 +21486,30 @@ export default function App() {
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Arrival Date</label>
                       <input name="arrivalDate" type="date" defaultValue={new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                  </div>
+
+                  {/* Additional Details */}
+                  <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                    <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Additional Details</h4>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
+                        <select name="customer" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                          <option value="">—</option>
+                          {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Contract #</label><input name="contractNumber" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Split #</label><input name="splitNumber" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Brix <span className="text-[8px] opacity-40">(auto)</span></label><input name="brix" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Silo <span className="text-[8px] opacity-40">(auto)</span></label><input name="silo" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Country of Origin <span className="text-[8px] opacity-40">(auto)</span></label><input name="countryOfOrigin" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">PAPS #</label><input name="papsNo" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Trailer #</label><input name="trailerNo" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Customs Entry #</label><input name="customsEntryNo" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Port of Entry</label><input name="portOfEntry" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
+                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">HTS Code</label><input name="htsCode" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
                     </div>
                   </div>
 
@@ -21484,7 +21640,8 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
                     <select value={editingTransfer.product} onChange={(e) => setEditingTransfer({...editingTransfer, product: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                       <option value="">Select Product</option>
-                      {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                      {buildOrderProductOptions(editingTransfer.product).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                      {editingTransfer.product && !buildOrderProductOptions().some(o => o.value === editingTransfer.product) && <option value={editingTransfer.product}>{editingTransfer.product}</option>}
                     </select>
                   </div>
                   {!hasLegs ? (
@@ -21502,7 +21659,15 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
-                    <input type="text" value={editingTransfer.lotCode || ''} onChange={(e) => setEditingTransfer({...editingTransfer, lotCode: e.target.value})} placeholder="e.g. LOT-2026-001" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    <select value={editingTransfer.lotCode || ''} onChange={(e) => {
+                      const ln = e.target.value;
+                      const lc = lotCodes.find(l => l.lotNumber === ln);
+                      setEditingTransfer({ ...editingTransfer, lotCode: ln, ...(lc ? { countryOfOrigin: lc.countryOfOrigin || editingTransfer.countryOfOrigin, silo: lc.silo || editingTransfer.silo, brix: lc.brix || editingTransfer.brix } : {}) });
+                    }} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">Select Lot Code</option>
+                      {lotCodes.map(l => <option key={l.id} value={l.lotNumber}>{l.lotNumber}</option>)}
+                      {editingTransfer.lotCode && !lotCodes.some(l => l.lotNumber === editingTransfer.lotCode) && <option value={editingTransfer.lotCode}>{editingTransfer.lotCode}</option>}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
@@ -21541,6 +21706,61 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
                     <input type="text" value={editingTransfer.notes || ''} onChange={(e) => setEditingTransfer({...editingTransfer, notes: e.target.value})} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                  </div>
+                </div>
+
+                {/* Additional Details */}
+                <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                  <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Additional Details</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Customer</label>
+                      <select value={editingTransfer.customer || ''} onChange={(e) => setEditingTransfer({...editingTransfer, customer: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                        <option value="">—</option>
+                        {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        {editingTransfer.customer && !customers.some(c => c.name === editingTransfer.customer) && <option value={editingTransfer.customer}>{editingTransfer.customer}</option>}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Contract #</label>
+                      <input type="text" value={editingTransfer.contractNumber || ''} onChange={(e) => setEditingTransfer({...editingTransfer, contractNumber: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Split #</label>
+                      <input type="text" value={editingTransfer.splitNumber || ''} onChange={(e) => setEditingTransfer({...editingTransfer, splitNumber: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Brix</label>
+                      <input type="text" value={editingTransfer.brix || ''} onChange={(e) => setEditingTransfer({...editingTransfer, brix: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Silo</label>
+                      <input type="text" value={editingTransfer.silo || ''} onChange={(e) => setEditingTransfer({...editingTransfer, silo: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Country of Origin <span className="text-[8px] opacity-40">(from lot code)</span></label>
+                      <input type="text" value={editingTransfer.countryOfOrigin || ''} onChange={(e) => setEditingTransfer({...editingTransfer, countryOfOrigin: e.target.value})} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">PAPS #</label>
+                      <input type="text" value={editingTransfer.papsNo || ''} onChange={(e) => setEditingTransfer({...editingTransfer, papsNo: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Trailer #</label>
+                      <input type="text" value={editingTransfer.trailerNo || ''} onChange={(e) => setEditingTransfer({...editingTransfer, trailerNo: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Customs Entry #</label>
+                      <input type="text" value={editingTransfer.customsEntryNo || ''} onChange={(e) => setEditingTransfer({...editingTransfer, customsEntryNo: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Port of Entry</label>
+                      <input type="text" value={editingTransfer.portOfEntry || ''} onChange={(e) => setEditingTransfer({...editingTransfer, portOfEntry: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">HTS Code</label>
+                      <input type="text" value={editingTransfer.htsCode || ''} onChange={(e) => setEditingTransfer({...editingTransfer, htsCode: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
+                    </div>
                   </div>
                 </div>
 

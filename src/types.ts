@@ -350,6 +350,17 @@ export interface Transfer {
   notes?: string;
   status: string;
   legs?: TransferLeg[];
+  customer?: string;
+  brix?: string;
+  papsNo?: string;
+  trailerNo?: string;
+  customsEntryNo?: string;
+  contractNumber?: string;
+  splitNumber?: string;
+  portOfEntry?: string;
+  htsCode?: string;
+  silo?: string;
+  countryOfOrigin?: string;
 }
 
 export interface Invoice {
