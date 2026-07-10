@@ -14339,7 +14339,7 @@ export default function App() {
             setOrderSyncTabSample([]);
             try {
               const id = extractSheetId(orderSyncUrl) || cfg.sheetId;
-              const preview = await fetchTabPreview(id, tab.tabName);
+              const preview = await fetchTabPreview(id, tab.tabName, tab.headerRow);
               setOrderSyncTabHeaders(preview.headers);
               setOrderSyncTabSample(preview.sampleRows);
             } catch (err) {
@@ -14597,12 +14597,25 @@ export default function App() {
                           )}
                           {isEditing && (
                             <div className="border-t border-[#141414]/30 p-4 space-y-4 bg-white">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-[10px] uppercase font-bold opacity-60">Headers on Row</label>
+                                  <select
+                                    value={String(tab.headerRow || 1)}
+                                    onChange={(e) => { const hr = parseInt(e.target.value, 10) || 1; updateTab(idx, { headerRow: hr }); setOrderSyncTabHeaders(null); setOrderSyncTabSample([]); }}
+                                    className="bg-white border border-[#141414] px-2 py-2 text-xs outline-none"
+                                    title="Which row holds the column titles. Data is read from the row after it."
+                                  >
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                  </select>
+                                </div>
                                 <button onClick={fetchHeaders} disabled={orderSyncFetchingHeaders || !idFromUrl} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:opacity-80 disabled:opacity-50">{orderSyncFetchingHeaders ? 'Fetching…' : 'Fetch Headers'}</button>
                                 {orderSyncTabHeaders && (
                                   <button onClick={autoMap} className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">Auto-detect Columns</button>
                                 )}
-                                <span className="text-[10px] opacity-60">Fetches row 1 (headers) + a few sample rows so you can map columns.</span>
+                                <span className="text-[10px] opacity-60">Fetches the header row (row {tab.headerRow || 1}) + sample rows so you can map columns.</span>
                               </div>
                               {orderSyncTabHeaders && (
                                 <>

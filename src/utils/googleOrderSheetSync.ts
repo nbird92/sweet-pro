@@ -900,6 +900,9 @@ export interface ColumnMap {
 export interface ConfiguredTab {
   tabName: string;
   columns: ColumnMap;
+  /** 1-based row that holds the column titles (1, 2, or 3). Data starts on the
+   *  row after it. Defaults to 1 when unset. */
+  headerRow?: number;
   /** Hint for QA-format disambiguation (Tote, Bulk, Liquid, Molasses, ...). */
   expectedFormat?: string;
   /** Per-unit weight in kg; tab default for tote rows. 0 leaves qty in MT. */
@@ -1003,14 +1006,21 @@ export async function fetchTabFromSheet(sheetId: string, tabName: string): Promi
 export async function fetchTabPreview(
   sheetId: string,
   tabName: string,
+  headerRow?: number,
 ): Promise<{ headers: string[]; sampleRows: string[][] }> {
   const csv = await fetchTabFromSheet(sheetId, tabName);
   const rows = parseCSV(csv);
   const nonEmpty = (r: string[]) => (r || []).reduce((n, c) => n + ((c || '').trim() ? 1 : 0), 0);
-  let headerIdx = 0;
-  const scan = Math.min(rows.length, 4);
-  for (let i = 1; i < scan; i++) {
-    if (nonEmpty(rows[i]) > nonEmpty(rows[headerIdx])) headerIdx = i;
+  let headerIdx: number;
+  if (headerRow && headerRow >= 1) {
+    // Explicit "Headers on Row N" from the configurator (1-based).
+    headerIdx = Math.min(Math.floor(headerRow) - 1, Math.max(0, rows.length - 1));
+  } else {
+    headerIdx = 0;
+    const scan = Math.min(rows.length, 4);
+    for (let i = 1; i < scan; i++) {
+      if (nonEmpty(rows[i]) > nonEmpty(rows[headerIdx])) headerIdx = i;
+    }
   }
   const headers = rows[headerIdx] || [];
   const sampleRows = rows.slice(headerIdx + 1, headerIdx + 6);
@@ -1068,7 +1078,10 @@ export function parseConfiguredTab(
   rows: string[][],
   tab: ConfiguredTab,
 ): ParsedOrderRow[] {
-  if (rows.length < 2) return [];
+  // Data begins on the row AFTER the column titles. "Headers on Row N" (1-based)
+  // → titles at index N-1, data starts at index N. Defaults to headers on row 1.
+  const dataStart = Math.max(1, Math.floor(tab.headerRow || 1));
+  if (rows.length <= dataStart) return [];
   const cm = tab.columns;
   const cell = (row: string[], idx: number | undefined): string =>
     idx === undefined || idx < 0 ? '' : (row[idx] ?? '').trim();
@@ -1076,7 +1089,7 @@ export function parseConfiguredTab(
   const skipPrefixes = (tab.skipPoPrefixes || []).map(p => p.toUpperCase());
 
   const out: ParsedOrderRow[] = [];
-  for (let i = 1; i < rows.length; i++) {
+  for (let i = dataStart; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
 
