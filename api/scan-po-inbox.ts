@@ -9,7 +9,7 @@ import {
 } from './_gmail.js';
 
 /**
- * Scheduled PO inbox scan (Vercel Cron, every 15 min).
+ * Scheduled PO inbox scan (Vercel Cron, hourly).
  *
  * Reads recent messages from the shared PO mailbox. For each message it scans
  * the BODY first (the primary source for order info + changes), and only falls
@@ -264,14 +264,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Optional one-off overrides via query string (still gated by CRON_SECRET) for
   // ad-hoc tests, e.g. ?q=in:inbox&max=50&force=1 to scan the last 50 emails
   // and re-extract even ones already processed (the client still skips POs that
-  // already exist in the orders table). The 15-min cron passes none of these.
+  // already exist in the orders table). The hourly cron passes none of these.
   const qOverride = typeof req.query.q === 'string' ? req.query.q : undefined;
-  // Default no longer requires an attachment so amendment emails (often plain
-  // text, no attachment) are also scanned. The model classifies each as
-  // new_order / amendment / cancellation / other; only non-'other' is queued.
-  // 1-day window keeps the 15-min cron cheap (~96 overlapping runs still cover
-  // every email); the manual "Re-import last 3 days" widens it on demand.
-  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'newer_than:1d');
+  // Default requires an attachment to hold down AI spend: real POs almost always
+  // arrive as a PDF/Excel attachment, so this skips the bulk of plain-text inbox
+  // chatter before it ever reaches Gemini. TRADE-OFF: plain-text amendment /
+  // cancellation emails (no attachment) are no longer auto-scanned — use the
+  // manual "Re-import last 3 days" for those, or override PO_INBOX_QUERY (Vercel
+  // env var) with a broader Gmail query (e.g. a sender/label filter). The 1-day
+  // window keeps the hourly cron cheap (~24 overlapping runs still cover every
+  // attachment email).
+  const query = qOverride !== undefined ? qOverride : (process.env.PO_INBOX_QUERY || 'newer_than:1d has:attachment');
   const maxOverride = typeof req.query.max === 'string' ? parseInt(req.query.max, 10) : NaN;
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';
@@ -290,7 +293,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Each Gemini extraction takes a few seconds, so a backlog can exceed the
   // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
   // persisted per message (processedPoEmails + incomingPoOrders), so the next
-  // run — or the 15-min cron — continues where this one left off.
+  // run — or the hourly cron — continues where this one left off.
   // Budget sits ~100s under the 300s maxDuration (vercel.json, Pro plan): a single
   // in-flight message can still be slow (multiple Gemini calls + rate-limit
   // backoff), and if the whole run overruns 300s Vercel HARD-KILLS it before the

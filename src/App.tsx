@@ -19290,13 +19290,15 @@ export default function App() {
           </div>
         )}
 
-        {/* Email-importer status light — green when the 15-minute inbox scan is
-            running cleanly, red when it's stale (>20 min) or its last run had
+        {/* Email-importer status light — green when the hourly inbox scan is
+            running cleanly, red when it's stale (>75 min) or its last run had
             errors. Click for details. */}
         {user && (() => {
           const st = poScanStatus;
           const ageMs = st?.lastRunAt ? Date.now() - Date.parse(st.lastRunAt) : Infinity;
-          const stale = !Number.isFinite(ageMs) || ageMs > 20 * 60 * 1000;
+          // Cron runs hourly; allow a buffer for GitHub-Actions scheduling delay
+          // before flagging the importer as stale.
+          const stale = !Number.isFinite(ageMs) || ageMs > 75 * 60 * 1000;
           const errs = st?.errors || [];
           // Paused = the scheduled importer intentionally idle outside its Mon 4AM ET
           // → Fri 5PM PT run window (heartbeat still fresh). Shown amber, not red.
@@ -19320,12 +19322,12 @@ export default function App() {
                     <span className="font-bold uppercase tracking-widest text-[10px]">Email Importer</span>
                     <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${healthy ? 'bg-emerald-100 text-emerald-700' : paused ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{healthy ? 'Running' : paused ? 'Paused' : 'Attention'}</span>
                   </div>
-                  {!st && <div className="text-red-600">No importer heartbeat yet — waiting for the first 15-minute scan to report in.</div>}
+                  {!st && <div className="text-red-600">No importer heartbeat yet — waiting for the first hourly scan to report in.</div>}
                   {st && (
                     <>
                       <div className="opacity-70">Last run: {st.lastRunAt ? new Date(st.lastRunAt).toLocaleString() : '—'}{ageMin != null ? ` (${ageMin} min ago)` : ''}</div>
                       {paused && <div className="text-amber-700 font-bold">{st.note || 'Paused — outside the scheduled run window (Mon 4AM ET – Fri 5PM PT).'}</div>}
-                      {stale && <div className="text-red-600 font-bold">No run in {ageMin != null ? `${ageMin} minutes` : 'a while'} — expected every 15 minutes. Check the Vercel cron for /api/scan-po-inbox.</div>}
+                      {stale && <div className="text-red-600 font-bold">No run in {ageMin != null ? `${ageMin} minutes` : 'a while'} — expected hourly. Check the Vercel cron for /api/scan-po-inbox.</div>}
                       <div className="opacity-70">Scanned {st.scanned ?? 0} · queued {st.queued ?? 0}{st.remaining ? ` · ${st.remaining} remaining` : ''}{st.partial ? ' · partial run' : ''}</div>
                       {errs.length > 0 ? (
                         <div className="space-y-1">
@@ -19338,7 +19340,7 @@ export default function App() {
                       ) : (!stale && !paused && <div className="text-emerald-700">Last run completed without errors.</div>)}
                     </>
                   )}
-                  <div className="pt-1 border-t border-[#141414]/10 opacity-50">Scans every 15 minutes via the Vercel cron, Monday 4 AM ET → Friday 5 PM PT; the app also drains the queue every 5 minutes while open. Use “Scan Inbox Now” to run outside that window.</div>
+                  <div className="pt-1 border-t border-[#141414]/10 opacity-50">Scans hourly via the Vercel cron, Monday 4 AM ET → Friday 5 PM PT; the app also drains the queue every 5 minutes while open. Use “Scan Inbox Now” to run outside that window.</div>
                 </div>
               )}
             </div>

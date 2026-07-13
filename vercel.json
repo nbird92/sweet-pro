@@ -16,6 +16,6 @@
     }
   },
   "crons": [
-    { "path": "/api/scan-po-inbox", "schedule": "*/15 * * * *" }
+    { "path": "/api/scan-po-inbox", "schedule": "0 * * * *" }
   ]
 }
