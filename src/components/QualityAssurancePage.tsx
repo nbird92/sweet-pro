@@ -2306,11 +2306,37 @@ export default function QualityAssurancePage({
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
-                      <input type="text" value={newProductData.terminal || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, terminal: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 100" />
+                      <select
+                        value={newProductData.terminal || ''}
+                        onChange={(e) => {
+                          const code = e.target.value;
+                          const match = (locations.find(l => l.name === newProductData.location)?.terminalNames || []).find(t => t.terminal === code);
+                          setNewProductData(prev => ({ ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) }));
+                        }}
+                        className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                      >
+                        <option value="">Select Terminal</option>
+                        {(locations.find(l => l.name === newProductData.location)?.terminalNames || []).map((t, i) => (
+                          <option key={i} value={t.terminal}>{t.terminal}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
-                      <input type="text" value={newProductData.terminalName || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, terminalName: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Hamilton Terminal" />
+                      <select
+                        value={newProductData.terminalName || ''}
+                        onChange={(e) => {
+                          const name = e.target.value;
+                          const match = (locations.find(l => l.name === newProductData.location)?.terminalNames || []).find(t => t.terminalName === name);
+                          setNewProductData(prev => ({ ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) }));
+                        }}
+                        className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                      >
+                        <option value="">Select Terminal Name</option>
+                        {(locations.find(l => l.name === newProductData.location)?.terminalNames || []).map((t, i) => (
+                          <option key={i} value={t.terminalName}>{t.terminalName}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</label>
@@ -2563,23 +2589,37 @@ export default function QualityAssurancePage({
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
-                        <input
-                          type="text"
+                        <select
                           value={editData?.terminal || ''}
-                          onChange={(e) => setEditData(prev => prev ? { ...prev, terminal: e.target.value || undefined } : prev)}
+                          onChange={(e) => {
+                            const code = e.target.value;
+                            const match = (locations.find(l => l.name === editData?.location)?.terminalNames || []).find(t => t.terminal === code);
+                            setEditData(prev => prev ? { ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) } : prev);
+                          }}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          placeholder="e.g. 100"
-                        />
+                        >
+                          <option value="">Select Terminal</option>
+                          {(locations.find(l => l.name === editData?.location)?.terminalNames || []).map((t, i) => (
+                            <option key={i} value={t.terminal}>{t.terminal}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
-                        <input
-                          type="text"
+                        <select
                           value={editData?.terminalName || ''}
-                          onChange={(e) => setEditData(prev => prev ? { ...prev, terminalName: e.target.value || undefined } : prev)}
+                          onChange={(e) => {
+                            const name = e.target.value;
+                            const match = (locations.find(l => l.name === editData?.location)?.terminalNames || []).find(t => t.terminalName === name);
+                            setEditData(prev => prev ? { ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) } : prev);
+                          }}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          placeholder="e.g. Hamilton Terminal"
-                        />
+                        >
+                          <option value="">Select Terminal Name</option>
+                          {(locations.find(l => l.name === editData?.location)?.terminalNames || []).map((t, i) => (
+                            <option key={i} value={t.terminalName}>{t.terminalName}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format</label>

@@ -11674,17 +11674,16 @@ export default function App() {
       const stockRows: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
         .map(o => {
-          // Terminal + Terminal Name come from the order's corresponding Location
-          // (matched by name) — a Location can list several { terminal, terminalName }.
-          const loc = locations.find(l => l.name === o.location);
-          const locTerminals = loc?.terminalNames || [];
+          // Terminal + Terminal Name are PRODUCT-dependent: each line item's product
+          // QA record carries them (set on the QA product from its location's
+          // terminal list). Multi-line orders join distinct values.
           const lineItems = o.lineItems || [];
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(locTerminals.map(t => t.terminal)),
-            terminalName: joinDistinct(locTerminals.map(t => t.terminalName)),
+            terminal: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.terminal)),
+            terminalName: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
