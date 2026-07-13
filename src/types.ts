@@ -106,6 +106,8 @@ export interface ProductGroup {
   name: string;
   color: string;
   bolCode: string;
+  warehouse?: string;   // Liquid | DRY
+  commodity?: string;   // WHT | LIQ SUCROS
 }
 
 export const INITIAL_PRODUCT_GROUPS: ProductGroup[] = [
@@ -258,6 +260,12 @@ export interface Shipment {
   location?: string;
 }
 
+/** A terminal code paired with its display name. A Location can have many. */
+export interface TerminalName {
+  terminal: string;      // terminal code / short id
+  terminalName: string;  // full terminal name
+}
+
 export interface Location {
   id: string;
   locationCode: string;
@@ -267,6 +275,8 @@ export interface Location {
   province: string;
   postalCode: string;
   bays: string[];
+  /** Terminals served from this location — each a { terminal, terminalName } pair. */
+  terminalNames?: TerminalName[];
   active?: boolean; // Whether this location is shown in the location dropdowns across the app. Defaults to true when undefined.
   appointmentStartTime?: string;  // e.g. '00:00'
   appointmentEndTime?: string;    // e.g. '22:30'
@@ -876,6 +886,8 @@ export interface QAProduct {
   sellingUnitKg?: number;      // kg per selling unit
   warehouse?: string;          // Storage warehouse for this product (feeds Stock Requests)
   commodityGroup?: string;     // Commodity group / CMY (feeds Stock Requests)
+  terminal?: string;           // Terminal code for this product
+  terminalName?: string;       // Terminal name for this product
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];

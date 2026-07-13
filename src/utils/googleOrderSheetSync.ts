@@ -18,7 +18,7 @@
 // The sheet must be either "Anyone with link can view" or published to the
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
-import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer } from '../types';
+import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer, LotCode } from '../types';
 import { parseCSV } from './googleSheetsSync';
 
 // Workbook containing the order tabs to import.
@@ -94,6 +94,23 @@ export interface ParsedOrderRow {
   portOfEntry: string;
   htsCode: string;
   countryOfOrigin: string;
+  /** Lot-code testing-log extras (Sync Lot Codes). date=shipmentDate, lot#=lotCode.
+   *  Optional so the other (legacy) ParsedOrderRow builders don't need updating —
+   *  only parseConfiguredTab populates them and only the lot-code converter reads them. */
+  tankNumber?: string;
+  sugarType?: string;
+  ph?: string;
+  color?: string;
+  temperature?: string;
+  invert?: string;
+  ash?: string;
+  moisture?: string;
+  flavourOdourOk?: string;
+  testerName?: string;
+  notes?: string;
+  weeklyVerification?: string;
+  category?: string;
+  customerPo?: string;
 }
 
 export interface OrderSyncResult {
@@ -921,6 +938,22 @@ export interface ColumnMap {
   portOfEntry?: number;
   htsCode?: number;
   countryOfOrigin?: number;
+  /** Lot-code testing-log columns (Sync Lot Codes). Lot# maps to lotCode, Date to
+   *  shipmentDate, BOL to bolNumber; these are the remaining lab-test columns. */
+  tankNumber?: number;
+  sugarType?: number;
+  ph?: number;
+  color?: number;
+  temperature?: number;
+  invert?: number;
+  ash?: number;
+  moisture?: number;
+  flavourOdourOk?: number;
+  testerName?: number;
+  notes?: number;
+  weeklyVerification?: number;
+  category?: number;
+  customerPo?: number;
 }
 
 export interface ConfiguredTab {
@@ -1097,11 +1130,28 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     customsEntryNo: find(h => /customs entry|entry no|entry number|entry #/.test(h) || h === 'customs entry' || h === 'customs no'),
     reversals: find(h => /reversal/.test(h)),
     brix: find(h => h === 'brix' || /brix/.test(h)),
-    silo: find(h => h === 'silo' || /silo|tank/.test(h)),
+    // Prefer a real "silo" header; fall back to a "tank" header (preserves the
+    // pre-lot-code transfer behaviour where tank stood in for silo).
+    silo: find(h => h === 'silo' || /silo/.test(h)) ?? find(h => /tank/.test(h)),
     trailerNo: find(h => h === 'trailer' || h === 'trailer #' || h === 'trailer no' || /trailer/.test(h)),
     portOfEntry: find(h => /port of entry|port/.test(h)),
     htsCode: find(h => /hts|harmonized|tariff/.test(h)),
     countryOfOrigin: find(h => /country of origin|country|origin country/.test(h)),
+    // Lot-code testing-log columns.
+    tankNumber: find(h => h === 'tank' || h === 'tank #' || h === 'tank no' || h === 'tank no.' || h === 'tank number' || /tank/.test(h)),
+    sugarType: find(h => h === 'sugar type' || h === 'sugar' || h === 'type'),
+    ph: find(h => h === 'ph' || h === 'p.h.' || h === 'p.h'),
+    color: find(h => /colou?r/.test(h)),
+    temperature: find(h => h === 'temp' || h === 'temp °c' || h === 'temp c' || /temperature/.test(h)),
+    invert: find(h => /invert/.test(h)),
+    ash: find(h => h === 'ash'),
+    moisture: find(h => /moisture/.test(h)),
+    flavourOdourOk: find(h => /flavou?r|odou?r/.test(h)),
+    testerName: find(h => h === 'tester' || h === 'tester name' || h === 'tested by' || h === 'analyst' || h === 'technician'),
+    notes: find(h => h === 'notes' || h === 'note' || h === 'comments' || h === 'remarks'),
+    weeklyVerification: find(h => /weekly verif|weekly check|verification/.test(h)),
+    category: find(h => h === 'category' || h === 'conv' || h === 'conv/org' || h === 'conventional/organic' || /conventional|organic/.test(h)),
+    customerPo: find(h => h === 'customer po' || h === 'customer po #' || h === 'cust po'),
   };
 }
 
@@ -1153,11 +1203,27 @@ export function parseConfiguredTab(
     const portOfEntryRaw = cell(row, cm.portOfEntry);
     const htsCodeRaw = cell(row, cm.htsCode);
     const countryRaw = cell(row, cm.countryOfOrigin);
+    const tankRaw = cell(row, cm.tankNumber);
+    const sugarTypeRaw = cell(row, cm.sugarType);
+    const phRaw = cell(row, cm.ph);
+    const colorRaw = cell(row, cm.color);
+    const temperatureRaw = cell(row, cm.temperature);
+    const invertRaw = cell(row, cm.invert);
+    const ashRaw = cell(row, cm.ash);
+    const moistureRaw = cell(row, cm.moisture);
+    const flavourOdourRaw = cell(row, cm.flavourOdourOk);
+    const testerRaw = cell(row, cm.testerName);
+    const notesRaw = cell(row, cm.notes);
+    const weeklyVerificationRaw = cell(row, cm.weeklyVerification);
+    const categoryRaw = cell(row, cm.category);
+    const customerPoRaw = cell(row, cm.customerPo);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
-    // so from/to/transfer-number presence also counts as a non-empty row.
-    if (!customer && !bol && !po && !product && !fromRaw && !toRaw && !transferNoRaw) continue;
+    // so from/to/transfer-number presence also counts as a non-empty row. A lot-
+    // code row may carry only a lot number, a date or a tank. (Entity converters
+    // still validate/skip rows that lack the fields they actually require.)
+    if (!customer && !bol && !po && !product && !fromRaw && !toRaw && !transferNoRaw && !lotRaw && !shipDateRaw && !tankRaw) continue;
     if (bol.toLowerCase() === 'bl number') continue;
     if (skipPrefixes.some(p => po.toUpperCase().startsWith(p))) continue;
 
@@ -1208,6 +1274,20 @@ export function parseConfiguredTab(
       portOfEntry: portOfEntryRaw,
       htsCode: htsCodeRaw,
       countryOfOrigin: countryRaw,
+      tankNumber: tankRaw,
+      sugarType: sugarTypeRaw,
+      ph: phRaw,
+      color: colorRaw,
+      temperature: temperatureRaw,
+      invert: invertRaw,
+      ash: ashRaw,
+      moisture: moistureRaw,
+      flavourOdourOk: flavourOdourRaw,
+      testerName: testerRaw,
+      notes: notesRaw,
+      weeklyVerification: weeklyVerificationRaw,
+      category: categoryRaw,
+      customerPo: customerPoRaw,
     });
   }
   return out;
@@ -2458,5 +2538,221 @@ export const TRANSFER_FIELDS: Array<{ key: keyof ColumnMap; label: string; requi
   { key: 'customsEntryNo', label: 'Customs Entry #' },
   { key: 'portOfEntry', label: 'Port of Entry' },
   { key: 'htsCode', label: 'HTS Code' },
+  { key: 'status', label: 'Status / Cancellation' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lot Codes (Lot Code Testing Log) sync — mirrors the transfer path. Maps a lab
+// testing-log sheet to LotCode records (Lot# → lotCode column, Date →
+// shipmentDate). No product resolution needed — the log stores raw test values.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LotCodeSyncResult {
+  newLotCodes: LotCode[];
+  /** Existing lot codes whose empty fields were filled from the sheet (matched by
+   *  lot number). Each is the full merged record; the caller replaces by id. */
+  updatedLotCodes: LotCode[];
+  skipped: Array<{ tab: string; lotNumber: string; reason: string }>;
+  errors: Array<{ tab: string; rowIdx: number; message: string }>;
+}
+
+/** Day-of-year (001-366) from an ISO date, for LotCode.julianDate. */
+function julianDayOfYear(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
+  const d = new Date(iso + 'T12:00:00');
+  if (isNaN(d.getTime())) return '';
+  const start = new Date(d.getFullYear(), 0, 0);
+  return String(Math.floor((d.getTime() - start.getTime()) / 86400000)).padStart(3, '0');
+}
+
+export function parsedRowsToLotCodesConfigured(
+  parsed: ParsedOrderRow[],
+  existingLotCodes: LotCode[],
+): LotCodeSyncResult {
+  const result: LotCodeSyncResult = { newLotCodes: [], updatedLotCodes: [], skipped: [], errors: [] };
+  const norm = (s?: string) => (s || '').trim();
+  const category = (v: string): LotCode['category'] => {
+    const s = v.trim().toLowerCase();
+    if (s.startsWith('org')) return 'Organic';
+    if (s.startsWith('con')) return 'Conventional';
+    return '';
+  };
+  const silo = (v: string): LotCode['silo'] => {
+    const s = v.trim().toLowerCase();
+    if (s.startsWith('n')) return 'North';
+    if (s.startsWith('s')) return 'South';
+    return '';
+  };
+  const yesNo = (v: string): LotCode['flavourOdourOk'] => {
+    const s = v.trim().toLowerCase();
+    if (['y', 'yes', 'ok', 'pass', 'true', '1'].includes(s)) return 'Yes';
+    if (['n', 'no', 'fail', 'false', '0'].includes(s)) return 'No';
+    return '';
+  };
+
+  const existingByLot = new Map<string, LotCode>();
+  for (const lc of existingLotCodes) {
+    const k = (lc.lotNumber || '').trim().toUpperCase();
+    if (k && !existingByLot.has(k)) existingByLot.set(k, lc);
+  }
+  const existingLots = new Set(existingByLot.keys());
+  const updatedByLot = new Map<string, LotCode>();
+  // Lots CREATED earlier in this same import, keyed by lot number, so a later row
+  // with the same (new) lot number fills the already-pushed record in place rather
+  // than producing an id-less phantom update.
+  const newByLot = new Map<string, LotCode>();
+
+  const compositeKey = (bol: string, date: string, tank: string) =>
+    `${bol.toUpperCase()}|${date}|${tank.toUpperCase()}`;
+  const existingComposites = new Set(
+    existingLotCodes.map(lc => compositeKey(lc.bolNumber || '', lc.date || '', lc.tankNumber || '')),
+  );
+  const addedComposites = new Set<string>();
+
+  for (const r of parsed) {
+    try {
+      if (isCancelledStatus(r.status)) {
+        result.skipped.push({ tab: r.tab, lotNumber: r.lotCode || '', reason: 'Row marked cancelled' });
+        continue;
+      }
+      const lotNumber = norm(r.lotCode);
+      const date = norm(r.shipmentDate);
+      const bol = norm(r.bolNumber);
+      const tank = norm(r.tankNumber);
+      if (!lotNumber && !date && !bol) {
+        result.skipped.push({ tab: r.tab, lotNumber, reason: 'Row has no lot number, date or BOL' });
+        continue;
+      }
+
+      // Fields carried from this sheet row (build a new lot OR fill an existing one's gaps).
+      const fields: Partial<LotCode> = {
+        lotNumber: lotNumber || undefined,
+        tankNumber: tank || undefined,
+        date: date || undefined,
+        julianDate: date ? (julianDayOfYear(date) || undefined) : undefined,
+        category: category(norm(r.category)) || undefined,
+        silo: silo(norm(r.silo)) || undefined,
+        brix: norm(r.brix) || undefined,
+        ph: norm(r.ph) || undefined,
+        color: norm(r.color) || undefined,
+        temperature: norm(r.temperature) || undefined,
+        invert: norm(r.invert) || undefined,
+        ash: norm(r.ash) || undefined,
+        moisture: norm(r.moisture) || undefined,
+        flavourOdourOk: yesNo(norm(r.flavourOdourOk)) || undefined,
+        testerName: norm(r.testerName) || undefined,
+        notes: norm(r.notes) || undefined,
+        weeklyVerification: norm(r.weeklyVerification) || undefined,
+        sugarType: norm(r.sugarType) || undefined,
+        countryOfOrigin: norm(r.countryOfOrigin) || undefined,
+        bolNumber: bol || undefined,
+        customerPo: norm(r.customerPo) || undefined,
+      };
+      const isEmpty = (v: any) => v === undefined || v === null || v === '';
+
+      const lotU = lotNumber.toUpperCase();
+      // A lot number created earlier in THIS import: fill the pending new record's
+      // empty fields in place (it's already in newLotCodes, keeping its id/createdAt).
+      const pendingNew = lotU ? newByLot.get(lotU) : undefined;
+      if (pendingNew) {
+        for (const [k, v] of Object.entries(fields)) {
+          if (isEmpty((pendingNew as any)[k]) && !isEmpty(v)) (pendingNew as any)[k] = v;
+        }
+        continue;
+      }
+      // Existing lot with the same number → fill only its empty fields.
+      if (lotU && (existingLots.has(lotU) || updatedByLot.has(lotU))) {
+        const base = updatedByLot.get(lotU) || existingByLot.get(lotU);
+        if (base) {
+          const merged: any = { ...base };
+          let changed = false;
+          for (const [k, v] of Object.entries(fields)) {
+            if (isEmpty((merged as any)[k]) && !isEmpty(v)) { merged[k] = v; changed = true; }
+          }
+          if (changed) updatedByLot.set(lotU, merged as LotCode);
+          else result.skipped.push({ tab: r.tab, lotNumber, reason: 'Lot code already exists with no missing fields to fill' });
+          continue;
+        }
+      }
+
+      // Numberless rows dedup on BOL|date|tank so re-runs don't duplicate.
+      const comp = compositeKey(bol, date, tank);
+      if (!lotU && (existingComposites.has(comp) || addedComposites.has(comp))) {
+        result.skipped.push({ tab: r.tab, lotNumber, reason: 'An identical lot row already exists (same BOL/date/tank)' });
+        continue;
+      }
+
+      const newLot: LotCode = {
+        id: `LOT-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        lotNumber, tankNumber: '', date, julianDate: date ? julianDayOfYear(date) : '',
+        category: '', productGroup: '', silo: '', brix: '', ph: '', color: '', temperature: '',
+        invert: '', ash: '', moisture: '', flavourOdourOk: '', testerId: '', testerName: '',
+        notes: '', weeklyVerification: '', sugarType: '', countryOfOrigin: '', bolNumber: '',
+        customerPo: '', createdAt: new Date().toISOString(),
+        ...fields,
+      };
+      const stripped = stripUndefined(newLot) as LotCode;
+      result.newLotCodes.push(stripped);
+      if (lotU) { existingLots.add(lotU); newByLot.set(lotU, stripped); }
+      addedComposites.add(comp);
+    } catch (err) {
+      result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  result.updatedLotCodes = Array.from(updatedByLot.values()).map(lc => stripUndefined(lc) as LotCode);
+  return result;
+}
+
+/** Run a lot-code sync against any sheet/config. Same fetch + parse path as the
+ *  other entities; only the row-to-record build differs. */
+export async function syncLotCodesFromConfig(
+  config: SheetImportConfig,
+  ctx: { existingLotCodes: LotCode[] },
+): Promise<LotCodeSyncResult> {
+  const allParsed: ParsedOrderRow[] = [];
+  const fetchErrors: LotCodeSyncResult['errors'] = [];
+  for (const tab of config.tabs) {
+    try {
+      const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
+      const rows = parseCSV(csv);
+      allParsed.push(...parseConfiguredTab(rows, tab));
+    } catch (err) {
+      fetchErrors.push({ tab: tab.tabName, rowIdx: 0, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const result = parsedRowsToLotCodesConfigured(allParsed, ctx.existingLotCodes);
+  result.errors.unshift(...fetchErrors);
+  return result;
+}
+
+/** Default lot-code-sync preset — blank tabular starter. */
+export const DEFAULT_LOTCODE_IMPORT_CONFIG: SheetImportConfig = {
+  name: 'Lot Codes (tabular template)',
+  sheetId: '',
+  tabs: [{ tabName: 'Sheet1', columns: {} }],
+};
+
+/** Canonical field list for the lot-code column-mapping UI (label + key). */
+export const LOTCODE_FIELDS: Array<{ key: keyof ColumnMap; label: string; required?: boolean }> = [
+  { key: 'lotCode', label: 'Lot #', required: true },
+  { key: 'shipmentDate', label: 'Date', required: true },
+  { key: 'bolNumber', label: 'BOL #' },
+  { key: 'tankNumber', label: 'Tank #' },
+  { key: 'sugarType', label: 'Sugar Type' },
+  { key: 'brix', label: 'Brix' },
+  { key: 'ph', label: 'PH' },
+  { key: 'color', label: 'Color' },
+  { key: 'temperature', label: 'Temp °C' },
+  { key: 'invert', label: 'Invert' },
+  { key: 'ash', label: 'Ash' },
+  { key: 'moisture', label: 'Moisture' },
+  { key: 'flavourOdourOk', label: 'Flavour/Odour OK' },
+  { key: 'testerName', label: 'Tester' },
+  { key: 'category', label: 'Conv./Organic' },
+  { key: 'silo', label: 'Silo' },
+  { key: 'countryOfOrigin', label: 'Country of Origin' },
+  { key: 'customerPo', label: 'Customer PO #' },
+  { key: 'notes', label: 'Notes' },
+  { key: 'weeklyVerification', label: 'Weekly Verification' },
   { key: 'status', label: 'Status / Cancellation' },
 ];

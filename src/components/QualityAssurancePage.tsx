@@ -1490,6 +1490,8 @@ export default function QualityAssurancePage({
         columns={[
           { key: 'name', label: 'Group Name', bold: true },
           { key: 'bolCode', label: 'BOL Code', mono: true, bold: true, widthClass: 'w-32' },
+          { key: 'warehouse', label: 'Warehouse', render: (pg) => pg.warehouse || '—' },
+          { key: 'commodity', label: 'Commodity', render: (pg) => pg.commodity || '—' },
           {
             key: 'color',
             label: 'Color',
@@ -1540,6 +1542,8 @@ export default function QualityAssurancePage({
             <>
               <DetailRow label="Group Name" value={productGroupDraft.name} bold />
               <DetailRow label="BOL Code" value={productGroupDraft.bolCode} mono bold />
+              <DetailRow label="Warehouse" value={productGroupDraft.warehouse || '—'} />
+              <DetailRow label="Commodity" value={productGroupDraft.commodity || '—'} />
               <DetailRow
                 label="Color"
                 value={
@@ -1568,6 +1572,28 @@ export default function QualityAssurancePage({
                   placeholder="e.g. B, P, T, L"
                   maxLength={1}
                 />
+              </DetailField>
+              <DetailField label="Warehouse">
+                <select
+                  value={productGroupDraft.warehouse || ''}
+                  onChange={(e) => setProductGroupDraft(d => d ? { ...d, warehouse: e.target.value || undefined } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                >
+                  <option value="">Select Warehouse</option>
+                  <option value="Liquid">Liquid</option>
+                  <option value="DRY">DRY</option>
+                </select>
+              </DetailField>
+              <DetailField label="Commodity">
+                <select
+                  value={productGroupDraft.commodity || ''}
+                  onChange={(e) => setProductGroupDraft(d => d ? { ...d, commodity: e.target.value || undefined } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                >
+                  <option value="">Select Commodity</option>
+                  <option value="WHT">WHT</option>
+                  <option value="LIQ SUCROS">LIQ SUCROS</option>
+                </select>
               </DetailField>
               <DetailField label="Color">
                 <div className="flex items-center gap-2">
@@ -2264,11 +2290,27 @@ export default function QualityAssurancePage({
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</label>
-                      <input type="text" value={newProductData.warehouse || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, warehouse: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Hamilton" />
+                      <select value={newProductData.warehouse || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, warehouse: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Select Warehouse</option>
+                        <option value="Liquid">Liquid</option>
+                        <option value="DRY">DRY</option>
+                      </select>
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</label>
-                      <input type="text" value={newProductData.commodityGroup || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, commodityGroup: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Sugar" />
+                      <select value={newProductData.commodityGroup || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, commodityGroup: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <option value="">Select Commodity</option>
+                        <option value="WHT">WHT</option>
+                        <option value="LIQ SUCROS">LIQ SUCROS</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
+                      <input type="text" value={newProductData.terminal || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, terminal: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 100" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
+                      <input type="text" value={newProductData.terminalName || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, terminalName: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Hamilton Terminal" />
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</label>
@@ -2497,22 +2539,46 @@ export default function QualityAssurancePage({
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</label>
-                        <input
-                          type="text"
+                        <select
                           value={editData?.warehouse || ''}
                           onChange={(e) => setEditData(prev => prev ? { ...prev, warehouse: e.target.value || undefined } : prev)}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          placeholder="e.g. Hamilton"
-                        />
+                        >
+                          <option value="">Select Warehouse</option>
+                          <option value="Liquid">Liquid</option>
+                          <option value="DRY">DRY</option>
+                        </select>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</label>
-                        <input
-                          type="text"
+                        <select
                           value={editData?.commodityGroup || ''}
                           onChange={(e) => setEditData(prev => prev ? { ...prev, commodityGroup: e.target.value || undefined } : prev)}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          placeholder="e.g. Sugar"
+                        >
+                          <option value="">Select Commodity</option>
+                          <option value="WHT">WHT</option>
+                          <option value="LIQ SUCROS">LIQ SUCROS</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
+                        <input
+                          type="text"
+                          value={editData?.terminal || ''}
+                          onChange={(e) => setEditData(prev => prev ? { ...prev, terminal: e.target.value || undefined } : prev)}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="e.g. 100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
+                        <input
+                          type="text"
+                          value={editData?.terminalName || ''}
+                          onChange={(e) => setEditData(prev => prev ? { ...prev, terminalName: e.target.value || undefined } : prev)}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          placeholder="e.g. Hamilton Terminal"
                         />
                       </div>
                       <div>
@@ -2654,6 +2720,8 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div><div className="text-xs font-bold">{displayData.location}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</div><div className="text-xs font-bold">{displayData.warehouse || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</div><div className="text-xs font-bold">{displayData.commodityGroup || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</div><div className="text-xs font-bold">{displayData.terminal || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</div><div className="text-xs font-bold">{displayData.terminalName || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>

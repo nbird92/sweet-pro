@@ -91,6 +91,7 @@ import {
   syncShipmentScheduleFromConfig,
   DEFAULT_SHIPMENT_SCHEDULE_CONFIG,
   syncTransfersFromConfig,
+  syncLotCodesFromConfig,
   fetchTabPreview,
   extractSheetId,
   autoDetectColumns,
@@ -99,12 +100,15 @@ import {
   DEFAULT_INVOICE_IMPORT_CONFIG,
   DEFAULT_SHIPMENT_IMPORT_CONFIG,
   DEFAULT_TRANSFER_IMPORT_CONFIG,
+  DEFAULT_LOTCODE_IMPORT_CONFIG,
   ORDER_FIELDS,
   TRANSFER_FIELDS,
+  LOTCODE_FIELDS,
   type OrderSyncResult,
   type InvoiceSyncResult,
   type ShipmentSyncResult,
   type TransferSyncResult,
+  type LotCodeSyncResult,
   type SheetImportConfig,
   type ConfiguredTab,
   type ColumnMap,
@@ -375,6 +379,8 @@ export default function App() {
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
+  // Row selection for the Stock Requests table (far-left checkbox column).
+  const [selectedStockRows, setSelectedStockRows] = useState<Set<string>>(new Set());
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
 
@@ -5383,9 +5389,9 @@ export default function App() {
   const [isSyncingOrdersSheet, setIsSyncingOrdersSheet] = useState(false);
   const [orderSyncPreview, setOrderSyncPreview] = useState<OrderSyncResult | null>(null);
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
-  // Configurable sync UI — same modal serves Orders, Invoices, Shipments, and Transfers.
-  // syncMode tracks which mode the modal is in; null means closed.
-  type SyncMode = 'orders' | 'invoices' | 'shipments' | 'transfers';
+  // Configurable sync UI — same modal serves Orders, Invoices, Shipments, Transfers,
+  // and Lot Codes. syncMode tracks which mode the modal is in; null means closed.
+  type SyncMode = 'orders' | 'invoices' | 'shipments' | 'transfers' | 'lotCodes';
   const [syncMode, setSyncMode] = useState<SyncMode | null>(null);
   const isConfiguringOrderSync = syncMode !== null;
   const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
@@ -5450,6 +5456,15 @@ export default function App() {
   const [transferSyncPresets, setTransferSyncPresets] = useState<SheetImportConfig[]>(() => {
     try {
       const raw = localStorage.getItem('transferImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
+  // Lot-code-sync state (Lot Code Testing Log; separate preset store)
+  const [isSyncingLotCodeSheet, setIsSyncingLotCodeSheet] = useState(false);
+  const [lotCodeSyncPreview, setLotCodeSyncPreview] = useState<LotCodeSyncResult | null>(null);
+  const [lotCodeSyncPresets, setLotCodeSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('lotCodeImportPresets');
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
@@ -9432,6 +9447,15 @@ export default function App() {
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           transfers={transfers}
           onUpdateLotCodes={setLotCodes}
+          onSyncLotCodes={() => {
+            const preset = lotCodeSyncPresets[0] || DEFAULT_LOTCODE_IMPORT_CONFIG;
+            setOrderSyncConfig(preset);
+            setOrderSyncUrl(preset.sheetId ? `https://docs.google.com/spreadsheets/d/${preset.sheetId}/` : '');
+            setOrderSyncEditingTabIdx(null);
+            setOrderSyncTabHeaders(null);
+            setOrderSyncTabSample([]);
+            setSyncMode('lotCodes');
+          }}
           onUpdateShipments={(updated) => {
             // Split back into hamilton / vancouver based on existing membership
             const hamIds = new Set(hamiltonShipments.map(s => s.id));
@@ -10733,6 +10757,54 @@ export default function App() {
                       )}
                     </div>
                   </div>
+                  {/* Terminal Names — a repeatable list of { terminal, terminalName }
+                      pairs. Each row has two columns: Terminal (code) + Terminal Name. */}
+                  <div className="space-y-3 pt-2 border-t border-[#141414]/10">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-[10px] uppercase font-bold opacity-50">Terminal Names</h4>
+                      <button
+                        onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: [...(l.terminalNames || []), { terminal: '', terminalName: '' }] } : l))}
+                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
+                      >
+                        <Plus size={10} /> Add Terminal Name
+                      </button>
+                    </div>
+                    {(liveLoc.terminalNames || []).length > 0 && (
+                      <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 items-center text-[9px] uppercase font-bold opacity-40">
+                        <div className="px-1">Terminal</div>
+                        <div className="px-1">Terminal Name</div>
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      {(liveLoc.terminalNames || []).map((tn, idx) => (
+                        <div key={idx} className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={tn.terminal}
+                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, terminal: e.target.value } : t) } : l))}
+                            className="w-28 bg-white border border-[#141414]/20 p-2 text-xs font-mono"
+                            placeholder="Terminal"
+                          />
+                          <input
+                            type="text"
+                            value={tn.terminalName}
+                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, terminalName: e.target.value } : t) } : l))}
+                            className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
+                            placeholder="Terminal Name"
+                          />
+                          <button
+                            onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).filter((_, i) => i !== idx) } : l))}
+                            className="p-2 hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      {(liveLoc.terminalNames || []).length === 0 && (
+                        <div className="text-center text-[10px] opacity-40 italic py-4">No terminal names added yet.</div>
+                      )}
+                    </div>
+                  </div>
                   <div className="text-[10px] opacity-40 italic">Manage location details on the Quality Assurance page.</div>
                 </div>
               );
@@ -11602,15 +11674,17 @@ export default function App() {
       const stockRows: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
         .map(o => {
-          const cust = customers.find(c => c.name === o.customer);
-          const shipTo = o.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === o.shipToLocationId) : undefined;
+          // Terminal + Terminal Name come from the order's corresponding Location
+          // (matched by name) — a Location can list several { terminal, terminalName }.
+          const loc = locations.find(l => l.name === o.location);
+          const locTerminals = loc?.terminalNames || [];
           const lineItems = o.lineItems || [];
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: shipTo?.locationCode || '',
-            terminalName: shipTo?.name || '',
+            terminal: joinDistinct(locTerminals.map(t => t.terminal)),
+            terminalName: joinDistinct(locTerminals.map(t => t.terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
@@ -11655,6 +11729,22 @@ export default function App() {
               icon={<Boxes size={14} />}
               stickyHeader
               columns={[
+                {
+                  key: 'select', label: '', sortable: false, align: 'center', widthClass: 'w-8',
+                  render: (r) => (
+                    <input
+                      type="checkbox"
+                      checked={selectedStockRows.has(r.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => setSelectedStockRows(prev => {
+                        const next = new Set(prev);
+                        if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
+                        return next;
+                      })}
+                      className="cursor-pointer"
+                    />
+                  ),
+                },
                 { key: 'split', label: 'Split', mono: true, render: (r) => r.split || '—' },
                 { key: 'customer', label: 'Customer', bold: true, render: (r) => r.customer || '—' },
                 { key: 'terminal', label: 'Terminal', render: (r) => r.terminal || '—' },
@@ -11669,6 +11759,7 @@ export default function App() {
               ]}
               rows={getSortedAndFilteredData<StockRow>(stockRows, ['split', 'customer', 'terminal', 'terminalName', 'po', 'packing', 'warehouse', 'cmy'])}
               getRowKey={(r) => r.id}
+              onRowClick={(r) => { const ord = orders.find(o => o.id === r.id); if (ord) setViewingOrderCard({ ...ord }); }}
               defaultSortKey="split"
               emptyMessage="No confirmed orders with a split number. Confirm an order and add a Split No. to it to see it here."
             />
@@ -14730,30 +14821,37 @@ export default function App() {
             syncMode === 'invoices' ? 'invoiceImportPresets'
             : syncMode === 'shipments' ? 'shipmentImportPresets'
             : syncMode === 'transfers' ? 'transferImportPresets'
+            : syncMode === 'lotCodes' ? 'lotCodeImportPresets'
             : 'orderImportPresets';
           const modePresets =
             syncMode === 'invoices' ? invoiceSyncPresets
             : syncMode === 'shipments' ? shipmentSyncPresets
             : syncMode === 'transfers' ? transferSyncPresets
+            : syncMode === 'lotCodes' ? lotCodeSyncPresets
             : orderSyncPresets;
           const setModePresets =
             syncMode === 'invoices' ? setInvoiceSyncPresets
             : syncMode === 'shipments' ? setShipmentSyncPresets
             : syncMode === 'transfers' ? setTransferSyncPresets
+            : syncMode === 'lotCodes' ? setLotCodeSyncPresets
             : setOrderSyncPresets;
           const modeDefaultConfig =
             syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG
             : syncMode === 'shipments' ? DEFAULT_SHIPMENT_IMPORT_CONFIG
             : syncMode === 'transfers' ? DEFAULT_TRANSFER_IMPORT_CONFIG
+            : syncMode === 'lotCodes' ? DEFAULT_LOTCODE_IMPORT_CONFIG
             : DEFAULT_ORDER_IMPORT_CONFIG;
           const modeDefaultName =
             syncMode === 'invoices' ? 'Sucro Invoices Default'
             : syncMode === 'shipments' ? 'Shipments Template'
             : syncMode === 'transfers' ? 'Transfers Template'
+            : syncMode === 'lotCodes' ? 'Lot Codes Template'
             : 'Sucro Default';
           // Column-mapping field list is mode-specific: transfers map From/To
-          // and a Transfer Number instead of Customer/Ship-To/BOL.
-          const modeFields = syncMode === 'transfers' ? TRANSFER_FIELDS : ORDER_FIELDS;
+          // and a Transfer Number; lot codes map the lab testing-log columns.
+          const modeFields = syncMode === 'transfers' ? TRANSFER_FIELDS
+            : syncMode === 'lotCodes' ? LOTCODE_FIELDS
+            : ORDER_FIELDS;
           const savePreset = () => {
             const name = window.prompt('Preset name:', cfg.name || (syncMode === 'invoices' ? 'My Invoice Sheet' : 'My Order Sheet'));
             if (!name) return;
@@ -14831,6 +14929,17 @@ export default function App() {
               } finally {
                 setIsSyncingTransferSheet(false);
               }
+            } else if (syncMode === 'lotCodes') {
+              setIsSyncingLotCodeSheet(true);
+              try {
+                const preview = await syncLotCodesFromConfig(toRun, { existingLotCodes: lotCodes });
+                setLotCodeSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingLotCodeSheet(false);
+              }
             } else {
               setIsSyncingOrdersSheet(true);
               try {
@@ -14856,7 +14965,7 @@ export default function App() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : syncMode === 'transfers' ? 'Transfer' : 'Order'} Sheet Sync</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : syncMode === 'transfers' ? 'Transfer' : syncMode === 'lotCodes' ? 'Lot Code' : 'Order'} Sheet Sync</h3>
                   <button onClick={() => setSyncMode(null)} className="hover:opacity-70"><X size={16} /></button>
                 </div>
 
@@ -15050,7 +15159,7 @@ export default function App() {
                   <button onClick={savePreset} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Save Preset</button>
                   <div className="flex gap-2">
                     <button onClick={() => setSyncMode(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
-                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet) ? 'Fetching…' : 'Preview Import →'}</button>
+                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet) ? 'Fetching…' : 'Preview Import →'}</button>
                   </div>
                 </div>
               </motion.div>
@@ -15781,6 +15890,127 @@ export default function App() {
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
                 >
                   Import {transferSyncPreview.newTransfers.length} new{(transferSyncPreview.updatedTransfers?.length || 0) > 0 ? ` · Update ${transferSyncPreview.updatedTransfers.length}` : ''}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {lotCodeSyncPreview && (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-5xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FlaskConical size={14} /> Lot Code Sync Preview</h3>
+                <button onClick={() => setLotCodeSyncPreview(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="border border-emerald-500/40 bg-emerald-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">New Lot Codes</div>
+                    <div className="text-2xl font-bold">{lotCodeSyncPreview.newLotCodes.length}</div>
+                  </div>
+                  <div className="border border-amber-500/40 bg-amber-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Skipped</div>
+                    <div className="text-2xl font-bold">{lotCodeSyncPreview.skipped.length}</div>
+                  </div>
+                  <div className="border border-red-500/40 bg-red-50 p-3">
+                    <div className="text-[10px] uppercase opacity-60">Errors</div>
+                    <div className="text-2xl font-bold">{lotCodeSyncPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {lotCodeSyncPreview.newLotCodes.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Lot Codes ({lotCodeSyncPreview.newLotCodes.length})</h4>
+                    <div className="border border-[#141414]/10 overflow-hidden max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] border-b border-[#141414]/10 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Lot #</th>
+                            <th className="p-2 text-left font-bold">Date</th>
+                            <th className="p-2 text-left font-bold">BOL #</th>
+                            <th className="p-2 text-left font-bold">Tank #</th>
+                            <th className="p-2 text-left font-bold">Sugar Type</th>
+                            <th className="p-2 text-left font-bold">Brix</th>
+                            <th className="p-2 text-left font-bold">Tester</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lotCodeSyncPreview.newLotCodes.map(lc => (
+                            <tr key={lc.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold">{lc.lotNumber || '—'}</td>
+                              <td className="p-2">{lc.date || '—'}</td>
+                              <td className="p-2 font-mono">{lc.bolNumber || '—'}</td>
+                              <td className="p-2">{lc.tankNumber || '—'}</td>
+                              <td className="p-2">{lc.sugarType || '—'}</td>
+                              <td className="p-2">{lc.brix || '—'}</td>
+                              <td className="p-2">{lc.testerName || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {lotCodeSyncPreview.skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped ({lotCodeSyncPreview.skipped.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto text-xs">
+                      <table className="w-full">
+                        <thead className="bg-[#F5F5F5] sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Tab</th>
+                            <th className="p-2 text-left font-bold">Lot #</th>
+                            <th className="p-2 text-left font-bold">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lotCodeSyncPreview.skipped.map((s, i) => (
+                            <tr key={i} className="border-b border-[#141414]/5">
+                              <td className="p-2">{s.tab}</td>
+                              <td className="p-2 font-mono">{s.lotNumber || '—'}</td>
+                              <td className="p-2 opacity-70">{s.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {lotCodeSyncPreview.errors.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70 text-red-700">Errors ({lotCodeSyncPreview.errors.length})</h4>
+                    <div className="border border-red-300 bg-red-50 max-h-32 overflow-y-auto p-2 text-xs">
+                      {lotCodeSyncPreview.errors.map((e, i) => (
+                        <div key={i} className="py-1"><span className="font-mono">{e.tab}</span>{e.rowIdx ? `:row ${e.rowIdx}` : ''} — <span className="text-red-700">{e.message}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setLotCodeSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button
+                  disabled={lotCodeSyncPreview.newLotCodes.length === 0 && (lotCodeSyncPreview.updatedLotCodes?.length || 0) === 0}
+                  onClick={() => {
+                    // Replace existing lot codes whose gaps were filled, then append new ones.
+                    const upById = new Map((lotCodeSyncPreview.updatedLotCodes || []).map(lc => [lc.id, lc]));
+                    setLotCodes([
+                      ...lotCodes.map(lc => upById.get(lc.id) || lc),
+                      ...lotCodeSyncPreview.newLotCodes,
+                    ]);
+                    setLotCodeSyncPreview(null);
+                  }}
+                  className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                >
+                  Import {lotCodeSyncPreview.newLotCodes.length} new{(lotCodeSyncPreview.updatedLotCodes?.length || 0) > 0 ? ` · Update ${lotCodeSyncPreview.updatedLotCodes.length}` : ''}
                 </button>
               </div>
             </motion.div>

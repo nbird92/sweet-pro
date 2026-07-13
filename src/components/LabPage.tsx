@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert } from 'lucide-react';
+import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import DataTable from './DataTable';
@@ -15,6 +15,8 @@ interface LabPageProps {
   transfers: Transfer[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
   onUpdateShipments: (shipments: Shipment[]) => void;
+  /** Opens the shared Google-Sheets sync modal in lot-code mode. */
+  onSyncLotCodes?: () => void;
 }
 
 const EMPTY_FORM = {
@@ -62,7 +64,7 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}${siloCode}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
@@ -422,6 +424,14 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         >
           <Upload size={12} /> Import CSV
         </button>
+        {onSyncLotCodes && (
+          <button
+            onClick={onSyncLotCodes}
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+          >
+            <FileText size={12} /> Sync Lot Codes
+          </button>
+        )}
         <button
           onClick={openAdd}
           className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
