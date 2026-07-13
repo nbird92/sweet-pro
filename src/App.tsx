@@ -54,7 +54,8 @@ import {
   RotateCcw,
   ScanLine,
   Sparkles,
-  Boxes
+  Boxes,
+  Copy
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -381,6 +382,14 @@ export default function App() {
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
   // Row selection for the Stock Requests table (far-left checkbox column).
   const [selectedStockRows, setSelectedStockRows] = useState<Set<string>>(new Set());
+  // Stock Requests page: product-group filter + "email selected rows" previewer.
+  const [stockGroupFilter, setStockGroupFilter] = useState('');
+  const [stockEmailOpen, setStockEmailOpen] = useState(false);
+  const [stockEmailTo, setStockEmailTo] = useState('');
+  const [stockEmailSubject, setStockEmailSubject] = useState('Stock Requests');
+  const [stockEmailSending, setStockEmailSending] = useState(false);
+  const [stockEmailStatus, setStockEmailStatus] = useState<string | null>(null);
+  const [stockCopied, setStockCopied] = useState(false);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
 
@@ -11668,6 +11677,7 @@ export default function App() {
       type StockRow = {
         id: string; split: string; customer: string; terminal: string; terminalName: string;
         po: string; units: number; qtyMt: number; packing: string; warehouse: string; cmy: string; shipDate: string;
+        productGroup: string;
       };
       const joinDistinct = (vals: (string | undefined)[]) =>
         Array.from(new Set(vals.map(v => (v || '').trim()).filter(Boolean))).join(', ');
@@ -11691,8 +11701,73 @@ export default function App() {
             warehouse: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.warehouse)),
             cmy: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.commodityGroup)),
             shipDate: o.shipmentDate || '',
+            productGroup: joinDistinct(lineItems.map(li => { const p = resolveProduct(li.productName); return p.qa?.productGroup || p.sku?.productGroup; })),
           };
         });
+      // Product-group filter (top-of-table dropdown), then search/sort.
+      const stockGroupRows = stockGroupFilter
+        ? stockRows.filter(r => r.productGroup.split(', ').includes(stockGroupFilter))
+        : stockRows;
+      // Selected rows (persist across filtering) + their QTY-MT total, used by the
+      // email previewer.
+      const stockSelected = stockRows.filter(r => selectedStockRows.has(r.id));
+      const stockSelectedTotalMt = stockSelected.reduce((s, r) => s + r.qtyMt, 0);
+      const fmtMt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+      const emailCols: Array<[string, keyof StockRow]> = [
+        ['Split', 'split'], ['Customer', 'customer'], ['Terminal', 'terminal'], ['Terminal Name', 'terminalName'],
+        ['PO #', 'po'], ['Qty MT', 'qtyMt'], ['Packing', 'packing'], ['Warehouse', 'warehouse'], ['CMY', 'cmy'], ['Ship Date', 'shipDate'],
+      ];
+      const cellVal = (r: StockRow, key: keyof StockRow) => key === 'qtyMt' ? fmtMt(r.qtyMt) : String((r as any)[key] || '');
+      const buildStockEmailHtml = () => {
+        const th = emailCols.map(([label]) => `<th style="border:1px solid #ccc;padding:6px 10px;text-align:left;background:#f2f2f2;">${label}</th>`).join('');
+        const body = stockSelected.map(r => `<tr>${emailCols.map(([, key]) => `<td style="border:1px solid #ccc;padding:6px 10px;">${cellVal(r, key) || ''}</td>`).join('')}</tr>`).join('');
+        const total = `<tr><td colspan="5" style="border:1px solid #ccc;padding:6px 10px;font-weight:bold;text-align:right;">TOTAL QTY (MT)</td><td style="border:1px solid #ccc;padding:6px 10px;font-weight:bold;">${fmtMt(stockSelectedTotalMt)}</td><td colspan="4" style="border:1px solid #ccc;"></td></tr>`;
+        return `<table style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;"><thead><tr>${th}</tr></thead><tbody>${body}${total}</tbody></table>`;
+      };
+      const buildStockEmailText = () => {
+        const header = emailCols.map(([label]) => label).join('\t');
+        const rows = stockSelected.map(r => emailCols.map(([, key]) => cellVal(r, key)).join('\t'));
+        return [header, ...rows, `TOTAL QTY (MT)\t${fmtMt(stockSelectedTotalMt)}`].join('\n');
+      };
+      const openStockEmail = () => {
+        setStockEmailSubject(`Stock Requests — ${selectedStockRows.size} order${selectedStockRows.size !== 1 ? 's' : ''}`);
+        setStockEmailStatus(null);
+        setStockCopied(false);
+        setStockEmailOpen(true);
+      };
+      const copyStockEmail = async () => {
+        try {
+          const AnyClipboardItem = (window as any).ClipboardItem;
+          if (navigator.clipboard && AnyClipboardItem) {
+            await navigator.clipboard.write([new AnyClipboardItem({
+              'text/html': new Blob([buildStockEmailHtml()], { type: 'text/html' }),
+              'text/plain': new Blob([buildStockEmailText()], { type: 'text/plain' }),
+            })]);
+          } else {
+            await navigator.clipboard.writeText(buildStockEmailText());
+          }
+          setStockCopied(true);
+          setStockEmailStatus(null);
+        } catch {
+          try { await navigator.clipboard.writeText(buildStockEmailText()); setStockCopied(true); }
+          catch { setStockEmailStatus('Could not copy to clipboard.'); }
+        }
+      };
+      const sendStockEmail = async () => {
+        const to = stockEmailTo.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+        if (to.length === 0) { setStockEmailStatus('Enter at least one recipient email.'); return; }
+        setStockEmailSending(true);
+        setStockEmailStatus(null);
+        try {
+          const res = await sendEmail({ to, subject: stockEmailSubject || 'Stock Requests', html: buildStockEmailHtml() });
+          if (res.success) { setStockEmailStatus(`Sent to ${(res.actualTo || to).join(', ')} ✓`); }
+          else { setStockEmailStatus(res.error || 'Send failed.'); }
+        } catch (e) {
+          setStockEmailStatus(e instanceof Error ? e.message : 'Send failed.');
+        } finally {
+          setStockEmailSending(false);
+        }
+      };
       const stockExportSheets = (): SheetSpec[] => [{
         sheetName: 'Stock Requests',
         title: 'Stock Requests',
@@ -11720,9 +11795,31 @@ export default function App() {
             count={stockRows.length}
             exportSheets={stockExportSheets}
             exportFileName="StockRequests"
-          />
+          >
+            <button
+              onClick={openStockEmail}
+              disabled={selectedStockRows.size === 0}
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Preview and email the selected rows'}
+            >
+              <Mail size={12} /> Email Selected ({selectedStockRows.size})
+            </button>
+          </PageBanner>
           <div className="p-6 space-y-4">
-            <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by split, customer, terminal, PO, packing, warehouse or CMY..." />
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+              <div className="flex-1"><SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by split, customer, terminal, PO, packing, warehouse or CMY..." /></div>
+              <div className="flex items-center gap-2 whitespace-nowrap">
+                <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
+                <select
+                  value={stockGroupFilter}
+                  onChange={(e) => setStockGroupFilter(e.target.value)}
+                  className="bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
+                >
+                  <option value="">All Groups</option>
+                  {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
+                </select>
+              </div>
+            </div>
             <DataTable<StockRow>
               title="Stock Requests"
               icon={<Boxes size={14} />}
@@ -11756,13 +11853,83 @@ export default function App() {
                 { key: 'cmy', label: 'CMY', render: (r) => r.cmy || '—' },
                 { key: 'shipDate', label: 'Ship Date', render: (r) => r.shipDate || '—' },
               ]}
-              rows={getSortedAndFilteredData<StockRow>(stockRows, ['split', 'customer', 'terminal', 'terminalName', 'po', 'packing', 'warehouse', 'cmy'])}
+              rows={getSortedAndFilteredData<StockRow>(stockGroupRows, ['split', 'customer', 'terminal', 'terminalName', 'po', 'packing', 'warehouse', 'cmy'])}
               getRowKey={(r) => r.id}
               onRowClick={(r) => { const ord = orders.find(o => o.id === r.id); if (ord) setViewingOrderCard({ ...ord }); }}
               defaultSortKey="split"
               emptyMessage="No confirmed orders with a split number. Confirm an order and add a Split No. to it to see it here."
             />
           </div>
+
+          {/* Email previewer for the selected rows — preview the table, copy it, or
+              send it directly. A total QTY (MT) row is appended at the bottom. */}
+          {stockEmailOpen && (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+              <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full overflow-hidden my-8" onClick={(e) => e.stopPropagation()}>
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Mail size={14} /> Email Stock Requests — {stockSelected.length} row{stockSelected.length !== 1 ? 's' : ''}</h3>
+                  <button onClick={() => setStockEmailOpen(false)} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+                <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
+                    <label className="text-[10px] uppercase font-bold opacity-50">To</label>
+                    <input
+                      type="text"
+                      value={stockEmailTo}
+                      onChange={(e) => setStockEmailTo(e.target.value)}
+                      placeholder="recipient@example.com, another@example.com"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white"
+                    />
+                    <label className="text-[10px] uppercase font-bold opacity-50">Subject</label>
+                    <input
+                      type="text"
+                      value={stockEmailSubject}
+                      onChange={(e) => setStockEmailSubject(e.target.value)}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Preview table */}
+                  <div className="border border-[#141414]/10 overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-[#F5F5F5]">
+                        <tr>{emailCols.map(([label]) => <th key={label} className="p-2 text-left font-bold border border-[#141414]/10 whitespace-nowrap">{label}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {stockSelected.map(r => (
+                          <tr key={r.id}>
+                            {emailCols.map(([, key]) => <td key={key} className={`p-2 border border-[#141414]/10 ${key === 'qtyMt' ? 'text-right font-mono' : ''}`}>{cellVal(r, key) || '—'}</td>)}
+                          </tr>
+                        ))}
+                        <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                          <td colSpan={5} className="p-2 text-right border border-[#141414]/10 uppercase tracking-widest">Total Qty (MT)</td>
+                          <td className="p-2 text-right font-mono border border-[#141414]/10">{fmtMt(stockSelectedTotalMt)}</td>
+                          <td colSpan={4} className="border border-[#141414]/10"></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {stockEmailStatus && <div className="text-xs font-bold">{stockEmailStatus}</div>}
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between gap-3">
+                  <button onClick={() => setStockEmailOpen(false)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Close</button>
+                  <div className="flex items-center gap-3">
+                    <button onClick={copyStockEmail} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase flex items-center gap-1.5 hover:bg-white">
+                      <Copy size={12} /> {stockCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                    <button
+                      onClick={sendStockEmail}
+                      disabled={stockEmailSending || stockSelected.length === 0}
+                      className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase flex items-center gap-1.5 hover:bg-emerald-800 disabled:opacity-40"
+                    >
+                      <Send size={12} /> {stockEmailSending ? 'Sending…' : 'Send Email'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
