@@ -389,6 +389,7 @@ export interface Invoice {
   papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
   customsEntryNo?: string;  // Customs entry number
   reversals?: string;       // Reversal/credit reference or amount, from the sync sheet
+  lotCode?: string;         // Lot code(s) from the matching shipment (by BOL), captured at Complete & Bill
 }
 
 export interface OrderLineItem {
@@ -873,6 +874,8 @@ export interface QAProduct {
   casePackKg?: number;         // total kg per case pack
   sellingUnitQuantity?: number; // selling units per shippable unit (carton / bundle)
   sellingUnitKg?: number;      // kg per selling unit
+  warehouse?: string;          // Storage warehouse for this product (feeds Stock Requests)
+  commodityGroup?: string;     // Commodity group / CMY (feeds Stock Requests)
 }
 
 export const INITIAL_QA_PRODUCTS: QAProduct[] = [];

@@ -1,7 +1,9 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
+  setDoc,
   writeBatch,
   deleteDoc,
   runTransaction,
@@ -98,6 +100,17 @@ export async function claimDoc<T>(collectionName: string, id: string): Promise<T
     tx.delete(ref);
     return snap.data() as T;
   });
+}
+
+// Per-user UI preferences (page/nav order, hidden pages, per-table column order).
+// Stored one doc per user under `userPreferences/{uid}` so a user's layout follows
+// them across devices instead of living only in that browser's localStorage.
+export async function fetchUserPrefs(uid: string): Promise<Record<string, any> | null> {
+  const snap = await getDoc(doc(db, 'userPreferences', uid));
+  return snap.exists() ? (snap.data() as Record<string, any>) : null;
+}
+export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Promise<void> {
+  await setDoc(doc(db, 'userPreferences', uid), stripUndefinedDeep({ ...prefs, id: uid, updatedAt: new Date().toISOString() }));
 }
 
 // Fetch all data from all collections (one-time bulk read)

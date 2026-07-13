@@ -1407,6 +1407,45 @@ export default function ReportsPage({
   const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
   const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
 
+  // Customer sales volume broken out BY MONTH (invoiced MT bucketed on invoice
+  // date). Columns are every YYYY-MM present in the data, ascending; each row is
+  // a customer with a per-month map + total. Reuses the same customer name-match
+  // as the Customer Report so the totals line up.
+  const customerMonthlySales = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
+      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
+      : (inv.qty || 0);
+    const monthKeys = new Set<string>();
+    const rows = customers.map(cust => {
+      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
+      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
+      const byMonth: Record<string, number> = {};
+      let total = 0;
+      invoices.filter(i => nameHit(i.customer)).forEach(i => {
+        // total counts ALL matched invoices (matching the main report's Sales
+        // Volume); only validly-dated ones are bucketed into a month column.
+        const mt = invMt(i);
+        total += mt;
+        const mk = (i.date || '').slice(0, 7); // YYYY-MM
+        if (!/^\d{4}-\d{2}$/.test(mk)) return;
+        byMonth[mk] = (byMonth[mk] || 0) + mt;
+        monthKeys.add(mk);
+      });
+      return { id: cust.id, customer: cust.name || '(unnamed)', byMonth, total };
+    }).filter(r => r.total > 0);
+    return { rows: rows.sort((a, b) => b.total - a.total), months: [...monthKeys].sort() };
+  }, [customers, invoices, resolveCustomerName]);
+
+  const monthLabel = (mk: string) => {
+    const [y, m] = mk.split('-').map(Number);
+    if (!y || !m) return mk;
+    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  };
+  const monthlySalesRows = selectedCustomerRow
+    ? customerMonthlySales.rows.filter(r => r.id === reportCustomerId)
+    : customerMonthlySales.rows;
+
   // ═══════════════════════════════════════════════════════════════════════════
   // REPORT: Outstanding contract volume vs future forecast (by product)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1548,6 +1587,52 @@ export default function ReportsPage({
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Sales volume BY MONTH — customer × month invoiced-MT matrix. Follows
+            the selected-customer filter (single row when one is chosen). */}
+        <div className="border border-[#141414] border-t-0 overflow-x-auto">
+          <div className="bg-[#2a2a2a] text-[#E4E3E0] px-4 py-2 text-[10px] font-bold uppercase tracking-widest">
+            Sales Volume by Month (MT)
+          </div>
+          {customerMonthlySales.months.length === 0 ? (
+            <div className="p-6 text-center text-xs opacity-50 italic">No invoiced volume with a valid date.</div>
+          ) : (
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
+                  <th className="p-3 sticky left-0 bg-[#F5F5F5]">Customer</th>
+                  {customerMonthlySales.months.map(mk => (
+                    <th key={mk} className="p-3 text-right whitespace-nowrap">{monthLabel(mk)}</th>
+                  ))}
+                  <th className="p-3 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {monthlySalesRows.map(r => (
+                  <tr key={r.id} className="hover:bg-[#F9F9F9]">
+                    <td className="p-3 font-bold sticky left-0 bg-white">{r.customer}</td>
+                    {customerMonthlySales.months.map(mk => (
+                      <td key={mk} className="p-3 text-right font-mono">{r.byMonth[mk] ? formatNum(r.byMonth[mk]) : '—'}</td>
+                    ))}
+                    <td className="p-3 text-right font-mono font-bold">{formatNum(r.total)}</td>
+                  </tr>
+                ))}
+                {monthlySalesRows.length === 0 && (
+                  <tr><td colSpan={customerMonthlySales.months.length + 2} className="p-6 text-center opacity-50 italic">No invoiced volume.</td></tr>
+                )}
+                {monthlySalesRows.length > 1 && (
+                  <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                    <td className="p-3 uppercase tracking-widest sticky left-0 bg-[#141414]">Total</td>
+                    {customerMonthlySales.months.map(mk => (
+                      <td key={mk} className="p-3 text-right font-mono">{formatNum(monthlySalesRows.reduce((s, r) => s + (r.byMonth[mk] || 0), 0))}</td>
+                    ))}
+                    <td className="p-3 text-right font-mono">{formatNum(monthlySalesRows.reduce((s, r) => s + r.total, 0))}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Contract-level detail — shown when a single customer is selected. */}

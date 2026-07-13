@@ -53,13 +53,14 @@ import {
   Zap,
   RotateCcw,
   ScanLine,
-  Sparkles
+  Sparkles,
+  Boxes
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc, deleteDocs } from './firebaseDb';
+import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -69,7 +70,7 @@ import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
-import DataTable from './components/DataTable';
+import DataTable, { ColumnOrderContext, type ColumnOrderStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
 import ConferencesPage from './components/ConferencesPage';
@@ -267,6 +268,33 @@ export default function App() {
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
+  // Per-table saved column order (tableKey -> ordered column keys). Backed by the
+  // per-user Firestore prefs doc so it's PERMANENT across devices; individual
+  // DataTables also cache to localStorage for instant load before Firestore replies.
+  // Seeded from this device's localStorage cache so a saved layout shows instantly
+  // (and any pre-Firestore orders migrate up on first save); the per-user Firestore
+  // doc then wins on load.
+  const [columnOrders, setColumnOrders] = useState<Record<string, string[]>>(() => {
+    const out: Record<string, string[]> = {};
+    try {
+      const prefix = 'dt-colorder:';
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const v = JSON.parse(localStorage.getItem(key) || '[]');
+        if (Array.isArray(v) && v.length) out[key.slice(prefix.length)] = v.filter((x: any) => typeof x === 'string');
+      }
+    } catch { /* ignore malformed cache */ }
+    return out;
+  });
+  // Gate for the debounced save: stays false until the signed-in user's prefs have
+  // loaded, so we never write defaults over their stored layout. State (not a ref)
+  // so the save effect re-fires the moment loading completes — flushing any edit
+  // made during the load window.
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
+  // Set true as soon as the user touches any pref (column/nav order, hidden pages)
+  // so the async prefs load can't clobber an edit made during its fetch window.
+  const prefsDirtyRef = useRef(false);
   const [isEditingSidebar, setIsEditingSidebar] = useState(false);
   const [scheduleLocation, setScheduleLocation] = useState('Hamilton');
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
@@ -2238,6 +2266,7 @@ export default function App() {
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
+          const lotCode = get(entry, 'lotcode', 'lot', 'lotnumber', 'lotcodes', 'lot#');
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
@@ -2263,6 +2292,7 @@ export default function App() {
               carrier,
               status,
               splitNo: splitNo || undefined,
+              lotCode: lotCode || inv.lotCode || undefined,
               dueDate: dueDate || undefined,
               contractNumber: contractNumber || undefined,
               shippingTerms: shippingTerms || undefined,
@@ -2287,6 +2317,7 @@ export default function App() {
             date,
             status,
             splitNo: splitNo || undefined,
+            lotCode: lotCode || undefined,
             dueDate: dueDate || undefined,
             contractNumber: contractNumber || undefined,
             shippingTerms: shippingTerms || undefined,
@@ -2450,6 +2481,7 @@ export default function App() {
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const status = get(entry, 'status', 'invoicestatus') || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
+          const lotCode = get(entry, 'lotcode', 'lot', 'lotnumber', 'lotcodes', 'lot#');
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
@@ -2471,6 +2503,7 @@ export default function App() {
             date,
             status,
             splitNo: splitNo || undefined,
+            lotCode: lotCode || existingInv?.lotCode || undefined,
             dueDate: dueDate || undefined,
             contractNumber: contractNumber || undefined,
             shippingTerms: shippingTerms || undefined,
@@ -2906,6 +2939,79 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Column-order store handed to every DataTable via context. Reordering a table
+  // updates columnOrders here, which the save effect persists to Firestore.
+  const columnOrderStore = useMemo<ColumnOrderStore>(() => ({
+    get: (k) => columnOrders[k],
+    set: (k, order) => {
+      prefsDirtyRef.current = true;
+      setColumnOrders(prev => {
+        const next = { ...prev };
+        if (order.length) next[k] = order; else delete next[k];
+        return next;
+      });
+    },
+  }), [columnOrders]);
+
+  // Load the signed-in user's saved UI prefs (page order, hidden pages, table
+  // column orders) once per user, and let them win over the localStorage-seeded
+  // defaults. Re-gate saves on EVERY user change (not just sign-out) so one
+  // account's layout can't be written under another's uid mid-switch.
+  useEffect(() => {
+    setPrefsLoaded(false);
+    prefsDirtyRef.current = false;
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const remote = await fetchUserPrefs(user.uid);
+        // Skip applying remote if the user already customized during the fetch
+        // window — their in-flight edit wins and is what gets saved.
+        if (!cancelled && remote && !prefsDirtyRef.current) {
+          if (Array.isArray(remote.pageOrder)) setPageOrder(remote.pageOrder);
+          if (Array.isArray(remote.hiddenPages)) setHiddenPages(new Set(remote.hiddenPages as string[]));
+          if (remote.columnOrders && typeof remote.columnOrders === 'object') {
+            const co = remote.columnOrders as Record<string, string[]>;
+            setColumnOrders(co);
+            // Reconcile the localStorage cache with remote: write present keys and
+            // PRUNE any dt-colorder key absent from remote, so a table order reset
+            // on another device propagates here instead of being resurrected from
+            // this device's stale cache.
+            try {
+              const prefix = 'dt-colorder:';
+              for (let i = localStorage.length - 1; i >= 0; i--) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(prefix) && !(key.slice(prefix.length) in co)) localStorage.removeItem(key);
+              }
+              for (const [k, v] of Object.entries(co)) {
+                if (Array.isArray(v) && v.length) localStorage.setItem(prefix + k, JSON.stringify(v));
+              }
+            } catch { /* cache best-effort */ }
+          }
+        }
+      } catch (e) {
+        console.warn('User prefs load failed:', e instanceof Error ? e.message : e);
+      } finally {
+        if (!cancelled) setPrefsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Persist UI prefs to Firestore (debounced) whenever they change after the
+  // initial load — so a reordered column or customized menu order is permanent.
+  useEffect(() => {
+    if (!user || !prefsLoaded) return;
+    const t = setTimeout(() => {
+      saveUserPrefs(user.uid, {
+        pageOrder,
+        hiddenPages: [...hiddenPages],
+        columnOrders,
+      }).catch(e => console.warn('User prefs save failed:', e instanceof Error ? e.message : e));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders]);
 
   // Auto-maximize the Order Details modal whenever a new order is opened.
   useEffect(() => {
@@ -3740,7 +3846,7 @@ export default function App() {
   const [poPendingImports, setPoPendingImports] = useState<PoPendingImport[]>([]);
   // Email-importer heartbeat (written by /api/scan-po-inbox on every run) —
   // drives the green/red status light in the top corner.
-  const [poScanStatus, setPoScanStatus] = useState<{ lastRunAt?: string; ok?: boolean; scanned?: number; queued?: number; remaining?: number; partial?: boolean; errors?: Array<{ where?: string; message?: string }> } | null>(null);
+  const [poScanStatus, setPoScanStatus] = useState<{ lastRunAt?: string; ok?: boolean; scanned?: number; queued?: number; remaining?: number; partial?: boolean; windowClosed?: boolean; note?: string; errors?: Array<{ where?: string; message?: string }> } | null>(null);
   const [showScanStatus, setShowScanStatus] = useState(false);
   const [inboxFeed, setInboxFeed] = useState<InboxFeedItem[]>([]);
   const [inboxTriage, setInboxTriage] = useState<InboxTriage[]>([]);
@@ -5074,6 +5180,7 @@ export default function App() {
         shippingTerms: linkedOrder?.shippingTerms || '',
         location: linkedOrder?.location || '',
         contractNumber: linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
+        lotCode: ((shipment.lotNumbers && shipment.lotNumbers.length > 0) ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : [])).filter(Boolean).join(', ') || undefined,
       };
 
       setInvoices(prevInvoices => {
@@ -5127,6 +5234,18 @@ export default function App() {
     }
   };
 
+  // Lot code(s) for an invoice: the lot lives on the Shipment (by id, or matched
+  // by BOL), not the order. Returns the shipment's comma-joined lot numbers, or ''.
+  const lotCodeFromShipment = (opts: { shipmentId?: string; bol?: string }): string => {
+    const all = [...hamiltonShipments, ...vancouverShipments];
+    const bol = (opts.bol || '').trim();
+    const ship = (opts.shipmentId && all.find(s => s.id === opts.shipmentId))
+      || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
+    if (!ship) return '';
+    const lots = (ship.lotNumbers && ship.lotNumbers.length > 0) ? ship.lotNumbers : (ship.lotNumber ? [ship.lotNumber] : []);
+    return lots.filter(Boolean).join(', ');
+  };
+
   const completeAndBillOrder = (orderId: string, opts?: { invoiceQtyMt?: number; shipmentId?: string }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status === 'Completed') return;
@@ -5163,6 +5282,7 @@ export default function App() {
       shippingTerms: order.shippingTerms || '',
       location: order.location || '',
       contractNumber: order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
+      lotCode: lotCodeFromShipment({ shipmentId: opts?.shipmentId, bol: order.bolNumber }) || undefined,
     };
 
     setInvoices(prevInvoices => {
@@ -6648,6 +6768,7 @@ export default function App() {
 
 
   const togglePageVisibility = useCallback((pageName: string) => {
+    prefsDirtyRef.current = true;
     setHiddenPages(prev => {
       const next = new Set(prev);
       if (next.has(pageName)) {
@@ -6673,6 +6794,7 @@ export default function App() {
     { name: 'Contracts', icon: FileText },
     { name: 'Transfers', icon: ArrowRightLeft },
     { name: 'Orders', icon: ShoppingCart },
+    { name: 'Stock Requests', icon: Boxes },
     { name: 'Invoices', icon: FileText },
     { name: 'Return Orders', icon: RotateCcw },
     { name: 'Email Center', icon: Mail },
@@ -6723,6 +6845,7 @@ export default function App() {
     if (fromIdx < 0 || toIdx < 0) return;
     currentOrder.splice(fromIdx, 1);
     currentOrder.splice(toIdx, 0, draggedPage);
+    prefsDirtyRef.current = true;
     setPageOrder(currentOrder);
     localStorage.setItem('sweetpro-page-order', JSON.stringify(currentOrder));
     setDraggedPage(null);
@@ -7916,7 +8039,7 @@ export default function App() {
         return v;
       };
 
-      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'reversals', 'shippingTerms', 'location'];
+      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'lotCode', 'reversals', 'shippingTerms', 'location'];
       const invoiceExportSheets = (): SheetSpec[] => [{
         sheetName: 'Invoices',
         title: 'Customer Invoices',
@@ -7935,11 +8058,12 @@ export default function App() {
           { header: 'Carrier', key: 'carrier' },
           { header: 'Status', key: 'status' },
           { header: 'Split No.', key: 'splitNo' },
+          { header: 'Lot Code', key: 'lotCode' },
           { header: 'Reversals', key: 'reversals' },
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Location', key: 'location' },
         ],
-        rows: invoices.map(inv => ({ ...inv, product: productToShortform(inv.product) })) as any[],
+        rows: invoices.map(inv => ({ ...inv, product: productToShortform(inv.product), lotCode: inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) })) as any[],
       }];
       return (
         <div className="space-y-0">
@@ -8018,6 +8142,7 @@ export default function App() {
                   <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Lot Code" sortKey="lotCode" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Reversals" sortKey="reversals" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-4">Actions</th>
                 </tr>
@@ -8129,6 +8254,24 @@ export default function App() {
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
+                        {/* Lot code from the matching shipment (by BOL). Stored on the
+                            invoice at Complete & Bill; falls back to the live shipment
+                            lookup for invoices billed before this field existed. */}
+                        <input
+                          type="text"
+                          key={i.lotCode || ''}
+                          defaultValue={i.lotCode || lotCodeFromShipment({ shipmentId: i.shipmentId, bol: i.bolNumber })}
+                          onBlur={(e) => {
+                            const v = e.target.value;
+                            if (v !== (i.lotCode || '')) {
+                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, lotCode: v } : inv));
+                            }
+                          }}
+                          placeholder="—"
+                          className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
+                        />
+                      </td>
                       <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
@@ -8169,7 +8312,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(i.id) && (
                         <tr>
-                          <td colSpan={13} className="p-0">
+                          <td colSpan={14} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
@@ -10059,9 +10202,13 @@ export default function App() {
           g.rows.set(rk, cur);
         };
 
-        // Invoices — the default volume source.
+        // Invoices — the default volume source. Skip cancelled invoices and
+        // return orders: a Return & Bill run creates a 'Credit' invoice (id
+        // INV-RTN-…) whose qty is POSITIVE, so counting it would inflate tolled
+        // MT. 'Credit' is the app-wide return-invoice marker (see billed filters).
         for (const inv of invoices) {
-          if ((inv.status || '').toLowerCase() === 'cancelled' || !inv.date) continue;
+          const st = (inv.status || '').toLowerCase();
+          if (st === 'cancelled' || st === 'credit' || (inv.id || '').startsWith('INV-RTN-') || !inv.date) continue;
           const d = new Date(inv.date + 'T12:00:00');
           if (isNaN(d.getTime())) continue;
           const g = getGroup(d);
@@ -11440,6 +11587,96 @@ export default function App() {
       );
     }
 
+    if (activePage === 'Stock Requests') {
+      // Confirmed orders that have a split number are "stock requested". WAREHOUSE
+      // and CMY come from each line item's product QA record (warehouse /
+      // commodityGroup); PACKING from the product's format. Multi-line orders join
+      // distinct product-level values. UNITS uses lineItemUnits (MT-safe), QTY MT
+      // sums the line total weights.
+      type StockRow = {
+        id: string; split: string; customer: string; terminal: string; terminalName: string;
+        po: string; units: number; qtyMt: number; packing: string; warehouse: string; cmy: string; shipDate: string;
+      };
+      const joinDistinct = (vals: (string | undefined)[]) =>
+        Array.from(new Set(vals.map(v => (v || '').trim()).filter(Boolean))).join(', ');
+      const stockRows: StockRow[] = orders
+        .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
+        .map(o => {
+          const cust = customers.find(c => c.name === o.customer);
+          const shipTo = o.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === o.shipToLocationId) : undefined;
+          const lineItems = o.lineItems || [];
+          return {
+            id: o.id,
+            split: (o.splitNumber || '').trim(),
+            customer: o.customer || '',
+            terminal: shipTo?.locationCode || '',
+            terminalName: shipTo?.name || '',
+            po: o.po || '',
+            units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
+            qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
+            packing: joinDistinct(lineItems.map(li => { const p = resolveProduct(li.productName); return p.qa?.productFormat || p.sku?.productFormat; })),
+            warehouse: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.warehouse)),
+            cmy: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.commodityGroup)),
+            shipDate: o.shipmentDate || '',
+          };
+        });
+      const stockExportSheets = (): SheetSpec[] => [{
+        sheetName: 'Stock Requests',
+        title: 'Stock Requests',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | ${stockRows.length} confirmed orders with a split number`,
+        columns: [
+          { header: 'Split', key: 'split' },
+          { header: 'Customer', key: 'customer' },
+          { header: 'Terminal', key: 'terminal' },
+          { header: 'Terminal Name', key: 'terminalName' },
+          { header: 'PO #', key: 'po' },
+          { header: 'Units', key: 'units' },
+          { header: 'Qty MT', key: 'qtyMt' },
+          { header: 'Packing', key: 'packing' },
+          { header: 'Warehouse', key: 'warehouse' },
+          { header: 'CMY', key: 'cmy' },
+          { header: 'Ship Date', key: 'shipDate' },
+        ],
+        rows: stockRows as any[],
+      }];
+      return (
+        <div>
+          <PageBanner
+            icon={<Boxes size={18} />}
+            title="Stock Requests"
+            count={stockRows.length}
+            exportSheets={stockExportSheets}
+            exportFileName="StockRequests"
+          />
+          <div className="p-6 space-y-4">
+            <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by split, customer, terminal, PO, packing, warehouse or CMY..." />
+            <DataTable<StockRow>
+              title="Stock Requests"
+              icon={<Boxes size={14} />}
+              stickyHeader
+              columns={[
+                { key: 'split', label: 'Split', mono: true, render: (r) => r.split || '—' },
+                { key: 'customer', label: 'Customer', bold: true, render: (r) => r.customer || '—' },
+                { key: 'terminal', label: 'Terminal', render: (r) => r.terminal || '—' },
+                { key: 'terminalName', label: 'Terminal Name', render: (r) => r.terminalName || '—' },
+                { key: 'po', label: 'PO #', mono: true, render: (r) => r.po || '—' },
+                { key: 'units', label: 'Units', align: 'right', render: (r) => Math.round(r.units).toLocaleString() },
+                { key: 'qtyMt', label: 'Qty MT', align: 'right', render: (r) => r.qtyMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
+                { key: 'packing', label: 'Packing', render: (r) => r.packing || '—' },
+                { key: 'warehouse', label: 'Warehouse', render: (r) => r.warehouse || '—' },
+                { key: 'cmy', label: 'CMY', render: (r) => r.cmy || '—' },
+                { key: 'shipDate', label: 'Ship Date', render: (r) => r.shipDate || '—' },
+              ]}
+              rows={getSortedAndFilteredData<StockRow>(stockRows, ['split', 'customer', 'terminal', 'terminalName', 'po', 'packing', 'warehouse', 'cmy'])}
+              getRowKey={(r) => r.id}
+              defaultSortKey="split"
+              emptyMessage="No confirmed orders with a split number. Confirm an order and add a Split No. to it to see it here."
+            />
+          </div>
+        </div>
+      );
+    }
+
     if (activePage !== 'Customer Quote') {
       return (
         <div className="flex flex-col items-center-safe justify-center min-h-[60vh] text-center p-12">
@@ -12071,7 +12308,9 @@ export default function App() {
           </div>
         </header>
 
-        {renderContent()}
+        <ColumnOrderContext.Provider value={columnOrderStore}>
+          {renderContent()}
+        </ColumnOrderContext.Provider>
       </div>
 
       {/* Login Modal */}
@@ -12174,6 +12413,8 @@ export default function App() {
                     <input type="text" value={editingInvoiceCard.customsEntryNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customsEntryNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
                     <input type="text" value={editingInvoiceCard.reversals || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, reversals: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Lot Code</label>
+                    <input type="text" value={editingInvoiceCard.lotCode ?? ''} placeholder={lotCodeFromShipment({ shipmentId: editingInvoiceCard.shipmentId, bol: editingInvoiceCard.bolNumber }) || '—'} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, lotCode: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due-date status</label>
                     <div className={`text-sm py-1.5 ${editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'text-red-600 font-bold' : 'opacity-60'}`}>{editingInvoiceCard.dueDate && new Date(editingInvoiceCard.dueDate) < new Date() && editingInvoiceCard.status !== 'Paid' && editingInvoiceCard.status !== 'Cancelled' ? 'Overdue' : 'On time'}</div></div>
                 </div>
@@ -12405,6 +12646,8 @@ export default function App() {
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
                     <div className="text-sm font-mono">{inv.splitNo || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Lot Code</label>
+                    <div className="text-sm font-mono">{inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
                     <div className="text-sm font-mono">{inv.papsNo || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
@@ -18825,28 +19068,33 @@ export default function App() {
           const ageMs = st?.lastRunAt ? Date.now() - Date.parse(st.lastRunAt) : Infinity;
           const stale = !Number.isFinite(ageMs) || ageMs > 20 * 60 * 1000;
           const errs = st?.errors || [];
-          const healthy = !!st && st.ok !== false && !stale && errs.length === 0;
+          // Paused = the scheduled importer intentionally idle outside its Mon 4AM ET
+          // → Fri 5PM PT run window (heartbeat still fresh). Shown amber, not red.
+          const paused = !!st?.windowClosed && !stale && errs.length === 0;
+          const healthy = !paused && !!st && st.ok !== false && !stale && errs.length === 0;
           const ageMin = Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs / 60000)) : null;
+          const dotClass = healthy ? 'bg-emerald-500' : paused ? 'bg-amber-400' : 'bg-red-500 animate-pulse';
           return (
             <div className="fixed top-3 right-4 z-[95]">
               <button
                 onClick={() => setShowScanStatus(v => !v)}
-                title={healthy ? 'Email importer running normally' : 'Email importer needs attention — click for details'}
+                title={healthy ? 'Email importer running normally' : paused ? 'Email importer paused — outside scheduled hours (Mon 4AM ET – Fri 5PM PT)' : 'Email importer needs attention — click for details'}
                 className="flex items-center gap-1.5 bg-white/95 border border-[#141414]/20 shadow px-2.5 py-1 rounded-full hover:border-[#141414] transition-all"
               >
-                <span className={`w-2.5 h-2.5 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
+                <span className={`w-2.5 h-2.5 rounded-full ${dotClass}`} />
                 <span className="text-[9px] font-bold uppercase tracking-widest opacity-70">Importer</span>
               </button>
               {showScanStatus && (
                 <div className="mt-2 w-96 max-h-[60vh] overflow-y-auto bg-white border border-[#141414] shadow-[6px_6px_0px_0px_rgba(20,20,20,1)] p-4 text-xs space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-bold uppercase tracking-widest text-[10px]">Email Importer</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${healthy ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{healthy ? 'Running' : 'Attention'}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${healthy ? 'bg-emerald-100 text-emerald-700' : paused ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{healthy ? 'Running' : paused ? 'Paused' : 'Attention'}</span>
                   </div>
                   {!st && <div className="text-red-600">No importer heartbeat yet — waiting for the first 15-minute scan to report in.</div>}
                   {st && (
                     <>
                       <div className="opacity-70">Last run: {st.lastRunAt ? new Date(st.lastRunAt).toLocaleString() : '—'}{ageMin != null ? ` (${ageMin} min ago)` : ''}</div>
+                      {paused && <div className="text-amber-700 font-bold">{st.note || 'Paused — outside the scheduled run window (Mon 4AM ET – Fri 5PM PT).'}</div>}
                       {stale && <div className="text-red-600 font-bold">No run in {ageMin != null ? `${ageMin} minutes` : 'a while'} — expected every 15 minutes. Check the Vercel cron for /api/scan-po-inbox.</div>}
                       <div className="opacity-70">Scanned {st.scanned ?? 0} · queued {st.queued ?? 0}{st.remaining ? ` · ${st.remaining} remaining` : ''}{st.partial ? ' · partial run' : ''}</div>
                       {errs.length > 0 ? (
@@ -18857,10 +19105,10 @@ export default function App() {
                           ))}
                           {errs.length > 10 && <div className="opacity-50 italic">…and {errs.length - 10} more</div>}
                         </div>
-                      ) : (!stale && <div className="text-emerald-700">Last run completed without errors.</div>)}
+                      ) : (!stale && !paused && <div className="text-emerald-700">Last run completed without errors.</div>)}
                     </>
                   )}
-                  <div className="pt-1 border-t border-[#141414]/10 opacity-50">Runs every 15 minutes via the Vercel cron; the app also drains the queue every 5 minutes while open.</div>
+                  <div className="pt-1 border-t border-[#141414]/10 opacity-50">Scans every 15 minutes via the Vercel cron, Monday 4 AM ET → Friday 5 PM PT; the app also drains the queue every 5 minutes while open. Use “Scan Inbox Now” to run outside that window.</div>
                 </div>
               )}
             </div>

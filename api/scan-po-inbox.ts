@@ -62,7 +62,7 @@ function getDb() {
 /** Best-effort heartbeat: record every run's outcome so the app can show a
  *  green/red importer status light. Never throws — a status-write failure
  *  must not break the scan itself. */
-async function writeScanStatus(ok: boolean, summary: any, errorMsg?: string): Promise<void> {
+async function writeScanStatus(ok: boolean, summary: any, errorMsg?: string, extra?: Record<string, unknown>): Promise<void> {
   try {
     const db = getDb();
     await db.collection('appStatus').doc('poInboxScan').set({
@@ -73,10 +73,13 @@ async function writeScanStatus(ok: boolean, summary: any, errorMsg?: string): Pr
       queued: summary?.queued ?? 0,
       remaining: summary?.remaining ?? 0,
       partial: !!summary?.partial,
+      windowClosed: false,
+      note: '',
       errors: [
         ...(errorMsg ? [{ where: 'run', message: errorMsg }] : []),
         ...(Array.isArray(summary?.errors) ? summary.errors.slice(0, 20) : []),
       ],
+      ...(extra || {}),
     });
   } catch (e) {
     console.warn('scan status write failed:', e instanceof Error ? e.message : e);
@@ -190,6 +193,30 @@ function isStockRequest(subject: string | undefined): boolean {
   return /stock\s*request/i.test(String(subject || ''));
 }
 
+// Current weekday (0=Sun..6=Sat) and minutes-since-midnight in a given IANA zone.
+function nowInZone(tz: string): { dow: number; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+  const wd = parts.find(p => p.type === 'weekday')?.value || 'Sun';
+  let hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  if (hour === 24) hour = 0; // some runtimes emit '24' for midnight
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  const dow: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { dow: dow[wd] ?? 0, minutes: hour * 60 + minute };
+}
+// The scheduled importer only runs Monday 04:00 America/New_York (ET) through
+// Friday 17:00 America/Los_Angeles (PT). Start is governed by ET, end by PT.
+// Set PO_SCAN_WINDOW=off to disable the gate. Manual/user runs bypass it.
+function withinImporterWindow(): boolean {
+  if ((process.env.PO_SCAN_WINDOW || '').toLowerCase() === 'off') return true;
+  const et = nowInZone('America/New_York');
+  const pt = nowInZone('America/Los_Angeles');
+  if (et.dow === 0 || et.dow === 6) return false;              // Sat/Sun ET → before start / past end
+  if (et.dow === 1 && et.minutes < 4 * 60) return false;       // Monday before 4:00 AM ET
+  if (pt.dow === 0 || pt.dow === 6) return false;              // Sat/Sun PT → past Fri 5pm
+  if (pt.dow === 5 && pt.minutes >= 17 * 60) return false;     // Friday 5:00 PM PT or later
+  return true;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Authorize EITHER the Vercel cron (Bearer <CRON_SECRET>) OR a signed-in app
   // user (Bearer <Firebase ID token>) — the latter lets the Email Center
@@ -198,7 +225,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = (req.headers['authorization'] as string) || '';
   let authorized = !cronSecret;
-  if (cronSecret && authHeader === `Bearer ${cronSecret}`) authorized = true;
+  let viaCronSecret = false; // true for the scheduled cron / GitHub fallback
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) { authorized = true; viaCronSecret = true; }
   if (!authorized && authHeader.startsWith('Bearer ')) {
     try {
       const decoded = await getAuth(getAdminApp()).verifyIdToken(authHeader.slice(7));
@@ -247,6 +275,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const maxOverride = typeof req.query.max === 'string' ? parseInt(req.query.max, 10) : NaN;
   const maxTotal = Number.isFinite(maxOverride) && maxOverride > 0 ? maxOverride : 200;
   const force = req.query.force === '1' || req.query.force === 'true';
+
+  // The scheduled cron only scans Monday 04:00 ET → Friday 17:00 PT. Outside that
+  // window the automated run no-ops (still refreshing the heartbeat so the status
+  // light stays green, just paused). Manual "Scan Inbox Now" runs, or any run with
+  // ?force=1, ignore the window. Auto-detected via the CRON_SECRET auth path.
+  if (viaCronSecret && !force && !withinImporterWindow()) {
+    await writeScanStatus(true, { scanned: 0, queued: 0, remaining: 0, partial: false, errors: [] }, undefined, { windowClosed: true, note: 'Paused — outside the Mon 4AM ET – Fri 5PM PT run window.' });
+    return res.status(200).json({ ok: true, skipped: 'window-closed', message: 'Outside the Mon 4AM ET – Fri 5PM PT run window; scan skipped.' });
+  }
 
   const summary = { scanned: 0, skipped: 0, bodySkipped: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
 
