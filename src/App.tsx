@@ -11681,6 +11681,20 @@ export default function App() {
       };
       const joinDistinct = (vals: (string | undefined)[]) =>
         Array.from(new Set(vals.map(v => (v || '').trim()).filter(Boolean))).join(', ');
+      // Resolve a line item to its exact product. Prefer the stored productKey
+      // (the QA/SKU id saved on the line) — resolving by productName alone can
+      // fuzzy-match the WRONG product (e.g. resolveProduct's packaging-format
+      // fallback returns the first SKU of that format), which surfaced as wrong
+      // terminals. Only fall back to name matching when there's no productKey.
+      const resolveLineProduct = (li: OrderLineItem): { qa: QAProduct | null; sku: SKU | null } => {
+        if (li.productKey) {
+          const qaById = qaProducts.find(q => q.id === li.productKey) || null;
+          if (qaById) return { qa: qaById, sku: skus.find(s => s.id === qaById.skuId) || null };
+          const skuById = skus.find(s => s.id === li.productKey) || null;
+          if (skuById) return { qa: qaProducts.find(q => q.skuId === skuById.id) || null, sku: skuById };
+        }
+        return resolveProduct(li.productName);
+      };
       const stockRows: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
         .map(o => {
@@ -11692,16 +11706,16 @@ export default function App() {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.terminal)),
-            terminalName: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.terminalName)),
+            terminal: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.terminal)),
+            terminalName: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
-            packing: joinDistinct(lineItems.map(li => { const p = resolveProduct(li.productName); return p.qa?.productFormat || p.sku?.productFormat; })),
-            warehouse: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.warehouse)),
-            cmy: joinDistinct(lineItems.map(li => resolveProduct(li.productName).qa?.commodityGroup)),
+            packing: joinDistinct(lineItems.map(li => { const p = resolveLineProduct(li); return p.qa?.productFormat || p.sku?.productFormat; })),
+            warehouse: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.warehouse)),
+            cmy: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.commodityGroup)),
             shipDate: o.shipmentDate || '',
-            productGroup: joinDistinct(lineItems.map(li => { const p = resolveProduct(li.productName); return p.qa?.productGroup || p.sku?.productGroup; })),
+            productGroup: joinDistinct(lineItems.map(li => { const p = resolveLineProduct(li); return p.qa?.productGroup || p.sku?.productGroup; })),
           };
         });
       // Product-group filter (top-of-table dropdown), then search/sort.
