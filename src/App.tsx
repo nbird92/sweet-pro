@@ -10683,9 +10683,11 @@ export default function App() {
                       </button>
                     </div>
                     {(liveLoc.terminalNames || []).length > 0 && (
-                      <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 items-center text-[9px] uppercase font-bold opacity-40">
-                        <div className="px-1">Terminal</div>
-                        <div className="px-1">Terminal Name</div>
+                      <div className="flex gap-2 items-center text-[9px] uppercase font-bold opacity-40">
+                        <div className="w-28 px-1">Terminal</div>
+                        <div className="flex-1 px-1">Terminal Name</div>
+                        <div className="w-28 px-1">Warehouse</div>
+                        <div className="w-8" />
                       </div>
                     )}
                     <div className="space-y-2">
@@ -10705,9 +10707,22 @@ export default function App() {
                             className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
                             placeholder="Terminal Name"
                           />
+                          {/* Warehouse pairs this terminal with a product type — a Stock
+                              Request picks the terminal whose warehouse matches the
+                              ordered product's QA Warehouse. Values mirror the QA product
+                              Warehouse dropdown so they compare cleanly. */}
+                          <select
+                            value={tn.warehouse || ''}
+                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, warehouse: e.target.value || undefined } : t) } : l))}
+                            className="w-28 bg-white border border-[#141414]/20 p-2 text-xs"
+                          >
+                            <option value="">Warehouse</option>
+                            <option value="Liquid">Liquid</option>
+                            <option value="DRY">DRY</option>
+                          </select>
                           <button
                             onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).filter((_, i) => i !== idx) } : l))}
-                            className="p-2 hover:bg-red-500 hover:text-white transition-all"
+                            className="w-8 p-2 hover:bg-red-500 hover:text-white transition-all"
                           >
                             <Trash2 size={12} />
                           </button>
@@ -11644,19 +11659,44 @@ export default function App() {
           const lineItems = o.lineItems || [];
           const products = lineItems.map(resolveLineProduct);
           // ── TERMINAL RULES ────────────────────────────────────────────────────
-          // Terminal + Terminal Name are purely LOCATION-based: they are whatever
-          // the ORDER's location (e.g. "Hamilton (Sherman)") defines in its Terminal
-          // Names list. The product is NOT consulted — a product's own QA terminal
-          // has no say here. If a location defines several terminals, all are shown.
-          // An order shipping from Hamilton (Sherman) can therefore never surface a
-          // Hamilton (Ferguson) terminal.
+          // The terminal is keyed by TWO parameters:
+          //   1. the ORDER's location  → WHICH Location's terminal list to use
+          //      (Hamilton (Sherman) and Hamilton (Ferguson) are different sites);
+          //   2. the ordered PRODUCT's warehouse (QA Warehouse: Liquid / DRY) → WHICH
+          //      terminal within that list, since each terminal is tagged with the
+          //      warehouse it serves.
           const orderTerminals = terminalsForLoc(o.location);
+          const terminalFor = (qa: QAProduct | null) => {
+            if (!orderTerminals.length) return undefined;
+            const wh = (qa?.warehouse || '').trim().toLowerCase();
+            if (wh) {
+              const hit = orderTerminals.find(t => (t.warehouse || '').trim().toLowerCase() === wh);
+              if (hit) return hit;
+            }
+            // Product has no warehouse (or none tagged for it): only safe to fall back
+            // when the location offers a single terminal — otherwise it's ambiguous.
+            return orderTerminals.length === 1 ? orderTerminals[0] : undefined;
+          };
+          const rowTerminals = products.map(p => terminalFor(p.qa));
+          const terminal = joinDistinct(rowTerminals.map(t => t?.terminal));
+          const terminalName = joinDistinct(rowTerminals.map(t => t?.terminalName));
+          let terminalNote = '';
+          if (!terminal) {
+            if (!orderTerminals.length) {
+              terminalNote = terminalDiag(o.location);
+            } else {
+              const whs = joinDistinct(products.map(p => p.qa?.warehouse));
+              terminalNote = whs
+                ? `No terminal at "${o.location}" is tagged with the product warehouse "${whs}". Open Locations → "${o.location}" → Terminal Names and set that terminal's Warehouse.`
+                : `The ordered product has no Warehouse set, and "${o.location}" defines ${orderTerminals.length} terminals — so the right one can't be chosen. Set Warehouse on the QA product.`;
+            }
+          }
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(orderTerminals.map(t => t.terminal)),
-            terminalName: joinDistinct(orderTerminals.map(t => t.terminalName)),
+            terminal,
+            terminalName,
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
@@ -11666,7 +11706,7 @@ export default function App() {
             shipDate: o.shipmentDate || '',
             productGroup: joinDistinct(products.map(p => p.qa?.productGroup || p.sku?.productGroup)),
             orderLocation: (o.location || '').trim(),
-            terminalNote: orderTerminals.length ? '' : terminalDiag(o.location),
+            terminalNote,
           };
         });
       // "Clear All" hides rows non-destructively via a persisted set of order ids.

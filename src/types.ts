@@ -260,10 +260,14 @@ export interface Shipment {
   location?: string;
 }
 
-/** A terminal code paired with its display name. A Location can have many. */
+/** A terminal code paired with its display name, scoped to a warehouse type.
+ *  A Location can have many — one per warehouse (e.g. a Liquid terminal and a DRY
+ *  terminal). A Stock Request row picks the terminal whose `warehouse` matches the
+ *  ordered product's QAProduct.warehouse. */
 export interface TerminalName {
   terminal: string;      // terminal code / short id
   terminalName: string;  // full terminal name
+  warehouse?: string;    // 'Liquid' | 'DRY' — matches QAProduct.warehouse
 }
 
 export interface Location {
