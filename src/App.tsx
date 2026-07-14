@@ -11620,30 +11620,20 @@ export default function App() {
           // terminal list). Multi-line orders join distinct values.
           const lineItems = o.lineItems || [];
           const products = lineItems.map(resolveLineProduct);
-          // The terminal always belongs to the location the ORDER ships from — an
-          // order out of Hamilton (Sherman) can never show a Hamilton (Ferguson)
-          // terminal. The product's own terminal only picks WHICH one when that
-          // location lists several; when the location has exactly one, it applies
-          // to every product there.
+          // ── TERMINAL RULES ────────────────────────────────────────────────────
+          // Terminal + Terminal Name are purely LOCATION-based: they are whatever
+          // the ORDER's location (e.g. "Hamilton (Sherman)") defines in its Terminal
+          // Names list. The product is NOT consulted — a product's own QA terminal
+          // has no say here. If a location defines several terminals, all are shown.
+          // An order shipping from Hamilton (Sherman) can therefore never surface a
+          // Hamilton (Ferguson) terminal.
           const orderTerminals = terminalsForLoc(o.location);
-          const terminalFor = (qa: QAProduct | null): { terminal?: string; terminalName?: string } => {
-            if (!orderTerminals.length) return {};
-            if (qa && (qa.terminal || qa.terminalName)) {
-              const hit = orderTerminals.find(t =>
-                (qa.terminal && t.terminal === qa.terminal) || (qa.terminalName && t.terminalName === qa.terminalName));
-              if (hit) return { terminal: hit.terminal, terminalName: hit.terminalName };
-            }
-            if (orderTerminals.length === 1) {
-              return { terminal: orderTerminals[0].terminal, terminalName: orderTerminals[0].terminalName };
-            }
-            return {};
-          };
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(products.map(p => terminalFor(p.qa).terminal)),
-            terminalName: joinDistinct(products.map(p => terminalFor(p.qa).terminalName)),
+            terminal: joinDistinct(orderTerminals.map(t => t.terminal)),
+            terminalName: joinDistinct(orderTerminals.map(t => t.terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
