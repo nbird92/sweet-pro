@@ -11581,7 +11581,7 @@ export default function App() {
       type StockRow = {
         id: string; split: string; customer: string; terminal: string; terminalName: string;
         po: string; units: number; qtyMt: number; packing: string; warehouse: string; cmy: string; shipDate: string;
-        productGroup: string;
+        productGroup: string; orderLocation: string; terminalNote: string;
       };
       const joinDistinct = (vals: (string | undefined)[]) =>
         Array.from(new Set(vals.map(v => (v || '').trim()).filter(Boolean))).join(', ');
@@ -11611,6 +11611,29 @@ export default function App() {
         if (exact) return exact.terminalNames || [];
         const prefixed = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
         return prefixed.length === 1 ? (prefixed[0].terminalNames || []) : [];
+      };
+      // A blank terminal has exactly four possible causes. Rather than silently
+      // rendering "—", explain WHICH one on the cell so the data can be fixed.
+      const terminalDiag = (locName?: string): string => {
+        const raw = (locName || '').trim();
+        if (!raw) return 'This order has no Location set. Open the order and choose one.';
+        const n = raw.toLowerCase();
+        const exact = locations.find(l => l.name === raw)
+          || locations.find(l => l.name.trim().toLowerCase() === n);
+        const hit = exact || (() => {
+          const p = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+          return p.length === 1 ? p[0] : undefined;
+        })();
+        if (hit) {
+          return (hit.terminalNames || []).length
+            ? ''
+            : `Location "${hit.name}" has no Terminal Names defined. Add them in Locations → open "${hit.name}" → Terminal Names.`;
+        }
+        const ambiguous = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+        if (ambiguous.length > 1) {
+          return `The order's location "${raw}" is ambiguous — it matches ${ambiguous.map(l => `"${l.name}"`).join(' and ')}. Set the order's Location to the specific one.`;
+        }
+        return `The order's location "${raw}" doesn't match any Location record. Existing locations: ${locations.map(l => l.name).join(', ') || '(none)'}.`;
       };
       const stockRowsAll: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
@@ -11642,6 +11665,8 @@ export default function App() {
             cmy: joinDistinct(products.map(p => p.qa?.commodityGroup)),
             shipDate: o.shipmentDate || '',
             productGroup: joinDistinct(products.map(p => p.qa?.productGroup || p.sku?.productGroup)),
+            orderLocation: (o.location || '').trim(),
+            terminalNote: orderTerminals.length ? '' : terminalDiag(o.location),
           };
         });
       // "Clear All" hides rows non-destructively via a persisted set of order ids.
@@ -11829,8 +11854,19 @@ export default function App() {
                 },
                 { key: 'split', label: 'Split', mono: true, render: (r) => r.split || '—' },
                 { key: 'customer', label: 'Customer', bold: true, render: (r) => r.customer || '—' },
-                { key: 'terminal', label: 'Terminal', render: (r) => r.terminal || '—' },
-                { key: 'terminalName', label: 'Terminal Name', render: (r) => r.terminalName || '—' },
+                { key: 'orderLocation', label: 'Location', render: (r) => r.orderLocation || <span className="text-amber-700 font-bold" title="This order has no Location set.">not set</span> },
+                {
+                  key: 'terminal', label: 'Terminal',
+                  render: (r) => r.terminal || (
+                    <span className="text-amber-700 font-bold cursor-help" title={r.terminalNote}>— why?</span>
+                  ),
+                },
+                {
+                  key: 'terminalName', label: 'Terminal Name',
+                  render: (r) => r.terminalName || (
+                    <span className="text-amber-700 font-bold cursor-help" title={r.terminalNote}>— why?</span>
+                  ),
+                },
                 { key: 'po', label: 'PO #', mono: true, render: (r) => r.po || '—' },
                 { key: 'units', label: 'Units', align: 'right', render: (r) => Math.round(r.units).toLocaleString() },
                 { key: 'qtyMt', label: 'Qty MT', align: 'right', render: (r) => r.qtyMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
