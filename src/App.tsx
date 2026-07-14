@@ -390,6 +390,12 @@ export default function App() {
   const [stockEmailSending, setStockEmailSending] = useState(false);
   const [stockEmailStatus, setStockEmailStatus] = useState<string | null>(null);
   const [stockCopied, setStockCopied] = useState(false);
+  // "Clear All" hides derived rows non-destructively (orders are never deleted).
+  // The hidden order-ids persist to localStorage and can be restored.
+  const [stockClearedIds, setStockClearedIds] = useState<Set<string>>(() => {
+    try { const raw = localStorage.getItem('sweetpro-stock-cleared'); return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>(); } catch { return new Set<string>(); }
+  });
+  const [stockClearConfirm, setStockClearConfirm] = useState(false);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
 
@@ -11695,7 +11701,7 @@ export default function App() {
         }
         return resolveProduct(li.productName);
       };
-      const stockRows: StockRow[] = orders
+      const stockRowsAll: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
         .map(o => {
           // Terminal + Terminal Name are PRODUCT-dependent: each line item's product
@@ -11718,6 +11724,22 @@ export default function App() {
             productGroup: joinDistinct(lineItems.map(li => { const p = resolveLineProduct(li); return p.qa?.productGroup || p.sku?.productGroup; })),
           };
         });
+      // "Clear All" hides rows non-destructively via a persisted set of order ids.
+      const stockRows: StockRow[] = stockRowsAll.filter(r => !stockClearedIds.has(r.id));
+      const stockHiddenCount = stockRowsAll.length - stockRows.length;
+      const persistStockCleared = (next: Set<string>) => {
+        setStockClearedIds(next);
+        try {
+          if (next.size) localStorage.setItem('sweetpro-stock-cleared', JSON.stringify([...next]));
+          else localStorage.removeItem('sweetpro-stock-cleared');
+        } catch { /* cache best-effort */ }
+      };
+      const clearAllStock = () => {
+        persistStockCleared(new Set([...stockClearedIds, ...stockRowsAll.map(r => r.id)]));
+        setSelectedStockRows(new Set());
+        setStockClearConfirm(false);
+      };
+      const restoreStock = () => persistStockCleared(new Set());
       // Product-group filter (top-of-table dropdown), then search/sort.
       const stockGroupRows = stockGroupFilter
         ? stockRows.filter(r => r.productGroup.split(', ').includes(stockGroupFilter))
@@ -11817,6 +11839,23 @@ export default function App() {
               title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Preview and email the selected rows'}
             >
               <Mail size={12} /> Email Selected ({selectedStockRows.size})
+            </button>
+            {stockHiddenCount > 0 && (
+              <button
+                onClick={restoreStock}
+                className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+                title="Un-hide rows cleared earlier"
+              >
+                <RotateCcw size={12} /> Restore ({stockHiddenCount})
+              </button>
+            )}
+            <button
+              onClick={() => setStockClearConfirm(true)}
+              disabled={stockRows.length === 0}
+              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Hide all rows from the list (orders are not deleted)"
+            >
+              <Trash2 size={12} /> Clear All
             </button>
           </PageBanner>
           <div className="p-6 space-y-4">
@@ -11940,6 +11979,27 @@ export default function App() {
                       <Send size={12} /> {stockEmailSending ? 'Sending…' : 'Send Email'}
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Clear All confirm — hides rows (non-destructive), never deletes orders. */}
+          {stockClearConfirm && (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+              <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-2">
+                  <Trash2 size={14} /> <h3 className="text-xs font-bold uppercase tracking-widest">Clear Stock Requests</h3>
+                </div>
+                <div className="p-6 text-sm space-y-2">
+                  <p>Hide all <span className="font-bold">{stockRows.length}</span> row{stockRows.length !== 1 ? 's' : ''} from the Stock Requests list?</p>
+                  <p className="text-xs opacity-60">Orders are not deleted — this only hides them here. New confirmed orders with a split number will still appear, and you can Restore the hidden rows anytime.</p>
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                  <button onClick={() => setStockClearConfirm(false)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                  <button onClick={clearAllStock} className="px-4 py-2 bg-red-600 text-white text-[11px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-700">
+                    <Trash2 size={12} /> Clear All
+                  </button>
                 </div>
               </div>
             </div>
