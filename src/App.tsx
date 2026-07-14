@@ -396,6 +396,7 @@ export default function App() {
     try { const raw = localStorage.getItem('sweetpro-stock-cleared'); return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>(); } catch { return new Set<string>(); }
   });
   const [stockClearConfirm, setStockClearConfirm] = useState(false);
+  const [stockDeleteConfirm, setStockDeleteConfirm] = useState(false);
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
 
@@ -11668,6 +11669,11 @@ export default function App() {
         setSelectedStockRows(new Set());
         setStockClearConfirm(false);
       };
+      const deleteSelectedStock = () => {
+        persistStockCleared(new Set([...stockClearedIds, ...selectedStockRows]));
+        setSelectedStockRows(new Set());
+        setStockDeleteConfirm(false);
+      };
       const restoreStock = () => persistStockCleared(new Set());
       // Product-group filter (top-of-table dropdown), then search/sort.
       const stockGroupRows = stockGroupFilter
@@ -11768,6 +11774,14 @@ export default function App() {
               title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Preview and email the selected rows'}
             >
               <Mail size={12} /> Email Selected ({selectedStockRows.size})
+            </button>
+            <button
+              onClick={() => setStockDeleteConfirm(true)}
+              disabled={selectedStockRows.size === 0}
+              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Remove the selected rows from the list'}
+            >
+              <Trash2 size={12} /> Delete Selected ({selectedStockRows.size})
             </button>
             {stockHiddenCount > 0 && (
               <button
@@ -11908,6 +11922,28 @@ export default function App() {
                       <Send size={12} /> {stockEmailSending ? 'Sending…' : 'Send Email'}
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Selected confirm — removes the chosen rows from the list
+              (non-destructive: the underlying orders are never deleted). */}
+          {stockDeleteConfirm && (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md">
+              <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-2">
+                  <Trash2 size={14} /> <h3 className="text-xs font-bold uppercase tracking-widest">Delete Selected Rows</h3>
+                </div>
+                <div className="p-6 text-sm space-y-2">
+                  <p>Remove the <span className="font-bold">{selectedStockRows.size}</span> selected row{selectedStockRows.size !== 1 ? 's' : ''} from the Stock Requests list?</p>
+                  <p className="text-xs opacity-60">The orders themselves are not deleted — this only removes them from this list. You can bring them back with Restore.</p>
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                  <button onClick={() => setStockDeleteConfirm(false)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                  <button onClick={deleteSelectedStock} className="px-4 py-2 bg-red-600 text-white text-[11px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-700">
+                    <Trash2 size={12} /> Delete {selectedStockRows.size}
+                  </button>
                 </div>
               </div>
             </div>
