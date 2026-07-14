@@ -3810,6 +3810,45 @@ export default function App() {
     }
   };
 
+  /** Preview the Bill of Lading for an invoice. Invoices link to a shipment/order
+   *  by BOL NUMBER — `invoice.shipmentId` is unreliable (Complete & Bill stores the
+   *  ORDER id there, returns store the ReturnOrder id, CSV import leaves it blank),
+   *  so try it first but always fall back to the BOL, same as lotCodeFromShipment. */
+  const handleGenerateBolForInvoice = (inv: Invoice) => {
+    const all = [...hamiltonShipments, ...vancouverShipments];
+    const bol = (inv.bolNumber || '').trim();
+
+    // 1. A real shipment: by id (may be an order id — that just misses), then by BOL.
+    const shipment = (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
+      || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
+    if (shipment) { handleGenerateBol(shipment); return; }
+
+    // 2. No shipment, but a linked order — reuse its stub builder.
+    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
+    if (linkedOrder) { handleGenerateBol(shipmentForOrder(linkedOrder)); return; }
+
+    // 3. Neither (e.g. an imported invoice) — build a stub from the invoice itself.
+    if (!bol) {
+      setErrorBox('This invoice has no BOL number — cannot generate a Bill of Lading.');
+      return;
+    }
+    handleGenerateBol({
+      id: `TMP-${inv.id}`,
+      week: '', date: inv.date || new Date().toISOString().split('T')[0],
+      day: '', time: '', bay: '',
+      customer: inv.customer || '',
+      product: inv.product || inv.lineItems?.[0]?.productName || '',
+      po: inv.po || '',
+      bol,
+      qty: (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) || inv.qty || 0,
+      carrier: inv.carrier || '',
+      arrive: '', start: '', out: '',
+      status: inv.status,
+      contractNumber: inv.contractNumber,
+      location: inv.location,
+    } as Shipment);
+  };
+
   const handleGenerateCoa = (shipment: Shipment) => {
     try {
       const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
@@ -8322,8 +8361,12 @@ export default function App() {
                           <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
                             <Printer size={14} />
                           </button>
-                          <button onClick={() => toggleRow(i.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Expand details">
-                            {expandedRows.has(i.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          <button
+                            onClick={() => handleGenerateBolForInvoice(i)}
+                            className="p-1 hover:bg-blue-600 hover:text-white transition-all"
+                            title="Preview BOL"
+                          >
+                            <Truck size={14} />
                           </button>
                           <button
                             onClick={() => {
@@ -8339,73 +8382,6 @@ export default function App() {
                         </div>
                       </td>
                     </tr>
-                    <AnimatePresence>
-                      {expandedRows.has(i.id) && (
-                        <tr>
-                          <td colSpan={14} className="p-0">
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                            >
-                              <div className="p-6 space-y-4">
-                                <div className="grid grid-cols-4 gap-6">
-                                  <div>
-                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Carrier</div>
-                                    <div className="text-xs font-bold">{i.carrier || '—'}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div>
-                                    <div className="text-xs font-bold">{i.location || linkedOrder?.location || '—'}</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Contract #</div>
-                                    <div className="text-xs font-bold font-mono">{i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</div>
-                                  </div>
-                                </div>
-                                {invoiceLineItems.length > 0 && (
-                                  <div className="border border-[#141414]/10 overflow-hidden">
-                                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
-                                      <h4 className="text-xs font-bold uppercase">Line Items</h4>
-                                    </div>
-                                    <table className="w-full text-xs">
-                                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
-                                        <tr>
-                                          <th className="p-3 text-left font-bold">Product</th>
-                                          <th className="p-3 text-left font-bold">QTY (units)</th>
-                                          <th className="p-3 text-left font-bold">Weight/Unit</th>
-                                          <th className="p-3 text-left font-bold">Total Weight</th>
-                                          <th className="p-3 text-left font-bold">Unit Amount</th>
-                                          <th className="p-3 text-left font-bold">Line Amount</th>
-                                          <th className="p-3 text-left font-bold">Contract #</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-[#141414]/10">
-                                        {invoiceLineItems.map(item => (
-                                          <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{lineItemToShortform(item)}</td>
-                                            <td className="p-3">{item.qty}</td>
-                                            <td className="p-3">{item.netWeightPerUnit}</td>
-                                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
-                                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
-                                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
-                                            <td className="p-3 font-mono">{item.contractNumber}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                )}
-                                {invoiceLineItems.length === 0 && (
-                                  <div className="text-[10px] opacity-40 italic">No line items available for this invoice.</div>
-                                )}
-                              </div>
-                            </motion.div>
-                          </td>
-                        </tr>
-                      )}
-                    </AnimatePresence>
                   </React.Fragment>
                   );
                 })}
@@ -8819,8 +8795,12 @@ export default function App() {
                           >
                             <Edit2 size={14} />
                           </button>
-                          <button onClick={() => toggleRow(ord.id)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
-                            {expandedRows.has(ord.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          <button
+                            onClick={() => handleGenerateBol(shipmentForOrder(ord))}
+                            className="p-1 hover:bg-blue-600 hover:text-white transition-all"
+                            title="Preview BOL"
+                          >
+                            <Truck size={14} />
                           </button>
                           {ord.status === 'Confirmed' || ord.status === 'Cancelled' ? (
                             <button onClick={() => ord.hidden ? setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)) : setOrderHideConfirmId(ord.id)} className="p-1 hover:bg-amber-500 hover:text-white transition-all" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
@@ -8834,89 +8814,6 @@ export default function App() {
                           </div>
                         </td>
                       </tr>
-                      <AnimatePresence>
-                        {expandedRows.has(ord.id) && (
-                          <tr>
-                            <td colSpan={13} className="p-0">
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className="overflow-hidden bg-[#F5F5F5] border-t border-[#141414]/10"
-                              >
-                                <div className="p-6 space-y-4">
-                                  <div className="grid grid-cols-4 gap-6">
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Order ID</div>
-                                      <div className="text-xs font-bold">{ord.id}</div>
-                                    </div>
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Date Created</div>
-                                      <div className="text-xs">{ord.date}</div>
-                                    </div>
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Total Weight (KG)</div>
-                                      <div className="text-xs font-bold">{(totalWeight * 1000).toFixed(0)}</div>
-                                    </div>
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Status</div>
-                                      <div className={`inline-block px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${
-                                        ord.status === 'Completed' ? 'bg-green-100 text-green-700' :
-                                        ord.status === 'Confirmed' ? 'bg-emerald-100 text-emerald-700' :
-                                        ord.status === 'Open' ? 'bg-amber-100 text-amber-700' :
-                                        'bg-red-100 text-red-700'
-                                      }`}>{ord.status}</div>
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-6">
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Shipment Date</div>
-                                      <div className="text-xs font-bold">{ord.shipmentDate || '—'}</div>
-                                    </div>
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Delivery Date</div>
-                                      <div className="text-xs font-bold">{ord.deliveryDate || '—'}</div>
-                                    </div>
-                                    <div>
-                                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Carrier</div>
-                                      <div className="text-xs font-bold">{ord.carrier || '—'}</div>
-                                    </div>
-                                  </div>
-
-                                  {/* Line Items Display */}
-                                  <div className="border border-[#141414]/10 overflow-hidden">
-                                    <div className="bg-[#141414] text-[#E4E3E0] p-3">
-                                      <h4 className="text-xs font-bold uppercase">Line Items</h4>
-                                    </div>
-                                    <table className="w-full text-xs">
-                                      <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
-                                        <tr>
-                                          <th className="p-3 text-left font-bold">Product</th>
-                                          <th className="p-3 text-left font-bold">QTY (units)</th>
-                                          <th className="p-3 text-left font-bold">Weight/Unit</th>
-                                          <th className="p-3 text-left font-bold">Total Weight</th>
-                                          <th className="p-3 text-left font-bold">Contract #</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-[#141414]/10">
-                                        {ord.lineItems.map(item => (
-                                          <tr key={item.id} className="hover:bg-[#141414]/5">
-                                            <td className="p-3">{lineItemToShortform(item)}</td>
-                                            <td className="p-3">{item.qty}</td>
-                                            <td className="p-3">{item.netWeightPerUnit}</td>
-                                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
-                                            <td className="p-3">{item.contractNumber}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            </td>
-                          </tr>
-                        )}
-                      </AnimatePresence>
                     </React.Fragment>
                   );
                 })}
@@ -11701,6 +11598,26 @@ export default function App() {
         }
         return resolveProduct(li.productName);
       };
+      // Terminal/Terminal Name are only valid if the product's OWN location still
+      // lists them. Legacy QA records kept a terminal from a previous location
+      // (e.g. "Ferguson" left on a product later moved to Hamilton (Sherman)) —
+      // never display those. Location strings don't always match Location.name
+      // exactly (SKU-mirrored products store "Hamilton"), so match tolerantly.
+      const terminalsForLoc = (locName?: string) => {
+        const n = (locName || '').trim().toLowerCase();
+        if (!n) return [];
+        const loc = locations.find(l => l.name === locName)
+          || locations.find(l => l.name.trim().toLowerCase() === n)
+          || locations.find(l => l.name.trim().toLowerCase().startsWith(n))
+          || locations.find(l => n.startsWith(l.name.trim().toLowerCase()));
+        return loc?.terminalNames || [];
+      };
+      const qaTerminalPair = (qa: QAProduct | null): { terminal?: string; terminalName?: string } => {
+        if (!qa || (!qa.terminal && !qa.terminalName)) return {};
+        const hit = terminalsForLoc(qa.location).find(t =>
+          (qa.terminal && t.terminal === qa.terminal) || (qa.terminalName && t.terminalName === qa.terminalName));
+        return hit ? { terminal: hit.terminal, terminalName: hit.terminalName } : {};
+      };
       const stockRowsAll: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
         .map(o => {
@@ -11708,20 +11625,21 @@ export default function App() {
           // QA record carries them (set on the QA product from its location's
           // terminal list). Multi-line orders join distinct values.
           const lineItems = o.lineItems || [];
+          const products = lineItems.map(resolveLineProduct);
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.terminal)),
-            terminalName: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.terminalName)),
+            terminal: joinDistinct(products.map(p => qaTerminalPair(p.qa).terminal)),
+            terminalName: joinDistinct(products.map(p => qaTerminalPair(p.qa).terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
-            packing: joinDistinct(lineItems.map(li => { const p = resolveLineProduct(li); return p.qa?.productFormat || p.sku?.productFormat; })),
-            warehouse: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.warehouse)),
-            cmy: joinDistinct(lineItems.map(li => resolveLineProduct(li).qa?.commodityGroup)),
+            packing: joinDistinct(products.map(p => p.qa?.productFormat || p.sku?.productFormat)),
+            warehouse: joinDistinct(products.map(p => p.qa?.warehouse)),
+            cmy: joinDistinct(products.map(p => p.qa?.commodityGroup)),
             shipDate: o.shipmentDate || '',
-            productGroup: joinDistinct(lineItems.map(li => { const p = resolveLineProduct(li); return p.qa?.productGroup || p.sku?.productGroup; })),
+            productGroup: joinDistinct(products.map(p => p.qa?.productGroup || p.sku?.productGroup)),
           };
         });
       // "Clear All" hides rows non-destructively via a persisted set of order ids.

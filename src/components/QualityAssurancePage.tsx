@@ -345,6 +345,34 @@ export default function QualityAssurancePage({
     certificates: [],
   });
 
+  // Terminal + Terminal Name are LOCATION-SCOPED. A product's stored location
+  // string doesn't always equal a Location.name exactly — products mirrored from
+  // SKUs carry e.g. "Hamilton" while the Location entity is "Hamilton (Sherman)".
+  // Match exactly, then case-insensitively, then by prefix, so those products
+  // still resolve to their location's terminal list (otherwise the dropdowns are
+  // empty and a stale terminal can never be corrected).
+  const terminalsForLocation = (locName?: string) => {
+    const n = (locName || '').trim().toLowerCase();
+    if (!n) return [];
+    const loc = locations.find(l => l.name === locName)
+      || locations.find(l => l.name.trim().toLowerCase() === n)
+      || locations.find(l => l.name.trim().toLowerCase().startsWith(n))
+      || locations.find(l => n.startsWith(l.name.trim().toLowerCase()));
+    return loc?.terminalNames || [];
+  };
+
+  // When a product's location changes, a terminal from the OLD location must not
+  // survive — that's how "Ferguson" ended up on Hamilton (Sherman) products. Keep
+  // the pair only if the new location still offers it; otherwise clear both.
+  const reconcileTerminal = <T extends { location: string; terminal?: string; terminalName?: string }>(p: T): T => {
+    if (!p.terminal && !p.terminalName) return p;
+    const hit = terminalsForLocation(p.location).find(t =>
+      (p.terminal && t.terminal === p.terminal) || (p.terminalName && t.terminalName === p.terminalName));
+    return hit
+      ? { ...p, terminal: hit.terminal, terminalName: hit.terminalName }
+      : { ...p, terminal: undefined, terminalName: undefined };
+  };
+
   const [newProductData, setNewProductData] = useState<QAProduct>(createBlankProduct);
 
   const openAddModal = () => {
@@ -503,7 +531,9 @@ export default function QualityAssurancePage({
           if (row.unitsPerPallet) patch.unitsPerPallet = num(row.unitsPerPallet);
 
           if (existing) {
-            toUpdate.push({ ...existing, ...patch, id: existing.id, skuId: existing.skuId });
+            // reconcile: a CSV row can change `location`, which must not leave the
+            // previous location's terminal behind on the record.
+            toUpdate.push(reconcileTerminal({ ...existing, ...patch, id: existing.id, skuId: existing.skuId }));
           } else {
             const base = createBlankProduct();
             toAdd.push({
@@ -549,8 +579,11 @@ export default function QualityAssurancePage({
 
   const saveChanges = () => {
     if (!editData) return;
-    onUpdateQAProduct(editData);
-    setSelectedProduct(editData);
+    // Belt-and-braces: never persist a terminal that doesn't belong to the
+    // product's location, regardless of which field the user last touched.
+    const clean = reconcileTerminal(editData);
+    onUpdateQAProduct(clean);
+    setSelectedProduct(clean);
     setIsEditing(false);
   };
 
@@ -2283,7 +2316,7 @@ export default function QualityAssurancePage({
                     </div>
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
-                      <select value={newProductData.location} onChange={(e) => setNewProductData(prev => ({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                      <select value={newProductData.location} onChange={(e) => setNewProductData(prev => reconcileTerminal({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                         <option value="">Select Location</option>
                         {locations.filter(l => l.active !== false).map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
                       </select>
@@ -2310,13 +2343,13 @@ export default function QualityAssurancePage({
                         value={newProductData.terminal || ''}
                         onChange={(e) => {
                           const code = e.target.value;
-                          const match = (locations.find(l => l.name === newProductData.location)?.terminalNames || []).find(t => t.terminal === code);
+                          const match = terminalsForLocation(newProductData.location).find(t => t.terminal === code);
                           setNewProductData(prev => ({ ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) }));
                         }}
                         className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                       >
                         <option value="">Select Terminal</option>
-                        {(locations.find(l => l.name === newProductData.location)?.terminalNames || []).map((t, i) => (
+                        {terminalsForLocation(newProductData.location).map((t, i) => (
                           <option key={i} value={t.terminal}>{t.terminal}</option>
                         ))}
                       </select>
@@ -2327,13 +2360,13 @@ export default function QualityAssurancePage({
                         value={newProductData.terminalName || ''}
                         onChange={(e) => {
                           const name = e.target.value;
-                          const match = (locations.find(l => l.name === newProductData.location)?.terminalNames || []).find(t => t.terminalName === name);
+                          const match = terminalsForLocation(newProductData.location).find(t => t.terminalName === name);
                           setNewProductData(prev => ({ ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) }));
                         }}
                         className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                       >
                         <option value="">Select Terminal Name</option>
-                        {(locations.find(l => l.name === newProductData.location)?.terminalNames || []).map((t, i) => (
+                        {terminalsForLocation(newProductData.location).map((t, i) => (
                           <option key={i} value={t.terminalName}>{t.terminalName}</option>
                         ))}
                       </select>
@@ -2593,13 +2626,13 @@ export default function QualityAssurancePage({
                           value={editData?.terminal || ''}
                           onChange={(e) => {
                             const code = e.target.value;
-                            const match = (locations.find(l => l.name === editData?.location)?.terminalNames || []).find(t => t.terminal === code);
+                            const match = terminalsForLocation(editData?.location).find(t => t.terminal === code);
                             setEditData(prev => prev ? { ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) } : prev);
                           }}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                         >
                           <option value="">Select Terminal</option>
-                          {(locations.find(l => l.name === editData?.location)?.terminalNames || []).map((t, i) => (
+                          {terminalsForLocation(editData?.location).map((t, i) => (
                             <option key={i} value={t.terminal}>{t.terminal}</option>
                           ))}
                         </select>
@@ -2610,13 +2643,13 @@ export default function QualityAssurancePage({
                           value={editData?.terminalName || ''}
                           onChange={(e) => {
                             const name = e.target.value;
-                            const match = (locations.find(l => l.name === editData?.location)?.terminalNames || []).find(t => t.terminalName === name);
+                            const match = terminalsForLocation(editData?.location).find(t => t.terminalName === name);
                             setEditData(prev => prev ? { ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) } : prev);
                           }}
                           className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                         >
                           <option value="">Select Terminal Name</option>
-                          {(locations.find(l => l.name === editData?.location)?.terminalNames || []).map((t, i) => (
+                          {terminalsForLocation(editData?.location).map((t, i) => (
                             <option key={i} value={t.terminalName}>{t.terminalName}</option>
                           ))}
                         </select>
@@ -2657,7 +2690,7 @@ export default function QualityAssurancePage({
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location</label>
-                        <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, location: e.target.value } : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                        <select value={editData?.location || ''} onChange={(e) => setEditData(prev => prev ? reconcileTerminal({ ...prev, location: e.target.value }) : prev)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                           <option value="">Select Location</option>
                           {locations.filter(l => l.active !== false).map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
                         </select>
