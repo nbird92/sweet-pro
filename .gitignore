@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 scripts/firebase-service-account.json
+
+.vercel
+.env*
