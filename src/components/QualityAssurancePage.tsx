@@ -354,11 +354,14 @@ export default function QualityAssurancePage({
   const terminalsForLocation = (locName?: string) => {
     const n = (locName || '').trim().toLowerCase();
     if (!n) return [];
-    const loc = locations.find(l => l.name === locName)
-      || locations.find(l => l.name.trim().toLowerCase() === n)
-      || locations.find(l => l.name.trim().toLowerCase().startsWith(n))
-      || locations.find(l => n.startsWith(l.name.trim().toLowerCase()));
-    return loc?.terminalNames || [];
+    const exact = locations.find(l => l.name === locName)
+      || locations.find(l => l.name.trim().toLowerCase() === n);
+    if (exact) return exact.terminalNames || [];
+    // NEVER guess on an ambiguous prefix: with both "Hamilton (Sherman)" and
+    // "Hamilton (Ferguson)" defined, a product storing plain "Hamilton" must not
+    // silently adopt whichever comes first. Only a UNIQUE prefix match counts.
+    const prefixed = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+    return prefixed.length === 1 ? (prefixed[0].terminalNames || []) : [];
   };
 
   // When a product's location changes, a terminal from the OLD location must not

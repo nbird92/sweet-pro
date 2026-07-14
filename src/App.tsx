@@ -11598,25 +11598,18 @@ export default function App() {
         }
         return resolveProduct(li.productName);
       };
-      // Terminal/Terminal Name are only valid if the product's OWN location still
-      // lists them. Legacy QA records kept a terminal from a previous location
-      // (e.g. "Ferguson" left on a product later moved to Hamilton (Sherman)) —
-      // never display those. Location strings don't always match Location.name
-      // exactly (SKU-mirrored products store "Hamilton"), so match tolerantly.
+      // Terminals are LOCATION-scoped: "Hamilton (Sherman)" and "Hamilton (Ferguson)"
+      // are different sites with different terminals. Resolve a location's terminal
+      // list by exact name; only accept a prefix match when it is UNIQUE, so a
+      // product/order storing plain "Hamilton" never silently adopts Ferguson's.
       const terminalsForLoc = (locName?: string) => {
         const n = (locName || '').trim().toLowerCase();
         if (!n) return [];
-        const loc = locations.find(l => l.name === locName)
-          || locations.find(l => l.name.trim().toLowerCase() === n)
-          || locations.find(l => l.name.trim().toLowerCase().startsWith(n))
-          || locations.find(l => n.startsWith(l.name.trim().toLowerCase()));
-        return loc?.terminalNames || [];
-      };
-      const qaTerminalPair = (qa: QAProduct | null): { terminal?: string; terminalName?: string } => {
-        if (!qa || (!qa.terminal && !qa.terminalName)) return {};
-        const hit = terminalsForLoc(qa.location).find(t =>
-          (qa.terminal && t.terminal === qa.terminal) || (qa.terminalName && t.terminalName === qa.terminalName));
-        return hit ? { terminal: hit.terminal, terminalName: hit.terminalName } : {};
+        const exact = locations.find(l => l.name === locName)
+          || locations.find(l => l.name.trim().toLowerCase() === n);
+        if (exact) return exact.terminalNames || [];
+        const prefixed = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+        return prefixed.length === 1 ? (prefixed[0].terminalNames || []) : [];
       };
       const stockRowsAll: StockRow[] = orders
         .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
@@ -11626,12 +11619,30 @@ export default function App() {
           // terminal list). Multi-line orders join distinct values.
           const lineItems = o.lineItems || [];
           const products = lineItems.map(resolveLineProduct);
+          // The terminal always belongs to the location the ORDER ships from — an
+          // order out of Hamilton (Sherman) can never show a Hamilton (Ferguson)
+          // terminal. The product's own terminal only picks WHICH one when that
+          // location lists several; when the location has exactly one, it applies
+          // to every product there.
+          const orderTerminals = terminalsForLoc(o.location);
+          const terminalFor = (qa: QAProduct | null): { terminal?: string; terminalName?: string } => {
+            if (!orderTerminals.length) return {};
+            if (qa && (qa.terminal || qa.terminalName)) {
+              const hit = orderTerminals.find(t =>
+                (qa.terminal && t.terminal === qa.terminal) || (qa.terminalName && t.terminalName === qa.terminalName));
+              if (hit) return { terminal: hit.terminal, terminalName: hit.terminalName };
+            }
+            if (orderTerminals.length === 1) {
+              return { terminal: orderTerminals[0].terminal, terminalName: orderTerminals[0].terminalName };
+            }
+            return {};
+          };
           return {
             id: o.id,
             split: (o.splitNumber || '').trim(),
             customer: o.customer || '',
-            terminal: joinDistinct(products.map(p => qaTerminalPair(p.qa).terminal)),
-            terminalName: joinDistinct(products.map(p => qaTerminalPair(p.qa).terminalName)),
+            terminal: joinDistinct(products.map(p => terminalFor(p.qa).terminal)),
+            terminalName: joinDistinct(products.map(p => terminalFor(p.qa).terminalName)),
             po: o.po || '',
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
