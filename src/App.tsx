@@ -397,6 +397,19 @@ export default function App() {
   });
   const [stockClearConfirm, setStockClearConfirm] = useState(false);
   const [stockDeleteConfirm, setStockDeleteConfirm] = useState(false);
+  // Saved email recipients for the Stock Requests emailer. Cached in localStorage for
+  // instant load and synced to the per-user Firestore prefs doc so they follow the user.
+  const [stockSavedRecipients, setStockSavedRecipients] = useState<string[]>(() => {
+    try { const raw = localStorage.getItem('sweetpro-stock-recipients'); return raw ? JSON.parse(raw) as string[] : []; } catch { return []; }
+  });
+  const saveStockRecipients = (next: string[]) => {
+    prefsDirtyRef.current = true;
+    setStockSavedRecipients(next);
+    try {
+      if (next.length) localStorage.setItem('sweetpro-stock-recipients', JSON.stringify(next));
+      else localStorage.removeItem('sweetpro-stock-recipients');
+    } catch { /* cache best-effort */ }
+  };
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
 
@@ -2993,6 +3006,14 @@ export default function App() {
         if (!cancelled && remote && !prefsDirtyRef.current) {
           if (Array.isArray(remote.pageOrder)) setPageOrder(remote.pageOrder);
           if (Array.isArray(remote.hiddenPages)) setHiddenPages(new Set(remote.hiddenPages as string[]));
+          if (Array.isArray(remote.stockEmailRecipients)) {
+            const list = (remote.stockEmailRecipients as string[]).filter(x => typeof x === 'string');
+            setStockSavedRecipients(list);
+            try {
+              if (list.length) localStorage.setItem('sweetpro-stock-recipients', JSON.stringify(list));
+              else localStorage.removeItem('sweetpro-stock-recipients');
+            } catch { /* cache best-effort */ }
+          }
           if (remote.columnOrders && typeof remote.columnOrders === 'object') {
             const co = remote.columnOrders as Record<string, string[]>;
             setColumnOrders(co);
@@ -3030,10 +3051,11 @@ export default function App() {
         pageOrder,
         hiddenPages: [...hiddenPages],
         columnOrders,
+        stockEmailRecipients: stockSavedRecipients,
       }).catch(e => console.warn('User prefs save failed:', e instanceof Error ? e.message : e));
     }, 800);
     return () => clearTimeout(t);
-  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders]);
+  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders, stockSavedRecipients]);
 
   // Auto-maximize the Order Details modal whenever a new order is opened.
   useEffect(() => {
@@ -11755,10 +11777,26 @@ export default function App() {
         const rows = stockSelected.map(r => emailCols.map(([, key]) => cellVal(r, key)).join('\t'));
         return [header, ...rows, `TOTAL QTY (MT)\t${fmtMt(stockSelectedTotalMt)}`].join('\n');
       };
+      const parseRecipients = (s: string) => s.split(/[,;\s]+/).map(x => x.trim()).filter(Boolean);
+      const stockToList = parseRecipients(stockEmailTo);
+      // Save whatever is currently in the To field for reuse next time.
+      const saveCurrentRecipients = () => {
+        const next = Array.from(new Set([...stockSavedRecipients, ...stockToList]));
+        saveStockRecipients(next);
+      };
+      const toggleRecipient = (addr: string) => {
+        const next = stockToList.includes(addr)
+          ? stockToList.filter(a => a !== addr)
+          : [...stockToList, addr];
+        setStockEmailTo(next.join(', '));
+      };
+      const removeSavedRecipient = (addr: string) => saveStockRecipients(stockSavedRecipients.filter(a => a !== addr));
       const openStockEmail = () => {
         setStockEmailSubject(`Stock Requests — ${selectedStockRows.size} order${selectedStockRows.size !== 1 ? 's' : ''}`);
         setStockEmailStatus(null);
         setStockCopied(false);
+        // Prefill with the saved recipients when the To field is empty.
+        if (!stockEmailTo.trim() && stockSavedRecipients.length) setStockEmailTo(stockSavedRecipients.join(', '));
         setStockEmailOpen(true);
       };
       const copyStockEmail = async () => {
@@ -11780,7 +11818,7 @@ export default function App() {
         }
       };
       const sendStockEmail = async () => {
-        const to = stockEmailTo.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+        const to = parseRecipients(stockEmailTo);
         if (to.length === 0) { setStockEmailStatus('Enter at least one recipient email.'); return; }
         setStockEmailSending(true);
         setStockEmailStatus(null);
@@ -11935,13 +11973,23 @@ export default function App() {
                 <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
                   <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-3 gap-y-2 items-center">
                     <label className="text-[10px] uppercase font-bold opacity-50">To</label>
-                    <input
-                      type="text"
-                      value={stockEmailTo}
-                      onChange={(e) => setStockEmailTo(e.target.value)}
-                      placeholder="recipient@example.com, another@example.com"
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={stockEmailTo}
+                        onChange={(e) => setStockEmailTo(e.target.value)}
+                        placeholder="recipient@example.com, another@example.com"
+                        className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white"
+                      />
+                      <button
+                        onClick={saveCurrentRecipients}
+                        disabled={stockToList.length === 0}
+                        title="Save these recipients so they're available next time"
+                        className="px-3 border border-[#141414] text-[10px] font-bold uppercase hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        Save
+                      </button>
+                    </div>
                     <label className="text-[10px] uppercase font-bold opacity-50">Subject</label>
                     <input
                       type="text"
@@ -11950,6 +11998,35 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white"
                     />
                   </div>
+
+                  {/* Saved recipients — click to add/remove from To; × forgets one. */}
+                  {stockSavedRecipients.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] uppercase font-bold opacity-50">Saved Recipients</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {stockSavedRecipients.map(addr => {
+                          const active = stockToList.includes(addr);
+                          return (
+                            <span
+                              key={addr}
+                              className={`inline-flex items-center gap-1 border text-[10px] font-mono pl-2 pr-1 py-1 transition-all ${active ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]' : 'border-[#141414]/30 hover:bg-[#F5F5F5]'}`}
+                            >
+                              <button onClick={() => toggleRecipient(addr)} title={active ? 'Remove from this email' : 'Add to this email'}>
+                                {addr}
+                              </button>
+                              <button
+                                onClick={() => removeSavedRecipient(addr)}
+                                title="Forget this saved recipient"
+                                className="opacity-50 hover:opacity-100"
+                              >
+                                <X size={10} />
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Preview table */}
                   <div className="border border-[#141414]/10 overflow-x-auto">
