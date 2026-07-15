@@ -36,6 +36,13 @@ import {
  *   CRON_SECRET       (when set, require Authorization: Bearer <CRON_SECRET>)
  */
 
+/** A Gemini "monthly spending cap" 429 — a billing wall on the Google project that
+ *  owns the API key. It won't clear within a run, so the scan aborts rather than
+ *  failing every message. Fix is on Google's side (raise the cap at ai.studio/spend). */
+function isSpendCapError(e: unknown): boolean {
+  return /spend(?:ing)?\s*cap/i.test(e instanceof Error ? e.message : String(e));
+}
+
 /** Split a raw From header ("Name <email>") into name + email parts. */
 function parseFrom(raw: string): { name?: string; email?: string } {
   const s = (raw || '').trim();
@@ -319,6 +326,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const feedIds = new Set<string>((await feedRef.get()).docs.map(d => d.id));
     const processedIds = new Set<string>((await processedRef.get()).docs.map(d => d.id));
 
+    let spendCapHit = false;
     for (let i = 0; i < messages.length; i++) {
       const meta = messages[i];
       try {
@@ -436,6 +444,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 for (const extraction of docs) await queueExtraction(extraction, '(email body)');
               }
             } catch (e) {
+              if (isSpendCapError(e)) throw e; // abort the whole run, don't log 200x
               summary.errors.push({ where: `${meta.id}:(body)`, message: e instanceof Error ? e.message : String(e) });
             }
           } else {
@@ -453,6 +462,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               noteOrder(docs);
               for (const extraction of docs) await queueExtraction(extraction, att.filename);
             } catch (e) {
+              if (isSpendCapError(e)) throw e;
               summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
             }
           }
@@ -467,6 +477,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
                 for (const extraction of docs) await queueExtraction(extraction, att.filename);
               } catch (e) {
+                if (isSpendCapError(e)) throw e;
                 summary.errors.push({ where: `${meta.id}:${att.filename}`, message: e instanceof Error ? e.message : String(e) });
               }
             }
@@ -502,6 +513,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           carrier: suggestionCarrier || '',
         });
       } catch (e) {
+        if (isSpendCapError(e)) {
+          // Billing wall — the rest of this run will fail identically. Stop now,
+          // record how many are left, and surface a clear reason.
+          spendCapHit = true;
+          summary.partial = true;
+          summary.remaining = messages.slice(i).filter(m => force || !feedIds.has(m.id)).length;
+          summary.errors.push({ where: 'gemini', message: 'Gemini monthly spend cap reached — scan stopped early. Raise the cap at https://ai.studio/spend for the project that owns GEMINI_API_KEY.' });
+          break;
+        }
         summary.errors.push({ where: meta.id, message: e instanceof Error ? e.message : String(e) });
       }
     }
@@ -519,8 +539,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.warn('inbox feed prune failed:', e instanceof Error ? e.message : e);
     }
 
-    await writeScanStatus(summary.errors.length === 0, summary);
-    return res.status(200).json({ ok: true, ...summary });
+    await writeScanStatus(summary.errors.length === 0, summary, undefined,
+      spendCapHit ? { note: 'Gemini monthly spend cap reached — raise it at ai.studio/spend for the API key\'s project.' } : undefined);
+    return res.status(200).json({ ok: true, spendCapHit, ...summary });
   } catch (e) {
     console.error('PO inbox scan error:', e);
     await writeScanStatus(false, summary, e instanceof Error ? e.message : String(e));

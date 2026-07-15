@@ -6931,7 +6931,12 @@ export default function App() {
       setDragOverPage(null);
       return;
     }
-    const currentOrder = pageOrder.length > 0 ? [...pageOrder] : defaultNavItems.map(n => n.name);
+    // Base the reorder on the FULL displayed nav order, not just the saved
+    // pageOrder. A saved order predating a newly-added page (e.g. Stock Requests)
+    // wouldn't contain that page, so its indexOf was -1 and the drop silently
+    // bailed — that's why some pages couldn't be reordered. navItems already lists
+    // every current page in display order (new ones appended).
+    const currentOrder = navItems.map(n => n.name);
     const fromIdx = currentOrder.indexOf(draggedPage);
     const toIdx = currentOrder.indexOf(targetPage);
     if (fromIdx < 0 || toIdx < 0) return;
@@ -6942,7 +6947,7 @@ export default function App() {
     localStorage.setItem('sweetpro-page-order', JSON.stringify(currentOrder));
     setDraggedPage(null);
     setDragOverPage(null);
-  }, [draggedPage, pageOrder]);
+  }, [draggedPage, navItems]);
 
   const handlePageDragEnd = useCallback(() => {
     setDraggedPage(null);
@@ -11672,8 +11677,20 @@ export default function App() {
         }
         return `The order's location "${raw}" doesn't match any Location record. Existing locations: ${locations.map(l => l.name).join(', ') || '(none)'}.`;
       };
+      // An order that has moved to the Invoices table must drop off Stock Requests.
+      // Match the same way removeOrdersInvoicedBy does — by BOL or PO of any
+      // non-cancelled/credit invoice — so a billed order disappears here even if it
+      // still lingers in the orders array.
+      const billedInvoices = invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
+      const invoicedBols = new Set(billedInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+      const invoicedPos = new Set(billedInvoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+      const isInvoiced = (o: Order) => {
+        const ob = (o.bolNumber || '').trim().toUpperCase();
+        const op = (o.po || '').trim().toUpperCase();
+        return (ob && invoicedBols.has(ob)) || (op && invoicedPos.has(op));
+      };
       const stockRowsAll: StockRow[] = orders
-        .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()))
+        .filter(o => o.status === 'Confirmed' && !!(o.splitNumber && o.splitNumber.trim()) && !isInvoiced(o))
         .map(o => {
           // Terminal + Terminal Name are PRODUCT-dependent: each line item's product
           // QA record carries them (set on the QA product from its location's

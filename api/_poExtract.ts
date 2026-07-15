@@ -23,8 +23,11 @@ async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Pro
     } catch (e: any) {
       const status = e?.status ?? e?.code;
       const msg = String(e?.message || e);
-      const transient = status === 429 || status === 503 ||
-        /\b429\b|\b503\b|rate|quota|resource[_\s-]*exhausted|overloaded|unavailable|try again|deadline/i.test(msg);
+      // A monthly SPEND-CAP 429 is NOT transient — it won't clear within this run,
+      // so retrying just burns the time budget. Throw it straight through.
+      const spendCap = /spend(?:ing)?\s*cap/i.test(msg);
+      const transient = !spendCap && (status === 429 || status === 503 ||
+        /\b429\b|\b503\b|rate|quota|resource[_\s-]*exhausted|overloaded|unavailable|try again|deadline/i.test(msg));
       if (!transient || attempt >= maxRetries) throw e;
       const waitMs = Math.min(20000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 600);
       await new Promise(r => setTimeout(r, waitMs));
