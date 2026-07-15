@@ -1447,6 +1447,7 @@ export function parsedRowsToOrdersConfigured(
         if (blank(o.deliveryDate) && r.deliveryDate) p.deliveryDate = r.deliveryDate;
         if (blank(o.location) && explicit?.defaultLocation) p.location = explicit.defaultLocation;
         if (blank(o.splitNumber) && r.splitNumber) p.splitNumber = r.splitNumber;
+        if (blank(o.lotCode) && r.lotCode) p.lotCode = r.lotCode;
         if (blank(o.papsNo) && r.papsNo) p.papsNo = r.papsNo;
         if (blank(o.customsEntryNo) && r.customsEntryNo) p.customsEntryNo = r.customsEntryNo;
         if (blank(o.shipToLocationId) && shipToLocationId) p.shipToLocationId = shipToLocationId;
@@ -1554,6 +1555,7 @@ export function parsedRowsToOrdersConfigured(
         ...(shipToLocationId ? { shipToLocationId } : {}),
         ...(r.papsNo ? { papsNo: r.papsNo } : {}),
         ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
+        ...(r.lotCode ? { lotCode: r.lotCode } : {}),
       };
       result.newOrders.push(stripUndefined(newOrder));
       if (bolU) addedBOLs.add(bolU);
@@ -1662,6 +1664,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'quantityMT', label: 'Quantity (MT)', required: true },
   { key: 'contractNumber', label: 'Contract Number' },
   { key: 'splitNumber', label: 'Split Number' },
+  { key: 'lotCode', label: 'Lot Code' },
   { key: 'pricePerMt', label: 'Price / MT (invoices)' },
   { key: 'reversals', label: 'Reversals (invoices)' },
   { key: 'bay', label: 'Bay / Dock (shipments)' },
@@ -1800,6 +1803,7 @@ export function parsedRowsToInvoicesConfigured(
         if (blank(existingInv.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
         if (blank(existingInv.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
         if (blank(existingInv.reversals) && r.reversals) patch.reversals = r.reversals;
+        if (blank(existingInv.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
         // Pricing backfill — price and amount filled independently, each only
         // when the existing invoice is missing it (never overwrites a value).
         if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
@@ -1851,6 +1855,7 @@ export function parsedRowsToInvoicesConfigured(
         ...(r.papsNo ? { papsNo: r.papsNo } : {}),
         ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
         ...(r.reversals ? { reversals: r.reversals } : {}),
+        ...(r.lotCode ? { lotCode: r.lotCode } : {}),
       };
 
       result.newInvoices.push(stripUndefined(newInvoice));

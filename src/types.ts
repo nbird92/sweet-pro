@@ -444,6 +444,7 @@ export interface Order {
   shipToLocationId?: string; // references ShipToLocation.id under the order's customer
   papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
   customsEntryNo?: string;  // Customs entry number
+  lotCode?: string;         // Lot code(s) — e.g. mapped from an order-sheet-sync column
 }
 
 /** One row in the Email Center's PO-import dashboard. Written by the app each
