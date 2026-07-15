@@ -35,6 +35,36 @@ async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Pro
   }
 }
 
+/** Recover the COMPLETE document objects from a truncated batch response
+ *  (`{ "documents": [ {…}, {…}, {…incomplete }`). Scans the array for balanced
+ *  top-level `{…}` objects (string-aware) and parses each — so a partial batch
+ *  still yields every fully-formed PO instead of throwing the whole run away. */
+function salvageDocuments(text: string): any[] {
+  const arrStart = text.indexOf('[');
+  if (arrStart < 0) return [];
+  const out: any[] = [];
+  let depth = 0, objStart = -1, inStr = false, esc = false;
+  for (let i = arrStart + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try { out.push(JSON.parse(text.slice(objStart, i + 1))); } catch { /* skip malformed */ }
+        objStart = -1;
+      }
+    }
+  }
+  return out;
+}
+
 export interface UploadFile {
   name: string;
   mimeType: string;
@@ -436,6 +466,10 @@ export async function extractPO(
     responseMimeType: 'application/json',
     responseSchema: PO_BATCH_SCHEMA,
     temperature: 0,
+    // Give structured output enough room. Without an explicit cap the response can
+    // be truncated mid-object, producing invalid JSON ("Gemini did not return valid
+    // JSON"). Configurable for unusually large multi-PO emails.
+    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 8192),
     // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
     // block of reasoning tokens on every call. Structured PO extraction against
     // a fixed schema doesn't need it — disable thinking to cut cost sharply.
@@ -461,15 +495,26 @@ export async function extractPO(
   }
 
   const text = response.text;
+  const finishReason = response.candidates?.[0]?.finishReason;
   if (!text || !text.trim()) {
     const blocked = response.promptFeedback?.blockReason;
+    if (finishReason === 'MAX_TOKENS') throw new Error('Gemini response was empty and hit the output-token limit — raise PO_EXTRACT_MAX_TOKENS.');
     throw new Error(blocked ? `Gemini blocked the request (${blocked}).` : 'Gemini returned no structured PO data.');
   }
   let parsed: any;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error(`Gemini did not return valid JSON: ${text.slice(0, 300)}`);
+    // The response was cut off mid-JSON (usually the output-token cap). Recover any
+    // fully-formed documents from the partial batch; only fail if none survive.
+    const salvaged = salvageDocuments(text);
+    if (salvaged.length) {
+      parsed = { documents: salvaged };
+    } else if (finishReason === 'MAX_TOKENS') {
+      throw new Error(`Gemini response was truncated at the output-token limit before any complete PO — raise PO_EXTRACT_MAX_TOKENS. Partial: ${text.slice(0, 200)}`);
+    } else {
+      throw new Error(`Gemini did not return valid JSON: ${text.slice(0, 300)}`);
+    }
   }
   // Tolerate either the batch shape ({ documents: [...] }) or a bare object
   // (older single-PO shape) so a schema hiccup never drops the extraction.
