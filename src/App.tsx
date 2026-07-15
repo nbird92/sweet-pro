@@ -935,6 +935,32 @@ export default function App() {
     return item.qty;
   };
 
+  // Rescale a set of line items so their TOTAL weight equals targetMt (e.g. a
+  // shipment's Scaled Qty), distributing proportionally by each line's current
+  // weight. Every weight-driven field recomputes — qty (units), totalWeight (MT),
+  // unitAmount and lineAmount — while the per-MT price (mtAmount) stays fixed.
+  // Mirrors the PO-amendment applier's formulas so a scaled invoice's line detail,
+  // totals and header all agree.
+  const rescaleLineItemsToMt = (items: OrderLineItem[], targetMt: number): OrderLineItem[] => {
+    const currentMt = items.reduce((s, li) => s + (li.totalWeight || 0), 0);
+    if (!(targetMt > 0) || !(currentMt > 0)) return items.map(li => ({ ...li }));
+    const r = targetMt / currentMt;
+    return items.map(li => {
+      const newTotalWeight = (li.totalWeight || 0) * r;
+      const newQty = (li.qty || 0) * r;
+      const mtAmount = li.mtAmount || 0;
+      const perUnitMt = newQty > 0 ? newTotalWeight / newQty : (li.netWeightPerUnit || 0);
+      return {
+        ...li,
+        totalWeight: Math.round(newTotalWeight * 1000) / 1000,
+        qty: Math.round(newQty * 1000) / 1000,
+        netWeightPerUnit: perUnitMt,
+        unitAmount: Math.round(mtAmount * perUnitMt * 100) / 100,
+        lineAmount: Math.round(newTotalWeight * mtAmount * 100) / 100,
+      };
+    });
+  };
+
   // Commit a new line-item list onto the invoice being edited and recompute the
   // header totals from it: Qty (MT) = sum of total weights; Amount / $/MT are
   // only overwritten when the lines carry pricing, so amount-only invoices keep
@@ -5241,25 +5267,41 @@ export default function App() {
       }
       // Find the contract for this shipment to use contract pricing
       const contract = contracts.find(c => c.contractNumber === shipment.contractNumber);
-      const invoiceAmount = contract
-        ? shipment.qty * contract.finalPrice  // qty is in MT, finalPrice is $/MT
-        : shipment.qty * config.refiningMarginCadMt; // fallback
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      // A Scaled Qty on the shipment is the actual weighed amount — it becomes the
+      // invoiced quantity (and rescales the line items) just like the Complete&Bill
+      // button path. Falls back to the shipment's planned qty when not scaled.
+      const isScaled = typeof shipment.scaledQty === 'number' && shipment.scaledQty > 0;
+      const billQty = isScaled ? shipment.scaledQty! : shipment.qty;
+      const orderLines = linkedOrder?.lineItems || [];
+      const orderLinesMt = orderLines.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      // Rescale the line items to the BILLED weight whenever we have weighted lines —
+      // this shipment (one per line) or its Scaled Qty is often only part of the
+      // order, so the invoice's lines/amount must match billQty, not the whole order.
+      const billLineItems = (orderLinesMt > 0)
+        ? rescaleLineItemsToMt(orderLines, billQty)
+        : orderLines;
+      const lineAmtSum = billLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
+      const invoiceAmount = lineAmtSum > 0
+        ? Math.round(lineAmtSum * 100) / 100
+        : (contract ? billQty * contract.finalPrice : billQty * config.refiningMarginCadMt);
+      const invoicePricePerMt = billQty > 0 ? Math.round((invoiceAmount / billQty) * 100) / 100 : undefined;
 
       const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
       const newInvoice: Invoice = {
         id: invoiceId,
         bolNumber: shipment.bol,
         customer: shipment.customer,
         product: shipment.product,
         po: shipment.po,
-        qty: shipment.qty,
+        qty: billQty,
         carrier: shipment.carrier,
         amount: invoiceAmount,
+        pricePerMt: invoicePricePerMt,
         shipmentId: shipment.id,
         date: new Date().toISOString().split('T')[0],
         status: 'Pending',
-        lineItems: linkedOrder?.lineItems || [],
+        lineItems: billLineItems,
         shippingTerms: linkedOrder?.shippingTerms || '',
         location: linkedOrder?.location || '',
         contractNumber: linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
@@ -5304,7 +5346,7 @@ export default function App() {
       if (contract) {
         setContracts(prevContracts => prevContracts.map(c => {
           if (c.contractNumber === shipment.contractNumber) {
-            const newVolumeTaken = c.volumeTaken + shipment.qty;
+            const newVolumeTaken = c.volumeTaken + billQty;
             return {
               ...c,
               volumeTaken: newVolumeTaken,
@@ -5343,10 +5385,24 @@ export default function App() {
     // When billed from a shipment, the SCALED qty (MT) is the actual weighed/shipped
     // amount and becomes the invoiced Quantity (MT) — and drives the invoice amount
     // and the contract volume drawdown. Falls back to the ordered weight otherwise.
-    const billQty = (opts?.invoiceQtyMt && opts.invoiceQtyMt > 0) ? opts.invoiceQtyMt : totalWeight;
-    const invoiceAmount = contract
-      ? billQty * contract.finalPrice  // billQty is in MT, finalPrice is $/MT
-      : billQty * config.refiningMarginCadMt; // fallback
+    const isScaled = !!(opts?.invoiceQtyMt && opts.invoiceQtyMt > 0);
+    const billQty = isScaled ? opts!.invoiceQtyMt! : totalWeight;
+    // When billed from a shipment with a Scaled Qty, the invoice's LINE ITEMS are
+    // rescaled to that weight so the invoiced Qty (units), Total Weight (MT) and
+    // Line Amount all reflect the scaled amount — not the ordered quantity.
+    const invoiceLineItems = (isScaled && totalWeight > 0)
+      ? rescaleLineItemsToMt(order.lineItems || [], billQty)
+      : (order.lineItems || []);
+    // Amount + price come from the (scaled) line items when they carry pricing AND
+    // those lines actually reflect billQty (rescaled, or an un-scaled full-order bill).
+    // A scaled bill whose lines couldn't be rescaled (zero total weight) must NOT emit
+    // the un-scaled line-amount sum — fall back to contract $/MT × billQty instead.
+    const lineAmtSum = invoiceLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
+    const canUseLineAmt = lineAmtSum > 0 && (!isScaled || totalWeight > 0);
+    const invoiceAmount = canUseLineAmt
+      ? Math.round(lineAmtSum * 100) / 100
+      : (contract ? billQty * contract.finalPrice : billQty * config.refiningMarginCadMt);
+    const invoicePricePerMt = billQty > 0 ? Math.round((invoiceAmount / billQty) * 100) / 100 : undefined;
 
     const invoiceId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newInvoice: Invoice = {
@@ -5358,10 +5414,11 @@ export default function App() {
       qty: billQty,
       carrier: order.carrier || '',
       amount: invoiceAmount,
+      pricePerMt: invoicePricePerMt,
       shipmentId: orderId,
       date: new Date().toISOString().split('T')[0],
       status: 'Pending',
-      lineItems: order.lineItems,
+      lineItems: invoiceLineItems,
       shippingTerms: order.shippingTerms || '',
       location: order.location || '',
       contractNumber: order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
@@ -8262,9 +8319,10 @@ export default function App() {
                   const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
                   // Get line items: from invoice directly, or look up linked order by BOL (memoised)
                   const linkedOrder = i.bolNumber ? ordersByBol.get(i.bolNumber) : undefined;
-                  // Empty [] is truthy, so fall back to the order only when the
-                  // invoice has no line items of its own.
-                  const invoiceLineItems = (i.lineItems && i.lineItems.length) ? i.lineItems : (linkedOrder?.lineItems || []);
+                  // Invoice values must come ONLY from the invoice's own line items —
+                  // never the linked order's quantity. (Non-quantity metadata like
+                  // location / contract # / terms may still fall back to the order.)
+                  const invoiceLineItems = i.lineItems || [];
                   const productOk = productMatches(i.product);
                   return (
                   <React.Fragment key={i.id}>
@@ -12878,11 +12936,13 @@ export default function App() {
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
                     <div className="text-sm font-bold">{(() => {
-                      // KG = invoiced Quantity (MT) × 1000; fall back to the line-item
-                      // weight sum when the invoice has no qty set.
-                      const mt = (typeof editingInvoiceCard.qty === 'number' && editingInvoiceCard.qty > 0)
-                        ? editingInvoiceCard.qty
-                        : (editingInvoiceCard.lineItems || []).reduce((s, i) => s + (i.totalWeight || 0), 0);
+                      // KG = Total Weight × 1000, line-items-first (same precedence as the
+                      // read-only Invoice Details view, so both cards agree); fall back to
+                      // the invoice's own stored qty only when there are no line items.
+                      const editItems = editingInvoiceCard.lineItems || [];
+                      const mt = editItems.length
+                        ? editItems.reduce((s, i) => s + (i.totalWeight || 0), 0)
+                        : (typeof editingInvoiceCard.qty === 'number' ? editingInvoiceCard.qty : 0);
                       return (mt * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 });
                     })()}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Pallets</label>
@@ -13051,9 +13111,32 @@ export default function App() {
         {viewingInvoiceCard && (() => {
           const inv = viewingInvoiceCard;
           const items = inv.lineItems || [];
-          const totalMt = (typeof inv.qty === 'number' && inv.qty > 0)
-            ? inv.qty
-            : items.reduce((s, li) => s + (li.totalWeight || 0), 0);
+          // Resolve each line's EFFECTIVE figures once (weight, $/MT, line amount) with
+          // the same fallbacks the Line Items table below uses, so the header totals and
+          // the footer totals can never disagree. Everything comes from the invoice's
+          // OWN line items (post-billing these carry the SCALED quantities) — never the
+          // order. Price/MT = Σ Line Amount ÷ Σ Total Weight.
+          const invRows = items.map(item => {
+            const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
+            const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
+            const resolved = resolveProduct(item.productName);
+            const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
+            const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
+            const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
+            const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
+            const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
+            const lineAmount = item.lineAmount || (totalWeight * mtAmount);
+            const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
+            return { item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
+          });
+          const totalMt = items.length
+            ? invRows.reduce((s, r) => s + r.totalWeight, 0)
+            : (typeof inv.qty === 'number' ? inv.qty : 0);
+          const totalLineAmt = invRows.reduce((s, r) => s + r.lineAmount, 0);
+          const headerAmount = totalLineAmt > 0 ? totalLineAmt : (inv.amount || 0);
+          const derivedPricePerMt = totalMt > 0 && totalLineAmt > 0
+            ? totalLineAmt / totalMt
+            : (typeof inv.pricePerMt === 'number' ? inv.pricePerMt : 0);
           return (
           <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
@@ -13091,13 +13174,13 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
-                    <div className="text-sm font-bold">{(inv.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div></div>
+                    <div className="text-sm font-bold">{totalMt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
                     <div className="text-sm font-bold">{(totalMt * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
-                    <div className="text-sm font-mono">{typeof inv.pricePerMt === 'number' ? `$${inv.pricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div></div>
+                    <div className="text-sm font-mono">{derivedPricePerMt > 0 ? `$${derivedPricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
-                    <div className="text-sm font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                    <div className="text-sm font-bold">${headerAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
                 </div>
                 <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
@@ -13128,22 +13211,12 @@ export default function App() {
                       <div className="text-sm">{inv.product || '—'}</div></div>
                   </div>
                   {items.length > 0 ? (() => {
-                    const rows = items.map(item => {
-                      const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
-                      const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
-                      const resolved = resolveProduct(item.productName);
-                      const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
-                      const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
-                      const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
-                      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
-                      const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
-                      const lineAmount = item.lineAmount || (totalWeight * mtAmount);
-                      const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
-                      return { item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
-                    });
+                    // Reuse the effective rows computed above so this table and the
+                    // header always show identical totals.
+                    const rows = invRows;
                     const totalQty = rows.reduce((s, r) => s + r.item.qty, 0);
-                    const totalWeightSum = rows.reduce((s, r) => s + r.totalWeight, 0);
-                    const totalLineAmount = rows.reduce((s, r) => s + r.lineAmount, 0);
+                    const totalWeightSum = totalMt;
+                    const totalLineAmount = totalLineAmt;
                     return (
                     <table className="w-full text-xs">
                       <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
