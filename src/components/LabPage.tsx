@@ -28,6 +28,9 @@ const EMPTY_FORM = {
   testerId: '', testerName: '', notes: '',
   weeklyVerification: '', sugarType: '', countryOfOrigin: '',
   bolNumber: '', customerPo: '',
+  // Granulated loading-log fields.
+  customerName: '', qtyMt: '', exitTime: '',
+  colorConfirmedCoa: '', moistureConfirmedCoa: '', sucrose: '', initials: '',
 };
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
@@ -307,6 +310,9 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       testerId: lc.testerId, testerName: lc.testerName,
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
       bolNumber: lc.bolNumber || '', customerPo: lc.customerPo || '',
+      customerName: lc.customerName || '', qtyMt: lc.qtyMt || '', exitTime: lc.exitTime || '',
+      colorConfirmedCoa: lc.colorConfirmedCoa || '', moistureConfirmedCoa: lc.moistureConfirmedCoa || '',
+      sucrose: lc.sucrose || '', initials: lc.initials || '',
     });
     setEditingLot(lc);
   };
@@ -453,7 +459,30 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           modal; Delete now lives in the modal footer instead of inline rows. */}
       <DataTable<LotCode>
         title="Lot Code Testing Log"
-        columns={[
+        storageKey={filterSugarType === 'Granulated' ? 'Lot Code Testing Log (Granulated)' : 'Lot Code Testing Log'}
+        columns={filterSugarType === 'Granulated' ? [
+          // Granulated loading-log column set (shown when Granulated is filtered).
+          { key: 'date', label: 'Date' },
+          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => lc.customerPo || '—' },
+          { key: 'customerName', label: 'Customer Name', render: (lc) => lc.customerName || '—' },
+          { key: 'qtyMt', label: 'QTY MT', render: (lc) => lc.qtyMt || '—' },
+          { key: 'exitTime', label: 'Exit Time', render: (lc) => lc.exitTime || '—' },
+          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+          { key: 'temperature', label: 'Temp °C' },
+          { key: 'moisture', label: 'Moisture %', render: (lc) => lc.moisture || '—' },
+          { key: 'color', label: 'Color ICUMSA', render: (lc) => lc.color || '—' },
+          { key: 'colorConfirmedCoa', label: 'Color on COA %', render: (lc) => lc.colorConfirmedCoa || '—' },
+          { key: 'invert', label: 'Invert %' },
+          { key: 'moistureConfirmedCoa', label: 'Moisture on COA %', render: (lc) => lc.moistureConfirmedCoa || '—' },
+          { key: 'ash', label: 'Ash %', render: (lc) => lc.ash || '—' },
+          { key: 'sucrose', label: 'Sucrose %', render: (lc) => lc.sucrose || '—' },
+          { key: 'initials', label: 'Initials', render: (lc) => lc.initials || '—' },
+          {
+            key: 'notes', label: 'Note',
+            render: (lc) => <span title={lc.notes} className="block max-w-[150px] truncate">{lc.notes || '—'}</span>,
+          },
+          { key: 'weeklyVerification', label: 'Onsite Observation : Weekly', render: (lc) => lc.weeklyVerification || '—' },
+        ] : [
           { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
           { key: 'date', label: 'Date' },
           { key: 'bolNumber', label: 'BOL #', mono: true },
@@ -700,6 +729,34 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     </tr>
                   </tbody>
                 </table>
+                {/* Granulated loading-log fields — surfaced when the sugar type is
+                    Granulated (they also feed the Granulated table column set). */}
+                {formData.sugarType === 'Granulated' && (
+                  <div className="border border-[#141414]/20 p-3 space-y-3">
+                    <div className="text-[10px] uppercase font-bold opacity-60">Granulated Loading Log</div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {([
+                        ['customerName', 'Customer Name', 'text'],
+                        ['qtyMt', 'QTY MT', 'text'],
+                        ['exitTime', 'Exit Time', 'text'],
+                        ['colorConfirmedCoa', 'Color on COA %', 'text'],
+                        ['moistureConfirmedCoa', 'Moisture on COA %', 'text'],
+                        ['sucrose', 'Sucrose %', 'text'],
+                        ['initials', 'Initials', 'text'],
+                      ] as const).map(([key, label]) => (
+                        <div key={key} className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
+                          <input
+                            type="text"
+                            value={(formData as any)[key]}
+                            onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                            className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
                   <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })}

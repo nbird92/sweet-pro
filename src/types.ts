@@ -1032,6 +1032,14 @@ export interface LotCode {
   bolNumber: string;
   customerPo: string;
   createdAt: string;
+  // Granulated loading-log fields (shown when the sugar type is Granulated).
+  customerName?: string;
+  qtyMt?: string;
+  exitTime?: string;
+  colorConfirmedCoa?: string;   // Color confirmed on COA %
+  moistureConfirmedCoa?: string; // Moisture confirmed on COA %
+  sucrose?: string;             // Sucrose %
+  initials?: string;
 }
 
 export const INITIAL_LOT_CODES: LotCode[] = [];
