@@ -2,8 +2,8 @@ name: PO Inbox Scan (fallback cron)
 
 # Plan-independent backup for the Vercel cron. Vercel's Hobby plan only runs
 # cron jobs once per day, so this GitHub Actions schedule keeps the email
-# importer draining hourly on any plan. (GitHub may delay scheduled runs by
-# several minutes under load — that's expected and harmless.)
+# importer draining every 3 hours on any plan. (GitHub may delay scheduled runs
+# by several minutes under load — that's expected and harmless.)
 #
 # Enable it by adding two repository secrets (Settings → Secrets and variables
 # → Actions):
@@ -13,7 +13,7 @@ name: PO Inbox Scan (fallback cron)
 
 on:
   schedule:
-    - cron: '0 * * * *'   # hourly (top of each hour)
+    - cron: '0 */3 * * *'   # every 3 hours (00:00, 03:00, … UTC)
   workflow_dispatch: {}       # allow manual "Run workflow"
 
 # Never let two overlapping runs pile up.
