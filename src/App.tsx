@@ -3090,6 +3090,33 @@ export default function App() {
     }
   }, [viewingOrderCard?.id]);
 
+  // Backfill invoice BOL numbers from the Lot Code Testing Log. Now that invoices
+  // can carry lot codes (sheet sync), an invoice that has a lot code but no BOL gets
+  // its BOL filled from the matching LotCode record (lotNumber → bolNumber). Non-
+  // destructive — only a BLANK BOL is filled — and self-converging (a filled invoice
+  // is skipped on the next pass), so there's no update loop.
+  useEffect(() => {
+    if (!invoices.length || !lotCodes.length) return;
+    const bolByLot = new Map<string, string>();
+    for (const lc of lotCodes) {
+      const lot = (lc.lotNumber || '').trim().toUpperCase();
+      const bol = (lc.bolNumber || '').trim();
+      if (lot && bol && !bolByLot.has(lot)) bolByLot.set(lot, bol);
+    }
+    if (!bolByLot.size) return;
+    let changed = false;
+    const next = invoices.map(inv => {
+      if ((inv.bolNumber || '').trim()) return inv; // already has a BOL
+      const lots = (inv.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      for (const l of lots) {
+        const bol = bolByLot.get(l.toUpperCase());
+        if (bol) { changed = true; return { ...inv, bolNumber: bol }; }
+      }
+      return inv;
+    });
+    if (changed) setInvoices(next);
+  }, [invoices, lotCodes]);
+
   const handleGoogleSignIn = async () => {
     try {
       setSyncError(null);
