@@ -7015,25 +7015,15 @@ export default function App() {
     try {
     if (activePage === 'Dashboard') {
       const todayISO = new Date().toISOString().split('T')[0];
-      const isCancelledShipment = (s: Shipment) => (s.status || '').toLowerCase().includes('cancel');
-      // A shipment counts once it's explicitly Completed OR its date has passed —
-      // imported schedule rows keep status "Scheduled" even after they ship, which
-      // previously froze the dashboard at the last manually-completed week.
-      const completedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s =>
-        !isCancelledShipment(s) && (s.status === 'Completed' || (!!s.date && s.date <= todayISO)));
-
-      // Normalize a shipment's week label ("Week 05" / "26" → "Week 5" / "Week 26");
-      // when the label is missing, DERIVE the week from the shipment date. A
-      // shipment with neither a week nor a date can't be placed — return '' and
-      // the caller skips it (previously those rendered as an unlabeled week row).
-      const weekOfShipment = (s: Shipment): string => {
-        const m = String(s.week || '').match(/(\d+)/);
-        if (m) return `Week ${parseInt(m[1], 10)}`;
-        if (s.date) {
-          const n = getWeekNumber(s.date);
-          if (Number.isFinite(n) && n > 0) return `Week ${n}`;
-        }
-        return '';
+      // Weekly Completed Totals + Volume by Product are driven ONLY by INVOICED
+      // quantities (the Invoices table) — NOT the shipment schedule / shipments.
+      // Only billed invoices (not Cancelled / Credit) with a date count; the week
+      // comes from the invoice date.
+      const billedWeeklyInvoices = invoices.filter(i =>
+        i.status !== 'Cancelled' && i.status !== 'Credit' && !!i.date);
+      const weekOfDate = (dateStr: string): string => {
+        const n = getWeekNumber(dateStr);
+        return Number.isFinite(n) && n > 0 ? `Week ${n}` : '';
       };
 
       // Weekly Totals — seeded with EVERY week up to the current week so the
@@ -7041,22 +7031,36 @@ export default function App() {
       const weeklyTotals: { [week: string]: { volume: number, tolling: number } } = {};
       const currentWeekNum = getWeekNumber(todayISO);
       for (let w = 1; w <= currentWeekNum; w++) weeklyTotals[`Week ${w}`] = { volume: 0, tolling: 0 };
-      completedShipments.forEach(s => {
-        const wk = weekOfShipment(s);
-        if (!wk) return; // no week, no date — nothing to place it under
+      billedWeeklyInvoices.forEach(i => {
+        const wk = weekOfDate(i.date);
+        if (!wk) return; // no valid week — nothing to place it under
         if (!weeklyTotals[wk]) weeklyTotals[wk] = { volume: 0, tolling: 0 };
-        weeklyTotals[wk].volume += s.qty;
-        weeklyTotals[wk].tolling += s.qty * config.refiningMarginCadMt;
+        const qty = i.qty || 0;
+        weeklyTotals[wk].volume += qty;
+        weeklyTotals[wk].tolling += qty * config.refiningMarginCadMt;
       });
 
-      // Volume by Product
+      // Volume by Product — invoiced weight per product SHORTFORM per week. Sum the
+      // invoice's line items (each by its shortform); an invoice with no lines falls
+      // back to its own product + qty.
       const productVolume: { [week: string]: { [product: string]: number } } = {};
-      completedShipments.forEach(s => {
-        const wk = weekOfShipment(s);
+      billedWeeklyInvoices.forEach(i => {
+        const wk = weekOfDate(i.date);
         if (!wk) return;
         if (!productVolume[wk]) productVolume[wk] = {};
-        if (!productVolume[wk][s.product]) productVolume[wk][s.product] = 0;
-        productVolume[wk][s.product] += s.qty;
+        const bucket = productVolume[wk];
+        const lines = i.lineItems || [];
+        if (lines.length) {
+          for (const li of lines) {
+            const name = lineItemToShortform(li) || productToShortform(li.productName) || li.productName || '(unknown)';
+            const w = li.totalWeight || 0;
+            if (!w) continue;
+            bucket[name] = (bucket[name] || 0) + w;
+          }
+        } else {
+          const name = productToShortform(i.product) || i.product || '(unknown)';
+          bucket[name] = (bucket[name] || 0) + (i.qty || 0);
+        }
       });
 
       const sortedWeeks = Object.keys(weeklyTotals).sort((a, b) => {
