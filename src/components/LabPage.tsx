@@ -29,8 +29,9 @@ const EMPTY_FORM = {
   weeklyVerification: '', sugarType: '', countryOfOrigin: '',
   bolNumber: '', customerPo: '',
   // Granulated loading-log fields.
-  customerName: '', qtyMt: '', exitTime: '',
-  colorConfirmedCoa: '', moistureConfirmedCoa: '', sucrose: '', initials: '',
+  customerName: '', qtyMt: '', exitTime: '', loadedFrom: '', sugarUsed: '',
+  colorConfirmedCoa: '', moistureConfirmedCoa: '', sucrose: '',
+  foreignMaterial: '', sievingResults: '', initials: '',
 };
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
@@ -311,8 +312,10 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
       bolNumber: lc.bolNumber || '', customerPo: lc.customerPo || '',
       customerName: lc.customerName || '', qtyMt: lc.qtyMt || '', exitTime: lc.exitTime || '',
+      loadedFrom: lc.loadedFrom || '', sugarUsed: lc.sugarUsed || '',
       colorConfirmedCoa: lc.colorConfirmedCoa || '', moistureConfirmedCoa: lc.moistureConfirmedCoa || '',
-      sucrose: lc.sucrose || '', initials: lc.initials || '',
+      sucrose: lc.sucrose || '', foreignMaterial: lc.foreignMaterial || '', sievingResults: lc.sievingResults || '',
+      initials: lc.initials || '',
     });
     setEditingLot(lc);
   };
@@ -461,27 +464,31 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         title="Lot Code Testing Log"
         storageKey={filterSugarType === 'Granulated' ? 'Lot Code Testing Log (Granulated)' : 'Lot Code Testing Log'}
         columns={filterSugarType === 'Granulated' ? [
-          // Granulated loading-log column set (shown when Granulated is filtered).
+          // Granulated loading-log column set — mirrors the "Granulated Loads 2026"
+          // sheet's columns, in order.
           { key: 'date', label: 'Date' },
           { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => lc.customerPo || '—' },
-          { key: 'customerName', label: 'Customer Name', render: (lc) => lc.customerName || '—' },
+          { key: 'customerName', label: 'Customer', render: (lc) => lc.customerName || '—' },
           { key: 'qtyMt', label: 'QTY MT', render: (lc) => lc.qtyMt || '—' },
           { key: 'exitTime', label: 'Exit Time', render: (lc) => lc.exitTime || '—' },
           { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
-          { key: 'temperature', label: 'Temp °C' },
+          { key: 'loadedFrom', label: 'Loaded From', render: (lc) => lc.loadedFrom || '—' },
+          { key: 'sugarUsed', label: 'Sugar Used', render: (lc) => lc.sugarUsed || '—' },
+          { key: 'temperature', label: 'Temperature' },
           { key: 'moisture', label: 'Moisture %', render: (lc) => lc.moisture || '—' },
           { key: 'color', label: 'Color ICUMSA', render: (lc) => lc.color || '—' },
-          { key: 'colorConfirmedCoa', label: 'Color on COA %', render: (lc) => lc.colorConfirmedCoa || '—' },
+          { key: 'colorConfirmedCoa', label: 'Color confirmed on COA %', render: (lc) => lc.colorConfirmedCoa || '—' },
           { key: 'invert', label: 'Invert %' },
-          { key: 'moistureConfirmedCoa', label: 'Moisture on COA %', render: (lc) => lc.moistureConfirmedCoa || '—' },
+          { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %', render: (lc) => lc.moistureConfirmedCoa || '—' },
           { key: 'ash', label: 'Ash %', render: (lc) => lc.ash || '—' },
           { key: 'sucrose', label: 'Sucrose %', render: (lc) => lc.sucrose || '—' },
+          { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N', render: (lc) => lc.foreignMaterial || '—' },
           { key: 'initials', label: 'Initials', render: (lc) => lc.initials || '—' },
           {
             key: 'notes', label: 'Note',
             render: (lc) => <span title={lc.notes} className="block max-w-[150px] truncate">{lc.notes || '—'}</span>,
           },
-          { key: 'weeklyVerification', label: 'Onsite Observation : Weekly', render: (lc) => lc.weeklyVerification || '—' },
+          { key: 'sievingResults', label: 'Sieving Results', render: (lc) => lc.sievingResults || '—' },
         ] : [
           { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
           { key: 'date', label: 'Date' },
@@ -736,13 +743,17 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     <div className="text-[10px] uppercase font-bold opacity-60">Granulated Loading Log</div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                       {([
-                        ['customerName', 'Customer Name', 'text'],
-                        ['qtyMt', 'QTY MT', 'text'],
-                        ['exitTime', 'Exit Time', 'text'],
-                        ['colorConfirmedCoa', 'Color on COA %', 'text'],
-                        ['moistureConfirmedCoa', 'Moisture on COA %', 'text'],
-                        ['sucrose', 'Sucrose %', 'text'],
-                        ['initials', 'Initials', 'text'],
+                        ['customerName', 'Customer'],
+                        ['qtyMt', 'QTY MT'],
+                        ['exitTime', 'Exit Time'],
+                        ['loadedFrom', 'Loaded From'],
+                        ['sugarUsed', 'Sugar Used'],
+                        ['colorConfirmedCoa', 'Color confirmed on COA %'],
+                        ['moistureConfirmedCoa', 'Moisture Confirmed on COA %'],
+                        ['sucrose', 'Sucrose %'],
+                        ['foreignMaterial', 'Foreign Material Identified Y/N'],
+                        ['sievingResults', 'Sieving Results'],
+                        ['initials', 'Initials'],
                       ] as const).map(([key, label]) => (
                         <div key={key} className="space-y-1">
                           <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>

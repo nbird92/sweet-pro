@@ -1036,9 +1036,13 @@ export interface LotCode {
   customerName?: string;
   qtyMt?: string;
   exitTime?: string;
+  loadedFrom?: string;          // Loaded From:
+  sugarUsed?: string;           // Sugar Used:
   colorConfirmedCoa?: string;   // Color confirmed on COA %
   moistureConfirmedCoa?: string; // Moisture confirmed on COA %
   sucrose?: string;             // Sucrose %
+  foreignMaterial?: string;     // Foreign Material Identified Y/N
+  sievingResults?: string;      // Sieving Results
   initials?: string;
 }
 
