@@ -298,16 +298,16 @@ function generateCoaPage(
 // ============================================================
 // MAIN EXPORT
 // ============================================================
-export function generateCoaPdf({
+/** Draw the Certificate of Analysis onto an existing jsPDF `doc` (its current
+ *  page). Used both standalone (generateCoaPdf) and as a Document Package page. */
+export function renderCoaInto(doc: jsPDF, {
   shipment,
   order,
   customer,
   shipFromLocation,
   lotCodes,
   qaProducts,
-}: GenerateCoaParams): { blobUrl: string; filename: string } {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
-
+}: GenerateCoaParams): void {
   // Resolve the lot codes assigned to this shipment
   const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
   const shipmentLotCodes = assignedLotNums
@@ -373,9 +373,13 @@ export function generateCoaPdf({
     templateSubtitle,
     parameters,
   );
+}
 
-  const bolNum = shipment.bol || order?.bolNumber || '';
-  const filename = `COA_${bolNum || 'draft'}_${(shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+export function generateCoaPdf(params: GenerateCoaParams): { blobUrl: string; filename: string } {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  renderCoaInto(doc, params);
+  const bolNum = params.shipment.bol || params.order?.bolNumber || '';
+  const filename = `COA_${bolNum || 'draft'}_${(params.shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
   return { blobUrl, filename };

@@ -62,7 +62,9 @@ function drawInfoField(doc: jsPDF, label: string, value: string, x: number, y: n
   doc.rect(x, y - 3.5, width, 12);
 }
 
-export function generateBolPdf({
+/** Draw the Bill of Lading onto an existing jsPDF `doc` (its current page).
+ *  Used both standalone (generateBolPdf) and as one page of the Document Package. */
+export function renderBolInto(doc: jsPDF, {
   shipment,
   order,
   customer,
@@ -70,8 +72,7 @@ export function generateBolPdf({
   shipFromLocation,
   shipToLocation,
   qaProducts,
-}: GenerateBolParams): { blobUrl: string; filename: string } {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+}: GenerateBolParams): void {
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 14;
   const contentWidth = pageWidth - M * 2;
@@ -328,10 +329,13 @@ export function generateBolPdf({
     doc.text(shipment.notes, leftCol + 2, y + 8, { maxWidth: contentWidth - 4 });
   }
 
-  // ═══════════════════════════════════════════════════════════
-  // RETURN BLOB URL + FILENAME
-  // ═══════════════════════════════════════════════════════════
-  const filename = `BOL_${bolNum || 'draft'}_${(shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+}
+
+export function generateBolPdf(params: GenerateBolParams): { blobUrl: string; filename: string } {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  renderBolInto(doc, params);
+  const bolNum = params.shipment.bol || params.order?.bolNumber || '';
+  const filename = `BOL_${bolNum || 'draft'}_${(params.shipment.customer || '').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
   return { blobUrl, filename };

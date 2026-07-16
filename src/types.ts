@@ -1136,7 +1136,7 @@ export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];
 export interface QATemplate {
   id: string;
   name: string;
-  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Order Confirmation' | 'Return Order Confirmation' | 'Other';
+  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Bag ID Report' | 'Scale Ticket' | 'Order Confirmation' | 'Return Order Confirmation' | 'Other';
   googleSheetUrl: string;
   description?: string;
   createdAt: string;

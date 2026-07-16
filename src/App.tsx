@@ -12,6 +12,7 @@ import {
   Package,
   Download,
   Printer,
+  Files,
   Save,
   Info,
   Users,
@@ -67,6 +68,7 @@ import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf } from './coaPdf';
+import { generateDocumentPackagePdf } from './documentPackagePdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
@@ -426,7 +428,7 @@ export default function App() {
     } catch { /* cache best-effort */ }
   };
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string } | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string; title?: string } | null>(null);
 
   // Modal window states (minimize/maximize)
   const [modalStates, setModalStates] = useState<Record<string, { minimized: boolean; maximized: boolean }>>({});
@@ -4059,6 +4061,102 @@ export default function App() {
       console.error('Generate COA failed:', e);
       setErrorBox('Failed to generate Certificate of Analysis: ' + (e.message || 'Unknown error'));
     }
+  };
+
+  /** True when any line item (or a product-name fallback) is a PACKAGED or TOTE
+   *  product — i.e. it has bag IDs. Bulk / liquid loads return false. Resolves the
+   *  product's format via the QA product / SKU catalog, then the name string. */
+  const hasPackagedOrToteProducts = (
+    lineItems?: Array<{ productName?: string; productDisplayName?: string }>,
+    fallbackName?: string,
+  ): boolean => {
+    const pkgTote = (s?: string) => !!s && /bag|pack|tote/i.test(s);
+    const lineIsPkgTote = (li: { productName?: string; productDisplayName?: string }) => {
+      const name = li.productName || '';
+      const qa = qaProducts.find(p => p.skuName === name);
+      const sku = skus.find(s => s.name === name);
+      return pkgTote(qa?.productFormat) || pkgTote(qa?.productGroup)
+        || pkgTote(sku?.productFormat) || pkgTote(sku?.productGroup)
+        || pkgTote(li.productDisplayName) || pkgTote(name);
+    };
+    if (lineItems && lineItems.some(lineIsPkgTote)) return true;
+    return pkgTote(fallbackName);
+  };
+
+  /** Build the full shipping document package (BOL + COA + Packing List + [Bag ID
+   *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
+   *  ID Report is included only for packaged / tote shipments. */
+  const handleGenerateDocumentPackage = (shipment: Shipment, includeBagIdReport?: boolean) => {
+    try {
+      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const cust = customers.find(c => c.name === shipment.customer);
+      const carr = carriers.find(c => c.name === shipment.carrier);
+      const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
+      const shipToLoc = linkedOrder?.shipToLocationId
+        ? cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)
+        : undefined;
+      const includeBag = includeBagIdReport ?? hasPackagedOrToteProducts(linkedOrder?.lineItems, shipment.product);
+      const { blobUrl, filename } = generateDocumentPackagePdf({
+        shipment,
+        order: linkedOrder,
+        customer: cust,
+        carrier: carr,
+        shipFromLocation: shipFromLoc,
+        shipToLocation: shipToLoc,
+        lotCodes,
+        qaProducts,
+        includeBagIdReport: includeBag,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, title: 'Document Package Preview' });
+    } catch (e: any) {
+      console.error('Generate document package failed:', e);
+      setErrorBox('Failed to generate document package: ' + (e.message || 'Unknown error'));
+    }
+  };
+
+  /** Resolve the shipment (real, order-derived, or an invoice stub) that a BOL-
+   *  bearing document should be generated from. Invoices link by BOL NUMBER since
+   *  invoice.shipmentId is unreliable (see handleGenerateBolForInvoice). */
+  const resolveInvoiceShipment = (inv: Invoice): Shipment | null => {
+    const all = [...hamiltonShipments, ...vancouverShipments];
+    const bol = (inv.bolNumber || '').trim();
+    const shipment = (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
+      || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
+    if (shipment) return shipment;
+    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
+    if (linkedOrder) return shipmentForOrder(linkedOrder);
+    if (!bol) return null;
+    return {
+      id: `TMP-${inv.id}`,
+      week: '', date: inv.date || new Date().toISOString().split('T')[0],
+      day: '', time: '', bay: '',
+      customer: inv.customer || '',
+      product: inv.product || inv.lineItems?.[0]?.productName || '',
+      po: inv.po || '',
+      bol,
+      qty: (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) || inv.qty || 0,
+      carrier: inv.carrier || '',
+      arrive: '', start: '', out: '',
+      status: inv.status,
+      contractNumber: inv.contractNumber,
+      location: inv.location,
+    } as Shipment;
+  };
+
+  /** Invoice-table action: build the document package for an invoice. The Bag ID
+   *  Report is included only when THIS invoice carries packaged or tote products. */
+  const handleGenerateDocumentPackageForInvoice = (inv: Invoice) => {
+    const shipment = resolveInvoiceShipment(inv);
+    if (!shipment) {
+      setErrorBox('This invoice has no BOL number — cannot build a document package.');
+      return;
+    }
+    const bol = (inv.bolNumber || '').trim();
+    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
+    const lineItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : linkedOrder?.lineItems;
+    const includeBagIdReport = hasPackagedOrToteProducts(lineItems, inv.product || shipment.product);
+    handleGenerateDocumentPackage(shipment, includeBagIdReport);
   };
 
   useEffect(() => {
@@ -8590,8 +8688,12 @@ export default function App() {
                       </td>
                       <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
-                          <button className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Print Invoice">
-                            <Printer size={14} />
+                          <button
+                            onClick={() => handleGenerateDocumentPackageForInvoice(i)}
+                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                            title="View Document Package"
+                          >
+                            <Files size={14} />
                           </button>
                           <button
                             onClick={() => handleGenerateBolForInvoice(i)}
@@ -13787,7 +13889,7 @@ export default function App() {
             >
               {(() => {
                 const linkedTemplate = pdfPreview.templateType ? qaTemplates.find(t => t.type === pdfPreview.templateType) : null;
-                const previewTitle = pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Certificate of Analysis' ? 'Certificate of Analysis Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview';
+                const previewTitle = pdfPreview.title || (pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Certificate of Analysis' ? 'Certificate of Analysis Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview');
                 return (
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-4">
