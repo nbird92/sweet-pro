@@ -69,7 +69,7 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
 }
 
 export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes }: LabPageProps) {
-  const [filterSugarType, setFilterSugarType] = useState('');
+  const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
@@ -417,7 +417,6 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
             onChange={(e) => setFilterSugarType(e.target.value)}
             className="bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 px-2 py-1 text-xs focus:outline-none"
           >
-            <option value="">All</option>
             {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
           </select>
         </div>
@@ -468,6 +467,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           // sheet's columns, in order.
           { key: 'date', label: 'Date' },
           { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => lc.customerPo || '—' },
+          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => lc.bolNumber || '—' },
           { key: 'customerName', label: 'Customer', render: (lc) => lc.customerName || '—' },
           { key: 'qtyMt', label: 'QTY MT', render: (lc) => lc.qtyMt || '—' },
           { key: 'exitTime', label: 'Exit Time', render: (lc) => lc.exitTime || '—' },
