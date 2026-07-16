@@ -123,6 +123,12 @@ export interface ParsedOrderRow {
   foreignMaterial?: string;
   sievingResults?: string;
   initials?: string;
+  // Additional loading-log extras (carrier/trailer reuse carrierName/trailerNo).
+  arrivalTime?: string;
+  loaderName?: string;
+  tempLoadingBay?: string;
+  atmosphericTemp?: string;
+  sugarLumpsGrams?: string;
 }
 
 export interface OrderSyncResult {
@@ -1016,6 +1022,14 @@ export interface ColumnMap {
   foreignMaterial?: number;
   sievingResults?: number;
   initials?: number;
+  // Additional loading-log columns (carrier/trailer reuse the `carrier`/`trailerNo`
+  // keys above). arrivalTime + loaderName are Liquid; tempLoadingBay,
+  // atmosphericTemp + sugarLumpsGrams are Granulated.
+  arrivalTime?: number;
+  loaderName?: number;
+  tempLoadingBay?: number;
+  atmosphericTemp?: number;
+  sugarLumpsGrams?: number;
 }
 
 export interface ConfiguredTab {
@@ -1227,6 +1241,13 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     foreignMaterial: find(h => /foreign\s*mate?rial/.test(h)),
     sievingResults: find(h => /sieving|sieve/.test(h)),
     initials: find(h => h === 'initials' || h === 'initial' || h === 'init'),
+    // temperature above grabs the plain "Temperature" column first; the loading-bay
+    // and atmospheric variants below only match their own more-specific headers.
+    arrivalTime: find(h => /arrival\s*time/.test(h)),
+    loaderName: find(h => /loader\s*name/.test(h) || h === 'loader'),
+    tempLoadingBay: find(h => /loading\s*bay/.test(h)),
+    atmosphericTemp: find(h => /atmospheric/.test(h)),
+    sugarLumpsGrams: find(h => /sugar\s*lumps|lumps/.test(h)),
   };
 }
 
@@ -1302,6 +1323,11 @@ export function parseConfiguredTab(
     const foreignMaterialRaw = cell(row, cm.foreignMaterial);
     const sievingResultsRaw = cell(row, cm.sievingResults);
     const initialsRaw = cell(row, cm.initials);
+    const arrivalTimeRaw = cell(row, cm.arrivalTime);
+    const loaderNameRaw = cell(row, cm.loaderName);
+    const tempLoadingBayRaw = cell(row, cm.tempLoadingBay);
+    const atmosphericTempRaw = cell(row, cm.atmosphericTemp);
+    const sugarLumpsGramsRaw = cell(row, cm.sugarLumpsGrams);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
@@ -1383,6 +1409,11 @@ export function parseConfiguredTab(
       foreignMaterial: foreignMaterialRaw,
       sievingResults: sievingResultsRaw,
       initials: initialsRaw,
+      arrivalTime: arrivalTimeRaw,
+      loaderName: loaderNameRaw,
+      tempLoadingBay: tempLoadingBayRaw,
+      atmosphericTemp: atmosphericTempRaw,
+      sugarLumpsGrams: sugarLumpsGramsRaw,
     });
   }
   return out;
@@ -2747,17 +2778,24 @@ export function parsedRowsToLotCodesConfigured(
         countryOfOrigin: norm(r.countryOfOrigin) || undefined,
         bolNumber: bol || undefined,
         customerPo: norm(r.customerPo) || undefined,
-        // Granulated loading-log fields (also fed by the invoice/order backfill).
+        // Loading-log fields (customer/BOL also filled by the invoice/order backfill).
         customerName: norm(r.customerName) || undefined,
         qtyMt: norm(r.qtyMt) || undefined,
         exitTime: norm(r.exitTime) || undefined,
+        arrivalTime: norm(r.arrivalTime) || undefined,
+        carrierName: norm(r.carrierName) || undefined,
+        trailerNumber: norm(r.trailerNo) || undefined,
+        loaderName: norm(r.loaderName) || undefined,
         loadedFrom: norm(r.loadedFrom) || undefined,
         sugarUsed: norm(r.sugarUsed) || undefined,
+        tempLoadingBay: norm(r.tempLoadingBay) || undefined,
+        atmosphericTemp: norm(r.atmosphericTemp) || undefined,
         colorConfirmedCoa: norm(r.colorConfirmedCoa) || undefined,
         moistureConfirmedCoa: norm(r.moistureConfirmedCoa) || undefined,
         sucrose: norm(r.sucrose) || undefined,
         foreignMaterial: norm(r.foreignMaterial) || undefined,
         sievingResults: norm(r.sievingResults) || undefined,
+        sugarLumpsGrams: norm(r.sugarLumpsGrams) || undefined,
         initials: norm(r.initials) || undefined,
       };
       const isEmpty = (v: any) => v === undefined || v === null || v === '';
@@ -2857,31 +2895,38 @@ export const LOTCODE_FIELDS: Array<{ key: keyof ColumnMap; label: string; requir
   { key: 'bolNumber', label: 'BOL #' },
   { key: 'customer', label: 'Customer' },
   { key: 'customerPo', label: 'PO #' },
+  { key: 'qtyMt', label: 'QTY MT' },
+  { key: 'arrivalTime', label: 'Arrival Time' },
+  { key: 'exitTime', label: 'Exit Time' },
+  { key: 'carrier', label: 'Carrier Name' },
+  { key: 'trailerNo', label: 'Trailer #' },
+  { key: 'loaderName', label: 'Loader Name' },
   { key: 'tankNumber', label: 'Tank #' },
   { key: 'sugarType', label: 'Sugar Type' },
-  { key: 'qtyMt', label: 'QTY MT' },
-  { key: 'exitTime', label: 'Exit Time' },
   { key: 'loadedFrom', label: 'Loaded From' },
   { key: 'sugarUsed', label: 'Sugar Used' },
   { key: 'brix', label: 'Brix' },
   { key: 'ph', label: 'PH' },
-  { key: 'color', label: 'Color / ICUMSA' },
+  { key: 'temperature', label: 'Temperature °C' },
+  { key: 'tempLoadingBay', label: 'Temperature at Loading Bay °C' },
+  { key: 'atmosphericTemp', label: 'Atmospheric Temperature °C' },
+  { key: 'color', label: 'Color ICUMSA' },
   { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %' },
-  { key: 'temperature', label: 'Temp °C' },
   { key: 'invert', label: 'Invert %' },
   { key: 'moisture', label: 'Moisture %' },
   { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %' },
   { key: 'ash', label: 'Ash %' },
   { key: 'sucrose', label: 'Sucrose %' },
-  { key: 'foreignMaterial', label: 'Foreign Material Y/N' },
+  { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N' },
   { key: 'sievingResults', label: 'Sieving Results' },
+  { key: 'sugarLumpsGrams', label: 'Sugar Lumps (grams)' },
   { key: 'flavourOdourOk', label: 'Flavour/Odour OK' },
   { key: 'initials', label: 'Initials' },
   { key: 'testerName', label: 'Tester' },
   { key: 'category', label: 'Conv./Organic' },
   { key: 'silo', label: 'Silo' },
   { key: 'countryOfOrigin', label: 'Country of Origin' },
-  { key: 'notes', label: 'Notes' },
+  { key: 'notes', label: 'Note' },
   { key: 'weeklyVerification', label: 'Weekly Verification' },
   { key: 'status', label: 'Status / Cancellation' },
 ];

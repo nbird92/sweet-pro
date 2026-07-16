@@ -71,7 +71,7 @@ import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
 import EmailCenterPage from './components/EmailCenterPage';
 import ReturnOrdersPage from './components/ReturnOrdersPage';
-import DataTable, { ColumnOrderContext, type ColumnOrderStore } from './components/DataTable';
+import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
 import ConferencesPage from './components/ConferencesPage';
@@ -283,6 +283,21 @@ export default function App() {
     const out: Record<string, string[]> = {};
     try {
       const prefix = 'dt-colorder:';
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const v = JSON.parse(localStorage.getItem(key) || '[]');
+        if (Array.isArray(v) && v.length) out[key.slice(prefix.length)] = v.filter((x: any) => typeof x === 'string');
+      }
+    } catch { /* ignore malformed cache */ }
+    return out;
+  });
+  // Per-table hidden-column sets (DataTable show/hide), seeded from this device's
+  // localStorage cache and then overwritten by the user's Firestore prefs on load.
+  const [columnHidden, setColumnHidden] = useState<Record<string, string[]>>(() => {
+    const out: Record<string, string[]> = {};
+    try {
+      const prefix = 'dt-colhidden:';
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
@@ -3015,6 +3030,20 @@ export default function App() {
     },
   }), [columnOrders]);
 
+  // Column-visibility store — same persistence path as columnOrderStore. Holds the
+  // hidden column keys per table so a user's show/hide choice is permanent.
+  const columnVisibilityStore = useMemo<ColumnVisibilityStore>(() => ({
+    get: (k) => columnHidden[k],
+    set: (k, hiddenKeys) => {
+      prefsDirtyRef.current = true;
+      setColumnHidden(prev => {
+        const next = { ...prev };
+        if (hiddenKeys.length) next[k] = hiddenKeys; else delete next[k];
+        return next;
+      });
+    },
+  }), [columnHidden]);
+
   // Load the signed-in user's saved UI prefs (page order, hidden pages, table
   // column orders) once per user, and let them win over the localStorage-seeded
   // defaults. Re-gate saves on EVERY user change (not just sign-out) so one
@@ -3058,6 +3087,21 @@ export default function App() {
               }
             } catch { /* cache best-effort */ }
           }
+          if (remote.columnHidden && typeof remote.columnHidden === 'object') {
+            const ch = remote.columnHidden as Record<string, string[]>;
+            setColumnHidden(ch);
+            // Same cache reconciliation as columnOrders, for the hidden-column sets.
+            try {
+              const prefix = 'dt-colhidden:';
+              for (let i = localStorage.length - 1; i >= 0; i--) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith(prefix) && !(key.slice(prefix.length) in ch)) localStorage.removeItem(key);
+              }
+              for (const [k, v] of Object.entries(ch)) {
+                if (Array.isArray(v) && v.length) localStorage.setItem(prefix + k, JSON.stringify(v));
+              }
+            } catch { /* cache best-effort */ }
+          }
         }
       } catch (e) {
         console.warn('User prefs load failed:', e instanceof Error ? e.message : e);
@@ -3077,11 +3121,12 @@ export default function App() {
         pageOrder,
         hiddenPages: [...hiddenPages],
         columnOrders,
+        columnHidden,
         stockEmailRecipients: stockSavedRecipients,
       }).catch(e => console.warn('User prefs save failed:', e instanceof Error ? e.message : e));
     }, 800);
     return () => clearTimeout(t);
-  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders, stockSavedRecipients]);
+  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders, columnHidden, stockSavedRecipients]);
 
   // Auto-maximize the Order Details modal whenever a new order is opened.
   useEffect(() => {
@@ -12924,7 +12969,9 @@ export default function App() {
         </header>
 
         <ColumnOrderContext.Provider value={columnOrderStore}>
-          {renderContent()}
+          <ColumnVisibilityContext.Provider value={columnVisibilityStore}>
+            {renderContent()}
+          </ColumnVisibilityContext.Provider>
         </ColumnOrderContext.Provider>
       </div>
 

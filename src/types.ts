@@ -1032,17 +1032,28 @@ export interface LotCode {
   bolNumber: string;
   customerPo: string;
   createdAt: string;
-  // Granulated loading-log fields (shown when the sugar type is Granulated).
+  // Loading-log fields shared/typed by sugar type (mirror the Liquid Loads /
+  // Granulated Loads sheets). Optional so legacy rows and the two sugar-type
+  // column sets can each surface only the ones they use.
   customerName?: string;
   qtyMt?: string;
   exitTime?: string;
+  // Liquid loading-log extras.
+  arrivalTime?: string;         // Arrival Time
+  carrierName?: string;         // Carrier Name
+  trailerNumber?: string;       // Trailer #
+  loaderName?: string;          // Loader Name
+  // Granulated loading-log extras.
   loadedFrom?: string;          // Loaded From:
   sugarUsed?: string;           // Sugar Used:
+  tempLoadingBay?: string;      // Temperature at loading Bay °C
+  atmosphericTemp?: string;     // Atmospheric Temperature °C
   colorConfirmedCoa?: string;   // Color confirmed on COA %
   moistureConfirmedCoa?: string; // Moisture confirmed on COA %
   sucrose?: string;             // Sucrose %
   foreignMaterial?: string;     // Foreign Material Identified Y/N
   sievingResults?: string;      // Sieving Results
+  sugarLumpsGrams?: string;     // Sugar Lumps collected during loading (grams)
   initials?: string;
 }
 

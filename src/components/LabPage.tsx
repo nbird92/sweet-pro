@@ -28,10 +28,12 @@ const EMPTY_FORM = {
   testerId: '', testerName: '', notes: '',
   weeklyVerification: '', sugarType: '', countryOfOrigin: '',
   bolNumber: '', customerPo: '',
-  // Granulated loading-log fields.
-  customerName: '', qtyMt: '', exitTime: '', loadedFrom: '', sugarUsed: '',
+  // Loading-log fields (Liquid + Granulated).
+  customerName: '', qtyMt: '', exitTime: '',
+  arrivalTime: '', carrierName: '', trailerNumber: '', loaderName: '',
+  loadedFrom: '', sugarUsed: '', tempLoadingBay: '', atmosphericTemp: '',
   colorConfirmedCoa: '', moistureConfirmedCoa: '', sucrose: '',
-  foreignMaterial: '', sievingResults: '', initials: '',
+  foreignMaterial: '', sievingResults: '', sugarLumpsGrams: '', initials: '',
 };
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
@@ -312,10 +314,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       notes: lc.notes, weeklyVerification: lc.weeklyVerification, sugarType: lc.sugarType, countryOfOrigin: lc.countryOfOrigin || '',
       bolNumber: lc.bolNumber || '', customerPo: lc.customerPo || '',
       customerName: lc.customerName || '', qtyMt: lc.qtyMt || '', exitTime: lc.exitTime || '',
+      arrivalTime: lc.arrivalTime || '', carrierName: lc.carrierName || '',
+      trailerNumber: lc.trailerNumber || '', loaderName: lc.loaderName || '',
       loadedFrom: lc.loadedFrom || '', sugarUsed: lc.sugarUsed || '',
+      tempLoadingBay: lc.tempLoadingBay || '', atmosphericTemp: lc.atmosphericTemp || '',
       colorConfirmedCoa: lc.colorConfirmedCoa || '', moistureConfirmedCoa: lc.moistureConfirmedCoa || '',
       sucrose: lc.sucrose || '', foreignMaterial: lc.foreignMaterial || '', sievingResults: lc.sievingResults || '',
-      initials: lc.initials || '',
+      sugarLumpsGrams: lc.sugarLumpsGrams || '', initials: lc.initials || '',
     });
     setEditingLot(lc);
   };
@@ -400,6 +405,11 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     ],
     rows: filtered as any[],
   }];
+
+  // Cell renderers used by both sugar-type column sets: '—' for empty values, and
+  // a truncated note with a hover title.
+  const dash = (v?: string) => v || '—';
+  const noteCell = (v?: string) => <span title={v} className="block max-w-[150px] truncate">{v || '—'}</span>;
   return (
     <div>
       <PageBanner
@@ -463,51 +473,58 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
         title="Lot Code Testing Log"
         storageKey={filterSugarType === 'Granulated' ? 'Lot Code Testing Log (Granulated)' : 'Lot Code Testing Log'}
         columns={filterSugarType === 'Granulated' ? [
-          // Granulated loading-log column set — mirrors the "Granulated Loads 2026"
-          // sheet's columns, in order.
+          // Granulated loading-log column set — mirrors the "Granulated Loads" sheet's
+          // columns, in order. BOL # is added (not on the sheet) for lot↔invoice linking.
           { key: 'date', label: 'Date' },
-          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => lc.customerPo || '—' },
-          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => lc.bolNumber || '—' },
-          { key: 'customerName', label: 'Customer', render: (lc) => lc.customerName || '—' },
-          { key: 'qtyMt', label: 'QTY MT', render: (lc) => lc.qtyMt || '—' },
-          { key: 'exitTime', label: 'Exit Time', render: (lc) => lc.exitTime || '—' },
+          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
+          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
+          { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+          { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
+          { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
           { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
-          { key: 'loadedFrom', label: 'Loaded From', render: (lc) => lc.loadedFrom || '—' },
-          { key: 'sugarUsed', label: 'Sugar Used', render: (lc) => lc.sugarUsed || '—' },
-          { key: 'temperature', label: 'Temperature' },
-          { key: 'moisture', label: 'Moisture %', render: (lc) => lc.moisture || '—' },
-          { key: 'color', label: 'Color ICUMSA', render: (lc) => lc.color || '—' },
-          { key: 'colorConfirmedCoa', label: 'Color confirmed on COA %', render: (lc) => lc.colorConfirmedCoa || '—' },
-          { key: 'invert', label: 'Invert %' },
-          { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %', render: (lc) => lc.moistureConfirmedCoa || '—' },
-          { key: 'ash', label: 'Ash %', render: (lc) => lc.ash || '—' },
-          { key: 'sucrose', label: 'Sucrose %', render: (lc) => lc.sucrose || '—' },
-          { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N', render: (lc) => lc.foreignMaterial || '—' },
-          { key: 'initials', label: 'Initials', render: (lc) => lc.initials || '—' },
-          {
-            key: 'notes', label: 'Note',
-            render: (lc) => <span title={lc.notes} className="block max-w-[150px] truncate">{lc.notes || '—'}</span>,
-          },
-          { key: 'sievingResults', label: 'Sieving Results', render: (lc) => lc.sievingResults || '—' },
+          { key: 'loadedFrom', label: 'Loaded From', render: (lc) => dash(lc.loadedFrom) },
+          { key: 'sugarUsed', label: 'Sugar Used', render: (lc) => dash(lc.sugarUsed) },
+          { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
+          { key: 'tempLoadingBay', label: 'Temperature at Loading Bay °C', render: (lc) => dash(lc.tempLoadingBay) },
+          { key: 'atmosphericTemp', label: 'Atmospheric Temperature °C', render: (lc) => dash(lc.atmosphericTemp) },
+          { key: 'moisture', label: 'Moisture %', render: (lc) => dash(lc.moisture) },
+          { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
+          { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
+          { key: 'invert', label: 'Invert %', render: (lc) => dash(lc.invert) },
+          { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %', render: (lc) => dash(lc.moistureConfirmedCoa) },
+          { key: 'ash', label: 'Ash %', render: (lc) => dash(lc.ash) },
+          { key: 'sucrose', label: 'Sucrose %', render: (lc) => dash(lc.sucrose) },
+          { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N', render: (lc) => dash(lc.foreignMaterial) },
+          { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
+          { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
+          { key: 'sievingResults', label: 'Sieving Results', render: (lc) => dash(lc.sievingResults) },
+          { key: 'sugarLumpsGrams', label: 'Sugar Lumps (grams)', render: (lc) => dash(lc.sugarLumpsGrams) },
+          { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
         ] : [
-          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+          // Liquid loading-log column set — mirrors the "Liquid Loads" sheet's columns,
+          // in order. BOL # is added (not on the sheet) for lot↔invoice linking.
           { key: 'date', label: 'Date' },
-          { key: 'bolNumber', label: 'BOL #', mono: true },
-          { key: 'customerName', label: 'Customer', render: (lc) => lc.customerName || '—' },
-          { key: 'tankNumber', label: 'Tank #' },
-          { key: 'sugarType', label: 'Sugar Type' },
-          { key: 'brix', label: 'Brix' },
-          { key: 'ph', label: 'PH' },
-          { key: 'color', label: 'Color' },
-          { key: 'temperature', label: 'Temp °C' },
-          { key: 'invert', label: 'Invert' },
-          { key: 'flavourOdourOk', label: 'Flavour/Odour OK' },
-          { key: 'testerName', label: 'Tester' },
-          {
-            key: 'notes', label: 'Notes',
-            render: (lc) => <span title={lc.notes} className="block max-w-[150px] truncate">{lc.notes || '—'}</span>,
-          },
-          { key: 'weeklyVerification', label: 'Weekly Verification' },
+          { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
+          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
+          { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
+          { key: 'arrivalTime', label: 'Arrival Time', render: (lc) => dash(lc.arrivalTime) },
+          { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
+          { key: 'carrierName', label: 'Carrier Name', render: (lc) => dash(lc.carrierName) },
+          { key: 'trailerNumber', label: 'Trailer #', render: (lc) => dash(lc.trailerNumber) },
+          { key: 'loaderName', label: 'Loader Name', render: (lc) => dash(lc.loaderName) },
+          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+          { key: 'tankNumber', label: 'Tank #', render: (lc) => dash(lc.tankNumber) },
+          { key: 'brix', label: 'Brix', render: (lc) => dash(lc.brix) },
+          { key: 'ph', label: 'PH', render: (lc) => dash(lc.ph) },
+          { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
+          { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
+          { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
+          { key: 'invert', label: 'Invert', render: (lc) => dash(lc.invert) },
+          { key: 'flavourOdourOk', label: 'Flavour/Odour OK', render: (lc) => dash(lc.flavourOdourOk) },
+          { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
+          { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
+          { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
         ]}
         rows={filtered}
         getRowKey={(lc) => lc.id}
@@ -737,38 +754,49 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     </tr>
                   </tbody>
                 </table>
-                {/* Granulated loading-log fields — surfaced when the sugar type is
-                    Granulated (they also feed the Granulated table column set). */}
-                {formData.sugarType === 'Granulated' && (
-                  <div className="border border-[#141414]/20 p-3 space-y-3">
-                    <div className="text-[10px] uppercase font-bold opacity-60">Granulated Loading Log</div>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {([
-                        ['customerName', 'Customer'],
-                        ['qtyMt', 'QTY MT'],
-                        ['exitTime', 'Exit Time'],
-                        ['loadedFrom', 'Loaded From'],
-                        ['sugarUsed', 'Sugar Used'],
-                        ['colorConfirmedCoa', 'Color confirmed on COA %'],
-                        ['moistureConfirmedCoa', 'Moisture Confirmed on COA %'],
-                        ['sucrose', 'Sucrose %'],
-                        ['foreignMaterial', 'Foreign Material Identified Y/N'],
-                        ['sievingResults', 'Sieving Results'],
-                        ['initials', 'Initials'],
-                      ] as const).map(([key, label]) => (
-                        <div key={key} className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
-                          <input
-                            type="text"
-                            value={(formData as any)[key]}
-                            onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
-                            className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none"
-                          />
-                        </div>
-                      ))}
+                {/* Loading-log fields — the extra columns from the Liquid Loads /
+                    Granulated Loads sheets, surfaced by sugar type. These feed the
+                    matching sugar-type table column set. */}
+                {(() => {
+                  const liquidFields: [string, string][] = [
+                    ['customerName', 'Customer'], ['qtyMt', 'QTY MT'],
+                    ['arrivalTime', 'Arrival Time'], ['exitTime', 'Exit Time'],
+                    ['carrierName', 'Carrier Name'], ['trailerNumber', 'Trailer #'],
+                    ['loaderName', 'Loader Name'], ['colorConfirmedCoa', 'Color Confirmed on COA %'],
+                    ['initials', 'Initials'],
+                  ];
+                  const granulatedFields: [string, string][] = [
+                    ['customerName', 'Customer'], ['qtyMt', 'QTY MT'], ['exitTime', 'Exit Time'],
+                    ['loadedFrom', 'Loaded From'], ['sugarUsed', 'Sugar Used'],
+                    ['tempLoadingBay', 'Temperature at Loading Bay °C'],
+                    ['atmosphericTemp', 'Atmospheric Temperature °C'],
+                    ['colorConfirmedCoa', 'Color Confirmed on COA %'],
+                    ['moistureConfirmedCoa', 'Moisture Confirmed on COA %'],
+                    ['sucrose', 'Sucrose %'], ['foreignMaterial', 'Foreign Material Identified Y/N'],
+                    ['sievingResults', 'Sieving Results'], ['sugarLumpsGrams', 'Sugar Lumps (grams)'],
+                    ['initials', 'Initials'],
+                  ];
+                  const isGranulated = formData.sugarType === 'Granulated';
+                  const fields = isGranulated ? granulatedFields : liquidFields;
+                  return (
+                    <div className="border border-[#141414]/20 p-3 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-60">{isGranulated ? 'Granulated' : 'Liquid'} Loading Log</div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {fields.map(([key, label]) => (
+                          <div key={key} className="space-y-1">
+                            <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
+                            <input
+                              type="text"
+                              value={(formData as any)[key]}
+                              onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                              className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
                   <textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
