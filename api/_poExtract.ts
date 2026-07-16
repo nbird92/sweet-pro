@@ -65,6 +65,42 @@ function salvageDocuments(text: string): any[] {
   return out;
 }
 
+/** Coerce a Gemini-emitted value to a number. The schema asks for numeric fields
+ *  as STRINGS because Gemini's structured NUMBER output can degenerate into a
+ *  runaway decimal ("0.000000000…") that burns the whole output-token budget on a
+ *  single field. Strings terminate cleanly; we parse them back here so every
+ *  downstream consumer still receives real numbers. Tolerates thousands separators
+ *  and stray currency/space characters, and a value that is already a number. */
+function toNum(v: any): number | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  const n = parseFloat(String(v).replace(/[^0-9.+-]/g, ''));
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** Convert every string-typed numeric field on a parsed document back to a number
+ *  (or undefined), in place. Runs before deriveDocMetrics so the arithmetic there
+ *  sees numbers exactly as it did when the schema used Type.NUMBER. */
+function coerceDocNumbers(doc: any): any {
+  if (!doc || typeof doc !== 'object') return doc;
+  doc.totalAmount = toNum(doc.totalAmount);
+  doc.confidence = toNum(doc.confidence);
+  if (doc.amendment && typeof doc.amendment === 'object') {
+    doc.amendment.newQuantityMt = toNum(doc.amendment.newQuantityMt);
+  }
+  if (Array.isArray(doc.lineItems)) {
+    for (const li of doc.lineItems) {
+      if (!li || typeof li !== 'object') continue;
+      li.quantity = toNum(li.quantity);
+      li.quantityMt = toNum(li.quantityMt);
+      li.unitPrice = toNum(li.unitPrice);
+      li.pricePerMt = toNum(li.pricePerMt);
+      li.amount = toNum(li.amount);
+    }
+  }
+  return doc;
+}
+
 export interface UploadFile {
   name: string;
   mimeType: string;
@@ -104,9 +140,9 @@ const PO_SCHEMA = {
     carrierDomain: { type: Type.STRING, description: "The carrier's email domain, lowercase (e.g. contrans.ca). Empty if not derivable." },
     contractNumber: { type: Type.STRING, description: 'Contract / agreement number if referenced.' },
     splitNumber: { type: Type.STRING, description: 'Split / shipment-split number (e.g. on an internal "Stock Request" note) to be attached to an existing PO or invoice. Capture exactly as printed.' },
-    totalAmount: { type: Type.NUMBER },
+    totalAmount: { type: Type.STRING, description: 'Order total price as a plain decimal string (e.g. "14746.20") — no currency symbol or thousands separators, at most 2 decimals. Empty string if not stated.' },
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
-    confidence: { type: Type.NUMBER, description: 'Overall extraction confidence 0..1.' },
+    confidence: { type: Type.STRING, description: 'Overall extraction confidence 0..1 as a short decimal string (e.g. "0.85").' },
     isCallOff: { type: Type.BOOLEAN, description: 'True for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of scheduled deliveries (one row per delivery with quantity + date + time).' },
     documentType: {
       type: Type.STRING,
@@ -121,7 +157,7 @@ const PO_SCHEMA = {
       properties: {
         newShipmentDate: { type: Type.STRING, description: 'New requested ship/pickup date, ISO YYYY-MM-DD.' },
         newDeliveryDate: { type: Type.STRING, description: 'New requested delivery date, ISO YYYY-MM-DD.' },
-        newQuantityMt: { type: Type.NUMBER, description: 'New TOTAL order quantity in metric tonnes.' },
+        newQuantityMt: { type: Type.STRING, description: 'New TOTAL order quantity in metric tonnes, as a plain decimal string.' },
         newSplitNumber: { type: Type.STRING, description: 'A split / shipment-split number to add to the existing PO or invoice (common on internal "Stock Request" notes).' },
         cancel: { type: Type.BOOLEAN, description: 'True when the order is being cancelled.' },
         summary: { type: Type.STRING, description: 'One-line plain-English summary of the requested change.' },
@@ -134,13 +170,13 @@ const PO_SCHEMA = {
         properties: {
           description: { type: Type.STRING, description: 'Product description as written on the PO.' },
           itemNumber: { type: Type.STRING, description: "The buyer's code for this product on this line — a \"Vendor Item #\", \"Material #\", \"Customer Part #\" or similar. Capture it exactly as printed (e.g. LC325X)." },
-          quantity: { type: Type.NUMBER, description: 'Quantity in the document unit.' },
+          quantity: { type: Type.STRING, description: 'Quantity in the document unit, as a plain decimal string (no thousands separators).' },
           unit: { type: Type.STRING, description: 'Unit of measure (kg, lb, MT, each, ...).' },
-          quantityMt: { type: Type.NUMBER, description: 'Quantity converted to metric tonnes.' },
-          unitPrice: { type: Type.NUMBER, description: 'Raw unit price number.' },
+          quantityMt: { type: Type.STRING, description: 'Quantity converted to metric tonnes, as a plain decimal string.' },
+          unitPrice: { type: Type.STRING, description: 'Raw unit price as a plain decimal string (no currency symbol).' },
           priceBasis: { type: Type.STRING, description: 'What the unit price is per (e.g. "per 100 lb").' },
-          pricePerMt: { type: Type.NUMBER, description: 'Price normalized to $/MT when derivable.' },
-          amount: { type: Type.NUMBER, description: 'Line extended/total price.' },
+          pricePerMt: { type: Type.STRING, description: 'Price normalized to $/MT when derivable, as a plain decimal string.' },
+          amount: { type: Type.STRING, description: 'Line extended/total price as a plain decimal string.' },
           deliveryDate: { type: Type.STRING, description: 'Per-line delivery date, ISO YYYY-MM-DD' },
           deliveryTime: { type: Type.STRING, description: 'Per-line delivery/appointment time as 24h HH:MM (e.g. "18:00:00" -> "18:00").' },
         },
@@ -469,7 +505,7 @@ export async function extractPO(
     // Give structured output enough room. Without an explicit cap the response can
     // be truncated mid-object, producing invalid JSON ("Gemini did not return valid
     // JSON"). Configurable for unusually large multi-PO emails.
-    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 8192),
+    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 16384),
     // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
     // block of reasoning tokens on every call. Structured PO extraction against
     // a fixed schema doesn't need it — disable thinking to cut cost sharply.
@@ -524,7 +560,7 @@ export async function extractPO(
   return docs
     .filter(d => d && typeof d === 'object')
     .map(d => {
-      const doc = { sourceFile: file.name, ...d };
+      const doc = coerceDocNumbers({ sourceFile: file.name, ...d });
       // Recompute MT quantities and $/MT prices in code (never trust the LLM's
       // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably, and derive
       // $/MT from a total order price ÷ quantity when no per-unit price is given.
