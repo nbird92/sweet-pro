@@ -493,6 +493,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
           { key: 'date', label: 'Date' },
           { key: 'bolNumber', label: 'BOL #', mono: true },
+          { key: 'customerName', label: 'Customer', render: (lc) => lc.customerName || '—' },
           { key: 'tankNumber', label: 'Tank #' },
           { key: 'sugarType', label: 'Sugar Type' },
           { key: 'brix', label: 'Brix' },

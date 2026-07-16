@@ -111,6 +111,18 @@ export interface ParsedOrderRow {
   weeklyVerification?: string;
   category?: string;
   customerPo?: string;
+  /** Granulated loading-log extras (Sync Lot Codes). Customer name reuses
+   *  `customerName` above; these carry the granulated-only columns. */
+  qtyMt?: string;
+  exitTime?: string;
+  loadedFrom?: string;
+  sugarUsed?: string;
+  colorConfirmedCoa?: string;
+  moistureConfirmedCoa?: string;
+  sucrose?: string;
+  foreignMaterial?: string;
+  sievingResults?: string;
+  initials?: string;
 }
 
 export interface OrderSyncResult {
@@ -146,23 +158,61 @@ const MONTH_INDEX: Record<string, number> = {
   jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
 };
 
-/** Parse "Jan 1, 2026" / "January 1, 2026" → "2026-01-01". Returns '' on failure. */
+/**
+ * Parse a sheet date cell to ISO "YYYY-MM-DD". A Google Sheets CSV export emits
+ * the date in whatever shape the cell's locale/format produces, so we accept the
+ * several forms seen across the order/invoice/transfer/lot-code sheets:
+ *   • "Jan 1, 2026" / "January 1 2026"      (month-first text)
+ *   • "1 Jan 2026" / "29 January 2026"      (day-first text)   ← Granulated tab
+ *   • "2026-01-27" (optionally with a time)  (ISO)             ← Liquid tab
+ *   • "2026/01/27"                           (ISO, slashes)
+ *   • "1/29/2026" / "01/29/26"               (numeric M/D/Y; D/M/Y when day>12)
+ * Returns '' on failure. The Sheets epoch "Dec 30, 1899" (any pre-1900 year) is
+ * treated as no date.
+ */
 function parseSheetDate(s: string): string {
   if (!s) return '';
   const trimmed = s.trim();
   if (!trimmed) return '';
-  const m = trimmed.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
-  if (!m) return '';
-  const month = MONTH_INDEX[m[1].slice(0, 3).toLowerCase()];
-  if (month === undefined) return '';
-  const day = parseInt(m[2], 10);
-  const year = parseInt(m[3], 10);
-  if (!Number.isFinite(day) || !Number.isFinite(year)) return '';
-  // "Dec 30, 1899" is the Sheets-engine date epoch — treat as no date.
-  if (year < 1900) return '';
-  const mm = String(month + 1).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  return `${year}-${mm}-${dd}`;
+
+  const build = (year: number, month1: number, day: number): string => {
+    if (!Number.isFinite(year) || !Number.isFinite(month1) || !Number.isFinite(day)) return '';
+    if (year < 1900) return '';                    // Sheets date epoch → no date
+    if (month1 < 1 || month1 > 12) return '';
+    if (day < 1 || day > 31) return '';
+    return `${year}-${String(month1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  };
+
+  // ISO — "2026-01-27" or "2026/01/27" (ignore any trailing time component).
+  let m = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T].*)?$/);
+  if (m) return build(parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10));
+
+  // Month-first text — "Jan 1, 2026" / "January 1 2026".
+  m = trimmed.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (m) {
+    const month = MONTH_INDEX[m[1].slice(0, 3).toLowerCase()];
+    if (month !== undefined) return build(parseInt(m[3], 10), month + 1, parseInt(m[2], 10));
+  }
+
+  // Day-first text — "29 Jan 2026" / "1 January 2026".
+  m = trimmed.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})$/);
+  if (m) {
+    const month = MONTH_INDEX[m[2].slice(0, 3).toLowerCase()];
+    if (month !== undefined) return build(parseInt(m[3], 10), month + 1, parseInt(m[1], 10));
+  }
+
+  // Numeric slash — "1/29/2026" / "01/29/26". Assume M/D/Y (North American); if
+  // the first field can't be a month but the second can, read it as D/M/Y.
+  m = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+    let year = parseInt(m[3], 10);
+    if (year < 100) year += 2000;                  // 2-digit year → 20xx
+    const swap = a > 12 && b <= 12;                 // looks like D/M/Y
+    return build(year, swap ? b : a, swap ? a : b);
+  }
+
+  return '';
 }
 
 /* ------------------------------------------------------------------ */
@@ -954,6 +1004,18 @@ export interface ColumnMap {
   weeklyVerification?: number;
   category?: number;
   customerPo?: number;
+  /** Granulated loading-log columns (Sync Lot Codes). "Customer" reuses the
+   *  existing `customer` key; these are the remaining granulated-only columns. */
+  qtyMt?: number;
+  exitTime?: number;
+  loadedFrom?: number;
+  sugarUsed?: number;
+  colorConfirmedCoa?: number;
+  moistureConfirmedCoa?: number;
+  sucrose?: number;
+  foreignMaterial?: number;
+  sievingResults?: number;
+  initials?: number;
 }
 
 export interface ConfiguredTab {
@@ -1151,7 +1213,20 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     notes: find(h => h === 'notes' || h === 'note' || h === 'comments' || h === 'remarks'),
     weeklyVerification: find(h => /weekly verif|weekly check|verification/.test(h)),
     category: find(h => h === 'category' || h === 'conv' || h === 'conv/org' || h === 'conventional/organic' || /conventional|organic/.test(h)),
-    customerPo: find(h => h === 'customer po' || h === 'customer po #' || h === 'cust po'),
+    customerPo: find(h => h === 'customer po' || h === 'customer po #' || h === 'cust po' || h === 'po' || h === 'po #' || h === 'po number'),
+    // Granulated loading-log columns. color/moisture above grab the plain column
+    // first (earlier in the sheet), so the "…confirmed on COA %" variants below
+    // only match their own headers.
+    qtyMt: find(h => /^qty\s*mt$|^quantity\s*mt$|qty\s*\(mt\)|quantity\s*\(mt\)/.test(h)),
+    exitTime: find(h => /exit\s*time|departure\s*time/.test(h)),
+    loadedFrom: find(h => /loaded\s*from/.test(h)),
+    sugarUsed: find(h => /sugar\s*used/.test(h)),
+    colorConfirmedCoa: find(h => /colou?r.*coa|colou?r.*confirmed/.test(h)),
+    moistureConfirmedCoa: find(h => /moisture.*coa|moisture.*confirmed/.test(h)),
+    sucrose: find(h => /sucrose/.test(h)),
+    foreignMaterial: find(h => /foreign\s*mate?rial/.test(h)),
+    sievingResults: find(h => /sieving|sieve/.test(h)),
+    initials: find(h => h === 'initials' || h === 'initial' || h === 'init'),
   };
 }
 
@@ -1217,6 +1292,16 @@ export function parseConfiguredTab(
     const weeklyVerificationRaw = cell(row, cm.weeklyVerification);
     const categoryRaw = cell(row, cm.category);
     const customerPoRaw = cell(row, cm.customerPo);
+    const qtyMtRaw = cell(row, cm.qtyMt);
+    const exitTimeRaw = cell(row, cm.exitTime);
+    const loadedFromRaw = cell(row, cm.loadedFrom);
+    const sugarUsedRaw = cell(row, cm.sugarUsed);
+    const colorConfirmedCoaRaw = cell(row, cm.colorConfirmedCoa);
+    const moistureConfirmedCoaRaw = cell(row, cm.moistureConfirmedCoa);
+    const sucroseRaw = cell(row, cm.sucrose);
+    const foreignMaterialRaw = cell(row, cm.foreignMaterial);
+    const sievingResultsRaw = cell(row, cm.sievingResults);
+    const initialsRaw = cell(row, cm.initials);
     let status = cell(row, cm.status);
 
     // Empty / placeholder row — skip. Transfer rows may have no customer/BOL,
@@ -1288,6 +1373,16 @@ export function parseConfiguredTab(
       weeklyVerification: weeklyVerificationRaw,
       category: categoryRaw,
       customerPo: customerPoRaw,
+      qtyMt: qtyMtRaw,
+      exitTime: exitTimeRaw,
+      loadedFrom: loadedFromRaw,
+      sugarUsed: sugarUsedRaw,
+      colorConfirmedCoa: colorConfirmedCoaRaw,
+      moistureConfirmedCoa: moistureConfirmedCoaRaw,
+      sucrose: sucroseRaw,
+      foreignMaterial: foreignMaterialRaw,
+      sievingResults: sievingResultsRaw,
+      initials: initialsRaw,
     });
   }
   return out;
@@ -2652,6 +2747,18 @@ export function parsedRowsToLotCodesConfigured(
         countryOfOrigin: norm(r.countryOfOrigin) || undefined,
         bolNumber: bol || undefined,
         customerPo: norm(r.customerPo) || undefined,
+        // Granulated loading-log fields (also fed by the invoice/order backfill).
+        customerName: norm(r.customerName) || undefined,
+        qtyMt: norm(r.qtyMt) || undefined,
+        exitTime: norm(r.exitTime) || undefined,
+        loadedFrom: norm(r.loadedFrom) || undefined,
+        sugarUsed: norm(r.sugarUsed) || undefined,
+        colorConfirmedCoa: norm(r.colorConfirmedCoa) || undefined,
+        moistureConfirmedCoa: norm(r.moistureConfirmedCoa) || undefined,
+        sucrose: norm(r.sucrose) || undefined,
+        foreignMaterial: norm(r.foreignMaterial) || undefined,
+        sievingResults: norm(r.sievingResults) || undefined,
+        initials: norm(r.initials) || undefined,
       };
       const isEmpty = (v: any) => v === undefined || v === null || v === '';
 
@@ -2680,9 +2787,15 @@ export function parsedRowsToLotCodesConfigured(
         }
       }
 
-      // Numberless rows dedup on BOL|date|tank so re-runs don't duplicate.
+      // Numberless rows dedup on BOL|date|tank so re-runs don't duplicate. Also
+      // match a date-LESS variant against EXISTING records: a numberless row
+      // imported before dates parsed holds a blank date, so once parseSheetDate
+      // starts resolving that cell the full key would no longer match its prior
+      // record and the row would duplicate — the date-less check re-links it.
       const comp = compositeKey(bol, date, tank);
-      if (!lotU && (existingComposites.has(comp) || addedComposites.has(comp))) {
+      const compNoDate = compositeKey(bol, '', tank);
+      if (!lotU && (existingComposites.has(comp) || addedComposites.has(comp) ||
+                    (date !== '' && existingComposites.has(compNoDate)))) {
         result.skipped.push({ tab: r.tab, lotNumber, reason: 'An identical lot row already exists (same BOL/date/tank)' });
         continue;
       }
@@ -2742,21 +2855,32 @@ export const LOTCODE_FIELDS: Array<{ key: keyof ColumnMap; label: string; requir
   { key: 'lotCode', label: 'Lot #', required: true },
   { key: 'shipmentDate', label: 'Date', required: true },
   { key: 'bolNumber', label: 'BOL #' },
+  { key: 'customer', label: 'Customer' },
+  { key: 'customerPo', label: 'PO #' },
   { key: 'tankNumber', label: 'Tank #' },
   { key: 'sugarType', label: 'Sugar Type' },
+  { key: 'qtyMt', label: 'QTY MT' },
+  { key: 'exitTime', label: 'Exit Time' },
+  { key: 'loadedFrom', label: 'Loaded From' },
+  { key: 'sugarUsed', label: 'Sugar Used' },
   { key: 'brix', label: 'Brix' },
   { key: 'ph', label: 'PH' },
-  { key: 'color', label: 'Color' },
+  { key: 'color', label: 'Color / ICUMSA' },
+  { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %' },
   { key: 'temperature', label: 'Temp °C' },
-  { key: 'invert', label: 'Invert' },
-  { key: 'ash', label: 'Ash' },
-  { key: 'moisture', label: 'Moisture' },
+  { key: 'invert', label: 'Invert %' },
+  { key: 'moisture', label: 'Moisture %' },
+  { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %' },
+  { key: 'ash', label: 'Ash %' },
+  { key: 'sucrose', label: 'Sucrose %' },
+  { key: 'foreignMaterial', label: 'Foreign Material Y/N' },
+  { key: 'sievingResults', label: 'Sieving Results' },
   { key: 'flavourOdourOk', label: 'Flavour/Odour OK' },
+  { key: 'initials', label: 'Initials' },
   { key: 'testerName', label: 'Tester' },
   { key: 'category', label: 'Conv./Organic' },
   { key: 'silo', label: 'Silo' },
   { key: 'countryOfOrigin', label: 'Country of Origin' },
-  { key: 'customerPo', label: 'Customer PO #' },
   { key: 'notes', label: 'Notes' },
   { key: 'weeklyVerification', label: 'Weekly Verification' },
   { key: 'status', label: 'Status / Cancellation' },
