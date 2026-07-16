@@ -59,9 +59,35 @@ function drawInfoField(doc: jsPDF, label: string, value: string, x: number, y: n
   doc.rect(x, y - 3.5, width, 12);
 }
 
-function isLiquidSugar(sugarType: string): boolean {
-  const lower = sugarType.toLowerCase();
+/** COA template rule: LIQUID / MOLASSES sugar types use the liquid COA; every
+ *  other type (granulated, icing, brown, yellow, …) uses the granulated COA. */
+export function isLiquidSugar(sugarType: string): boolean {
+  const lower = (sugarType || '').toLowerCase();
   return lower.includes('liquid') || lower.includes('molasses');
+}
+
+/** Resolve the sugar type that drives the COA layout/template for a shipment:
+ *  the first assigned lot code's sugar type, else the matching QA product's.
+ *  Mirrors the resolution inside renderCoaInto so the linked template matches
+ *  the generated COA. */
+export function resolveCoaSugarType(params: {
+  shipment: Shipment;
+  order?: Order;
+  lotCodes: LotCode[];
+  qaProducts: QAProduct[];
+}): string {
+  const { shipment, order, lotCodes, qaProducts } = params;
+  const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
+  const shipmentLotCodes = assignedLotNums
+    .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
+    .filter((lc): lc is LotCode => !!lc);
+  if (shipmentLotCodes.length > 0 && shipmentLotCodes[0].sugarType) return shipmentLotCodes[0].sugarType;
+  const displayProductName = order?.product || shipment.product || '';
+  const lookupProductName = order?.lineItems?.[0]?.productName || shipment.product || displayProductName;
+  const qaProduct =
+    qaProducts.find(p => p.skuName === lookupProductName) ||
+    qaProducts.find(p => p.skuName === displayProductName);
+  return qaProduct?.sugarType || '';
 }
 
 // ============================================================

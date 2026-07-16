@@ -67,7 +67,7 @@ import { resolveProductName as resolveProductNameRule, resolveShortForm as resol
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
 import { generateBolPdf } from './bolPdf';
-import { generateCoaPdf } from './coaPdf';
+import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
 import { generateDocumentPackagePdf } from './documentPackagePdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
@@ -428,7 +428,7 @@ export default function App() {
     } catch { /* cache best-effort */ }
   };
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string; title?: string } | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string; title?: string; templateId?: string } | null>(null);
 
   // Modal window states (minimize/maximize)
   const [modalStates, setModalStates] = useState<Record<string, { minimized: boolean; maximized: boolean }>>({});
@@ -4042,6 +4042,18 @@ export default function App() {
     } as Shipment);
   };
 
+  /** Pick the correct COA template when the QA Templates table holds more than one
+   *  Certificate-of-Analysis entry (a liquid one and a granulated one). Liquid /
+   *  molasses sugar types map to the liquid COA; granulated, icing, brown, yellow
+   *  (and anything else) map to the granulated COA. Matched by template name. */
+  const resolveCoaTemplate = (sugarType: string): QATemplate | undefined => {
+    const coas = qaTemplates.filter(t => (t.type || '') === 'Certificate of Analysis');
+    if (coas.length <= 1) return coas[0];
+    const liquidCoa = coas.find(t => /liquid|molasses/i.test(t.name));
+    const granCoa = coas.find(t => /granulat|crystal|solid|dry/i.test(t.name)) || coas.find(t => t !== liquidCoa);
+    return (isLiquidSugar(sugarType) ? liquidCoa : granCoa) || coas[0];
+  };
+
   const handleGenerateCoa = (shipment: Shipment) => {
     try {
       const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
@@ -4055,8 +4067,12 @@ export default function App() {
         lotCodes,
         qaProducts,
       });
+      // Link the COA template that matches this shipment's sugar type (liquid vs
+      // granulated) so the preview's Template button opens the right sheet.
+      const sugarType = resolveCoaSugarType({ shipment, order: linkedOrder, lotCodes, qaProducts });
+      const coaTemplate = resolveCoaTemplate(sugarType);
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis' });
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis', templateId: coaTemplate?.id });
     } catch (e: any) {
       console.error('Generate COA failed:', e);
       setErrorBox('Failed to generate Certificate of Analysis: ' + (e.message || 'Unknown error'));
@@ -13888,7 +13904,9 @@ export default function App() {
               onClick={(e) => e.stopPropagation()}
             >
               {(() => {
-                const linkedTemplate = pdfPreview.templateType ? qaTemplates.find(t => t.type === pdfPreview.templateType) : null;
+                const linkedTemplate = pdfPreview.templateId
+                  ? qaTemplates.find(t => t.id === pdfPreview.templateId)
+                  : (pdfPreview.templateType ? qaTemplates.find(t => t.type === pdfPreview.templateType) : null);
                 const previewTitle = pdfPreview.title || (pdfPreview.templateType === 'Bill of Lading' ? 'Bill of Lading Preview' : pdfPreview.templateType === 'Certificate of Analysis' ? 'Certificate of Analysis Preview' : pdfPreview.templateType === 'Order Confirmation' ? 'Order Confirmation Preview' : 'Document Preview');
                 return (
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
