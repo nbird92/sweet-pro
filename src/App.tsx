@@ -3117,6 +3117,40 @@ export default function App() {
     if (changed) setInvoices(next);
   }, [invoices, lotCodes]);
 
+  // Backfill Lot Code BOL numbers from the Invoices table (the reverse direction). A
+  // lot code with a blank BOL gets its BOL from an invoice that matches it EITHER by
+  // lot code (the invoice's lotCode contains this lot number) OR by PO number
+  // (invoice.po === the lot's Customer PO). Only invoices that HAVE a BOL are sources.
+  // Non-destructive (fills only a blank BOL) and self-converging (a filled lot is
+  // skipped next pass), and it can't loop with the invoice-side backfill above since
+  // each only fills blanks from a counterpart that already has a BOL.
+  useEffect(() => {
+    if (!lotCodes.length || !invoices.length) return;
+    const bolByLot = new Map<string, string>();
+    const bolByPo = new Map<string, string>();
+    for (const inv of invoices) {
+      const bol = (inv.bolNumber || '').trim();
+      if (!bol) continue;
+      for (const l of (inv.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean)) {
+        const k = l.toUpperCase();
+        if (!bolByLot.has(k)) bolByLot.set(k, bol);
+      }
+      const po = (inv.po || '').trim().toUpperCase();
+      if (po && !bolByPo.has(po)) bolByPo.set(po, bol);
+    }
+    if (!bolByLot.size && !bolByPo.size) return;
+    let changed = false;
+    const next = lotCodes.map(lc => {
+      if ((lc.bolNumber || '').trim()) return lc; // already has a BOL
+      const lot = (lc.lotNumber || '').trim().toUpperCase();
+      const po = (lc.customerPo || '').trim().toUpperCase();
+      const bol = (lot && bolByLot.get(lot)) || (po && bolByPo.get(po));
+      if (bol) { changed = true; return { ...lc, bolNumber: bol }; }
+      return lc;
+    });
+    if (changed) setLotCodes(next);
+  }, [lotCodes, invoices]);
+
   const handleGoogleSignIn = async () => {
     try {
       setSyncError(null);
