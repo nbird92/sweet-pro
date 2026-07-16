@@ -901,6 +901,10 @@ export interface SugarType {
   id: string;
   name: string;
   abbreviation: string;
+  /** QATemplate.id of the Certificate-of-Analysis template to use for this sugar
+   *  type (e.g. a liquid COA vs a granulated COA). Empty = fall back to the
+   *  liquid/granulated name heuristic. */
+  coaTemplateId?: string;
 }
 
 export const INITIAL_SUGAR_TYPES: SugarType[] = [

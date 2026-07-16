@@ -4042,13 +4042,21 @@ export default function App() {
     } as Shipment);
   };
 
-  /** Pick the correct COA template when the QA Templates table holds more than one
-   *  Certificate-of-Analysis entry (a liquid one and a granulated one). Liquid /
-   *  molasses sugar types map to the liquid COA; granulated, icing, brown, yellow
-   *  (and anything else) map to the granulated COA. Matched by template name. */
+  /** Pick the COA template for a sugar type. The Sugar Type record's "COA Type"
+   *  link (coaTemplateId) wins when set. Otherwise, when the table holds more than
+   *  one Certificate-of-Analysis template, fall back to the liquid/granulated name
+   *  heuristic (liquid/molasses → liquid COA; everything else → granulated COA). */
   const resolveCoaTemplate = (sugarType: string): QATemplate | undefined => {
     const coas = qaTemplates.filter(t => (t.type || '') === 'Certificate of Analysis');
-    if (coas.length <= 1) return coas[0];
+    if (coas.length === 0) return undefined;
+    // 1) Explicit COA Type linked on the Sugar Type record.
+    const st = sugarTypes.find(s => (s.name || '').toLowerCase() === (sugarType || '').toLowerCase());
+    if (st?.coaTemplateId) {
+      const linked = coas.find(t => t.id === st.coaTemplateId);
+      if (linked) return linked;
+    }
+    // 2) Fallback: single COA, else match by liquid/granulated template name.
+    if (coas.length === 1) return coas[0];
     const liquidCoa = coas.find(t => /liquid|molasses/i.test(t.name));
     const granCoa = coas.find(t => /granulat|crystal|solid|dry/i.test(t.name)) || coas.find(t => t !== liquidCoa);
     return (isLiquidSugar(sugarType) ? liquidCoa : granCoa) || coas[0];

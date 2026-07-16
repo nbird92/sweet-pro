@@ -1658,6 +1658,12 @@ export default function QualityAssurancePage({
           { key: 'name', label: 'Sugar Type', bold: true },
           { key: 'abbreviation', label: 'Abbreviation', mono: true, bold: true },
           {
+            key: 'coaTemplate',
+            label: 'COA Type',
+            render: (st) => qaTemplates.find(t => t.id === st.coaTemplateId)?.name || '—',
+            sortValue: (st) => qaTemplates.find(t => t.id === st.coaTemplateId)?.name || '',
+          },
+          {
             key: 'productCount',
             label: 'Products',
             align: 'right',
@@ -1705,6 +1711,10 @@ export default function QualityAssurancePage({
               <DetailRow label="Sugar Type" value={sugarTypeDraft.name} bold />
               <DetailRow label="Abbreviation" value={sugarTypeDraft.abbreviation} mono bold />
               <DetailRow
+                label="COA Type"
+                value={qaTemplates.find(t => t.id === sugarTypeDraft.coaTemplateId)?.name || '—'}
+              />
+              <DetailRow
                 label="Products"
                 value={qaProducts.filter(q => q.sugarType === sugarTypeDraft.name).length}
                 mono
@@ -1728,6 +1738,18 @@ export default function QualityAssurancePage({
                   placeholder="e.g. GC, LC, BR"
                   maxLength={4}
                 />
+              </DetailField>
+              <DetailField label="COA Type" hint="The Certificate-of-Analysis template used for this sugar type (e.g. liquid vs granulated COA).">
+                <select
+                  value={sugarTypeDraft.coaTemplateId || ''}
+                  onChange={(e) => setSugarTypeDraft(d => d ? { ...d, coaTemplateId: e.target.value } : d)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                >
+                  <option value="">— None (auto by sugar type) —</option>
+                  {qaTemplates.filter(t => t.type === 'Certificate of Analysis').map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
               </DetailField>
             </div>
           )
