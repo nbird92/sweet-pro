@@ -3234,6 +3234,37 @@ export default function App() {
     if (changed) setLotCodes(next);
   }, [lotCodes, invoices, orders]);
 
+  // Backfill invoice Lot Codes from the Lot Code Testing Log. An invoice with a
+  // blank Lot Code gets it from the lot codes that match its BOL number OR its PO
+  // number — the reverse of the invoice→lot BOL fill above. This is what makes the
+  // invoice table's Lot Code column populate for synced invoices (whose sheet has
+  // no lot column), and in turn lets those lot codes pick up the invoice's BOL by
+  // lot number. Non-destructive (fills only a blank lot code) and self-converging.
+  useEffect(() => {
+    if (!invoices.length || !lotCodes.length) return;
+    const lotsByBol = new Map<string, string[]>();
+    const lotsByPo = new Map<string, string[]>();
+    for (const lc of lotCodes) {
+      const lot = (lc.lotNumber || '').trim();
+      if (!lot || lot === '-') continue;
+      const bol = (lc.bolNumber || '').trim().toUpperCase();
+      if (bol) { const a = lotsByBol.get(bol); if (a) a.push(lot); else lotsByBol.set(bol, [lot]); }
+      const po = (lc.customerPo || '').trim().toUpperCase();
+      if (po) { const a = lotsByPo.get(po); if (a) a.push(lot); else lotsByPo.set(po, [lot]); }
+    }
+    if (!lotsByBol.size && !lotsByPo.size) return;
+    let changed = false;
+    const next = invoices.map(inv => {
+      if ((inv.lotCode || '').trim()) return inv; // already has a lot code
+      const bol = (inv.bolNumber || '').trim().toUpperCase();
+      const po = (inv.po || '').trim().toUpperCase();
+      const lots = (bol && lotsByBol.get(bol)) || (po && lotsByPo.get(po));
+      if (lots && lots.length) { changed = true; return { ...inv, lotCode: [...new Set(lots)].join(', ') }; }
+      return inv;
+    });
+    if (changed) setInvoices(next);
+  }, [invoices, lotCodes]);
+
   const handleGoogleSignIn = async () => {
     try {
       setSyncError(null);
