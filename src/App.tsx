@@ -5291,6 +5291,29 @@ export default function App() {
     return 1 + Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
   };
 
+  /**
+   * TOLLING-FEE week numbering — SUNDAY → SATURDAY weeks (deliberately NOT ISO).
+   * Week 1 is the Sun–Sat week containing January 1, so 2026 Week 28 runs
+   * Sun Jul 5 → Sat Jul 11. Weeks are numbered within the DATE'S OWN year, so a
+   * late-December invoice stays in that year (annual tolling totals stay clean)
+   * instead of rolling into the next year's week 1.
+   *
+   * Used ONLY by the Tolling Fees summary. Every other week label in the app
+   * (shipment schedule, dashboard, etc.) keeps ISO weeks via getWeekNumber.
+   */
+  const getTollingWeek = (date: Date): { week: number; year: number; start: Date; end: Date } => {
+    const y = date.getFullYear();
+    // Sunday that starts this date's week (getDay(): Sun=0 … Sat=6).
+    const start = new Date(y, date.getMonth(), date.getDate() - date.getDay());
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    // Week 1 starts on the Sunday on/before Jan 1 of the date's own year.
+    const jan1 = new Date(y, 0, 1);
+    const firstWeekStart = new Date(y, 0, 1 - jan1.getDay());
+    // Math.round absorbs the ±1h drift a DST change introduces across the span.
+    const week = Math.round((start.getTime() - firstWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+    return { week, year: y, start, end };
+  };
+
   const toLocalDateString = (date: Date) => {
     const year = date.getFullYear();
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -10436,8 +10459,13 @@ export default function App() {
             const m = d.getMonth();
             return { key: `${y}-M${String(m).padStart(2, '0')}`, label: d.toLocaleString(undefined, { month: 'short', year: 'numeric' }), sortKey: `${y}-${String(m).padStart(2, '0')}` };
           }
-          const wk = getWeekNumber(d.toISOString().split('T')[0]);
-          return { key: `${y}-W${String(wk).padStart(2, '0')}`, label: `Week ${wk}, ${y}`, sortKey: `${y}-${String(wk).padStart(2, '0')}` };
+          // Tolling weeks run SUNDAY → SATURDAY (see getTollingWeek), NOT ISO —
+          // e.g. 2026 Week 28 = Sun Jul 5 → Sat Jul 11. The label carries the
+          // date range so each bucket's boundaries are verifiable at a glance.
+          const { week: wk, year: wy, start, end } = getTollingWeek(d);
+          const md = (dt: Date) => dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          const pad = String(wk).padStart(2, '0');
+          return { key: `${wy}-W${pad}`, label: `Week ${wk}, ${wy} (${md(start)} – ${md(end)})`, sortKey: `${wy}-${pad}` };
         };
         const currentKey = periodOf(now).key;
         const norm = (s?: string) => (s || '').trim().toLowerCase();
