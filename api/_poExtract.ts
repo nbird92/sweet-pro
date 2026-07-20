@@ -39,6 +39,65 @@ async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Pro
  *  (`{ "documents": [ {…}, {…}, {…incomplete }`). Scans the array for balanced
  *  top-level `{…}` objects (string-aware) and parses each — so a partial batch
  *  still yields every fully-formed PO instead of throwing the whole run away. */
+/** Closing brackets needed to balance an (assumed valid-so-far) JSON fragment,
+ *  or null if the nesting is malformed or the fragment ends inside a string.
+ *  String contents are skipped. */
+function bracketClosers(s: string): string | null {
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') stack.push(c);
+    else if (c === '}') { if (stack.pop() !== '{') return null; }
+    else if (c === ']') { if (stack.pop() !== '[') return null; }
+  }
+  if (inStr) return null;
+  return stack.reverse().map(b => (b === '{' ? '}' : ']')).join('');
+}
+
+/** Best-effort recovery of ONE object from a JSON fragment that begins with '{'
+ *  but was truncated (the model hit the token limit mid-document). Closes a
+ *  dangling string value, drops an incomplete trailing key/comma, balances the
+ *  open brackets, and parses — retrying at earlier property boundaries until one
+ *  parses. Lets a cut-off PO still yield the fields the model finished. */
+function repairTruncatedObject(fragment: string): any | null {
+  // If the cut landed inside a string value, close that string first.
+  let inStr = false, esc = false;
+  for (let i = 0; i < fragment.length; i++) {
+    const c = fragment[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; }
+    else if (c === '"') inStr = true;
+  }
+  const base = inStr ? fragment + '"' : fragment;
+
+  const attempt = (s: string): any | null => {
+    let t = s.replace(/[\s,]+$/, '');            // trailing whitespace / commas
+    t = t.replace(/"[^"\\]*"\s*:\s*$/, '');       // dangling  "key":  with no value
+    t = t.replace(/[\s,]+$/, '');
+    const closers = bracketClosers(t);
+    if (closers === null) return null;
+    try {
+      const o = JSON.parse(t + closers);
+      return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
+    } catch { return null; }
+  };
+
+  const first = attempt(base);
+  if (first) return first;
+  // Retry at successively earlier property boundaries (bounded).
+  let s = base;
+  for (let n = 0; n < 500; n++) {
+    const comma = s.lastIndexOf(',');
+    if (comma <= 0) break;
+    s = s.slice(0, comma);
+    const r = attempt(s);
+    if (r) return r;
+  }
+  return null;
+}
+
 function salvageDocuments(text: string): any[] {
   const arrStart = text.indexOf('[');
   if (arrStart < 0) return [];
@@ -61,6 +120,13 @@ function salvageDocuments(text: string): any[] {
         objStart = -1;
       }
     }
+  }
+  // The response was cut off mid-document (depth never returned to 0 for the last
+  // object): recover whatever fields it did finish so a truncated batch still
+  // yields its earlier complete docs PLUS a partial final one, instead of failing.
+  if (depth > 0 && objStart >= 0) {
+    const repaired = repairTruncatedObject(text.slice(objStart));
+    if (repaired) out.push(repaired);
   }
   return out;
 }
@@ -515,7 +581,7 @@ export async function extractPO(
     // Give structured output enough room. Without an explicit cap the response can
     // be truncated mid-object, producing invalid JSON ("Gemini did not return valid
     // JSON"). Configurable for unusually large multi-PO emails.
-    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 16384),
+    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 32768),
     // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
     // block of reasoning tokens on every call. Structured PO extraction against
     // a fixed schema doesn't need it — disable thinking to cut cost sharply.
