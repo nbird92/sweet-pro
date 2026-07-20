@@ -10649,6 +10649,44 @@ export default function App() {
           ...g.rows.map(r => ({ period: g.label, productGroup: r.productGroup, location: r.location, mt: r.mt, netAmount: r.netAmount, tax: r.tax, total: r.totalFees, currency: r.currency })),
           { period: g.label, productGroup: 'TOTAL', location: '', mt: g.mt, netAmount: g.netAmount, tax: g.tax, total: g.totalFees, currency: g.currency },
         ]) as any[],
+      }, {
+        // Second sheet: the drill-down behind every summary row — one row per
+        // contributing invoice, with its own MT / fees. Internal-transfer volume
+        // appears here too (its Product Group is suffixed "(Internal Transfers)"
+        // and the Invoice # column carries the transfer number).
+        sheetName: 'Invoice Detail',
+        title: 'Tolling Fees — Invoice Detail',
+        subtitle: `Generated ${new Date().toLocaleDateString()} | grouped ${tollingTimeframe} | one row per invoice`,
+        columns: [
+          { header: 'Period', key: 'period' },
+          { header: 'Product Group', key: 'productGroup' },
+          { header: 'Location', key: 'location' },
+          { header: 'Invoice #', key: 'invoiceNumber' },
+          { header: 'Customer', key: 'customer' },
+          { header: 'Date', key: 'date' },
+          { header: 'PO', key: 'po' },
+          { header: 'Product', key: 'product' },
+          { header: 'MT', key: 'mt', format: 'number' },
+          { header: 'Net Amount', key: 'netAmount', format: 'currency' },
+          { header: 'Tax', key: 'tax', format: 'currency' },
+          { header: 'Total Tolling Fees', key: 'total', format: 'currency' },
+          { header: 'Currency', key: 'currency' },
+        ],
+        rows: tollingPeriods.flatMap(g => g.rows.flatMap(r => r.invoices.map(iv => ({
+          period: g.label,
+          productGroup: r.productGroup,
+          location: r.location,
+          invoiceNumber: iv.invoiceNumber,
+          customer: iv.customer,
+          date: iv.date,
+          po: iv.po,
+          product: iv.products,
+          mt: iv.mt,
+          netAmount: iv.netAmount,
+          tax: iv.tax,
+          total: iv.fees,
+          currency: r.currency,
+        })))) as any[],
       }];
       return (
         <div>
