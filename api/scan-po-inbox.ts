@@ -62,8 +62,19 @@ function getAdminApp() {
   return getApps().length ? getApps()[0] : initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
 }
 
+let dbInstance: ReturnType<typeof getFirestore> | null = null;
 function getDb() {
-  return getFirestore(getAdminApp(), 'sweetpro');
+  if (!dbInstance) {
+    const db = getFirestore(getAdminApp(), 'sweetpro');
+    // Drop undefined fields instead of rejecting the whole write. Extraction
+    // payloads are built from model output where any optional/numeric field can
+    // legitimately be absent; without this a single undefined fails the entire
+    // document ("Cannot use undefined as a Firestore value"). settings() must run
+    // before the instance is used and only once — hence the memo + guard.
+    try { db.settings({ ignoreUndefinedProperties: true }); } catch { /* already initialized */ }
+    dbInstance = db;
+  }
+  return dbInstance;
 }
 
 /** Best-effort heartbeat: record every run's outcome so the app can show a

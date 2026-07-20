@@ -78,24 +78,31 @@ function toNum(v: any): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** Write the coerced number to obj[key], or REMOVE the key when there is no usable
+ *  value. Assigning `undefined` would CREATE the key with an undefined value, and
+ *  Firestore rejects that ("Cannot use undefined as a Firestore value") when the
+ *  extraction is persisted. Deleting keeps the old Type.NUMBER behaviour, where an
+ *  unfilled numeric field was simply absent from the JSON. */
+function setNum(obj: any, key: string): void {
+  const n = toNum(obj[key]);
+  if (n === undefined) delete obj[key];
+  else obj[key] = n;
+}
+
 /** Convert every string-typed numeric field on a parsed document back to a number
- *  (or undefined), in place. Runs before deriveDocMetrics so the arithmetic there
- *  sees numbers exactly as it did when the schema used Type.NUMBER. */
+ *  (removing the field when empty), in place. Runs before deriveDocMetrics so the
+ *  arithmetic there sees numbers exactly as it did when the schema used Type.NUMBER. */
 function coerceDocNumbers(doc: any): any {
   if (!doc || typeof doc !== 'object') return doc;
-  doc.totalAmount = toNum(doc.totalAmount);
-  doc.confidence = toNum(doc.confidence);
+  setNum(doc, 'totalAmount');
+  setNum(doc, 'confidence');
   if (doc.amendment && typeof doc.amendment === 'object') {
-    doc.amendment.newQuantityMt = toNum(doc.amendment.newQuantityMt);
+    setNum(doc.amendment, 'newQuantityMt');
   }
   if (Array.isArray(doc.lineItems)) {
     for (const li of doc.lineItems) {
       if (!li || typeof li !== 'object') continue;
-      li.quantity = toNum(li.quantity);
-      li.quantityMt = toNum(li.quantityMt);
-      li.unitPrice = toNum(li.unitPrice);
-      li.pricePerMt = toNum(li.pricePerMt);
-      li.amount = toNum(li.amount);
+      for (const k of ['quantity', 'quantityMt', 'unitPrice', 'pricePerMt', 'amount']) setNum(li, k);
     }
   }
   return doc;
@@ -469,16 +476,19 @@ export function expandCallOffDoc(doc: any): any[] {
     const seq = (seqByWeek.get(week) || 0) + 1;
     seqByWeek.set(week, seq);
     const time = timeOf(l).replace(/^(\d{1,2}:\d{2})(:\d{2})?$/, '$1');
-    return {
+    const out: any = {
       ...doc,
       documentType: 'new_order',
       poNumber: `${base}-${week}${seq}`,
       deliveryDate: l.deliveryDate,
       shipmentDate: l.deliveryDate,
-      totalAmount: undefined, // the call-off total is the whole bulk order, not this delivery
       notes: [doc.notes, time ? `Delivery time ${time}` : ''].filter(Boolean).join(' · '),
       lineItems: [l],
     };
+    // The call-off total is the whole bulk order, not this delivery — drop it.
+    // DELETE rather than assigning undefined: Firestore rejects undefined values.
+    delete out.totalAmount;
+    return out;
   });
 }
 
