@@ -15878,6 +15878,20 @@ export default function App() {
                                 <option value={tab.defaultLocation}>{tab.defaultLocation} (inactive)</option>
                               )}
                             </select>
+                            {/* Lot-code sync only: sugar type stamped on rows whose sheet has no
+                                Sugar Type column, so imports show under the Lot Code Testing Log
+                                filter. Blank = infer from the tab name (e.g. "Granulated Loads"). */}
+                            {syncMode === 'lotCodes' && (
+                              <select
+                                value={tab.defaultSugarType || ''}
+                                onChange={(e) => updateTab(idx, { defaultSugarType: e.target.value || undefined })}
+                                className="bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
+                                title="Sugar type stamped on lot codes imported from this tab when the sheet has no Sugar Type column. Blank = infer from the tab name."
+                              >
+                                <option value="">— Sugar Type (auto) —</option>
+                                {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
+                              </select>
+                            )}
                             <span className="text-[10px] opacity-60 font-mono whitespace-nowrap">{mappedFields}/{modeFields.length} mapped</span>
                             <button onClick={() => { setOrderSyncEditingTabIdx(isEditing ? null : idx); setOrderSyncTabHeaders(null); setOrderSyncTabSample([]); }} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase bg-white hover:bg-[#E4E3E0]">{isEditing ? 'Done' : 'Map'}</button>
                             <button onClick={() => removeTab(idx)} className="p-1.5 border border-[#141414] hover:bg-red-100 text-red-700" title="Remove tab"><X size={12} /></button>

@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
-import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText } from 'lucide-react';
+import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
-import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
 interface LabPageProps {
@@ -22,7 +21,7 @@ interface LabPageProps {
 const EMPTY_FORM = {
   lotNumber: '', tankNumber: '', date: '', julianDate: '',
   category: '' as 'Conventional' | 'Organic' | '',
-  productGroup: '', silo: '' as 'North' | 'South' | '',
+  productGroup: '', silo: '' as 'East' | 'West' | '', loadNumber: '',
   brix: '', ph: '', color: '', temperature: '',
   invert: '', ash: '', moisture: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
@@ -47,7 +46,7 @@ function getJulianDay(dateStr: string): string {
   return String(day).padStart(3, '0');
 }
 
-// Generate lot code: HS-[sugarType][productGroup][orgConv][YY][JJJ][silo]
+// Generate lot code: HS-[Type][Group][Conv/Org][YY][JJJ]-[Silo][loadNumber]
 function generateLotCode(form: typeof EMPTY_FORM): string {
   const plant = 'HS';
   const sugarTypeMap: Record<string, string> = {
@@ -66,8 +65,75 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   let yy = '??';
   if (form.date) { yy = form.date.slice(2, 4); }
   const jjj = form.julianDate || '???';
-  const siloCode = form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
-  return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}${siloCode}`;
+  const siloCode = form.silo === 'East' ? 'E' : form.silo === 'West' ? 'W' : '';
+  const load = (form.loadNumber || '').trim();
+  return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}-${siloCode}${load}`;
+}
+
+// ISO-8601 week number (Monday-based) from a YYYY-MM-DD date — mirrors the
+// Shipment Schedule so lot codes group into the same week buckets.
+function getWeekNumber(dateStr: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const target = new Date(date.valueOf());
+  const dayNum = (date.getDay() + 6) % 7;
+  target.setDate(target.getDate() - dayNum + 3);
+  const jan4 = new Date(target.getFullYear(), 0, 4);
+  const jan4DayNum = (jan4.getDay() + 6) % 7;
+  const week1Monday = new Date(jan4.valueOf());
+  week1Monday.setDate(jan4.getDate() - jan4DayNum);
+  const diffMs = target.getTime() - week1Monday.getTime();
+  return 1 + Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
+}
+
+const MONTH_IDX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+// Normalize any date shape the lot-code data carries (ISO "2026-01-27", day-first
+// "29 Jan 2026", month-first "Jan 29, 2026", numeric M/D/Y) to ISO YYYY-MM-DD.
+// Returns '' when unparseable.
+function toIsoDate(raw?: string): string {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  const build = (y: number, mo1: number, d: number): string => {
+    if (!Number.isFinite(y) || !Number.isFinite(mo1) || !Number.isFinite(d)) return '';
+    if (y < 1900 || mo1 < 1 || mo1 > 12 || d < 1 || d > 31) return '';
+    return `${y}-${String(mo1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  };
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T].*)?$/);
+  if (m) return build(+m[1], +m[2], +m[3]);
+  m = s.match(/^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (m) { const mo = MONTH_IDX[m[1].slice(0, 3).toLowerCase()]; if (mo !== undefined) return build(+m[3], mo + 1, +m[2]); }
+  m = s.match(/^(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})$/);
+  if (m) { const mo = MONTH_IDX[m[2].slice(0, 3).toLowerCase()]; if (mo !== undefined) return build(+m[3], mo + 1, +m[1]); }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) { const a = +m[1], b = +m[2]; let y = +m[3]; if (y < 100) y += 2000; const swap = a > 12 && b <= 12; return build(y, swap ? b : a, swap ? a : b); }
+  return '';
+}
+
+// Uniform display date — ISO when parseable, else the raw value unchanged.
+function formatDisplayDate(raw?: string): string {
+  return toIsoDate(raw) || (raw || '');
+}
+
+// ISO week-YEAR of a YYYY-MM-DD date — the year of that ISO week's Thursday, which
+// diverges from the calendar year across the Dec/Jan boundary. Keying weeks off
+// THIS (not the calendar year) keeps every date in an ISO week under one bucket.
+function isoWeekYear(dateStr: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const target = new Date(date.valueOf());
+  target.setDate(target.getDate() - ((date.getDay() + 6) % 7) + 3); // move to this week's Thursday
+  return target.getFullYear();
+}
+
+// Week bucket key for a date, e.g. "2026-W28"; '' when unparseable. Uses the ISO
+// week-year so a week spanning New Year isn't split into two buckets.
+function weekKeyOf(raw?: string): string {
+  const iso = toIsoDate(raw);
+  if (!iso) return '';
+  return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
 export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes }: LabPageProps) {
@@ -79,6 +145,9 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const [showShipmentPicker, setShowShipmentPicker] = useState(false);
   const [shipmentSearch, setShipmentSearch] = useState('');
   const [pickerTab, setPickerTab] = useState<'shipments' | 'transfers'>('shipments');
+  // Which week sections are open. Current week is open by default (a `collapse-<key>`
+  // entry marks it as user-collapsed); other weeks open only when their key is present.
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   const qaPeople = people.filter(p => p.department === 'QA');
@@ -226,7 +295,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           julianDate:         row['juliandate'] || (date ? getJulianDay(date) : ''),
           category:           (row['category'] === 'Organic' ? 'Organic' : row['category'] === 'Conventional' ? 'Conventional' : '') as LotCode['category'],
           productGroup:       row['productgroup'] || '',
-          silo:               (row['silo'] === 'North' ? 'North' : row['silo'] === 'South' ? 'South' : '') as LotCode['silo'],
+          silo:               (/^[en]/i.test(row['silo'] || '') ? 'East' : /^[ws]/i.test(row['silo'] || '') ? 'West' : '') as LotCode['silo'],
           brix:               row['brix'] || '',
           ph:                 row['ph'] || '',
           color:              row['color'] || row['colour'] || '',
@@ -307,7 +376,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       lotNumber: lc.lotNumber, tankNumber: lc.tankNumber,
       date: lc.date || '', julianDate: lc.julianDate || '',
       category: lc.category || '', productGroup: lc.productGroup || '',
-      silo: lc.silo || '',
+      silo: lc.silo || '', loadNumber: lc.loadNumber || '',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
@@ -410,6 +479,93 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   // a truncated note with a hover title.
   const dash = (v?: string) => v || '—';
   const noteCell = (v?: string) => <span title={v} className="block max-w-[150px] truncate">{v || '—'}</span>;
+
+  // The rendered column set for the selected sugar type. The Date column shows a
+  // NORMALIZED date (toIsoDate) so every row reads the same format regardless of
+  // how it was entered/imported. BOL # is added (not on the sheets) for linking.
+  type LotCol = { key: string; label: string; render?: (lc: LotCode) => React.ReactNode; mono?: boolean; bold?: boolean; widthClass?: string };
+  const columns: LotCol[] = filterSugarType === 'Granulated' ? [
+    { key: 'date', label: 'Date', render: (lc) => dash(formatDisplayDate(lc.date)) },
+    { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
+    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
+    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+    { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
+    { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
+    { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+    { key: 'loadedFrom', label: 'Loaded From', render: (lc) => dash(lc.loadedFrom) },
+    { key: 'sugarUsed', label: 'Sugar Used', render: (lc) => dash(lc.sugarUsed) },
+    { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
+    { key: 'tempLoadingBay', label: 'Temperature at Loading Bay °C', render: (lc) => dash(lc.tempLoadingBay) },
+    { key: 'atmosphericTemp', label: 'Atmospheric Temperature °C', render: (lc) => dash(lc.atmosphericTemp) },
+    { key: 'moisture', label: 'Moisture %', render: (lc) => dash(lc.moisture) },
+    { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
+    { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
+    { key: 'invert', label: 'Invert %', render: (lc) => dash(lc.invert) },
+    { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %', render: (lc) => dash(lc.moistureConfirmedCoa) },
+    { key: 'ash', label: 'Ash %', render: (lc) => dash(lc.ash) },
+    { key: 'sucrose', label: 'Sucrose %', render: (lc) => dash(lc.sucrose) },
+    { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N', render: (lc) => dash(lc.foreignMaterial) },
+    { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
+    { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
+    { key: 'sievingResults', label: 'Sieving Results', render: (lc) => dash(lc.sievingResults) },
+    { key: 'sugarLumpsGrams', label: 'Sugar Lumps (grams)', render: (lc) => dash(lc.sugarLumpsGrams) },
+    { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
+  ] : [
+    { key: 'date', label: 'Date', render: (lc) => dash(formatDisplayDate(lc.date)) },
+    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+    { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
+    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
+    { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
+    { key: 'arrivalTime', label: 'Arrival Time', render: (lc) => dash(lc.arrivalTime) },
+    { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
+    { key: 'carrierName', label: 'Carrier Name', render: (lc) => dash(lc.carrierName) },
+    { key: 'trailerNumber', label: 'Trailer #', render: (lc) => dash(lc.trailerNumber) },
+    { key: 'loaderName', label: 'Loader Name', render: (lc) => dash(lc.loaderName) },
+    { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
+    { key: 'tankNumber', label: 'Tank #', render: (lc) => dash(lc.tankNumber) },
+    { key: 'brix', label: 'Brix', render: (lc) => dash(lc.brix) },
+    { key: 'ph', label: 'PH', render: (lc) => dash(lc.ph) },
+    { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
+    { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
+    { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
+    { key: 'invert', label: 'Invert', render: (lc) => dash(lc.invert) },
+    { key: 'flavourOdourOk', label: 'Flavour/Odour OK', render: (lc) => dash(lc.flavourOdourOk) },
+    { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
+    { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
+    { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
+  ];
+
+  // Group the filtered lot codes into ISO weeks (newest first), like the Shipment
+  // Schedule. Unparseable-date rows fall into an "undated" bucket at the bottom.
+  const now = new Date();
+  const currentIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const currentWeekKey = `${isoWeekYear(currentIso)}-W${String(getWeekNumber(currentIso)).padStart(2, '0')}`;
+  const byWeek = new Map<string, LotCode[]>();
+  for (const lc of filtered) {
+    const wk = weekKeyOf(lc.date) || 'undated';
+    (byWeek.get(wk) || byWeek.set(wk, []).get(wk)!).push(lc);
+  }
+  if (!byWeek.has(currentWeekKey)) byWeek.set(currentWeekKey, []); // always show the current week
+  const weekKeys = Array.from(byWeek.keys()).sort((a, b) => {
+    if (a === 'undated') return 1;
+    if (b === 'undated') return -1;
+    return b.localeCompare(a); // newest week first
+  });
+  const isWeekExpanded = (key: string) => key === currentWeekKey ? !expandedWeeks.has(`collapse-${key}`) : expandedWeeks.has(key);
+  const toggleWeek = (key: string) => {
+    setExpandedWeeks(prev => {
+      const next = new Set(prev);
+      const k = key === currentWeekKey ? `collapse-${key}` : key;
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  };
+  const weekLabel = (key: string) => {
+    if (key === 'undated') return 'Undated';
+    const [y, w] = key.split('-W');
+    return `Week ${parseInt(w, 10)} · ${y}`;
+  };
+
   return (
     <div>
       <PageBanner
@@ -465,74 +621,64 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
       </PageBanner>
     <div className="p-6 space-y-4">
 
-      {/* Lot Code Testing Log — standardized DataTable. The Add button stays
-          in the PageBanner (alongside Template / Import / Clear All) so the
-          DataTable header has no onAdd. Row click opens the existing edit
-          modal; Delete now lives in the modal footer instead of inline rows. */}
-      <DataTable<LotCode>
-        title="Lot Code Testing Log"
-        storageKey={filterSugarType === 'Granulated' ? 'Lot Code Testing Log (Granulated)' : 'Lot Code Testing Log'}
-        columns={filterSugarType === 'Granulated' ? [
-          // Granulated loading-log column set — mirrors the "Granulated Loads" sheet's
-          // columns, in order. BOL # is added (not on the sheet) for lot↔invoice linking.
-          { key: 'date', label: 'Date' },
-          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
-          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
-          { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
-          { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
-          { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
-          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
-          { key: 'loadedFrom', label: 'Loaded From', render: (lc) => dash(lc.loadedFrom) },
-          { key: 'sugarUsed', label: 'Sugar Used', render: (lc) => dash(lc.sugarUsed) },
-          { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
-          { key: 'tempLoadingBay', label: 'Temperature at Loading Bay °C', render: (lc) => dash(lc.tempLoadingBay) },
-          { key: 'atmosphericTemp', label: 'Atmospheric Temperature °C', render: (lc) => dash(lc.atmosphericTemp) },
-          { key: 'moisture', label: 'Moisture %', render: (lc) => dash(lc.moisture) },
-          { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
-          { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
-          { key: 'invert', label: 'Invert %', render: (lc) => dash(lc.invert) },
-          { key: 'moistureConfirmedCoa', label: 'Moisture Confirmed on COA %', render: (lc) => dash(lc.moistureConfirmedCoa) },
-          { key: 'ash', label: 'Ash %', render: (lc) => dash(lc.ash) },
-          { key: 'sucrose', label: 'Sucrose %', render: (lc) => dash(lc.sucrose) },
-          { key: 'foreignMaterial', label: 'Foreign Material Identified Y/N', render: (lc) => dash(lc.foreignMaterial) },
-          { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
-          { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
-          { key: 'sievingResults', label: 'Sieving Results', render: (lc) => dash(lc.sievingResults) },
-          { key: 'sugarLumpsGrams', label: 'Sugar Lumps (grams)', render: (lc) => dash(lc.sugarLumpsGrams) },
-          { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
-        ] : [
-          // Liquid loading-log column set — mirrors the "Liquid Loads" sheet's columns,
-          // in order. BOL # is added (not on the sheet) for lot↔invoice linking.
-          { key: 'date', label: 'Date' },
-          { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
-          { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
-          { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
-          { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
-          { key: 'arrivalTime', label: 'Arrival Time', render: (lc) => dash(lc.arrivalTime) },
-          { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
-          { key: 'carrierName', label: 'Carrier Name', render: (lc) => dash(lc.carrierName) },
-          { key: 'trailerNumber', label: 'Trailer #', render: (lc) => dash(lc.trailerNumber) },
-          { key: 'loaderName', label: 'Loader Name', render: (lc) => dash(lc.loaderName) },
-          { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
-          { key: 'tankNumber', label: 'Tank #', render: (lc) => dash(lc.tankNumber) },
-          { key: 'brix', label: 'Brix', render: (lc) => dash(lc.brix) },
-          { key: 'ph', label: 'PH', render: (lc) => dash(lc.ph) },
-          { key: 'colorConfirmedCoa', label: 'Color Confirmed on COA %', render: (lc) => dash(lc.colorConfirmedCoa) },
-          { key: 'color', label: 'Color ICUMSA', render: (lc) => dash(lc.color) },
-          { key: 'temperature', label: 'Temperature °C', render: (lc) => dash(lc.temperature) },
-          { key: 'invert', label: 'Invert', render: (lc) => dash(lc.invert) },
-          { key: 'flavourOdourOk', label: 'Flavour/Odour OK', render: (lc) => dash(lc.flavourOdourOk) },
-          { key: 'initials', label: 'Initials', render: (lc) => dash(lc.initials) },
-          { key: 'notes', label: 'Note', render: (lc) => noteCell(lc.notes) },
-          { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
-        ]}
-        rows={filtered}
-        getRowKey={(lc) => lc.id}
-        onRowClick={(lc) => openEdit(lc)}
-        emptyMessage="No lot codes recorded yet."
-        defaultSortKey="date"
-        defaultSortDir="desc"
-      />
+      {/* Lot Code Testing Log — grouped into ISO weeks (newest first) with
+          expandable sections, mirroring the Shipment Schedule. The current week is
+          green and expanded by default. Row click opens the edit modal. */}
+      <div className="space-y-2">
+        {weekKeys.map((key) => {
+          const rows = (byWeek.get(key) || []).slice().sort((a, b) =>
+            (toIsoDate(b.date) || '').localeCompare(toIsoDate(a.date) || '') ||
+            (a.lotNumber || '').localeCompare(b.lotNumber || ''));
+          const isCurrent = key === currentWeekKey;
+          const expanded = isWeekExpanded(key);
+          return (
+            <div key={key} className={`bg-white border-2 overflow-hidden ${isCurrent ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
+              <button
+                onClick={() => toggleWeek(key)}
+                className={`w-full px-3 py-2 flex justify-between items-center transition-all ${isCurrent ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-[#141414] text-[#E4E3E0] hover:bg-opacity-90'}`}
+              >
+                <span className="text-[10px] font-bold uppercase tracking-widest">
+                  {weekLabel(key)}{isCurrent ? ' (Current Week)' : ''}
+                  <span className="opacity-60 font-mono normal-case ml-2">· {rows.length}</span>
+                </span>
+                {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              <AnimatePresence initial={false}>
+                {expanded && (
+                  <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                            {columns.map((c) => (
+                              <th key={c.key} className={`p-3 border-r border-[#141414]/10 ${c.widthClass || ''}`}>{c.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#141414]/10">
+                          {rows.length === 0 ? (
+                            <tr>
+                              <td colSpan={columns.length} className="p-6 text-center text-xs opacity-50 italic">No lot codes this week.</td>
+                            </tr>
+                          ) : rows.map((lc) => (
+                            <tr key={lc.id} onClick={() => openEdit(lc)} className="hover:bg-[#F9F9F9] transition-colors cursor-pointer">
+                              {columns.map((c) => (
+                                <td key={c.key} className={`p-3 text-xs border-r border-[#141414]/10 ${c.mono ? 'font-mono' : ''} ${c.bold ? 'font-bold' : ''}`}>
+                                  {c.render ? c.render(lc) : ((lc as any)[c.key] ?? '—')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
 
       {/* Add / Edit Lot Code Modal */}
       <AnimatePresence>
@@ -555,7 +701,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Generated Lot Code</div>
                     <div className="text-sm font-mono font-bold">{formData.lotNumber || '—'}</div>
                   </div>
-                  <div className="text-[9px] opacity-40 text-right">HS-[Type][Group][Conv/Org][YY][JJJ][Silo]</div>
+                  <div className="text-[9px] opacity-40 text-right">HS-[Type][Group][Conv/Org][YY][JJJ]-[Silo][Load#]</div>
                 </div>
 
                 {/* BOL Number & Customer PO with Search button */}
@@ -664,13 +810,20 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     <tr className="border-b border-[#141414]/10">
                       <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Silo</td>
                       <td className="p-1.5 border-r border-[#141414]/10">
-                        <select value={formData.silo} onChange={(e) => updateForm({ silo: e.target.value as 'North' | 'South' | '' })}
+                        <select value={formData.silo} onChange={(e) => updateForm({ silo: e.target.value as 'East' | 'West' | '' })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
                           <option value="">— Select —</option>
-                          <option value="North">North</option>
-                          <option value="South">South</option>
+                          <option value="East">East</option>
+                          <option value="West">West</option>
                         </select>
                       </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Load #</td>
+                      <td className="p-1.5">
+                        <input type="text" value={formData.loadNumber} onChange={(e) => updateForm({ loadNumber: e.target.value })}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. 1" />
+                      </td>
+                    </tr>
+                    <tr className="border-b border-[#141414]/10">
                       <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Country of Origin</td>
                       <td className="p-1.5">
                         <input type="text" value={formData.countryOfOrigin} onChange={(e) => updateForm({ countryOfOrigin: e.target.value })}

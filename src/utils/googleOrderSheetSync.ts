@@ -1053,6 +1053,10 @@ export interface ConfiguredTab {
    * carries the destination customer site.
    */
   defaultLocation?: string;
+  /** Sugar type stamped on imported LOT CODES whose sheet has no Sugar Type
+   *  column (e.g. a "Granulated Loads" tab). Falls back to inferring from the tab
+   *  name. Lets synced lot codes appear under the Lot Code Testing Log filter. */
+  defaultSugarType?: string;
 }
 
 export interface SheetImportConfig {
@@ -2699,6 +2703,9 @@ function julianDayOfYear(iso: string): string {
 export function parsedRowsToLotCodesConfigured(
   parsed: ParsedOrderRow[],
   existingLotCodes: LotCode[],
+  /** Per-tab default sugar type, keyed by tab name — stamped on rows whose sheet
+   *  has no (mapped) Sugar Type column, so imports appear under the right filter. */
+  tabDefaultSugarType?: Map<string, string>,
 ): LotCodeSyncResult {
   const result: LotCodeSyncResult = { newLotCodes: [], updatedLotCodes: [], skipped: [], errors: [] };
   const norm = (s?: string) => (s || '').trim();
@@ -2710,8 +2717,11 @@ export function parsedRowsToLotCodesConfigured(
   };
   const silo = (v: string): LotCode['silo'] => {
     const s = v.trim().toLowerCase();
-    if (s.startsWith('n')) return 'North';
-    if (s.startsWith('s')) return 'South';
+    if (s.startsWith('e')) return 'East';
+    if (s.startsWith('w')) return 'West';
+    // Legacy sheets that still use North/South map onto the new East/West pair.
+    if (s.startsWith('n')) return 'East';
+    if (s.startsWith('s')) return 'West';
     return '';
   };
   const yesNo = (v: string): LotCode['flavourOdourOk'] => {
@@ -2774,7 +2784,7 @@ export function parsedRowsToLotCodesConfigured(
         testerName: norm(r.testerName) || undefined,
         notes: norm(r.notes) || undefined,
         weeklyVerification: norm(r.weeklyVerification) || undefined,
-        sugarType: norm(r.sugarType) || undefined,
+        sugarType: norm(r.sugarType) || tabDefaultSugarType?.get(r.tab) || undefined,
         countryOfOrigin: norm(r.countryOfOrigin) || undefined,
         bolNumber: bol || undefined,
         customerPo: norm(r.customerPo) || undefined,
@@ -2867,6 +2877,15 @@ export async function syncLotCodesFromConfig(
 ): Promise<LotCodeSyncResult> {
   const allParsed: ParsedOrderRow[] = [];
   const fetchErrors: LotCodeSyncResult['errors'] = [];
+  // Per-tab default sugar type: the tab's explicit setting, else inferred from the
+  // tab NAME (e.g. "Granulated Loads 2026" → Granulated). Stamped on rows whose
+  // sheet has no Sugar Type column so imports match the Lot Code Testing Log filter.
+  const tabDefaultSugarType = new Map<string, string>();
+  for (const tab of config.tabs) {
+    const explicit = (tab.defaultSugarType || '').trim();
+    const st = explicit || inferSugarTypeFromName(tab.tabName);
+    if (st) tabDefaultSugarType.set(tab.tabName, st);
+  }
   for (const tab of config.tabs) {
     try {
       const csv = await fetchTabFromSheet(config.sheetId, tab.tabName);
@@ -2876,9 +2895,23 @@ export async function syncLotCodesFromConfig(
       fetchErrors.push({ tab: tab.tabName, rowIdx: 0, message: err instanceof Error ? err.message : String(err) });
     }
   }
-  const result = parsedRowsToLotCodesConfigured(allParsed, ctx.existingLotCodes);
+  const result = parsedRowsToLotCodesConfigured(allParsed, ctx.existingLotCodes, tabDefaultSugarType);
   result.errors.unshift(...fetchErrors);
   return result;
+}
+
+/** Guess a sugar type from a sheet/tab name (case-insensitive substring). Returns
+ *  '' when nothing recognizable is present. Used as the fallback default so a
+ *  "Granulated Loads" / "Liquid Loads" tab stamps its rows without extra config. */
+export function inferSugarTypeFromName(name: string): string {
+  const s = (name || '').toLowerCase();
+  if (s.includes('granulat')) return 'Granulated';
+  if (s.includes('liquid')) return 'Liquid';
+  if (s.includes('molasses')) return 'Molasses';
+  if (s.includes('icing')) return 'Icing';
+  if (s.includes('brown')) return 'Brown';
+  if (s.includes('yellow')) return 'Yellow';
+  return '';
 }
 
 /** Default lot-code-sync preset — blank tabular starter. */

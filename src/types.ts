@@ -1018,7 +1018,9 @@ export interface LotCode {
   julianDate: string;
   category: 'Conventional' | 'Organic' | '';
   productGroup: string;
-  silo: 'North' | 'South' | '';
+  silo: 'East' | 'West' | '';
+  /** Load number appended to the generated lot code (…-[Silo][loadNumber]). */
+  loadNumber?: string;
   brix: string;
   ph: string;
   color: string;
