@@ -21,7 +21,7 @@ interface LabPageProps {
 const EMPTY_FORM = {
   lotNumber: '', tankNumber: '', date: '', julianDate: '',
   category: '' as 'Conventional' | 'Organic' | '',
-  productGroup: '', silo: '' as 'East' | 'West' | '', loadNumber: '',
+  productGroup: '', silo: '' as 'East' | 'West' | 'North' | 'South' | '', loadNumber: '',
   brix: '', ph: '', color: '', temperature: '',
   invert: '', ash: '', moisture: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
@@ -65,7 +65,7 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   let yy = '??';
   if (form.date) { yy = form.date.slice(2, 4); }
   const jjj = form.julianDate || '???';
-  const siloCode = form.silo === 'East' ? 'E' : form.silo === 'West' ? 'W' : '';
+  const siloCode = form.silo === 'East' ? 'E' : form.silo === 'West' ? 'W' : form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
   const load = (form.loadNumber || '').trim();
   return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}-${siloCode}${load}`;
 }
@@ -295,7 +295,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           julianDate:         row['juliandate'] || (date ? getJulianDay(date) : ''),
           category:           (row['category'] === 'Organic' ? 'Organic' : row['category'] === 'Conventional' ? 'Conventional' : '') as LotCode['category'],
           productGroup:       row['productgroup'] || '',
-          silo:               (/^[en]/i.test(row['silo'] || '') ? 'East' : /^[ws]/i.test(row['silo'] || '') ? 'West' : '') as LotCode['silo'],
+          silo:               (/^e/i.test(row['silo'] || '') ? 'East' : /^w/i.test(row['silo'] || '') ? 'West' : /^n/i.test(row['silo'] || '') ? 'North' : /^s/i.test(row['silo'] || '') ? 'South' : '') as LotCode['silo'],
           brix:               row['brix'] || '',
           ph:                 row['ph'] || '',
           color:              row['color'] || row['colour'] || '',
@@ -810,11 +810,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     <tr className="border-b border-[#141414]/10">
                       <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Silo</td>
                       <td className="p-1.5 border-r border-[#141414]/10">
-                        <select value={formData.silo} onChange={(e) => updateForm({ silo: e.target.value as 'East' | 'West' | '' })}
+                        <select value={formData.silo} onChange={(e) => updateForm({ silo: e.target.value as 'East' | 'West' | 'North' | 'South' | '' })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none">
                           <option value="">— Select —</option>
                           <option value="East">East</option>
                           <option value="West">West</option>
+                          <option value="North">North</option>
+                          <option value="South">South</option>
                         </select>
                       </td>
                       <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-r border-[#141414]/10">Load #</td>

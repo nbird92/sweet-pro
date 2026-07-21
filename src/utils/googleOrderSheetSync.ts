@@ -2719,9 +2719,8 @@ export function parsedRowsToLotCodesConfigured(
     const s = v.trim().toLowerCase();
     if (s.startsWith('e')) return 'East';
     if (s.startsWith('w')) return 'West';
-    // Legacy sheets that still use North/South map onto the new East/West pair.
-    if (s.startsWith('n')) return 'East';
-    if (s.startsWith('s')) return 'West';
+    if (s.startsWith('n')) return 'North';
+    if (s.startsWith('s')) return 'South';
     return '';
   };
   const yesNo = (v: string): LotCode['flavourOdourOk'] => {
