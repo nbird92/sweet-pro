@@ -4047,9 +4047,9 @@ export default function App() {
     setPdfPreview(null);
   };
 
-  const handleGenerateBol = (shipment: Shipment) => {
+  const handleGenerateBol = (shipment: Shipment, orderOverride?: Order) => {
     try {
-      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const linkedOrder = orderOverride || orders.find(o => o.bolNumber === shipment.bol);
       const cust = customers.find(c => c.name === shipment.customer);
       const carr = carriers.find(c => c.name === shipment.carrier);
       const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
@@ -4076,43 +4076,48 @@ export default function App() {
     }
   };
 
+  /** The Order a BOL-bearing document should draw from for an invoice: the order
+   *  linked by BOL when one exists, otherwise a lightweight synthetic order that
+   *  carries the invoice's OWN line items, location and terms. Without this, an
+   *  invoice with no linked order reaches the generators as a bare Shipment stub
+   *  (which has no lineItems), so Qty/Net/Gross/Total render blank. */
+  const orderForInvoice = (inv: Invoice): Order | undefined => {
+    const bol = (inv.bolNumber || '').trim();
+    const linked = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
+    if (linked) return linked;
+    const hasData = (inv.lineItems && inv.lineItems.length > 0) || !!inv.location || !!inv.product;
+    if (!hasData) return undefined;
+    return {
+      id: `TMP-ORD-${inv.id}`,
+      bolNumber: bol,
+      customer: inv.customer || '',
+      product: inv.product || '',
+      contractNumber: inv.contractNumber,
+      po: inv.po || '',
+      date: inv.date || '',
+      status: 'Completed',
+      lineItems: inv.lineItems || [],
+      amount: inv.amount || 0,
+      carrier: inv.carrier || '',
+      shippingTerms: (inv.shippingTerms as Order['shippingTerms']) || '',
+      location: inv.location || '',
+    };
+  };
+
   /** Preview the Bill of Lading for an invoice. Invoices link to a shipment/order
    *  by BOL NUMBER — `invoice.shipmentId` is unreliable (Complete & Bill stores the
    *  ORDER id there, returns store the ReturnOrder id, CSV import leaves it blank),
-   *  so try it first but always fall back to the BOL, same as lotCodeFromShipment. */
+   *  so resolveInvoiceShipment tries it first but always falls back to the BOL.
+   *  orderForInvoice threads the invoice's own line items through so the goods
+   *  table (Qty/Net/Gross/Total) and ship-from location populate even with no
+   *  linked order. */
   const handleGenerateBolForInvoice = (inv: Invoice) => {
-    const all = [...hamiltonShipments, ...vancouverShipments];
-    const bol = (inv.bolNumber || '').trim();
-
-    // 1. A real shipment: by id (may be an order id — that just misses), then by BOL.
-    const shipment = (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
-      || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
-    if (shipment) { handleGenerateBol(shipment); return; }
-
-    // 2. No shipment, but a linked order — reuse its stub builder.
-    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
-    if (linkedOrder) { handleGenerateBol(shipmentForOrder(linkedOrder)); return; }
-
-    // 3. Neither (e.g. an imported invoice) — build a stub from the invoice itself.
-    if (!bol) {
+    const shipment = resolveInvoiceShipment(inv);
+    if (!shipment) {
       setErrorBox('This invoice has no BOL number — cannot generate a Bill of Lading.');
       return;
     }
-    handleGenerateBol({
-      id: `TMP-${inv.id}`,
-      week: '', date: inv.date || new Date().toISOString().split('T')[0],
-      day: '', time: '', bay: '',
-      customer: inv.customer || '',
-      product: inv.product || inv.lineItems?.[0]?.productName || '',
-      po: inv.po || '',
-      bol,
-      qty: (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) || inv.qty || 0,
-      carrier: inv.carrier || '',
-      arrive: '', start: '', out: '',
-      status: inv.status,
-      contractNumber: inv.contractNumber,
-      location: inv.location,
-    } as Shipment);
+    handleGenerateBol(shipment, orderForInvoice(inv));
   };
 
   /** Pick the COA template for a sugar type. The Sugar Type record's "COA Type"
@@ -4183,9 +4188,9 @@ export default function App() {
   /** Build the full shipping document package (BOL + COA + Packing List + [Bag ID
    *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
    *  ID Report is included only for packaged / tote shipments. */
-  const handleGenerateDocumentPackage = (shipment: Shipment, includeBagIdReport?: boolean) => {
+  const handleGenerateDocumentPackage = (shipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order) => {
     try {
-      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const linkedOrder = orderOverride || orders.find(o => o.bolNumber === shipment.bol);
       const cust = customers.find(c => c.name === shipment.customer);
       const carr = carriers.find(c => c.name === shipment.carrier);
       const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
@@ -4218,27 +4223,45 @@ export default function App() {
   const resolveInvoiceShipment = (inv: Invoice): Shipment | null => {
     const all = [...hamiltonShipments, ...vancouverShipments];
     const bol = (inv.bolNumber || '').trim();
-    const shipment = (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
-      || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
-    if (shipment) return shipment;
-    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
-    if (linkedOrder) return shipmentForOrder(linkedOrder);
-    if (!bol) return null;
-    return {
-      id: `TMP-${inv.id}`,
-      week: '', date: inv.date || new Date().toISOString().split('T')[0],
-      day: '', time: '', bay: '',
-      customer: inv.customer || '',
-      product: inv.product || inv.lineItems?.[0]?.productName || '',
-      po: inv.po || '',
-      bol,
-      qty: (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) || inv.qty || 0,
-      carrier: inv.carrier || '',
-      arrive: '', start: '', out: '',
-      status: inv.status,
-      contractNumber: inv.contractNumber,
-      location: inv.location,
-    } as Shipment;
+    const realOrStub = ((): Shipment | null => {
+      const shipment = (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
+        || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined);
+      if (shipment) return shipment;
+      const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
+      if (linkedOrder) return shipmentForOrder(linkedOrder);
+      if (!bol) return null;
+      return {
+        id: `TMP-${inv.id}`,
+        week: '', date: inv.date || new Date().toISOString().split('T')[0],
+        day: '', time: '', bay: '',
+        customer: inv.customer || '',
+        product: inv.product || inv.lineItems?.[0]?.productName || '',
+        po: inv.po || '',
+        bol,
+        qty: (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0) || inv.qty || 0,
+        carrier: inv.carrier || '',
+        arrive: '', start: '', out: '',
+        status: inv.status,
+        contractNumber: inv.contractNumber,
+        location: inv.location,
+      } as Shipment;
+    })();
+    if (!realOrStub) return null;
+    // Seed lot codes from the invoice when the resolved shipment carries none, so
+    // the COA (and the BOL's Lot Code field) populate from the invoice's captured
+    // lot code(s). Non-destructive — only fills a gap, never overrides real data.
+    // Fall back to the live shipment lookup (same source the invoice table shows)
+    // so EXISTING invoices whose lotCode field hasn't been backfilled yet still
+    // resolve their lot codes.
+    const hasLots = (realOrStub.lotNumbers && realOrStub.lotNumbers.length > 0) || !!realOrStub.lotNumber;
+    const invLotStr = (inv.lotCode || '').trim() || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber });
+    // Split on comma/semicolon only — matches the canonical sibling split sites
+    // (App.tsx:3157 etc.) and the ', ' join that produces inv.lotCode. A "/" is
+    // never a separator here, so keeping it out avoids mangling any lot number
+    // that legitimately contains a slash.
+    const invLots = invLotStr.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+    if (!hasLots && invLots.length > 0) return { ...realOrStub, lotNumbers: invLots };
+    return realOrStub;
   };
 
   /** Invoice-table action: build the document package for an invoice. The Bag ID
@@ -4249,11 +4272,10 @@ export default function App() {
       setErrorBox('This invoice has no BOL number — cannot build a document package.');
       return;
     }
-    const bol = (inv.bolNumber || '').trim();
-    const linkedOrder = bol ? orders.find(o => (o.bolNumber || '').trim() === bol) : undefined;
-    const lineItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : linkedOrder?.lineItems;
+    const orderOverride = orderForInvoice(inv);
+    const lineItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : orderOverride?.lineItems;
     const includeBagIdReport = hasPackagedOrToteProducts(lineItems, inv.product || shipment.product);
-    handleGenerateDocumentPackage(shipment, includeBagIdReport);
+    handleGenerateDocumentPackage(shipment, includeBagIdReport, orderOverride);
   };
 
   useEffect(() => {
@@ -11091,6 +11113,7 @@ export default function App() {
             columns={[
               { key: 'locationCode', label: 'Code', mono: true, bold: true, widthClass: 'w-20', render: (l) => l.locationCode || '—' },
               { key: 'name', label: 'Name', bold: true, render: (l) => l.name || '—' },
+              { key: 'bolName', label: 'BOL Name', render: (l) => l.bolName || '—' },
               { key: 'address', label: 'Address', render: (l) => l.address || '—' },
               { key: 'city', label: 'City', render: (l) => l.city || '—' },
               { key: 'province', label: 'Province', render: (l) => l.province || '—' },
@@ -11121,6 +11144,7 @@ export default function App() {
                 <div className="space-y-5">
                   <DetailRow label="Code" value={liveLoc.locationCode} mono bold />
                   <DetailRow label="Name" value={liveLoc.name} bold />
+                  <DetailRow label="BOL Name" value={liveLoc.bolName || '—'} />
                   <DetailRow label="Address" value={liveLoc.address} />
                   <DetailRow label="City" value={liveLoc.city} />
                   <DetailRow label="Province" value={liveLoc.province} />

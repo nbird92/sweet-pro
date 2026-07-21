@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Location, QAProduct, ShipToLocation } from './types';
-import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter, BLACK } from './pdfDocHelpers';
+import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter, resolveLineWeights, BLACK } from './pdfDocHelpers';
 
 export interface GeneratePackingListParams {
   shipment: Shipment;
@@ -55,7 +55,8 @@ export function renderPackingListInto(doc: jsPDF, {
     : (customer ? [customer.address, customer.city, customer.province].filter(Boolean).join(', ') : '');
   const shipToPostal = shipToLocation?.postalCode || customer?.postalCode || '';
 
-  const shipperName = shipFromLocation?.name || order?.location || 'Sucro Can Canada';
+  // Ship From name prints the location's legal BOL name when set, else its name.
+  const shipperName = shipFromLocation?.bolName || shipFromLocation?.name || order?.location || 'Sucro Can Canada';
   const shipperAddr = shipFromLocation ? [shipFromLocation.address, shipFromLocation.city, shipFromLocation.province].filter(Boolean).join(', ') : '';
   const shipperPostal = shipFromLocation?.postalCode || '';
 
@@ -81,9 +82,8 @@ export function renderPackingListInto(doc: jsPDF, {
 
   if (order?.lineItems && order.lineItems.length > 0) {
     order.lineItems.forEach(item => {
-      const qaProduct = qaProducts.find(p => p.skuName === item.productName);
-      const netWt = qaProduct?.netWeightKg || item.netWeightPerUnit || 0;
-      const grossWt = qaProduct?.grossWeightKg || 0;
+      // Matched on productKey then name; gross falls back to net when no tare.
+      const { netWt, grossWt } = resolveLineWeights(item, qaProducts);
       const itemNet = netWt * item.qty;
       const itemGross = grossWt * item.qty;
       totalNet += itemNet;
@@ -142,22 +142,31 @@ export function renderPackingListInto(doc: jsPDF, {
   drawInfoField(doc, 'Lot Code(s)', lotNums, leftCol + thirdW * 2, y, thirdW);
   y += 17;
 
-  // Notes box
+  // Notes box — clamp to the space left on the page (no forced minimum, which
+  // could push the box and footer past the bottom margin). Skip when no room.
   const pageHeight = doc.internal.pageSize.getHeight();
-  const notesH = Math.min(20, Math.max(14, pageHeight - 14 - y));
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(100, 100, 100);
-  doc.text('NOTES', leftCol + 2, y + 3);
-  doc.setDrawColor(200, 200, 200);
-  doc.rect(leftCol, y, contentWidth, notesH);
-  if (shipment.notes) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(BLACK);
-    doc.text(shipment.notes, leftCol + 2, y + 8, { maxWidth: contentWidth - 4 });
+  const notesH = Math.max(0, Math.min(20, pageHeight - 14 - y));
+  if (notesH >= 6) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 100, 100);
+    doc.text('NOTES', leftCol + 2, y + 3);
+    doc.setDrawColor(200, 200, 200);
+    doc.rect(leftCol, y, contentWidth, notesH);
+    if (shipment.notes) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(BLACK);
+      // Clip note lines to the box so long / multi-line notes never spill below
+      // the box outline or past the page bottom.
+      const lines = doc.splitTextToSize(shipment.notes, contentWidth - 4);
+      const lineH = 3.3;
+      const first = y + 7;
+      const maxLines = Math.max(0, Math.floor((y + notesH - first) / lineH) + 1);
+      if (maxLines > 0) doc.text(lines.slice(0, maxLines), leftCol + 2, first);
+    }
+    y += notesH + 6;
   }
-  y += notesH + 6;
 
   drawDocFooter(doc, Math.min(y, pageHeight - 8));
 }

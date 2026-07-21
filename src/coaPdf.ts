@@ -27,7 +27,7 @@ function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number, width
   return y + 7;
 }
 
-function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 13): number {
+function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 11): number {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 100, 100);
@@ -146,7 +146,13 @@ function generateCoaPage(
   const lookupProductName = order?.lineItems?.[0]?.productName || shipment.product || displayProductName;
   const productName = displayProductName;
   const bolNum = shipment.bol || order?.bolNumber || '';
-  const lotNums = shipmentLotCodes.map(lc => lc.lotNumber).join(', ');
+  // Lot Code(s) field: show the matched-record lot numbers, but fall back to the
+  // raw assigned lots (same source the BOL/Packing List print) so the COA's Lot
+  // Code field isn't blank when a seeded lot has no testing-log record yet.
+  const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
+  const lotNums = shipmentLotCodes.length > 0
+    ? shipmentLotCodes.map(lc => lc.lotNumber).join(', ')
+    : assignedLotNums.join(', ');
   const testDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
 
   const topFields = [
@@ -184,7 +190,7 @@ function generateCoaPage(
   ly = drawFieldRow(doc, 'Category', category, leftCol, ly, halfWidth);
   ly = drawFieldRow(doc, 'Country of Origin', origins, leftCol, ly, halfWidth);
 
-  const shipperName = shipFromLocation?.name || order?.location || 'Hamilton Sherman Plant';
+  const shipperName = shipFromLocation?.bolName || shipFromLocation?.name || order?.location || 'Hamilton Sherman Plant';
   let ry = y;
   ry = drawFieldRow(doc, 'Customer', customer?.name || shipment.customer || '', rightCol, ry, rightHalf);
   ry = drawFieldRow(doc, 'Lot Code(s)', lotNums, rightCol, ry, rightHalf);
@@ -222,7 +228,7 @@ function generateCoaPage(
       margin: { left: M, right: M },
       head,
       body,
-      styles: { fontSize: 8, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
+      styles: { fontSize: 8, cellPadding: 2, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
       headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 7 },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 40 },
@@ -245,7 +251,7 @@ function generateCoaPage(
       margin: { left: M, right: M },
       head,
       body,
-      styles: { fontSize: 8, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
+      styles: { fontSize: 8, cellPadding: 2, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
       headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 7 },
       columnStyles: {
         0: { fontStyle: 'bold', cellWidth: 48 },
@@ -269,26 +275,26 @@ function generateCoaPage(
   drawInfoField(doc, 'Tested By', testers, leftCol, y, thirdW);
   drawInfoField(doc, 'Test Date', testDates, leftCol + thirdW, y, thirdW);
   drawInfoField(doc, 'Weekly Verification', weeklyVerifications, leftCol + thirdW * 2, y, thirdW);
-  y += 17;
+  y += 14;
 
   // ═══════════════════════════════════════════════════════════
   // CERTIFICATION
   // ═══════════════════════════════════════════════════════════
   y = drawSectionHeader(doc, 'CERTIFICATION', leftCol, y, contentWidth);
   doc.setDrawColor(200, 200, 200);
-  doc.rect(leftCol, y, contentWidth, 16);
+  doc.rect(leftCol, y, contentWidth, 12);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(80, 80, 80);
   doc.text(
     'We hereby certify that the above product has been tested and the results are as shown above.',
-    leftCol + 3, y + 5
+    leftCol + 3, y + 4.5
   );
   doc.text(
     'This product complies with all applicable food safety regulations and is fit for human consumption.',
-    leftCol + 3, y + 10
+    leftCol + 3, y + 9
   );
-  y += 19;
+  y += 15;
 
   // ═══════════════════════════════════════════════════════════
   // SIGNATURES — QA Approved By (tester from lot code) & Authorized By
@@ -297,7 +303,7 @@ function generateCoaPage(
   y = drawSectionHeader(doc, 'QA APPROVAL', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'AUTHORIZATION', rightCol, sigHeaderY, rightHalf);
 
-  const sigRowH = 11;
+  const sigRowH = 10;
   const lotCodeDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
 
   let qy = y;

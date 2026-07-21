@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf';
+import type { OrderLineItem, QAProduct } from './types';
 
 // Shared drawing primitives + palette for the logistics document generators
 // (Packing List, Bag ID Report, Scale Ticket, and the combined Document Package).
@@ -6,6 +7,53 @@ import jsPDF from 'jspdf';
 
 export const BLACK = '#141414';
 export const DARK_GREEN = '#1a5c2e';
+
+/** Resolve a line item's QA catalog product. Matches on the stable productKey
+ *  (QA product id, then SKU id) before falling back to the display name — the
+ *  name match alone misses when several QA variants share an SKU name or when a
+ *  weight prefix has been appended. */
+export function resolveLineQaProduct(
+  item: { productKey?: string; productName?: string },
+  qaProducts: QAProduct[],
+): QAProduct | undefined {
+  const key = (item.productKey || '').trim();
+  if (key) {
+    // Exact QA-product id is the precise match.
+    const byId = qaProducts.find(p => p.id === key);
+    if (byId) return byId;
+    // A bare SKU id (unpaired-SKU line) doesn't say WHICH variant; only trust it
+    // when exactly one QA product carries that skuId. Otherwise fall through to
+    // the name match so we don't arbitrarily pick the first of several children.
+    const bySku = qaProducts.filter(p => p.skuId === key);
+    if (bySku.length === 1) return bySku[0];
+  }
+  const name = (item.productName || '').trim();
+  return name ? qaProducts.find(p => p.skuName === name) : undefined;
+}
+
+/** Per-unit net & gross weight in KILOGRAMS for a line item, with fallbacks so
+ *  neither column ends up blank on the BOL / Packing List: net → QA net (kg) →
+ *  derived from the line's total weight; gross → QA gross (kg) → net (no tare
+ *  known, so gross ≈ net).
+ *
+ *  Do NOT fall back to OrderLineItem.netWeightPerUnit directly: it is stored in
+ *  METRIC TONS per unit on the scan/manual/invoice paths (App.tsx buildScanLineItem
+ *  divides kg by 1000) but in KILOGRAMS on the Google-sheet sync path — a
+ *  dual-convention field. OrderLineItem.totalWeight, by contrast, is reliably
+ *  metric tons on every path (it's the "Qty (MT)" column), so per-unit kg =
+ *  totalWeight × 1000 / qty is unit-safe for both conventions. */
+export function resolveLineWeights(
+  item: OrderLineItem,
+  qaProducts: QAProduct[],
+): { netWt: number; grossWt: number } {
+  const qa = resolveLineQaProduct(item, qaProducts);
+  const derivedPerUnitKg = (item.qty > 0 && item.totalWeight > 0)
+    ? (item.totalWeight * 1000) / item.qty
+    : 0;
+  const netWt = qa?.netWeightKg || derivedPerUnitKg;
+  const grossWt = qa?.grossWeightKg || netWt;
+  return { netWt, grossWt };
+}
 
 /** Filled black band with white bold caption. Returns the y just below it. */
 export function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number, width: number): number {

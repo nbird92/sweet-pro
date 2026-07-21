@@ -274,6 +274,9 @@ export interface Location {
   id: string;
   locationCode: string;
   name: string;
+  /** Legal shipper name printed on the BOL (Shipper) and Packing List (Ship From).
+   *  Falls back to `name` when empty. */
+  bolName?: string;
   address: string;
   city: string;
   province: string;

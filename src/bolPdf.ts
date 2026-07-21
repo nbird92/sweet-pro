@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation } from './types';
+import { resolveLineWeights } from './pdfDocHelpers';
 
 interface GenerateBolParams {
   shipment: Shipment;
@@ -29,7 +30,7 @@ function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number, width
   return y + 7;
 }
 
-function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 13): number {
+function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 11): number {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 100, 100);
@@ -167,7 +168,8 @@ export function renderBolInto(doc: jsPDF, {
     : (customer ? [customer.address, customer.city, customer.province].filter(Boolean).join(', ') : '');
   const deliverToPostal = shipToLocation?.postalCode || customer?.postalCode || '';
 
-  const shipperName = shipFromLocation?.name || order?.location || 'Sucro Can Canada';
+  // Shipper name prints the location's legal BOL name when set, else its name.
+  const shipperName = shipFromLocation?.bolName || shipFromLocation?.name || order?.location || 'Sucro Can Canada';
   const shipperAddr = shipFromLocation ? [shipFromLocation.address, shipFromLocation.city, shipFromLocation.province].filter(Boolean).join(', ') : '';
   const shipperPostal = shipFromLocation?.postalCode || '';
 
@@ -194,11 +196,9 @@ export function renderBolInto(doc: jsPDF, {
 
   if (order?.lineItems && order.lineItems.length > 0) {
     order.lineItems.forEach(item => {
-      // QA spec lookup uses the bare productName so the catalog match
-      // works even when productDisplayName carries a weight suffix.
-      const qaProduct = qaProducts.find(p => p.skuName === item.productName);
-      const netWt = qaProduct?.netWeightKg || item.netWeightPerUnit || 0;
-      const grossWt = qaProduct?.grossWeightKg || 0;
+      // Per-unit net & gross weight, matched on productKey then name, with
+      // fallbacks so neither column is blank (gross ≈ net when no tare known).
+      const { netWt, grossWt } = resolveLineWeights(item, qaProducts);
       const itemNet = netWt * item.qty;
       const itemGross = grossWt * item.qty;
       totalNetWeight += itemNet;
@@ -235,7 +235,7 @@ export function renderBolInto(doc: jsPDF, {
     foot: [['', '', 'Total', totalNetWeight ? totalNetWeight.toFixed(2) : '', totalGrossWeight ? totalGrossWeight.toFixed(2) : '']],
     styles: {
       fontSize: 8,
-      cellPadding: 3,
+      cellPadding: 2,
       lineColor: [200, 200, 200],
       lineWidth: 0.3,
       textColor: [20, 20, 20],
@@ -264,6 +264,22 @@ export function renderBolInto(doc: jsPDF, {
   y = (doc as any).lastAutoTable?.finalY || y + 40;
   y += 3;
 
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const bottomMargin = 14;
+
+  // Page-break guard: the SHIPMENT DETAILS + SIGNATURES blocks below are drawn at
+  // fixed offsets from here with no internal pagination, so a tall goods table
+  // (7+ single-line items, or wrapping descriptions) would push the legally
+  // relevant signature block off the page bottom. When the fixed block (~76mm
+  // through the signatures) won't fit on the physical page, start a fresh page so
+  // nothing is clipped. (Threshold is the page edge, not the soft margin, so a
+  // BOL that still fits — up to ~6 items — stays on one page.)
+  const fixedBlockH = 76;
+  if (y + fixedBlockH > pageHeight - 2) {
+    doc.addPage();
+    y = 20;
+  }
+
   // ═══════════════════════════════════════════════════════════
   // SHIPMENT DETAILS — 3 equal-width fields per row
   // ═══════════════════════════════════════════════════════════
@@ -282,7 +298,7 @@ export function renderBolInto(doc: jsPDF, {
   drawInfoField(doc, 'Origin of Goods', originOfGoods, leftCol, y, thirdW);
   drawInfoField(doc, 'Lot Code(s)', lotNums, leftCol + thirdW, y, thirdW);
   drawInfoField(doc, 'Colour', shipment.colour || '', leftCol + thirdW * 2, y, thirdW);
-  y += 17;
+  y += 15;
 
   // ═══════════════════════════════════════════════════════════
   // SIGNATURES — 2 columns
@@ -290,7 +306,7 @@ export function renderBolInto(doc: jsPDF, {
   y = drawSectionHeader(doc, 'CONSIGNOR', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'RECEIVED IN GOOD CONDITION', rightCol, y - 7, rightHalf);
 
-  const sigRowH = 11;
+  const sigRowH = 10;
 
   // Consignor side
   let csy = y;
@@ -311,22 +327,30 @@ export function renderBolInto(doc: jsPDF, {
   // ═══════════════════════════════════════════════════════════
   // NOTES — clamp height so box stays within page margin
   // ═══════════════════════════════════════════════════════════
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const bottomMargin = 14;
-  const maxNotesH = Math.max(14, pageHeight - bottomMargin - y);
-  const notesH = Math.min(18, maxNotesH);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.setTextColor(100, 100, 100);
-  doc.text('NOTES', leftCol + 2, y + 3);
-  doc.setDrawColor(200, 200, 200);
-  doc.rect(leftCol, y, contentWidth, notesH);
-  if (shipment.notes) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(BLACK);
-    doc.text(shipment.notes, leftCol + 2, y + 8, { maxWidth: contentWidth - 4 });
+  // Clamp to the space actually left on the page (never force a minimum — that
+  // pushed the box past the bottom margin and cut the page off). Skip the box
+  // entirely when there is no meaningful room left. (pageHeight/bottomMargin
+  // declared above the page-break guard.)
+  const notesH = Math.max(0, Math.min(18, pageHeight - bottomMargin - y));
+  if (notesH >= 6) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 100, 100);
+    doc.text('NOTES', leftCol + 2, y + 3);
+    doc.setDrawColor(200, 200, 200);
+    doc.rect(leftCol, y, contentWidth, notesH);
+    if (shipment.notes) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(BLACK);
+      // Clip note lines to the box so long / multi-line notes never spill below
+      // the box outline or past the page bottom.
+      const lines = doc.splitTextToSize(shipment.notes, contentWidth - 4);
+      const lineH = 3.3;
+      const first = y + 7;
+      const maxLines = Math.max(0, Math.floor((y + notesH - first) / lineH) + 1);
+      if (maxLines > 0) doc.text(lines.slice(0, maxLines), leftCol + 2, first);
+    }
   }
 
 }

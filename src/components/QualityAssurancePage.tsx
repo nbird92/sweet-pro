@@ -2025,6 +2025,10 @@ export default function QualityAssurancePage({
                         <input value={editLocationData.name || ''} onChange={(e) => setEditLocationData({ ...editLocationData, name: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Location Name" />
                       </div>
                       <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">BOL Name</label>
+                        <input value={editLocationData.bolName || ''} onChange={(e) => setEditLocationData({ ...editLocationData, bolName: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Legal shipper name for BOL / Packing List" />
+                      </div>
+                      <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Address</label>
                         <input value={editLocationData.address || ''} onChange={(e) => setEditLocationData({ ...editLocationData, address: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Address" />
                       </div>
@@ -2057,6 +2061,7 @@ export default function QualityAssurancePage({
                     <div className="grid grid-cols-3 gap-4">
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Code</div><div className="text-xs font-bold font-mono">{selectedLocation.locationCode || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{selectedLocation.name || '—'}</div></div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">BOL Name</div><div className="text-xs font-bold">{selectedLocation.bolName || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Address</div><div className="text-xs font-bold">{selectedLocation.address || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">City</div><div className="text-xs font-bold">{selectedLocation.city || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Province</div><div className="text-xs font-bold">{selectedLocation.province || '—'}</div></div>
