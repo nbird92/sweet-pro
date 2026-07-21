@@ -3234,6 +3234,48 @@ export default function App() {
     if (changed) setLotCodes(next);
   }, [lotCodes, invoices, orders]);
 
+  // Backfill Lot Code QTY MT from the Invoices AND Orders tables. A lot code with a
+  // blank QTY MT gets it from the invoice/order matched by its BOL number (or PO):
+  // the invoiced Quantity (MT). Non-destructive (fills only a blank QTY MT) and
+  // self-converging; composes with the BOL backfill above, so a lot whose BOL was
+  // just filled can then match its quantity by that BOL on a later pass.
+  useEffect(() => {
+    if (!lotCodes.length || (!invoices.length && !orders.length)) return;
+    const fmt = (mt: number) => String(Math.round(mt * 1000) / 1000);
+    const mtByBol = new Map<string, string>();
+    const mtByPo = new Map<string, string>();
+    const addSource = (mt: number, bolRaw: string, poRaw: string) => {
+      if (!(mt > 0)) return;
+      const v = fmt(mt);
+      const bol = (bolRaw || '').trim().toUpperCase();
+      if (bol && !mtByBol.has(bol)) mtByBol.set(bol, v);
+      const po = (poRaw || '').trim().toUpperCase();
+      if (po && !mtByPo.has(po)) mtByPo.set(po, v);
+    };
+    // Invoices first (the invoiced qty is authoritative), then orders (line weights).
+    for (const inv of invoices) {
+      const mt = (typeof inv.qty === 'number' && inv.qty > 0)
+        ? inv.qty
+        : (inv.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
+      addSource(mt, inv.bolNumber, inv.po);
+    }
+    for (const ord of orders) {
+      const mt = (ord.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
+      addSource(mt, ord.bolNumber, ord.po);
+    }
+    if (!mtByBol.size && !mtByPo.size) return;
+    let changed = false;
+    const next = lotCodes.map(lc => {
+      if ((lc.qtyMt || '').trim()) return lc; // already has a QTY MT
+      const bol = (lc.bolNumber || '').trim().toUpperCase();
+      const po = (lc.customerPo || '').trim().toUpperCase();
+      const mt = (bol && mtByBol.get(bol)) || (po && mtByPo.get(po));
+      if (mt) { changed = true; return { ...lc, qtyMt: mt }; }
+      return lc;
+    });
+    if (changed) setLotCodes(next);
+  }, [lotCodes, invoices, orders]);
+
   // Backfill invoice Lot Codes from the Lot Code Testing Log. An invoice with a
   // blank Lot Code gets it from the lot codes that match its BOL number OR its PO
   // number — the reverse of the invoice→lot BOL fill above. This is what makes the
