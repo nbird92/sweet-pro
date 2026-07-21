@@ -219,17 +219,16 @@ export interface ExtractHints {
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 
-/** Schema entry for a NUMERIC field carried as a STRING. A raw Type.NUMBER (and
- *  even a plain STRING) can degenerate into a runaway "0.0000000000…" that burns
- *  the entire output-token budget on one field. `maxLength` + a decimals-capped
- *  `pattern` make Gemini's constrained decoder STOP the string — at most 6
- *  decimals and 24 chars — so the runaway is structurally impossible. The empty
- *  string is allowed for "not stated". Coerced back to a number in coerceDocNumbers. */
+/** Schema entry for a NUMERIC field carried as a STRING (Type.NUMBER degenerates
+ *  into a runaway "0.0000000000…" that burns the token budget). We keep the field
+ *  a PLAIN string and coerce it back to a number in coerceDocNumbers. Note: we do
+ *  NOT put `maxLength` / `pattern` here — the lite body model (gemini-2.5-flash-lite)
+ *  rejects those in a responseSchema with 400 INVALID_ARGUMENT. The runaway is
+ *  instead bounded by a modest maxOutputTokens (so it truncates fast) and recovered
+ *  by salvageDocuments' repairTruncatedObject. */
 const numStr = (description: string) => ({
   type: Type.STRING,
-  maxLength: '24',
-  pattern: '^$|^-?[0-9]{0,15}([.][0-9]{1,6})?$',
-  description,
+  description: `${description} Return a short plain number (at most 2 decimals, no trailing zeros); empty if not stated.`,
 });
 
 // Gemini structured-output schema (Type-based). Mirrors the fields the app maps.
@@ -619,10 +618,13 @@ export async function extractPO(
     responseMimeType: 'application/json',
     responseSchema: PO_BATCH_SCHEMA,
     temperature: 0,
-    // Give structured output enough room. Without an explicit cap the response can
-    // be truncated mid-object, producing invalid JSON ("Gemini did not return valid
-    // JSON"). Configurable for unusually large multi-PO emails.
-    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 32768),
+    // Enough room for a normal (multi-)PO, but MODEST on purpose: with the numeric
+    // fields now plain strings, a degenerate "0.0000…" runaway is possible again, so
+    // a lower cap makes it truncate FAST (well under the per-call time budget) rather
+    // than run for a minute+ and get aborted (which is what timed out on images).
+    // Truncated batches are still recovered by salvageDocuments. Bump via env for an
+    // unusually large multi-PO email.
+    maxOutputTokens: Number(process.env.PO_EXTRACT_MAX_TOKENS ?? 8192),
     // Cost control: Gemini 2.5 "thinks" by default, which bills a large hidden
     // block of reasoning tokens on every call. Structured PO extraction against
     // a fixed schema doesn't need it — disable thinking to cut cost sharply.
