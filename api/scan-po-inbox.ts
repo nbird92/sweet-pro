@@ -320,6 +320,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // finishing cleanly (partial:true) and reporting its status. Tunable via env.
   const startMs = Date.now();
   const BUDGET_MS = Number(process.env.PO_SCAN_BUDGET_MS ?? 200000);
+  // Absolute deadline for ANY Gemini work, ~20s under the 300s maxDuration. The
+  // between-message budget above stops STARTING new mail, but a single already-in-
+  // flight message (several extractions + rate-limit backoff) could still overrun
+  // and get HARD-KILLED at 300s (-> HTTP 504, no status written). Passing this
+  // deadline into extractPO aborts in-flight calls and stops retrying, so the run
+  // always returns cleanly (partial:true) with time to spare to write its status.
+  const hardDeadlineMs = startMs + Number(process.env.PO_SCAN_HARD_DEADLINE_MS ?? 280000);
 
   try {
     const db = getDb();
@@ -441,7 +448,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const bodyFile = { name: '(email)', mimeType: 'text/plain', dataBase64: Buffer.from(bodyText, 'utf8').toString('base64') };
                 // Cheap first pass on the lite model (classification + simple
                 // body-stated orders).
-                let docs = await extractPO(bodyFile, hints, { apiKey, model: liteModel, fallbackModel: model });
+                let docs = await extractPO(bodyFile, hints, { apiKey, model: liteModel, fallbackModel: model, deadlineMs: hardDeadlineMs });
                 // Escalate to the full model ONLY when the cheap pass flagged an
                 // order AND the body itself is the order (no doc attachment to
                 // carry it) — that's the one place body reading accuracy matters.
@@ -449,7 +456,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 // 'other' mail stays cheap on lite.
                 if (liteModel !== model && docAtts.length === 0
                     && docs.some(d => d?.documentType && d.documentType !== 'other')) {
-                  try { docs = await extractPO(bodyFile, hints, { apiKey, model }); } catch { /* keep the lite result */ }
+                  try { docs = await extractPO(bodyFile, hints, { apiKey, model, deadlineMs: hardDeadlineMs }); } catch { /* keep the lite result */ }
                 }
                 noteOrder(docs);
                 for (const extraction of docs) await queueExtraction(extraction, '(email body)');
@@ -469,7 +476,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             summary.attachments++;
             try {
               const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-              const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+              const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model, deadlineMs: hardDeadlineMs });
               noteOrder(docs);
               for (const extraction of docs) await queueExtraction(extraction, att.filename);
             } catch (e) {
@@ -485,7 +492,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               summary.attachments++;
               try {
                 const dataBase64 = await getAttachmentBase64(token, inbox, meta.id, att.attachmentId);
-                const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model });
+                const docs = await extractPO({ name: att.filename, mimeType: att.mimeType, dataBase64 }, hints, { apiKey, model, deadlineMs: hardDeadlineMs });
                 for (const extraction of docs) await queueExtraction(extraction, att.filename);
               } catch (e) {
                 if (isSpendCapError(e)) throw e;

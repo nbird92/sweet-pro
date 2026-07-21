@@ -16,13 +16,37 @@ export const DEFAULT_MODEL = 'gemini-2.5-flash';
  *  — e.g. re-importing 200 emails at once — easily exceeds the per-minute quota;
  *  backing off lets the batch recover instead of failing every call. Permanent
  *  errors (bad key, invalid request) are thrown immediately. */
-async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Promise<any> {
+async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4, deadlineMs?: number): Promise<any> {
+  // Hard cap on any single call so a hung request can't wedge the function; also
+  // never run past the caller's overall deadline (the scan's time budget). Enforced
+  // by an AbortSignal AND a Promise.race timeout, so the loop always makes progress.
+  const perCallCapMs = Number(process.env.PO_EXTRACT_CALL_TIMEOUT_MS ?? 90000);
   for (let attempt = 0; ; attempt++) {
+    if (deadlineMs && Date.now() >= deadlineMs) {
+      throw new Error('PO extraction deadline reached — stopped before the function time limit.');
+    }
+    const controller = new AbortController();
+    const capMs = deadlineMs ? Math.min(perCallCapMs, Math.max(1000, deadlineMs - Date.now())) : perCallCapMs;
+    let timer: any;
     try {
-      return await ai.models.generateContent(req);
+      // Race the SDK call against a hard timeout. The AbortSignal cancels the
+      // underlying request when the SDK honours it; the race guarantees we proceed
+      // even if it doesn't (the abandoned call is torn down when the function ends).
+      const timeoutP = new Promise((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error('Gemini call timed out (cap).')); }, capMs);
+      });
+      return await Promise.race([
+        ai.models.generateContent({ ...req, config: { ...req.config, abortSignal: controller.signal } }),
+        timeoutP,
+      ]);
     } catch (e: any) {
       const status = e?.status ?? e?.code;
       const msg = String(e?.message || e);
+      // A timeout/deadline ABORT (ours) is not worth retrying — it only burns more
+      // of the budget — so surface it immediately.
+      if (controller.signal.aborted || /abort/i.test(msg)) {
+        throw new Error('Gemini call exceeded its time budget and was aborted.');
+      }
       // A monthly SPEND-CAP 429 is NOT transient — it won't clear within this run,
       // so retrying just burns the time budget. Throw it straight through.
       const spendCap = /spend(?:ing)?\s*cap/i.test(msg);
@@ -30,7 +54,11 @@ async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4): Pro
         /\b429\b|\b503\b|rate|quota|resource[_\s-]*exhausted|overloaded|unavailable|try again|deadline/i.test(msg));
       if (!transient || attempt >= maxRetries) throw e;
       const waitMs = Math.min(20000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 600);
+      // Don't sleep past the deadline — bail now rather than wake up already over.
+      if (deadlineMs && Date.now() + waitMs >= deadlineMs) throw e;
       await new Promise(r => setTimeout(r, waitMs));
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -578,7 +606,7 @@ export function expandCallOffDoc(doc: any): any[] {
 export async function extractPO(
   file: UploadFile,
   hints: ExtractHints | undefined,
-  opts: { apiKey: string; model?: string; fallbackModel?: string },
+  opts: { apiKey: string; model?: string; fallbackModel?: string; deadlineMs?: number },
 ): Promise<any[]> {
   const parts = await partsForFile(file);
   const ht = hintsText(hints);
@@ -604,7 +632,7 @@ export async function extractPO(
   const primaryModel = opts.model || DEFAULT_MODEL;
   let response: any;
   try {
-    response = await generateWithRetry(ai, { model: primaryModel, contents: [{ role: 'user', parts }], config });
+    response = await generateWithRetry(ai, { model: primaryModel, contents: [{ role: 'user', parts }], config }, 4, opts.deadlineMs);
   } catch (e: any) {
     // A configured model can be retired (404 / NOT_FOUND / "no longer available").
     // Don't let that break the scan — fall back to the full model when one is
@@ -613,7 +641,7 @@ export async function extractPO(
     const status = e?.status ?? e?.code;
     const modelGone = status === 404 || /not[_\s-]*found|no longer available|is not found|does not exist|unsupported model/i.test(msg);
     if (modelGone && opts.fallbackModel && opts.fallbackModel !== primaryModel) {
-      response = await generateWithRetry(ai, { model: opts.fallbackModel, contents: [{ role: 'user', parts }], config });
+      response = await generateWithRetry(ai, { model: opts.fallbackModel, contents: [{ role: 'user', parts }], config }, 4, opts.deadlineMs);
     } else {
       throw e;
     }
