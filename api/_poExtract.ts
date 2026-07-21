@@ -191,6 +191,19 @@ export interface ExtractHints {
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 
+/** Schema entry for a NUMERIC field carried as a STRING. A raw Type.NUMBER (and
+ *  even a plain STRING) can degenerate into a runaway "0.0000000000…" that burns
+ *  the entire output-token budget on one field. `maxLength` + a decimals-capped
+ *  `pattern` make Gemini's constrained decoder STOP the string — at most 6
+ *  decimals and 24 chars — so the runaway is structurally impossible. The empty
+ *  string is allowed for "not stated". Coerced back to a number in coerceDocNumbers. */
+const numStr = (description: string) => ({
+  type: Type.STRING,
+  maxLength: '24',
+  pattern: '^$|^-?[0-9]{0,15}([.][0-9]{1,6})?$',
+  description,
+});
+
 // Gemini structured-output schema (Type-based). Mirrors the fields the app maps.
 const PO_SCHEMA = {
   type: Type.OBJECT,
@@ -213,9 +226,9 @@ const PO_SCHEMA = {
     carrierDomain: { type: Type.STRING, description: "The carrier's email domain, lowercase (e.g. contrans.ca). Empty if not derivable." },
     contractNumber: { type: Type.STRING, description: 'Contract / agreement number if referenced.' },
     splitNumber: { type: Type.STRING, description: 'Split / shipment-split number (e.g. on an internal "Stock Request" note) to be attached to an existing PO or invoice. Capture exactly as printed.' },
-    totalAmount: { type: Type.STRING, description: 'Order total price as a plain decimal string (e.g. "14746.20") — no currency symbol or thousands separators, at most 2 decimals. Empty string if not stated.' },
+    totalAmount: numStr('Order total price as a plain decimal string (e.g. "14746.20") — no currency symbol or thousands separators, at most 2 decimals. Empty string if not stated.'),
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
-    confidence: { type: Type.STRING, description: 'Overall extraction confidence 0..1 as a short decimal string (e.g. "0.85").' },
+    confidence: numStr('Overall extraction confidence 0..1 as a short decimal string (e.g. "0.85").'),
     isCallOff: { type: Type.BOOLEAN, description: 'True for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of scheduled deliveries (one row per delivery with quantity + date + time).' },
     documentType: {
       type: Type.STRING,
@@ -230,7 +243,7 @@ const PO_SCHEMA = {
       properties: {
         newShipmentDate: { type: Type.STRING, description: 'New requested ship/pickup date, ISO YYYY-MM-DD.' },
         newDeliveryDate: { type: Type.STRING, description: 'New requested delivery date, ISO YYYY-MM-DD.' },
-        newQuantityMt: { type: Type.STRING, description: 'New TOTAL order quantity in metric tonnes, as a plain decimal string.' },
+        newQuantityMt: numStr('New TOTAL order quantity in metric tonnes, as a plain decimal string.'),
         newSplitNumber: { type: Type.STRING, description: 'A split / shipment-split number to add to the existing PO or invoice (common on internal "Stock Request" notes).' },
         cancel: { type: Type.BOOLEAN, description: 'True when the order is being cancelled.' },
         summary: { type: Type.STRING, description: 'One-line plain-English summary of the requested change.' },
@@ -243,13 +256,13 @@ const PO_SCHEMA = {
         properties: {
           description: { type: Type.STRING, description: 'Product description as written on the PO.' },
           itemNumber: { type: Type.STRING, description: "The buyer's code for this product on this line — a \"Vendor Item #\", \"Material #\", \"Customer Part #\" or similar. Capture it exactly as printed (e.g. LC325X)." },
-          quantity: { type: Type.STRING, description: 'Quantity in the document unit, as a plain decimal string (no thousands separators).' },
+          quantity: numStr('Quantity in the document unit, as a plain decimal string (no thousands separators).'),
           unit: { type: Type.STRING, description: 'Unit of measure (kg, lb, MT, each, ...).' },
-          quantityMt: { type: Type.STRING, description: 'Quantity converted to metric tonnes, as a plain decimal string.' },
-          unitPrice: { type: Type.STRING, description: 'Raw unit price as a plain decimal string (no currency symbol).' },
+          quantityMt: numStr('Quantity converted to metric tonnes, as a plain decimal string.'),
+          unitPrice: numStr('Raw unit price as a plain decimal string (no currency symbol).'),
           priceBasis: { type: Type.STRING, description: 'What the unit price is per (e.g. "per 100 lb").' },
-          pricePerMt: { type: Type.STRING, description: 'Price normalized to $/MT when derivable, as a plain decimal string.' },
-          amount: { type: Type.STRING, description: 'Line extended/total price as a plain decimal string.' },
+          pricePerMt: numStr('Price normalized to $/MT when derivable, as a plain decimal string.'),
+          amount: numStr('Line extended/total price as a plain decimal string.'),
           deliveryDate: { type: Type.STRING, description: 'Per-line delivery date, ISO YYYY-MM-DD' },
           deliveryTime: { type: Type.STRING, description: 'Per-line delivery/appointment time as 24h HH:MM (e.g. "18:00:00" -> "18:00").' },
         },
