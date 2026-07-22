@@ -6494,6 +6494,51 @@ export default function App() {
     [locations]
   );
 
+  /** Set of INACTIVE location identifiers (name + code, normalised). Kept as the
+   *  inactive set rather than the active one so the rule can FAIL OPEN: a product
+   *  whose location is blank, or names a site that isn't in the Locations table at
+   *  all, stays visible. Hiding a real product because of a data gap would be far
+   *  worse than showing one extra. */
+  const inactiveLocationKeys = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const l of locations) {
+      if (l.active === false) {
+        if (l.name) s.add(l.name.trim().toLowerCase());
+        if (l.locationCode) s.add(l.locationCode.trim().toLowerCase());
+      }
+    }
+    return s;
+  }, [locations]);
+
+  /** True when a location string belongs to a location marked inactive. Blank or
+   *  unrecognised values are treated as ACTIVE (see inactiveLocationKeys). */
+  const isInactiveLocation = React.useCallback(
+    (loc?: string) => {
+      const n = (loc || '').trim().toLowerCase();
+      return n ? inactiveLocationKeys.has(n) : false;
+    },
+    [inactiveLocationKeys]
+  );
+
+  /** SKUs available to PICK when creating/editing a record — excludes anything
+   *  sited at an inactive location. Never use this to render a stored value on an
+   *  existing record: historical rows must keep showing their product even after
+   *  its site is retired. */
+  const selectableSkus = React.useMemo(
+    () => skus.filter(s => !isInactiveLocation(s.location)),
+    [skus, isInactiveLocation]
+  );
+
+  /** Same rule for QA products. A QA product inherits its SKU's location when it
+   *  carries none of its own, so a Ferguson SKU hides its QA children too. */
+  const selectableQaProducts = React.useMemo(
+    () => qaProducts.filter(q => {
+      const loc = q.location || skus.find(s => s.id === q.skuId)?.location;
+      return !isInactiveLocation(loc);
+    }),
+    [qaProducts, skus, isInactiveLocation]
+  );
+
   // Build the merged product attribute object used to evaluate naming-formula rules.
   const buildProductAttrs = (sku: SKU | null, qa: QAProduct | null) => ({
     productFormat: qa?.productFormat || sku?.productFormat,
