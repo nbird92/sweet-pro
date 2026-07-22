@@ -458,25 +458,37 @@ export default function ReportsPage({
     const addRow = (
       rawProduct: string | undefined, location: string, mt: number, revenue: number, customer: string | undefined,
     ) => {
-      if (!rawProduct || !mt) return;
-      const name = resolveProductName(rawProduct);
-      if (!name) return; // not in catalog any more — drop
+      const raw = (rawProduct || '').trim();
+      if (!raw) return;
+      // Resolve to the catalog when we can, but NEVER drop an unresolvable
+      // product. This report answers "what did we sell"; a product that has been
+      // renamed, retired, or is stored as a shortform code the matcher can't hit
+      // is still real sales. Dropping those silently blanked the whole report
+      // whenever invoice product strings didn't line up with SKU names.
+      const name = resolveProductName(raw) || raw;
+      // Note: a zero quantity is NOT a reason to drop either — the row still
+      // shows the product (and any revenue), which surfaces the data problem
+      // instead of hiding it behind an empty table.
       // Bucket per product AND location so a product sold from two sites reports
       // separately instead of being collapsed into one undifferentiated number.
       const key = `${name}|${location}`;
+      // Coerce: with the old "must have a quantity" gate gone, an undefined or
+      // NaN figure would otherwise poison the row total AND the grand total.
+      const q = Number.isFinite(mt) ? mt : 0;
+      const rev = Number.isFinite(revenue) ? revenue : 0;
       const existing = map.get(key);
       if (existing) {
-        existing.totalMt += mt;
-        existing.totalRevenue += revenue;
+        existing.totalMt += q;
+        existing.totalRevenue += rev;
       } else {
         map.set(key, {
           product: name,
           // Short form for display, matching every other page; fall back to the
           // catalog name, then the raw string.
-          display: toShortform(rawProduct) || name,
+          display: toShortform(raw) || name,
           location,
-          totalMt: mt,
-          totalRevenue: revenue,
+          totalMt: q,
+          totalRevenue: rev,
           customerCount: 0,
           avgPrice: 0,
         });
@@ -487,23 +499,37 @@ export default function ReportsPage({
 
     for (const inv of invoices) {
       const loc = inv.location || '';
+      const invQty = typeof inv.qty === 'number' && Number.isFinite(inv.qty) ? inv.qty : 0;
+      const invAmt = inv.amount || 0;
       // Prefer the per-line breakdown. inv.product is a COMMA-JOINED display
       // string on any mixed load, so reading only the headline product credited
       // the whole invoice to one product — a liquid line riding on a granulated
       // -headline invoice contributed nothing at all.
-      if (inv.lineItems?.length) {
-        const totalWt = inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
-        for (const li of inv.lineItems) {
-          const mt = li.totalWeight || 0;
-          if (!mt) continue;
-          // Apportion the invoice amount by weight — line amounts aren't always set.
-          const revenue = typeof li.lineAmount === 'number' && li.lineAmount > 0
-            ? li.lineAmount
-            : (totalWt > 0 ? ((inv.amount || 0) * mt) / totalWt : 0);
-          addRow(li.productName, loc, mt, revenue, inv.customer);
-        }
-      } else if (inv.product && inv.qty) {
-        addRow(inv.product, loc, inv.qty, inv.amount || 0, inv.customer);
+      const namedLines = (inv.lineItems || []).filter(li => (li.productName || '').trim());
+      const lineWt = namedLines.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      let addedAny = false;
+
+      for (const li of namedLines) {
+        // Weight per line: its own totalWeight, else an even split of the
+        // invoice's quantity. Line items frequently carry a product name with no
+        // weight; requiring totalWeight dropped the line AND (because line items
+        // existed at all) blocked the headline fallback below — the invoice
+        // vanished from the report entirely.
+        const mt = li.totalWeight || (namedLines.length ? invQty / namedLines.length : 0);
+        // Revenue: the line's own amount, else apportion the invoice total by
+        // weight, else split it evenly alongside the quantity.
+        const revenue = typeof li.lineAmount === 'number' && li.lineAmount > 0
+          ? li.lineAmount
+          : (lineWt > 0 ? (invAmt * (li.totalWeight || 0)) / lineWt : invAmt / namedLines.length);
+        addRow(li.productName, loc, mt, revenue, inv.customer);
+        addedAny = true;
+      }
+
+      // No usable line items — fall back to the invoice's headline product. This
+      // now runs whenever the lines produced nothing, not only when the array was
+      // empty.
+      if (!addedAny && inv.product) {
+        addRow(inv.product, loc, invQty, invAmt, inv.customer);
       }
     }
 
@@ -605,21 +631,26 @@ export default function ReportsPage({
     const map = new Map<string, { customer: string; product: string; totalMt: number; totalRevenue: number; invoiceCount: number }>();
 
     for (const inv of invoices) {
-      if (!inv.customer || !inv.product || !inv.qty) continue;
+      if (!inv.customer || !inv.product) continue;
       const cust = resolveCustomerName(inv.customer);
-      const prod = resolveProductName(inv.product);
-      if (!prod) continue; // product no longer in catalog
+      // Same rule as productSalesData: resolve to the catalog when possible, but
+      // never drop an unresolvable product — that silently emptied the ranking.
+      const prod = resolveProductName(inv.product) || inv.product.trim();
+      if (!prod) continue;
       const key = `${cust}|||${prod}`;
+      // qty is no longer a precondition, so coerce it — a missing qty must add 0,
+      // not NaN (which would poison the total and the whole column).
+      const qty = typeof inv.qty === 'number' && Number.isFinite(inv.qty) ? inv.qty : 0;
       const existing = map.get(key);
       if (existing) {
-        existing.totalMt += inv.qty;
+        existing.totalMt += qty;
         existing.totalRevenue += inv.amount || 0;
         existing.invoiceCount += 1;
       } else {
         map.set(key, {
           customer: cust,
           product: prod,
-          totalMt: inv.qty,
+          totalMt: qty,
           totalRevenue: inv.amount || 0,
           invoiceCount: 1,
         });
