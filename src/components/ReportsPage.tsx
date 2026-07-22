@@ -1465,40 +1465,60 @@ export default function ReportsPage({
   };
 
   // ── Customer report: per-customer workbook (all three sections) ──────────
-  /** Populate a workbook with the selected customer's three report sections, one
-   *  sheet each. Shared by the Export to Excel button and Send to Customer so the
-   *  emailed file is byte-identical to the downloaded one. */
-  const buildCustomerReportSheets = useCallback((
+  /** Populate a workbook with the selected customer's report — all three sections
+   *  stacked on ONE worksheet, separated by a labelled band and a blank row.
+   *  Shared by the Export to Excel button and Send to Customer so the emailed file
+   *  is identical to the downloaded one. */
+  const buildCustomerReportSheet = useCallback((
     wb: ExcelJS.Workbook,
     row: typeof customerReport[number],
   ) => {
     const dateStr = new Date().toLocaleDateString();
+    const ws = wb.addWorksheet('Customer Report');
+    const months = customerMonthlySales.months;
+    const monthly = customerMonthlySales.rows.find(m => m.id === row.id);
 
-    // Section 1 — summary
+    // Widest section decides the sheet's column widths: contracts needs 6, the
+    // monthly matrix needs months + 2.
+    const maxCols = Math.max(6, months.length + 2);
+
+    addTitleRows(ws, `Customer Report — ${row.customer}`, `Generated ${dateStr}`);
+
+    /** Dark band naming the section that follows. */
+    const sectionBand = (label: string) => {
+      const r = ws.addRow([label]);
+      r.getCell(1).font = { bold: true, size: 11, color: { argb: 'FFE4E3E0' } };
+      for (let i = 1; i <= maxCols; i++) {
+        r.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF141414' } };
+      }
+      return r;
+    };
+    const rightAlign = (r: ExcelJS.Row, from: number, to: number, fmt = NUMBER_FMT) => {
+      for (let i = from; i <= to; i++) {
+        r.getCell(i).numFmt = fmt;
+        r.getCell(i).alignment = { horizontal: 'right' };
+      }
+    };
+
+    // ── Section 1: summary ────────────────────────────────────────────────
+    sectionBand('SUMMARY');
     {
-      const ws = wb.addWorksheet('Summary');
-      addTitleRows(ws, `Customer Report — ${row.customer}`, `Generated ${dateStr}`);
       const h = ws.rowCount + 1;
       ws.addRow(['Customer', 'Sales Volume (MT)', 'Qty on Order (MT)', 'Contracts', 'Remaining Contract Balance (MT)']);
       applyHeaderRow(ws, h);
       for (let i = 2; i <= 5; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
       const r = ws.addRow([row.customer, row.salesMt, row.onOrderMt, row.contractCount, row.remainingTotal]);
-      r.getCell(2).numFmt = NUMBER_FMT;
-      r.getCell(3).numFmt = NUMBER_FMT;
+      rightAlign(r, 2, 3);
       r.getCell(4).numFmt = INT_FMT;
-      r.getCell(5).numFmt = NUMBER_FMT;
-      for (let i = 2; i <= 5; i++) r.getCell(i).alignment = { horizontal: 'right' };
-      ws.getColumn(1).width = 38;
-      for (let i = 2; i <= 5; i++) ws.getColumn(i).width = 24;
-      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 0 }];
+      r.getCell(4).alignment = { horizontal: 'right' };
+      rightAlign(r, 5, 5);
     }
 
-    // Section 2 — sales volume by month
+    ws.addRow([]);
+
+    // ── Section 2: sales volume by month ──────────────────────────────────
+    sectionBand('SALES VOLUME BY MONTH (MT)');
     {
-      const ws = wb.addWorksheet('Sales by Month');
-      addTitleRows(ws, `Sales Volume by Month (MT) — ${row.customer}`, `Generated ${dateStr}`);
-      const months = customerMonthlySales.months;
-      const monthly = customerMonthlySales.rows.find(m => m.id === row.id);
       const h = ws.rowCount + 1;
       ws.addRow(['Customer', ...months.map(monthLabel), 'Total']);
       applyHeaderRow(ws, h);
@@ -1508,30 +1528,27 @@ export default function ReportsPage({
         ...months.map(mk => monthly?.byMonth[mk] ?? 0),
         monthly?.total ?? 0,
       ]);
-      for (let i = 2; i <= months.length + 2; i++) {
-        r.getCell(i).numFmt = NUMBER_FMT;
-        r.getCell(i).alignment = { horizontal: 'right' };
-      }
-      ws.getColumn(1).width = 38;
-      for (let i = 2; i <= months.length + 2; i++) ws.getColumn(i).width = 14;
-      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 1 }];
+      rightAlign(r, 2, months.length + 2);
+      if (months.length === 0) ws.addRow(['No dated invoices for this customer.']);
     }
 
-    // Section 3 — contracts
+    ws.addRow([]);
+
+    // ── Section 3: contracts ──────────────────────────────────────────────
+    sectionBand('CONTRACTS');
     {
-      const ws = wb.addWorksheet('Contracts');
-      addTitleRows(ws, `Contracts — ${row.customer}`, `Generated ${dateStr} | ${row.contractRows.length} contracts`);
       const h = ws.rowCount + 1;
       ws.addRow(['Contract #', 'Product', 'Contract Vol (MT)', 'Volume Taken (MT)', 'Remaining Contract Balance (MT)', 'Qty on Order (MT)']);
       applyHeaderRow(ws, h);
       for (let i = 3; i <= 6; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
       row.contractRows.forEach((c, idx) => {
         const r = ws.addRow([c.contractNumber, c.product, c.contractVol, c.taken, c.remaining, c.qtyOnOrder]);
-        for (let i = 3; i <= 6; i++) {
-          r.getCell(i).numFmt = NUMBER_FMT;
-          r.getCell(i).alignment = { horizontal: 'right' };
+        rightAlign(r, 3, 6);
+        if (idx % 2 === 1) {
+          for (let i = 1; i <= 6; i++) {
+            r.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+          }
         }
-        if (idx % 2 === 1) r.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
       });
       if (row.contractRows.length) {
         const totalRowNum = ws.rowCount + 1;
@@ -1542,27 +1559,25 @@ export default function ReportsPage({
           row.contractRows.reduce((s, c) => s + c.remaining, 0),
           row.contractRows.reduce((s, c) => s + c.qtyOnOrder, 0),
         ]);
-        for (let i = 3; i <= 6; i++) {
-          t.getCell(i).numFmt = NUMBER_FMT;
-          t.getCell(i).alignment = { horizontal: 'right' };
-        }
+        rightAlign(t, 3, 6);
         applyTotalRow(ws, totalRowNum);
+      } else {
+        ws.addRow(['No active contracts for this customer.']);
       }
-      ws.getColumn(1).width = 20;
-      ws.getColumn(2).width = 34;
-      for (let i = 3; i <= 6; i++) ws.getColumn(i).width = 24;
-      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 0 }];
     }
+
+    ws.getColumn(1).width = 38;
+    for (let i = 2; i <= maxCols; i++) ws.getColumn(i).width = 22;
   }, [customerMonthlySales]);
 
   /** The selected customer's report as an .xlsx Blob — one source for both the
    *  download and the email attachment. */
   const buildCustomerReportBlob = useCallback(async (row: typeof customerReport[number]) => {
     const wb = new ExcelJS.Workbook();
-    buildCustomerReportSheets(wb, row);
+    buildCustomerReportSheet(wb, row);
     const buf = await wb.xlsx.writeBuffer();
     return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  }, [buildCustomerReportSheets]);
+  }, [buildCustomerReportSheet]);
 
   const customerReportFileName = (row: typeof customerReport[number]) =>
     `SweetPro_CustomerReport_${(row.customer || 'Customer').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
