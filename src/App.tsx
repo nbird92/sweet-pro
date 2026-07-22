@@ -754,19 +754,31 @@ export default function App() {
   };
   const resolveScannedProduct = (description: string | undefined, itemCode: string | undefined, cust: Customer | null | undefined, location: string | undefined, opts: ScanOpt[]): ScanOpt | null => {
     const byValue = (v: string | null) => (v ? (opts.find(o => o.value === v) || null) : null);
+    // The sugar form the DESCRIPTION itself states, e.g. "LIQUID SUCROSE BULK"
+    // -> liquid. Computed up front because the learned mappings below must
+    // respect it too.
+    const rawForm = detectSugarForm(description);
+    // A learned alias must never override explicit textual evidence: if the line
+    // clearly says liquid, a stale "MIX1303 -> Bulk Granulated 100" mapping is
+    // wrong and gets ignored rather than short-circuiting the scorer. Options
+    // with no detectable form still pass (nothing to contradict).
+    const formAgrees = (o: ScanOpt | null): boolean => {
+      if (!o) return false;
+      const f = optionSugarForm(o);
+      return !rawForm || !f || f === rawForm;
+    };
     // 1) Learned by the buyer's vendor item code (strongest — survives wording).
     if (itemCode && itemCode.trim()) {
       const hit = byValue(findLearned(poLearned, 'product', itemCode));
-      if (hit) return hit;
+      if (hit && formAgrees(hit)) return hit;
     }
     // 2) Learned by the description text.
     if (description && description.trim()) {
       const hit = byValue(findLearned(poLearned, 'product', description));
-      if (hit) return hit;
+      if (hit && formAgrees(hit)) return hit;
     }
     if (!description || !description.trim()) return null;
     // 3) Score with a sugar-form guard + customer/location affinity.
-    const rawForm = detectSugarForm(description);
     const aff = customerProductAffinity(cust, location);
     let best: ScanOpt | null = null;
     let bestScore = 0;
@@ -842,8 +854,14 @@ export default function App() {
       return 0;
     };
     // Origin location for the order — also used to weight the customer's product
-    // history (products bought at this location score higher).
-    const origin = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
+    // history (products bought at this location score higher). An INACTIVE site
+    // (e.g. a contract or customer default still pointing at a retired plant) is
+    // dropped to blank: pre-selecting it would surface that location in the
+    // review dropdown via its "keep the current value" fallback option, which is
+    // exactly what we're trying to stop.
+    const origin = activeOrBlankLocation(
+      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    );
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
       const factor = mtPerUnit(li.unit);
@@ -1361,7 +1379,9 @@ export default function App() {
     // NO human review, so an unfiltered pool would write a retired-site product
     // straight into production.
     const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
-    const origin = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
+    const origin = activeOrBlankLocation(
+      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    );
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
@@ -1381,7 +1401,9 @@ export default function App() {
     if (lines.length === 0) return null;
     const lineItems = lines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    const location = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
+    const location = activeOrBlankLocation(
+      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    );
     const shipToLocationId = matchShipToForCustomer(cust?.id || '', po);
     const deliveryDate = po.deliveryDate || '';
     const shipmentDate = deliveryDate || po.shipmentDate || ''; // default ship date to delivery date
@@ -6692,6 +6714,16 @@ export default function App() {
       return n ? inactiveLocationKeys.has(n) : false;
     },
     [inactiveLocationKeys]
+  );
+
+  /** A location value that is safe to PRE-SELECT on a new record: returns it
+   *  unchanged when the site is active (or unrecognised), and '' when the site is
+   *  inactive. Used for auto-detected origins — a contract or customer default
+   *  can still point at a retired plant, and seeding that made the retired site
+   *  appear in pickers through their "keep the current value" fallback option. */
+  const activeOrBlankLocation = React.useCallback(
+    (loc?: string) => (isInactiveLocation(loc) ? '' : (loc || '')),
+    [isInactiveLocation]
   );
 
   /** SKUs available to PICK when creating/editing a record — excludes anything
@@ -21618,7 +21650,20 @@ export default function App() {
                                     className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs outline-none"
                                   >
                                     <option value="">— Select product —</option>
-                                    {poProductOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}{o.label !== o.value ? ` (${o.value})` : ''}</option>)}
+                                    {/* Narrow to the chosen origin once one is set; with no
+                                        location selected, show everything. Products carrying
+                                        no location of their own stay visible (fail open on a
+                                        data gap), as does whatever this line already has
+                                        selected so a pick can't silently disappear. */}
+                                    {poProductOptions
+                                      .filter(o => {
+                                        if (!rev.location) return true;
+                                        if (o.key === line.productKey) return true;
+                                        const ol = (o.location || '').trim().toLowerCase();
+                                        if (!ol) return true;
+                                        return ol === rev.location.trim().toLowerCase();
+                                      })
+                                      .map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}{o.label !== o.value ? ` (${o.value})` : ''}</option>)}
                                   </select>
                                   {(line.productRaw || line.productCodeRaw) && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"{line.productCodeRaw && <> · item <span className="font-mono">{line.productCodeRaw}</span></>}</div>}
                                 </td>
