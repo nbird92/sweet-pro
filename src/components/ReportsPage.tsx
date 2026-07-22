@@ -117,7 +117,15 @@ export default function ReportsPage({
     else if (lower.includes('liquid')) detectedSugar = 'Liquid';
     if (!detectedSugar) {
       for (const st of sugarTypes) {
-        if (st.abbreviation && new RegExp(`\\b${st.abbreviation}\\b`).test(trimmed)) {
+        if (!st.abbreviation) continue;
+        // Escape first — abbreviation is a free-text user field and could contain
+        // regex metacharacters, which would throw on new RegExp.
+        const esc = st.abbreviation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Match BOTH the spaced token ("LC 60" -> \bLC\b) and the GLUED shortform
+        // code ("LC60"). \bLC\b does NOT match "LC60" — C and 6 are both word
+        // characters, so there is no boundary between them — which meant every
+        // liquid shortform failed to resolve and its invoice was dropped entirely.
+        if (new RegExp(`\\b${esc}(?:\\b|\\d)`, 'i').test(trimmed)) {
           detectedSugar = st.name;
           break;
         }
@@ -441,45 +449,85 @@ export default function ReportsPage({
     // whose product no longer resolves to any SKU are skipped so the report
     // shows only currently-cataloged products. Customer keys are also
     // resolved to current names so renamed customers count once.
-    const map = new Map<string, { product: string; totalMt: number; totalRevenue: number; customerCount: number; avgPrice: number }>();
+    const map = new Map<string, {
+      product: string; display: string; location: string;
+      totalMt: number; totalRevenue: number; customerCount: number; avgPrice: number;
+    }>();
     const productCustomers = new Map<string, Set<string>>();
 
-    for (const inv of invoices) {
-      if (!inv.product || !inv.qty) continue;
-      const key = resolveProductName(inv.product);
-      if (!key) continue; // not in catalog any more — drop
+    const addRow = (
+      rawProduct: string | undefined, location: string, mt: number, revenue: number, customer: string | undefined,
+    ) => {
+      if (!rawProduct || !mt) return;
+      const name = resolveProductName(rawProduct);
+      if (!name) return; // not in catalog any more — drop
+      // Bucket per product AND location so a product sold from two sites reports
+      // separately instead of being collapsed into one undifferentiated number.
+      const key = `${name}|${location}`;
       const existing = map.get(key);
       if (existing) {
-        existing.totalMt += inv.qty;
-        existing.totalRevenue += inv.amount || 0;
+        existing.totalMt += mt;
+        existing.totalRevenue += revenue;
       } else {
         map.set(key, {
-          product: key,
-          totalMt: inv.qty,
-          totalRevenue: inv.amount || 0,
+          product: name,
+          // Short form for display, matching every other page; fall back to the
+          // catalog name, then the raw string.
+          display: toShortform(rawProduct) || name,
+          location,
+          totalMt: mt,
+          totalRevenue: revenue,
           customerCount: 0,
           avgPrice: 0,
         });
       }
       if (!productCustomers.has(key)) productCustomers.set(key, new Set());
-      if (inv.customer) productCustomers.get(key)!.add(resolveCustomerName(inv.customer));
+      if (customer) productCustomers.get(key)!.add(resolveCustomerName(customer));
+    };
+
+    for (const inv of invoices) {
+      const loc = inv.location || '';
+      // Prefer the per-line breakdown. inv.product is a COMMA-JOINED display
+      // string on any mixed load, so reading only the headline product credited
+      // the whole invoice to one product — a liquid line riding on a granulated
+      // -headline invoice contributed nothing at all.
+      if (inv.lineItems?.length) {
+        const totalWt = inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+        for (const li of inv.lineItems) {
+          const mt = li.totalWeight || 0;
+          if (!mt) continue;
+          // Apportion the invoice amount by weight — line amounts aren't always set.
+          const revenue = typeof li.lineAmount === 'number' && li.lineAmount > 0
+            ? li.lineAmount
+            : (totalWt > 0 ? ((inv.amount || 0) * mt) / totalWt : 0);
+          addRow(li.productName, loc, mt, revenue, inv.customer);
+        }
+      } else if (inv.product && inv.qty) {
+        addRow(inv.product, loc, inv.qty, inv.amount || 0, inv.customer);
+      }
     }
 
-    const rows = Array.from(map.values());
+    const rows = Array.from(map.entries()).map(([key, r]) => ({ key, ...r }));
     const grandTotal = rows.reduce((s, r) => s + r.totalMt, 0);
     return rows.map(r => ({
       ...r,
-      customerCount: productCustomers.get(r.product)?.size ?? 0,
+      customerCount: productCustomers.get(r.key)?.size ?? 0,
       avgPrice: r.totalMt > 0 ? r.totalRevenue / r.totalMt : 0,
       pctOfTotal: grandTotal > 0 ? (r.totalMt / grandTotal) * 100 : 0,
     }));
-  }, [invoices, resolveProductName, resolveCustomerName]);
+  }, [invoices, resolveProductName, resolveCustomerName, toShortform]);
 
   const sortedProductSales = useMemo(() => {
     let list = productSalesData;
     if (prodSearch.trim()) {
       const q = prodSearch.toLowerCase();
-      list = list.filter(r => r.product.toLowerCase().includes(q));
+      // Match the short form shown in the cell and the location, not just the
+      // catalog name — otherwise you can't find a row by what you can see.
+      list = list.filter(r =>
+        r.product.toLowerCase().includes(q) ||
+        r.display.toLowerCase().includes(q) ||
+        (r.location || '').toLowerCase().includes(q)
+      );
     }
     if (prodSort.key) {
       list = [...list].sort((a, b) => {
@@ -1049,18 +1097,18 @@ export default function ReportsPage({
     addTitleRows(ws, 'Sales Volume by Product', `Generated ${dateStr} | ${productSalesData.length} products | ${formatNum(productGrandTotalMt)} MT total`);
 
     const headerRowNum = ws.rowCount + 1;
-    ws.addRow(['#', 'Product', 'Total (MT)', 'Revenue', 'Customers', 'Avg $/MT', '% of Total']);
+    ws.addRow(['#', 'Product', 'Location', 'Total (MT)', 'Revenue', 'Customers', 'Avg $/MT', '% of Total']);
     applyHeaderRow(ws, headerRowNum);
-    for (let i = 3; i <= 7; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
+    for (let i = 4; i <= 8; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
 
     sortedProductSales.forEach((row, idx) => {
-      const r = ws.addRow([idx + 1, row.product, row.totalMt, row.totalRevenue, row.customerCount, row.avgPrice, row.pctOfTotal / 100]);
-      r.getCell(3).numFmt = NUMBER_FMT;
-      r.getCell(4).numFmt = CURRENCY_FMT;
-      r.getCell(5).numFmt = INT_FMT;
-      r.getCell(6).numFmt = CURRENCY_FMT;
-      r.getCell(7).numFmt = PCT_FMT;
-      for (let i = 3; i <= 7; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      const r = ws.addRow([idx + 1, row.display, row.location, row.totalMt, row.totalRevenue, row.customerCount, row.avgPrice, row.pctOfTotal / 100]);
+      r.getCell(4).numFmt = NUMBER_FMT;
+      r.getCell(5).numFmt = CURRENCY_FMT;
+      r.getCell(6).numFmt = INT_FMT;
+      r.getCell(7).numFmt = CURRENCY_FMT;
+      r.getCell(8).numFmt = PCT_FMT;
+      for (let i = 4; i <= 8; i++) r.getCell(i).alignment = { horizontal: 'right' };
       if (idx % 2 === 1) {
         r.eachCell((cell) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
       }
@@ -1068,21 +1116,22 @@ export default function ReportsPage({
 
     const totalRowNum = ws.rowCount + 1;
     const avgAll = productGrandTotalMt > 0 ? productGrandTotalRev / productGrandTotalMt : 0;
-    const r = ws.addRow(['', `Total (${productSalesData.length} products)`, productGrandTotalMt, productGrandTotalRev, '', avgAll, 1]);
-    r.getCell(3).numFmt = NUMBER_FMT;
-    r.getCell(4).numFmt = CURRENCY_FMT;
-    r.getCell(6).numFmt = CURRENCY_FMT;
-    r.getCell(7).numFmt = PCT_FMT;
-    for (let i = 3; i <= 7; i++) r.getCell(i).alignment = { horizontal: 'right' };
+    const r = ws.addRow(['', `Total (${productSalesData.length} rows)`, '', productGrandTotalMt, productGrandTotalRev, '', avgAll, 1]);
+    r.getCell(4).numFmt = NUMBER_FMT;
+    r.getCell(5).numFmt = CURRENCY_FMT;
+    r.getCell(7).numFmt = CURRENCY_FMT;
+    r.getCell(8).numFmt = PCT_FMT;
+    for (let i = 4; i <= 8; i++) r.getCell(i).alignment = { horizontal: 'right' };
     applyTotalRow(ws, totalRowNum);
 
     ws.getColumn(1).width = 5;
     ws.getColumn(2).width = 35;
-    ws.getColumn(3).width = 16;
-    ws.getColumn(4).width = 18;
-    ws.getColumn(5).width = 14;
-    ws.getColumn(6).width = 16;
-    ws.getColumn(7).width = 14;
+    ws.getColumn(3).width = 22;
+    ws.getColumn(4).width = 16;
+    ws.getColumn(5).width = 18;
+    ws.getColumn(6).width = 14;
+    ws.getColumn(7).width = 16;
+    ws.getColumn(8).width = 14;
     ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
   }, [sortedProductSales, productSalesData, productGrandTotalMt, productGrandTotalRev]);
 
@@ -1827,6 +1876,9 @@ export default function ReportsPage({
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
                   <SortHeader label="Product" sortKey="product" current={prodSort} onToggle={toggleSort(setProdSort)} />
                 </th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
+                  <SortHeader label="Location" sortKey="location" current={prodSort} onToggle={toggleSort(setProdSort)} />
+                </th>
                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">
                   <div className="flex justify-end"><SortHeader label="Total (MT)" sortKey="totalMt" current={prodSort} onToggle={toggleSort(setProdSort)} /></div>
                 </th>
@@ -1846,9 +1898,10 @@ export default function ReportsPage({
             </thead>
             <tbody>
               {sortedProductSales.map((row, idx) => (
-                <tr key={row.product} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                <tr key={row.key} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-2 text-gray-400 font-mono">{idx + 1}</td>
-                  <td className="px-4 py-2 font-medium">{row.product}</td>
+                  <td className="px-4 py-2 font-medium">{row.display}</td>
+                  <td className="px-4 py-2">{row.location || '—'}</td>
                   <td className="px-4 py-2 text-right font-mono">{formatNum(row.totalMt)}</td>
                   <td className="px-4 py-2 text-right font-mono">{formatCurrency(row.totalRevenue)}</td>
                   <td className="px-4 py-2 text-right font-mono">{row.customerCount}</td>
@@ -1864,14 +1917,15 @@ export default function ReportsPage({
                 </tr>
               ))}
               {sortedProductSales.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No invoice data available.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No invoice data available.</td></tr>
               )}
             </tbody>
             {sortedProductSales.length > 0 && (
               <tfoot>
                 <tr className="bg-gray-50 font-bold border-t-2 border-[#141414]">
                   <td className="px-4 py-2"></td>
-                  <td className="px-4 py-2 text-[10px] uppercase tracking-widest">Total ({productSalesData.length} products)</td>
+                  <td className="px-4 py-2 text-[10px] uppercase tracking-widest">Total ({productSalesData.length} rows)</td>
+                  <td className="px-4 py-2"></td>
                   <td className="px-4 py-2 text-right font-mono">{formatNum(productGrandTotalMt)}</td>
                   <td className="px-4 py-2 text-right font-mono">{formatCurrency(productGrandTotalRev)}</td>
                   <td className="px-4 py-2 text-right font-mono">—</td>

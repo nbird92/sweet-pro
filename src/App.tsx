@@ -4401,7 +4401,6 @@ export default function App() {
         lastSyncedData.current.customers = JSON.stringify(mapped);
       }
       if (data.products) {
-        const validLocations = ['Hamilton', 'Vancouver'];
         const mapped = data.products.map((s: any) => ({
           ...s,
           productGroup: s.productGroup || s.productType || 'Bulk',
@@ -4410,7 +4409,14 @@ export default function App() {
           premiumCadMt: parseFloat(s.premiumCadMt) || 0,
           netWeightKg: s.netWeightKg ? (parseFloat(s.netWeightKg) || 0) : (s.unitSizeKg ? (parseFloat(s.unitSizeKg) || 0) : undefined),
           grossWeightKg: s.grossWeightKg ? (parseFloat(s.grossWeightKg) || 0) : undefined,
-          location: validLocations.includes(s.location) ? s.location : 'Hamilton',
+          // Preserve the STORED location verbatim. This used to force anything that
+          // wasn't literally 'Hamilton'/'Vancouver' to 'Hamilton', which silently
+          // rewrote every multi-site value ("Hamilton (Ferguson)", "Hamilton
+          // (Sherman)") on load — and since skus is synced back to Firestore, the
+          // mangling was persisted. Never coerce here: a location can be renamed or
+          // deactivated without making historical SKU data meaningless; surface any
+          // mismatch in the UI instead.
+          location: s.location || '',
           category: (s.category === 'Conventional' || s.category === 'Organic') ? s.category : 'Conventional'
         }));
         setSkus(mapped);
@@ -6928,7 +6934,19 @@ export default function App() {
     });
 
     const mode = (m: Map<string, number>): string => { let best = '', n = -1; m.forEach((v, k) => { if (v > n) { n = v; best = k; } }); return best; };
-    const validLoc = (l: string) => (l === 'Hamilton' || l === 'Vancouver') ? l : '';
+    // Accept ANY name in the Locations table — this is a multi-site business, so
+    // "Hamilton (Sherman)" and "Hamilton (Ferguson)" are distinct real sites. The
+    // old two-value whitelist threw away the location we just derived from history
+    // and pinned every rebuilt customer to 'Hamilton'. Match against the FULL list
+    // (not just active ones): historical orders legitimately reference sites that
+    // have since been deactivated. Returns the table's canonical spelling.
+    const validLoc = (l: string) => {
+      const n = norm(l);
+      if (!n) return '';
+      const hit = locations.find(x => norm(x.name) === n)
+        || locations.find(x => norm(x.locationCode) === n);
+      return hit ? hit.name : '';
+    };
 
     const rebuilt: Customer[] = [];
     let nextNum = parseInt(getNextCustomerNumber(customers), 10) || (customers.length + 1);
@@ -9878,6 +9896,7 @@ export default function App() {
           orders={orders}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           tollingFees={tollingFees}
+          productToShortform={productToShortform}
         />
       );
     }

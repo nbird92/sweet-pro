@@ -47,6 +47,11 @@ interface SalesForecastPageProps {
   orders: Order[];
   shipments: Shipment[];
   tollingFees: TollingFee[];
+  /** Renders a catalog product name as its SHORT form via the app's naming-formula
+   *  engine (App.tsx owns it, along with the formulas/sugarTypes/productGroups it
+   *  needs). Without this the product tables can only print the raw stored string,
+   *  which is the long "Product Description", not the short code shown elsewhere. */
+  productToShortform?: (name: string | undefined) => string;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -142,6 +147,7 @@ export default function SalesForecastPage({
   orders,
   shipments,
   tollingFees,
+  productToShortform,
 }: SalesForecastPageProps) {
   // ── Top Controls ────────────────────────────────────────────────────────
   const [selectedFiscalYearId, setSelectedFiscalYearId] = useState<string>(
@@ -216,6 +222,26 @@ export default function SalesForecastPage({
 
   // ── Actuals computation ─────────────────────────────────────────────────
 
+  /** Add an invoice's actual MT to `map` under `${customer}|${productName}|${idx}`.
+   *  Emits one entry PER LINE ITEM when the invoice has them: forecast lines are
+   *  keyed on the individual product name, but Invoice.product is a COMMA-JOINED
+   *  display string for any multi-product order — so keying the actuals on it
+   *  meant the lookup never matched and the grid showed zero actuals against a
+   *  real forecast. Falls back to the headline product for legacy/imported
+   *  invoices that carry no line items. */
+  const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
+    if (inv.lineItems?.length) {
+      for (const li of inv.lineItems) {
+        if (!li.productName) continue;
+        const k = `${inv.customer}|${li.productName}|${idx}`;
+        map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
+      }
+    } else if (inv.product) {
+      const k = `${inv.customer}|${inv.product}|${idx}`;
+      map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
+    }
+  };
+
   /** Build a map: `${customerName}|${productName}|${periodIndex}` -> actual MT from invoices */
   const actualsMap = useMemo(() => {
     if (!selectedFY) return new Map<string, number>();
@@ -226,8 +252,7 @@ export default function SalesForecastPage({
       if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
       const pIdx = periodIndexForDate(invDate, selectedFY.periods);
       if (pIdx < 0) continue;
-      const key = `${inv.customer}|${inv.product}|${pIdx}`;
-      map.set(key, (map.get(key) ?? 0) + inv.qty);
+      addInvoiceActuals(map, inv, pIdx);
     }
     return map;
   }, [invoices, selectedFY]);
@@ -241,20 +266,61 @@ export default function SalesForecastPage({
       if (!invDate) continue;
       if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
       const wIdx = weekIndexForDate(invDate, selectedFY.startDate);
-      const key = `${inv.customer}|${inv.product}|${wIdx}`;
-      map.set(key, (map.get(key) ?? 0) + inv.qty);
+      addInvoiceActuals(map, inv, wIdx);
     }
     return map;
   }, [invoices, selectedFY]);
 
+  // ── Catalog resolution ──────────────────────────────────────────────────
+  // The product tables used to gate on byte-exact SKU.name membership, which
+  // silently dropped (a) every QA-only product — liquids are frequently QA-only,
+  // which is why Liquid never appeared — and (b) anything differing only by case
+  // or stray whitespace. Resolve against BOTH catalogs, case/whitespace-tolerant.
+  const catalogIndex = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const bySku = new Map<string, SKU>();
+    const byQa = new Map<string, QAProduct>();
+    for (const s of skus) if (s.name) bySku.set(norm(s.name), s);
+    for (const q of qaProducts) if (q.skuName) byQa.set(norm(q.skuName), q);
+    return { norm, bySku, byQa };
+  }, [skus, qaProducts]);
+
+  const catalogEntry = useCallback(
+    (productName: string): { sku: SKU | null; qa: QAProduct | null } | null => {
+      const n = catalogIndex.norm(productName);
+      if (!n) return null;
+      const sku = catalogIndex.bySku.get(n) || null;
+      const qa = catalogIndex.byQa.get(n) || null;
+      return (sku || qa) ? { sku, qa } : null;
+    },
+    [catalogIndex]
+  );
+
+  /** Product group for a forecast line — falls back to the QA record so QA-only
+   *  products land in their real group instead of 'Ungrouped'. */
+  const groupOf = useCallback(
+    (productName: string): string => {
+      const hit = catalogEntry(productName);
+      if (!hit) return 'Ungrouped';
+      const qa = hit.qa || (hit.sku ? qaProducts.find(q => q.skuId === hit.sku!.id) : null) || null;
+      return qa?.productGroup || hit.sku?.productGroup || 'Ungrouped';
+    },
+    [catalogEntry, qaProducts]
+  );
+
+  /** Short-form product name for display, matching every other page. */
+  const displayProduct = useCallback(
+    (name: string) => (productToShortform ? productToShortform(name) : name) || name,
+    [productToShortform]
+  );
+
   // ── Product Forecast Table data ─────────────────────────────────────────
   const productForecastRows = useMemo(() => {
-    const skuNames = new Set(skus.map(s => s.name));
     const map = new Map<string, { productName: string; location: string; annual: number }>();
     for (const cf of mergedForecasts) {
       for (const line of cf.lines) {
-        // Only include products that exist in the SKU catalog
-        if (!skuNames.has(line.productName)) continue;
+        // Include anything resolvable in EITHER catalog (SKU or QA product).
+        if (!catalogEntry(line.productName)) continue;
         const key = `${line.productName}|${line.location}`;
         const existing = map.get(key);
         const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
@@ -266,32 +332,32 @@ export default function SalesForecastPage({
       }
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [mergedForecasts, skus]);
+  }, [mergedForecasts, catalogEntry]);
 
   // ── Forecast by Product Group (rollup of the product rows) ──────────────
+  // Rolls up by group AND location: the rollup used to key on group alone, which
+  // collapsed Sherman, Ferguson and Vancouver into a single undifferentiated number.
   const productGroupForecastRows = useMemo(() => {
-    const groupOf = (productName: string): string => {
-      const sku = skus.find(s => s.name === productName);
-      if (!sku) return 'Ungrouped';
-      const qa = qaProducts.find(q => q.skuId === sku.id);
-      return (qa?.productGroup || sku.productGroup || 'Ungrouped');
-    };
-    const map = new Map<string, { group: string; annual: number; products: Map<string, number> }>();
+    const map = new Map<string, {
+      group: string; location: string; annual: number; products: Map<string, number>;
+    }>();
     for (const row of productForecastRows) {
       const g = groupOf(row.productName) || 'Ungrouped';
-      const cur = map.get(g) || { group: g, annual: 0, products: new Map<string, number>() };
+      const key = `${g}|${row.location}`;
+      const cur = map.get(key) || { group: g, location: row.location, annual: 0, products: new Map<string, number>() };
       cur.annual += row.annual;
       cur.products.set(row.productName, (cur.products.get(row.productName) || 0) + row.annual);
-      map.set(g, cur);
+      map.set(key, cur);
     }
     return Array.from(map.values())
       .map(g => ({
         group: g.group,
+        location: g.location,
         annual: g.annual,
         products: Array.from(g.products.entries()).map(([productName, annual]) => ({ productName, annual })).sort((a, b) => b.annual - a.annual),
       }))
       .sort((a, b) => b.annual - a.annual);
-  }, [productForecastRows, skus, qaProducts]);
+  }, [productForecastRows, groupOf]);
 
   // ── Tolling Forecast: forecast MT × the tolling fee for its product group +
   //    location (+ tax), for the selected fiscal year. Projects future tolling
@@ -299,20 +365,13 @@ export default function SalesForecastPage({
   //    (the granularity tolling fees are set at). ──────────────────────────────
   const tollingForecastRows = useMemo(() => {
     const norm = (s?: string) => (s || '').trim().toLowerCase();
-    const skuNames = new Set(skus.map(s => s.name));
-    const groupOf = (productName: string): string => {
-      const sku = skus.find(s => s.name === productName);
-      if (!sku) return 'Ungrouped';
-      const qa = qaProducts.find(q => q.skuId === sku.id);
-      return (qa?.productGroup || sku.productGroup || 'Ungrouped');
-    };
     const feeFor = (group: string, location: string): TollingFee | undefined =>
       tollingFees.find(t => norm(t.productGroup) === norm(group) && norm(t.location) === norm(location))
       || tollingFees.find(t => norm(t.productGroup) === norm(group));
     const map = new Map<string, { group: string; location: string; mt: number }>();
     for (const cf of mergedForecasts) {
       for (const line of cf.lines) {
-        if (!skuNames.has(line.productName)) continue;
+        if (!catalogEntry(line.productName)) continue;
         const g = groupOf(line.productName);
         const key = `${g}|${line.location}`;
         const mt = line.entries.reduce((s, e) => s + e.value, 0);
@@ -559,54 +618,65 @@ export default function SalesForecastPage({
   const handleAutoPopulate = useCallback(() => {
     if (!selectedFY) return;
 
-    // Build a map: customerName -> productName -> total MT from all sources
-    const salesMap = new Map<string, Map<string, number>>();
-    // Track the distinct months we have data for, to compute a proper average
-    const monthsWithData = new Set<string>();
+    // Historical basis: a FIXED trailing 12-month window. The divisor used to be
+    // "the number of distinct months anywhere in the dataset", a single global
+    // number shared by every customer/product pair — so a customer who bought once
+    // had that one purchase smeared across the whole history span, producing a tiny
+    // non-zero forecast for a product they effectively don't buy. A fixed window
+    // with a fixed divisor makes the number mean "average MT per month over the
+    // last year", and drops anything with no recent sales entirely.
+    const LOOKBACK_MONTHS = 12;
+    const now = new Date();
+    const windowEnd = now.toISOString().slice(0, 10);
+    const windowStart = new Date(Date.UTC(
+      now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate(),
+    )).toISOString().slice(0, 10);
+    const inWindow = (d?: string) => !!d && d >= windowStart && d <= windowEnd;
 
-    const addToMap = (customerName: string, productName: string, qty: number, dateStr: string) => {
-      if (!customerName || !productName || !qty || !dateStr) return;
+    // customerName -> "productName|location" -> total MT. Location is a REAL key
+    // dimension: a customer's Ferguson and Sherman volume for the same product are
+    // separate forecast lines, not one merged number stamped with whichever
+    // location a name-only .find() happened to hit first.
+    const salesMap = new Map<string, Map<string, number>>();
+    const addToMap = (customerName: string, productName: string, location: string, qty: number) => {
+      if (!customerName || !productName || !qty) return;
       if (!salesMap.has(customerName)) salesMap.set(customerName, new Map());
       const prodMap = salesMap.get(customerName)!;
-      prodMap.set(productName, (prodMap.get(productName) ?? 0) + qty);
-      monthsWithData.add(dateStr.slice(0, 7)); // YYYY-MM
+      const key = `${productName}|${location || ''}`;
+      prodMap.set(key, (prodMap.get(key) ?? 0) + qty);
     };
 
-    // 1. Invoices — most reliable source (actual billed)
+    // 1. Invoices — the billed record, and authoritative. Prefer the per-line
+    //    breakdown: inv.product is a COMMA-JOINED display string on a mixed load,
+    //    which never matches a catalog product name.
+    const invoicedBols = new Set<string>();
     for (const inv of invoices) {
-      if (inv.qty && inv.customer && inv.product && inv.date) {
-        addToMap(inv.customer, inv.product, inv.qty, inv.date);
-      }
-    }
-
-    // 2. Orders — completed/confirmed orders with line items
-    for (const ord of orders) {
-      if (ord.status === 'Cancelled') continue;
-      // Skip if already captured via invoices (avoid double-counting)
-      // Orders with status Completed likely have invoices already,
-      // but include Confirmed/Open orders as pipeline
-      for (const li of ord.lineItems) {
-        if (li.productName && li.totalWeight && ord.date) {
-          addToMap(ord.customer, li.productName, li.totalWeight, ord.date);
+      if (!inv.customer || !inWindow(inv.date)) continue;
+      const bol = (inv.bolNumber || '').trim();
+      if (bol) invoicedBols.add(bol);
+      if (inv.lineItems?.length) {
+        for (const li of inv.lineItems) {
+          if (li.productName && li.totalWeight) {
+            addToMap(inv.customer, li.productName, inv.location || '', li.totalWeight);
+          }
         }
+      } else if (inv.qty && inv.product) {
+        addToMap(inv.customer, inv.product, inv.location || '', inv.qty);
       }
     }
 
-    // 3. Shipments — for additional volume data
+    // 2. Shipments that were never billed (no invoice carries that BOL) — i.e.
+    //    shipped but not yet invoiced. ORDERS are deliberately not ingested: an
+    //    Open order is pipeline rather than history, and a Completed one is already
+    //    counted through its invoice — the old code ingested both and double-counted.
     for (const s of shipments) {
-      if (s.qty && s.customer && s.product && s.date) {
-        // Only add if we don't already have heavy invoice/order data for this customer+product
-        const custMap = salesMap.get(s.customer);
-        const existing = custMap?.get(s.product) ?? 0;
-        // Only add shipment data if no existing data from invoices/orders
-        if (existing === 0) {
-          addToMap(s.customer, s.product, s.qty, s.date);
-        }
-      }
+      if (!s.qty || !s.customer || !s.product || !inWindow(s.date)) continue;
+      const bol = (s.bol || '').trim();
+      if (bol && invoicedBols.has(bol)) continue;
+      addToMap(s.customer, s.product, s.location || '', s.qty);
     }
 
-    // Calculate monthly average: total / number of distinct months with data
-    const numMonths = Math.max(1, monthsWithData.size);
+    const numMonths = LOOKBACK_MONTHS;
 
     // Build forecast entries for each customer
     const updatedForecasts = [...customerForecasts];
@@ -623,20 +693,33 @@ export default function SalesForecastPage({
       const lines: CustomerForecastLine[] = [];
       let annualTotal = 0;
 
-      for (const [productName, totalQty] of prodMap) {
+      for (const [key, totalQty] of prodMap) {
+        // Split the composite "productName|location" key (product names may
+        // themselves contain '|', so split on the LAST separator).
+        const sep = key.lastIndexOf('|');
+        const productName = sep >= 0 ? key.slice(0, sep) : key;
+        const rowLocation = sep >= 0 ? key.slice(sep + 1) : '';
+
         const monthlyAvg = totalQty / numMonths;
-        // Fill all 12 months with the monthly average
+        const rounded = Math.round(monthlyAvg * 10) / 10;
+        // A pair whose monthly average rounds to 0.0 has no meaningful recent
+        // demand — emit no line at all rather than a row of zeros that still
+        // carried a non-zero annual figure into the reports.
+        if (rounded <= 0) continue;
+
         const entries: ForecastEntry[] = [];
         for (let m = 0; m < 12; m++) {
-          entries.push({ periodIndex: m, value: Math.round(monthlyAvg * 10) / 10 });
+          entries.push({ periodIndex: m, value: rounded });
         }
-        const lineAnnual = monthlyAvg * 12;
-        annualTotal += lineAnnual;
+        // Accumulate from the SAME rounded value that is persisted, so the stored
+        // annualForecast can never disagree with the twelve monthly cells.
+        annualTotal += rounded * 12;
 
-        // Determine location from product data
+        // Location comes from the transaction itself; the product catalog is only
+        // a fallback when the source row carried no location.
         const qaProd = qaProducts.find((p) => p.skuName === productName);
         const skuProd = skus.find((s) => s.name === productName);
-        const prodLocation = qaProd?.location || skuProd?.location || cust.defaultLocation;
+        const prodLocation = rowLocation || qaProd?.location || skuProd?.location || cust.defaultLocation;
 
         lines.push({
           id: generateId('CFL'),
@@ -645,12 +728,17 @@ export default function SalesForecastPage({
           entries,
         });
       }
+      // Every pair rounded away — don't create/overwrite a forecast with nothing in it.
+      if (lines.length === 0) continue;
 
       const forecast: CustomerForecast = {
         id: existingIdx >= 0 ? updatedForecasts[existingIdx].id : generateId('CF'),
         customerId: cust.id,
         customerNumber: cust.customerNumber ?? '',
         customerName: cust.name,
+        // Creation-time DEFAULT only — not authoritative. A customer can forecast
+        // at several sites, so the table derives its Location cell from lines[]
+        // (see rowLocations); this scalar is just the fallback for a line-less row.
         location: cust.defaultLocation,
         fiscalYearId: selectedFY.id,
         type: forecastType,
@@ -667,7 +755,7 @@ export default function SalesForecastPage({
     }
 
     onUpdateCustomerForecasts(updatedForecasts);
-  }, [selectedFY, customers, customerForecasts, forecastType, invoices, orders, shipments, qaProducts, skus, onUpdateCustomerForecasts]);
+  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, onUpdateCustomerForecasts]);
 
   // ── Available products for adding ───────────────────────────────────────
   const availableProducts = useMemo(() => {
@@ -750,12 +838,38 @@ export default function SalesForecastPage({
   );
 
   // ── Location name lookup ────────────────────────────────────────────────
+  // Exact name, then id, then locationCode, then a trimmed/case-insensitive name.
+  // Deliberately NO prefix matching: this is a multi-site business, so a bare
+  // "Hamilton" must NOT be silently folded into "Hamilton (Sherman)" or
+  // "Hamilton (Ferguson)" — that would attribute volume to the wrong plant.
   const locationName = useCallback(
     (loc: string) => {
-      const found = locations.find((l) => l.name === loc || l.id === loc);
+      if (!loc) return '';
+      const n = loc.trim().toLowerCase();
+      const found = locations.find((l) => l.name === loc)
+        || locations.find((l) => l.id === loc)
+        || locations.find((l) => (l.locationCode || '').trim().toLowerCase() === n)
+        || locations.find((l) => (l.name || '').trim().toLowerCase() === n);
       return found?.name ?? loc;
     },
     [locations]
+  );
+
+  // A customer can forecast at SEVERAL sites, so the row's location set is derived
+  // from the forecast LINES. cf.location is only a creation-time default and stops
+  // being meaningful the moment lines exist — reading it is why Ferguson rows
+  // rendered (and searched, and sorted) as plain "Hamilton".
+  const rowLocations = useCallback(
+    (cf: CustomerForecast): string[] => {
+      const set = [...new Set(cf.lines.map((l) => l.location).filter(Boolean))];
+      return set.length ? set.sort() : (cf.location ? [cf.location] : []);
+    },
+    []
+  );
+
+  const rowLocationLabel = useCallback(
+    (cf: CustomerForecast) => rowLocations(cf).map(locationName).join(', ') || '—',
+    [rowLocations, locationName]
   );
 
   // ── Annual forecast with actuals incorporated ───────────────────────────
@@ -786,7 +900,12 @@ export default function SalesForecastPage({
       list = list.filter(cf =>
         (cf.customerNumber || '').toLowerCase().includes(q) ||
         cf.customerName.toLowerCase().includes(q) ||
-        cf.location.toLowerCase().includes(q)
+        // Search the DERIVED locations too — searching "Ferguson" used to return
+        // nothing because cf.location only ever held the customer's default site.
+        // (|| '' guard: defaultLocation is typed required but the add-customer
+        // form and the CSV importer can both leave it empty.)
+        (cf.location || '').toLowerCase().includes(q) ||
+        rowLocations(cf).some(l => locationName(l).toLowerCase().includes(q))
       );
     }
     // Sort
@@ -797,7 +916,9 @@ export default function SalesForecastPage({
         switch (customerSort.key) {
           case 'customerNumber': va = a.customerNumber || ''; vb = b.customerNumber || ''; break;
           case 'customerName': va = a.customerName; vb = b.customerName; break;
-          case 'location': va = a.location; vb = b.location; break;
+          // Sort on the same derived label the cell renders, so the column can't
+          // sort under one location while displaying another.
+          case 'location': va = rowLocationLabel(a); vb = rowLocationLabel(b); break;
           case 'annual': va = getAnnualWithActuals(a); vb = getAnnualWithActuals(b); break;
         }
         if (typeof va === 'number' && typeof vb === 'number') {
@@ -808,7 +929,7 @@ export default function SalesForecastPage({
       });
     }
     return list;
-  }, [mergedForecasts, customerSearch, customerSort, getAnnualWithActuals]);
+  }, [mergedForecasts, customerSearch, customerSort, getAnnualWithActuals, rowLocations, rowLocationLabel, locationName]);
 
   // ── Sorted & filtered product forecasts ────────────────────────────────
   const sortedProductForecasts = useMemo(() => {
@@ -987,7 +1108,8 @@ export default function SalesForecastPage({
           columns={[
             { key: 'customerNumber', label: 'Customer No.', mono: true, render: (cf) => cf.customerNumber || '—' },
             { key: 'customerName', label: 'Customer Name', bold: true },
-            { key: 'location', label: 'Location', render: (cf) => locationName(cf.location) },
+            // All of the customer's forecast sites, not just their default one.
+            { key: 'location', label: 'Location', render: (cf) => rowLocationLabel(cf), sortValue: (cf) => rowLocationLabel(cf) },
             {
               key: 'annual', label: `Annual ${typeLabel} (MT)`, align: 'right', mono: true, bold: true,
               sortValue: (cf) => getAnnualWithActuals(cf),
@@ -1045,7 +1167,7 @@ export default function SalesForecastPage({
                     setProductViewModalOpen(true);
                   }}
                 >
-                  <td className="px-4 py-2 font-medium">{row.productName}</td>
+                  <td className="px-4 py-2 font-medium">{displayProduct(row.productName)}</td>
                   <td className="px-4 py-2">{locationName(row.location)}</td>
                   <td className="px-4 py-2 text-right font-mono">
                     {row.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
@@ -1076,28 +1198,32 @@ export default function SalesForecastPage({
             <thead>
               <tr className="bg-gray-50 border-b border-[#141414]">
                 <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Product Group / Product</th>
+                <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Location</th>
                 <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Annual {typeLabel} (MT)</th>
               </tr>
             </thead>
             <tbody>
               {productGroupForecastRows.flatMap((g) => [
-                <tr key={g.group} className="border-b border-[#141414]/20 bg-[#F5F5F5] font-bold">
+                <tr key={`${g.group}|${g.location}`} className="border-b border-[#141414]/20 bg-[#F5F5F5] font-bold">
                   <td className="px-4 py-2 uppercase tracking-wide">{g.group}</td>
+                  <td className="px-4 py-2">{locationName(g.location)}</td>
                   <td className="px-4 py-2 text-right font-mono">{g.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
                 </tr>,
                 ...g.products.map((p) => (
-                  <tr key={`${g.group}|${p.productName}`} className="border-b border-gray-200 hover:bg-gray-50">
-                    <td className="px-4 py-1.5 pl-8 opacity-80">{p.productName}</td>
+                  <tr key={`${g.group}|${g.location}|${p.productName}`} className="border-b border-gray-200 hover:bg-gray-50">
+                    <td className="px-4 py-1.5 pl-8 opacity-80">{displayProduct(p.productName)}</td>
+                    <td className="px-4 py-1.5 opacity-80">{locationName(g.location)}</td>
                     <td className="px-4 py-1.5 text-right font-mono opacity-80">{p.annual.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
                   </tr>
                 )),
               ])}
               {productGroupForecastRows.length === 0 && (
-                <tr><td colSpan={2} className="px-4 py-8 text-center text-gray-400">No product {typeLabel.toLowerCase()} data yet.</td></tr>
+                <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400">No product {typeLabel.toLowerCase()} data yet.</td></tr>
               )}
               {productGroupForecastRows.length > 0 && (
                 <tr className="bg-[#141414] text-[#E4E3E0] font-black">
                   <td className="px-4 py-2 uppercase tracking-widest">Total</td>
+                  <td className="px-4 py-2" />
                   <td className="px-4 py-2 text-right font-mono">{productGroupForecastRows.reduce((s, g) => s + g.annual, 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>
                 </tr>
               )}
