@@ -11,6 +11,7 @@ import {
   Download,
   FileSpreadsheet,
   Calendar,
+  Mail,
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -31,6 +32,8 @@ import type {
   Contract,
 } from '../types';
 import { resolveShortForm } from '../utils/namingFormulaResolver';
+import { computeVolumeTaken } from '../utils/contractMatch';
+import { sendEmail } from '../utils/sendEmail';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
@@ -253,6 +256,11 @@ export default function ReportsPage({
   const [grpSort, setGrpSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
   // Customer report — dropdown to focus a single customer ('' = all).
   const [reportCustomerId, setReportCustomerId] = useState<string>('');
+  // "Send to Customer" popout for the customer report.
+  const [sendReportOpen, setSendReportOpen] = useState(false);
+  const [sendReportTo, setSendReportTo] = useState('');
+  const [sendReportSending, setSendReportSending] = useState(false);
+  const [sendReportResult, setSendReportResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const toggleSort = (setter: React.Dispatch<React.SetStateAction<{ key: string; dir: 'asc' | 'desc' }>>) => (key: string) => {
     setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' });
@@ -1421,6 +1429,193 @@ export default function ReportsPage({
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_Sales_Reports_${dateStr}.xlsx`);
   }, [buildCustomerSheet, buildProductSheet, buildProjectedSheet]);
 
+  // Customer sales volume broken out BY MONTH (invoiced MT bucketed on invoice
+  // date). Declared here — ahead of the per-customer workbook builders below —
+  // because those builders depend on it.
+  const customerMonthlySales = useMemo(() => {
+    const norm = (s?: string) => (s || '').trim().toLowerCase();
+    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
+      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
+      : (inv.qty || 0);
+    const monthKeys = new Set<string>();
+    const rows = customers.map(cust => {
+      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
+      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
+      const byMonth: Record<string, number> = {};
+      let total = 0;
+      invoices.filter(i => nameHit(i.customer)).forEach(i => {
+        // total counts ALL matched invoices (matching the main report's Sales
+        // Volume); only validly-dated ones are bucketed into a month column.
+        const mt = invMt(i);
+        total += mt;
+        const mk = (i.date || '').slice(0, 7); // YYYY-MM
+        if (!/^\d{4}-\d{2}$/.test(mk)) return;
+        byMonth[mk] = (byMonth[mk] || 0) + mt;
+        monthKeys.add(mk);
+      });
+      return { id: cust.id, customer: cust.name || '(unnamed)', byMonth, total };
+    }).filter(r => r.total > 0);
+    return { rows: rows.sort((a, b) => b.total - a.total), months: [...monthKeys].sort() };
+  }, [customers, invoices, resolveCustomerName]);
+
+  const monthLabel = (mk: string) => {
+    const [y, m] = mk.split('-').map(Number);
+    if (!y || !m) return mk;
+    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
+  };
+
+  // ── Customer report: per-customer workbook (all three sections) ──────────
+  /** Populate a workbook with the selected customer's three report sections, one
+   *  sheet each. Shared by the Export to Excel button and Send to Customer so the
+   *  emailed file is byte-identical to the downloaded one. */
+  const buildCustomerReportSheets = useCallback((
+    wb: ExcelJS.Workbook,
+    row: typeof customerReport[number],
+  ) => {
+    const dateStr = new Date().toLocaleDateString();
+
+    // Section 1 — summary
+    {
+      const ws = wb.addWorksheet('Summary');
+      addTitleRows(ws, `Customer Report — ${row.customer}`, `Generated ${dateStr}`);
+      const h = ws.rowCount + 1;
+      ws.addRow(['Customer', 'Sales Volume (MT)', 'Qty on Order (MT)', 'Contracts', 'Remaining Contract Balance (MT)']);
+      applyHeaderRow(ws, h);
+      for (let i = 2; i <= 5; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
+      const r = ws.addRow([row.customer, row.salesMt, row.onOrderMt, row.contractCount, row.remainingTotal]);
+      r.getCell(2).numFmt = NUMBER_FMT;
+      r.getCell(3).numFmt = NUMBER_FMT;
+      r.getCell(4).numFmt = INT_FMT;
+      r.getCell(5).numFmt = NUMBER_FMT;
+      for (let i = 2; i <= 5; i++) r.getCell(i).alignment = { horizontal: 'right' };
+      ws.getColumn(1).width = 38;
+      for (let i = 2; i <= 5; i++) ws.getColumn(i).width = 24;
+      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 0 }];
+    }
+
+    // Section 2 — sales volume by month
+    {
+      const ws = wb.addWorksheet('Sales by Month');
+      addTitleRows(ws, `Sales Volume by Month (MT) — ${row.customer}`, `Generated ${dateStr}`);
+      const months = customerMonthlySales.months;
+      const monthly = customerMonthlySales.rows.find(m => m.id === row.id);
+      const h = ws.rowCount + 1;
+      ws.addRow(['Customer', ...months.map(monthLabel), 'Total']);
+      applyHeaderRow(ws, h);
+      for (let i = 2; i <= months.length + 2; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
+      const r = ws.addRow([
+        row.customer,
+        ...months.map(mk => monthly?.byMonth[mk] ?? 0),
+        monthly?.total ?? 0,
+      ]);
+      for (let i = 2; i <= months.length + 2; i++) {
+        r.getCell(i).numFmt = NUMBER_FMT;
+        r.getCell(i).alignment = { horizontal: 'right' };
+      }
+      ws.getColumn(1).width = 38;
+      for (let i = 2; i <= months.length + 2; i++) ws.getColumn(i).width = 14;
+      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 1 }];
+    }
+
+    // Section 3 — contracts
+    {
+      const ws = wb.addWorksheet('Contracts');
+      addTitleRows(ws, `Contracts — ${row.customer}`, `Generated ${dateStr} | ${row.contractRows.length} contracts`);
+      const h = ws.rowCount + 1;
+      ws.addRow(['Contract #', 'Product', 'Contract Vol (MT)', 'Volume Taken (MT)', 'Remaining Contract Balance (MT)', 'Qty on Order (MT)']);
+      applyHeaderRow(ws, h);
+      for (let i = 3; i <= 6; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
+      row.contractRows.forEach((c, idx) => {
+        const r = ws.addRow([c.contractNumber, c.product, c.contractVol, c.taken, c.remaining, c.qtyOnOrder]);
+        for (let i = 3; i <= 6; i++) {
+          r.getCell(i).numFmt = NUMBER_FMT;
+          r.getCell(i).alignment = { horizontal: 'right' };
+        }
+        if (idx % 2 === 1) r.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } }; });
+      });
+      if (row.contractRows.length) {
+        const totalRowNum = ws.rowCount + 1;
+        const t = ws.addRow([
+          '', 'Total',
+          row.contractRows.reduce((s, c) => s + c.contractVol, 0),
+          row.contractRows.reduce((s, c) => s + c.taken, 0),
+          row.contractRows.reduce((s, c) => s + c.remaining, 0),
+          row.contractRows.reduce((s, c) => s + c.qtyOnOrder, 0),
+        ]);
+        for (let i = 3; i <= 6; i++) {
+          t.getCell(i).numFmt = NUMBER_FMT;
+          t.getCell(i).alignment = { horizontal: 'right' };
+        }
+        applyTotalRow(ws, totalRowNum);
+      }
+      ws.getColumn(1).width = 20;
+      ws.getColumn(2).width = 34;
+      for (let i = 3; i <= 6; i++) ws.getColumn(i).width = 24;
+      ws.views = [{ state: 'frozen', ySplit: h, xSplit: 0 }];
+    }
+  }, [customerMonthlySales]);
+
+  /** The selected customer's report as an .xlsx Blob — one source for both the
+   *  download and the email attachment. */
+  const buildCustomerReportBlob = useCallback(async (row: typeof customerReport[number]) => {
+    const wb = new ExcelJS.Workbook();
+    buildCustomerReportSheets(wb, row);
+    const buf = await wb.xlsx.writeBuffer();
+    return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }, [buildCustomerReportSheets]);
+
+  const customerReportFileName = (row: typeof customerReport[number]) =>
+    `SweetPro_CustomerReport_${(row.customer || 'Customer').replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+  const exportCustomerReport = useCallback(async (row: typeof customerReport[number]) => {
+    const blob = await buildCustomerReportBlob(row);
+    saveAs(blob, customerReportFileName(row));
+  }, [buildCustomerReportBlob]);
+
+  /** The customer's SALES CONTACT email (Customer.salesContactEmail), used to
+   *  pre-fill the Send to Customer box. Falls back to the generic contact email.
+   *  NOTE: salespersonId is the internal Sucro rep, NOT the customer, so it is
+   *  deliberately not used here. */
+  const suggestedReportRecipient = useCallback((customerId: string): string => {
+    const c = customers.find(x => x.id === customerId);
+    return (c?.salesContactEmail || c?.contactEmail || '').trim();
+  }, [customers]);
+
+  const openSendReport = useCallback((row: typeof customerReport[number]) => {
+    setSendReportTo(suggestedReportRecipient(row.id));
+    setSendReportResult(null);
+    setSendReportOpen(true);
+  }, [suggestedReportRecipient]);
+
+  const handleSendCustomerReport = useCallback(async (row: typeof customerReport[number]) => {
+    const recipients = sendReportTo.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+    if (!recipients.length) {
+      setSendReportResult({ ok: false, message: 'Enter at least one email address.' });
+      return;
+    }
+    setSendReportSending(true);
+    setSendReportResult(null);
+    try {
+      const blob = await buildCustomerReportBlob(row);
+      const res = await sendEmail({
+        to: recipients,
+        subject: `Customer Report — ${row.customer}`,
+        html: `<p>Hello,</p>
+<p>Please find attached the current customer report for <strong>${row.customer}</strong>, covering the summary, monthly sales volume and contract balances.</p>
+<p>Regards,<br/>Sucro Canada</p>`,
+        attachment: blob,
+        attachmentFilename: customerReportFileName(row),
+      });
+      setSendReportResult(res.success
+        ? { ok: true, message: `Sent to ${(res.actualTo || recipients).join(', ')}` }
+        : { ok: false, message: res.error || 'Send failed.' });
+    } catch (e: any) {
+      setSendReportResult({ ok: false, message: e?.message || String(e) });
+    } finally {
+      setSendReportSending(false);
+    }
+  }, [sendReportTo, buildCustomerReportBlob]);
+
   const exportSingleReport = useCallback(async (sheetName: string) => {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'Sweet Pro';
@@ -1472,8 +1667,14 @@ export default function ReportsPage({
           ? orders.filter(o => onOrder(o) && norm(o.contractNumber) === cn).reduce((s, o) => s + ordMt(o), 0)
           : 0;
         const contractVol = ct.contractVolume || 0;
-        const taken = ct.volumeTaken || 0;
-        const remaining = ct.volumeOutstanding != null ? ct.volumeOutstanding : Math.max(0, contractVol - taken);
+        // Volume Taken must MATCH the Contracts table, which deliberately ignores
+        // the persisted Contract.volumeTaken (it drifts when invoices are added or
+        // removed without touching the contract row) and recomputes from invoices.
+        // Shared implementation so the two can't diverge again.
+        const taken = computeVolumeTaken(ct.contractNumber, invoices);
+        // Outstanding follows the same rule as the Contracts table: always
+        // Contract Volume − Volume Taken, never the persisted volumeOutstanding.
+        const remaining = contractVol - taken;
         return { contractNumber: ct.contractNumber || '—', product: ct.skuName || '—', contractVol, taken, remaining, qtyOnOrder };
       }).sort((a, b) => b.remaining - a.remaining);
       const remainingTotal = contractRows.reduce((s, c) => s + c.remaining, 0);
@@ -1491,37 +1692,6 @@ export default function ReportsPage({
   // date). Columns are every YYYY-MM present in the data, ascending; each row is
   // a customer with a per-month map + total. Reuses the same customer name-match
   // as the Customer Report so the totals line up.
-  const customerMonthlySales = useMemo(() => {
-    const norm = (s?: string) => (s || '').trim().toLowerCase();
-    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
-      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
-      : (inv.qty || 0);
-    const monthKeys = new Set<string>();
-    const rows = customers.map(cust => {
-      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
-      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
-      const byMonth: Record<string, number> = {};
-      let total = 0;
-      invoices.filter(i => nameHit(i.customer)).forEach(i => {
-        // total counts ALL matched invoices (matching the main report's Sales
-        // Volume); only validly-dated ones are bucketed into a month column.
-        const mt = invMt(i);
-        total += mt;
-        const mk = (i.date || '').slice(0, 7); // YYYY-MM
-        if (!/^\d{4}-\d{2}$/.test(mk)) return;
-        byMonth[mk] = (byMonth[mk] || 0) + mt;
-        monthKeys.add(mk);
-      });
-      return { id: cust.id, customer: cust.name || '(unnamed)', byMonth, total };
-    }).filter(r => r.total > 0);
-    return { rows: rows.sort((a, b) => b.total - a.total), months: [...monthKeys].sort() };
-  }, [customers, invoices, resolveCustomerName]);
-
-  const monthLabel = (mk: string) => {
-    const [y, m] = mk.split('-').map(Number);
-    if (!y || !m) return mk;
-    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
-  };
   const monthlySalesRows = selectedCustomerRow
     ? customerMonthlySales.rows.filter(r => r.id === reportCustomerId)
     : customerMonthlySales.rows;
@@ -1630,8 +1800,96 @@ export default function ReportsPage({
                 <option key={r.id} value={r.id}>{r.customer}</option>
               ))}
             </select>
+            {/* Per-customer actions — only meaningful once a single customer is
+                picked, since both act on that one customer's three sections. */}
+            {selectedCustomerRow && (
+              <>
+                <button
+                  onClick={() => exportCustomerReport(selectedCustomerRow)}
+                  title={`Export ${selectedCustomerRow.customer}'s report (all three sections) to Excel`}
+                  className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors"
+                >
+                  <FileSpreadsheet size={12} /> Export to Excel
+                </button>
+                <button
+                  onClick={() => openSendReport(selectedCustomerRow)}
+                  title={`Email ${selectedCustomerRow.customer}'s report`}
+                  className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors"
+                >
+                  <Mail size={12} /> Send to Customer
+                </button>
+              </>
+            )}
           </div>
         </div>
+
+        {/* Send to Customer popout */}
+        {sendReportOpen && selectedCustomerRow && (
+          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+            <div
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Send Customer Report</h3>
+                <button onClick={() => setSendReportOpen(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="text-xs">
+                  Sending the report for <strong>{selectedCustomerRow.customer}</strong> as an Excel
+                  attachment with all three sections (summary, monthly sales, contracts).
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">
+                    To — separate multiple addresses with a comma
+                  </label>
+                  <input
+                    type="text"
+                    value={sendReportTo}
+                    onChange={(e) => setSendReportTo(e.target.value)}
+                    placeholder="name@customer.com"
+                    className="w-full bg-[#F5F5F5] border border-[#141414] px-3 py-2 text-sm outline-none focus:bg-white"
+                  />
+                  {suggestedReportRecipient(selectedCustomerRow.id) ? (
+                    <div className="text-[10px] opacity-60">
+                      Suggested from the customer card&apos;s Sales Contact:{' '}
+                      <button
+                        onClick={() => setSendReportTo(suggestedReportRecipient(selectedCustomerRow.id))}
+                        className="underline decoration-dotted hover:opacity-100"
+                      >
+                        {suggestedReportRecipient(selectedCustomerRow.id)}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] opacity-60">
+                      No Sales Contact email on this customer&apos;s card — enter one manually.
+                    </div>
+                  )}
+                </div>
+                {sendReportResult && (
+                  <div className={`text-xs border-l-2 pl-3 py-1 ${sendReportResult.ok ? 'border-emerald-600 text-emerald-700' : 'border-red-500 text-red-700'}`}>
+                    {sendReportResult.message}
+                  </div>
+                )}
+              </div>
+              <div className="px-4 py-3 border-t border-[#141414]/10 bg-[#F5F5F5] flex justify-end gap-2">
+                <button
+                  onClick={() => setSendReportOpen(false)}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => handleSendCustomerReport(selectedCustomerRow)}
+                  disabled={sendReportSending || !sendReportTo.trim()}
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-40"
+                >
+                  <Mail size={14} /> {sendReportSending ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="border border-[#141414] border-t-0 overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -1640,7 +1898,7 @@ export default function ReportsPage({
                 <th className="p-3 text-right">Sales Volume (MT)</th>
                 <th className="p-3 text-right">Qty on Order (MT)</th>
                 <th className="p-3 text-right">Contracts</th>
-                <th className="p-3 text-right">Remaining Balance (MT)</th>
+                <th className="p-3 text-right">Remaining Contract Balance (MT)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
@@ -1727,8 +1985,8 @@ export default function ReportsPage({
                   <th className="p-3">Contract #</th>
                   <th className="p-3">Product</th>
                   <th className="p-3 text-right">Contract Vol (MT)</th>
-                  <th className="p-3 text-right">Delivered (MT)</th>
-                  <th className="p-3 text-right">Remaining Balance (MT)</th>
+                  <th className="p-3 text-right">Volume Taken (MT)</th>
+                  <th className="p-3 text-right">Remaining Contract Balance (MT)</th>
                   <th className="p-3 text-right">Qty on Order (MT)</th>
                 </tr>
               </thead>

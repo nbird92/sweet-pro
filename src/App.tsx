@@ -81,6 +81,11 @@ import PeoplePage from './components/PeoplePage';
 import QualityAssurancePage from './components/QualityAssurancePage';
 import LabPage from './components/LabPage';
 import FinancePage from './components/FinancePage';
+import {
+  contractNumberFromSplit,
+  matchesContractByNumberOrSplit,
+  invoiceMatchesContract,
+} from './utils/contractMatch';
 import SalesForecastPage from './components/SalesForecastPage';
 import ReportsPage from './components/ReportsPage';
 import PageBanner from './components/PageBanner';
@@ -6496,44 +6501,10 @@ export default function App() {
     return resolveProduct(productName).sku !== null;
   };
 
-  // Strip the trailing numeric suffix from a split number to get its parent
-  // contract number. Example: "S03399.B29" → "S03399.B". Splits are
-  // contract-number + sequence digits (e.g. "S04280.G01" → contract S04280.G).
-  // When the input has no trailing digits we return it unchanged.
-  const contractNumberFromSplit = (split: string | undefined | null): string => {
-    if (!split) return '';
-    return String(split).replace(/\d+$/, '');
-  };
-
-  // True when an order / line item / invoice belongs to a given contract.
-  // Matches by:
-  //   1. Direct contractNumber equality on the record itself.
-  //   2. splitNumber / splitNo whose contract prefix matches contractNumber.
-  // (Caller may layer line-item contract matches on top.)
-  const matchesContractByNumberOrSplit = (
-    target: string | undefined,
-    split: string | undefined,
-    contractNumber: string,
-  ): boolean => {
-    if (!contractNumber) return false;
-    if (target && target === contractNumber) return true;
-    if (split && contractNumberFromSplit(split) === contractNumber) return true;
-    return false;
-  };
-
-  // Decide whether an invoice belongs to a contract. Invoices can reference the
-  // contract three ways, any of which counts:
-  //   1. contractNumber — which may be a comma-joined list ("A, B"), so split it,
-  //   2. splitNo whose contract prefix (digits stripped) is the contract number,
-  //   3. a line item's contractNumber (also possibly comma-joined).
-  const invoiceMatchesContract = (inv: Invoice, contractNumber: string): boolean => {
-    if (!contractNumber) return false;
-    const parts = (s: string | undefined) => (s || '').split(',').map(x => x.trim()).filter(Boolean);
-    if (parts(inv.contractNumber).includes(contractNumber)) return true;
-    if (inv.splitNo && contractNumberFromSplit(inv.splitNo) === contractNumber) return true;
-    if ((inv.lineItems || []).some(li => parts(li.contractNumber).includes(contractNumber))) return true;
-    return false;
-  };
+  // contractNumberFromSplit / matchesContractByNumberOrSplit / invoiceMatchesContract
+  // now live in src/utils/contractMatch.ts (imported at the top of this file) so
+  // the Contracts table and the Reports page share ONE implementation of
+  // "does this invoice belong to this contract" and of Volume Taken.
 
   // Resolve the contract behind an order so the orders table can show its
   // Price/MT (finalPrice) when the order itself carries no amount. An order can
