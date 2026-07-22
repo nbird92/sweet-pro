@@ -13864,6 +13864,19 @@ export default function App() {
           const derivedPricePerMt = totalMt > 0 && totalLineAmt > 0
             ? totalLineAmt / totalMt
             : (typeof inv.pricePerMt === 'number' ? inv.pricePerMt : 0);
+          // The REAL shipment behind this invoice, for the Edit Shipment button.
+          // Must be a genuine record — the stub resolveInvoiceShipment builds for
+          // PDFs is fine to print from but editing one would save nothing. Match by
+          // shipmentId first, then BOL: invoice.shipmentId is unreliable (Complete &
+          // Bill stores the ORDER id there, CSV import leaves it blank), so a miss
+          // there is expected and the BOL is the dependable link.
+          const invShipment = (() => {
+            const all = [...hamiltonShipments, ...vancouverShipments];
+            const bol = (inv.bolNumber || '').trim();
+            return (inv.shipmentId && all.find(s => s.id === inv.shipmentId))
+              || (bol ? all.find(s => (s.bol || '').trim() === bol) : undefined)
+              || null;
+          })();
           return (
           <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
             <motion.div
@@ -13993,6 +14006,22 @@ export default function App() {
               </div>
               <div className="shrink-0 border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-end gap-2">
                 <button onClick={() => setViewingInvoiceCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all">Close</button>
+                <button
+                  onClick={() => {
+                    if (!invShipment) return;
+                    // The shipment editor is a global modal, so it opens straight
+                    // over the Invoices page — no page navigation needed.
+                    setEditingShipment(invShipment);
+                    setViewingInvoiceCard(null);
+                  }}
+                  disabled={!invShipment}
+                  title={invShipment
+                    ? `Edit shipment ${invShipment.bol || invShipment.id}`
+                    : 'No shipment is linked to this invoice (matched by shipment id, then BOL)'}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 transition-all enabled:hover:bg-[#141414] enabled:hover:text-[#E4E3E0] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Truck size={14} /> Edit Shipment
+                </button>
                 <button
                   onClick={() => { setEditingInvoiceCard(inv); setViewingInvoiceCard(null); }}
                   className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
