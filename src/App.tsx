@@ -3767,6 +3767,22 @@ export default function App() {
     }));
   };
 
+  /** Persist shipment edits back to whichever site list holds the record.
+   *  UPSERTS: the old inline handlers used prev.map(), which silently dropped a
+   *  shipment that wasn't already in a list (and defaulted an unknown record to
+   *  Vancouver). Anything not found is inserted into its own site's schedule. */
+  const saveShipmentEdits = (s: Shipment) => {
+    if (hamiltonShipments.some(x => x.id === s.id)) {
+      setHamiltonShipments(prev => prev.map(x => x.id === s.id ? s : x));
+    } else if (vancouverShipments.some(x => x.id === s.id)) {
+      setVancouverShipments(prev => prev.map(x => x.id === s.id ? s : x));
+    } else if (/vancouver/i.test(s.location || '')) {
+      setVancouverShipments(prev => [...prev, s]);
+    } else {
+      setHamiltonShipments(prev => [...prev, s]);
+    }
+  };
+
   const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
     const bolKey = (inv.bolNumber || '').trim().toUpperCase();
     const linkedOrder = orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey);
@@ -14008,19 +14024,44 @@ export default function App() {
                 <button onClick={() => setViewingInvoiceCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all">Close</button>
                 <button
                   onClick={() => {
-                    if (!invShipment) return;
+                    let target = invShipment;
+                    if (!target) {
+                      // No shipment record exists (common on imported invoices).
+                      // Create a real one seeded from whatever the invoice knows —
+                      // blank fields are fine, the point is to give the editor an
+                      // actual row to save onto. Added to the list immediately so
+                      // Save (which updates by id) finds it.
+                      const created: Shipment = {
+                        id: `SHP-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                        week: '', date: inv.date || '', day: '', time: '', bay: '',
+                        customer: inv.customer || '',
+                        product: inv.product || '',
+                        po: inv.po || '',
+                        bol: (inv.bolNumber || '').trim(),
+                        qty: typeof inv.qty === 'number' ? inv.qty : 0,
+                        carrier: inv.carrier || '',
+                        arrive: '', start: '', out: '',
+                        status: 'Confirmed',
+                        contractNumber: inv.contractNumber,
+                        location: inv.location,
+                      };
+                      // Route to the site's own schedule; Hamilton is the default.
+                      const toVancouver = /vancouver/i.test(inv.location || '');
+                      if (toVancouver) setVancouverShipments(prev => [...prev, created]);
+                      else setHamiltonShipments(prev => [...prev, created]);
+                      target = created;
+                    }
                     // The shipment editor is a global modal, so it opens straight
                     // over the Invoices page — no page navigation needed.
-                    setEditingShipment(invShipment);
+                    setEditingShipment(target);
                     setViewingInvoiceCard(null);
                   }}
-                  disabled={!invShipment}
                   title={invShipment
                     ? `Edit shipment ${invShipment.bol || invShipment.id}`
-                    : 'No shipment is linked to this invoice (matched by shipment id, then BOL)'}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 transition-all enabled:hover:bg-[#141414] enabled:hover:text-[#E4E3E0] disabled:opacity-40 disabled:cursor-not-allowed"
+                    : 'No shipment is linked to this invoice — creates one from the invoice and opens it'}
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 transition-all hover:bg-[#141414] hover:text-[#E4E3E0]"
                 >
-                  <Truck size={14} /> Edit Shipment
+                  <Truck size={14} /> {invShipment ? 'Edit Shipment' : 'Create Shipment'}
                 </button>
                 <button
                   onClick={() => { setEditingInvoiceCard(inv); setViewingInvoiceCard(null); }}
@@ -17827,9 +17868,7 @@ export default function App() {
                     <div className="flex gap-4">
                       <button
                         onClick={() => {
-                          const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
-                          const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
-                          setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
+                          saveShipmentEdits(editingShipment);
                           setIsAddingShipment(false);
                           setEditingShipment(null);
                           setPendingCompleteOrderId(null);
@@ -17856,9 +17895,7 @@ export default function App() {
                             onClick={() => {
                               // Save shipment edits, then open the Confirm popup (which
                               // enforces the scaled-qty rule and highlights blanks).
-                              const isHamilton = hamiltonShipments.some(s => s.id === editingShipment.id);
-                              const setList = isHamilton ? setHamiltonShipments : setVancouverShipments;
-                              setList(prev => prev.map(s => s.id === editingShipment.id ? editingShipment : s));
+                              saveShipmentEdits(editingShipment);
                               setShipmentBillConfirm(editingShipment);
                               setIsAddingShipment(false);
                               setEditingShipment(null);
