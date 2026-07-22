@@ -6025,6 +6025,157 @@ export default function App() {
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
+
+  // ── Sync apply helpers ──────────────────────────────────────────────────
+  // Extracted from the four preview modals' inline onClick handlers so the exact
+  // same merge logic can also run unattended from Sync All. Each takes the CURRENT
+  // list as an argument instead of reading component state, and returns the merged
+  // list — React won't have flushed a re-render between steps, so a chained run
+  // must build each step on the previous step's result rather than on state.
+
+  const applyInvoiceSyncResult = (preview: InvoiceSyncResult, current: Invoice[]): Invoice[] => {
+    const updatedById = new Map(preview.updatedInvoices.map((u): [string, Invoice] => [u.id, u]));
+    const merged = [...current.map(inv => updatedById.get(inv.id) || inv), ...preview.newInvoices];
+    setInvoices(merged);
+    // Any order now sharing an invoiced BOL/PO is no longer an order. (Uses a
+    // functional setOrders internally, so it is safe to call mid-chain.)
+    removeOrdersInvoicedBy(merged);
+    return merged;
+  };
+
+  const applyOrderSyncResult = (preview: OrderSyncResult, current: Order[]): Order[] => {
+    const updated = preview.updatedOrders ?? [];
+    const updatedById = new Map(updated.map((o): [string, Order] => [o.id, o]));
+    if (preview.newOrders.length === 0 && updatedById.size === 0) return current;
+    // When a sync update REPLACES an order's BOL (matched by PO), carry the change
+    // to its linked shipments / invoices / return orders so they don't orphan.
+    const bolRemap = new Map<string, string>();
+    current.forEach(o => {
+      const u = updatedById.get(o.id);
+      const oldBol = (o.bolNumber || '').trim();
+      const newBol = (u?.bolNumber || '').trim();
+      if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, newBol);
+    });
+    const merged = [...current.map(o => updatedById.get(o.id) || o), ...preview.newOrders];
+    setOrders(merged);
+    if (bolRemap.size) {
+      const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
+      setHamiltonShipments(prev => prev.map(remapShip));
+      setVancouverShipments(prev => prev.map(remapShip));
+      setInvoices(prev => prev.map(i => bolRemap.has((i.bolNumber || '').trim()) ? { ...i, bolNumber: bolRemap.get((i.bolNumber || '').trim())! } : i));
+      setReturnOrders(prev => prev.map(r => bolRemap.has((r.originalBolNumber || '').trim()) ? { ...r, originalBolNumber: bolRemap.get((r.originalBolNumber || '').trim())! } : r));
+    }
+    return merged;
+  };
+
+  const applyTransferSyncResult = (preview: TransferSyncResult, current: Transfer[]): Transfer[] => {
+    const upById = new Map((preview.updatedTransfers || []).map((t): [string, Transfer] => [t.id, t]));
+    const merged = [...current.map(t => upById.get(t.id) || t), ...preview.newTransfers];
+    setTransfers(merged);
+    return merged;
+  };
+
+  const applyLotCodeSyncResult = (preview: LotCodeSyncResult, current: LotCode[]): LotCode[] => {
+    const upById = new Map((preview.updatedLotCodes || []).map((lc): [string, LotCode] => [lc.id, lc]));
+    const merged = [...current.map(lc => upById.get(lc.id) || lc), ...preview.newLotCodes];
+    setLotCodes(merged);
+    return merged;
+  };
+
+  // ── Sync All ────────────────────────────────────────────────────────────
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [syncAllSummary, setSyncAllSummary] = useState<string[] | null>(null);
+
+  /** A saved preset is only usable unattended if it actually names a sheet and a
+   *  tab. The transfer and lot-code importers ship with an EMPTY default sheetId,
+   *  so without a saved preset there is nothing to sync — skip rather than run
+   *  against a blank sheet. */
+  const presetIsUsable = (c?: SheetImportConfig | null) =>
+    !!c && !!(c.sheetId || '').trim() && Array.isArray(c.tabs) && c.tabs.length > 0;
+
+  /** Run all four sheet imports back to back — orders, invoices, transfers and
+   *  Hamilton-lab lot codes — using ONLY each importer's saved preset, and accept
+   *  every import/update automatically without showing a preview.
+   *
+   *  ORDER MATTERS: orders run before invoices because applying invoices drops any
+   *  order whose BOL/PO has since been invoiced, and the orders differ depends on
+   *  the current invoice list. Results are threaded through local variables since
+   *  React state is not updated synchronously between steps. */
+  const handleSyncAll = async () => {
+    if (isSyncingAll) return;
+    setIsSyncingAll(true);
+    setSyncAllSummary(null);
+    const notes: string[] = [];
+    let curOrders = orders;
+    let curInvoices = invoices;
+    let curTransfers = transfers;
+    let curLotCodes = lotCodes;
+
+    // 1. ORDERS
+    const ordersCfg = orderSyncPresets[0];
+    if (presetIsUsable(ordersCfg)) {
+      try {
+        const r = await syncOrdersFromConfig(ordersCfg, {
+          existingOrders: curOrders, customers, skus, qaProducts, carriers, existingInvoices: curInvoices,
+        });
+        curOrders = applyOrderSyncResult(r, curOrders);
+        notes.push(`Orders — ${r.newOrders.length} new, ${(r.updatedOrders ?? []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+      } catch (e: any) {
+        notes.push(`Orders — failed: ${e?.message || String(e)}`);
+      }
+    } else {
+      notes.push('Orders — skipped (no saved import preset)');
+    }
+
+    // 2. INVOICES (after orders — see note above)
+    const invoicesCfg = invoiceSyncPresets[0];
+    if (presetIsUsable(invoicesCfg)) {
+      try {
+        const r = await syncInvoicesFromConfig(invoicesCfg, {
+          existingInvoices: curInvoices, existingOrders: curOrders, customers, skus, qaProducts, carriers,
+        });
+        curInvoices = applyInvoiceSyncResult(r, curInvoices);
+        notes.push(`Invoices — ${r.newInvoices.length} new, ${r.updatedInvoices.length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+      } catch (e: any) {
+        notes.push(`Invoices — failed: ${e?.message || String(e)}`);
+      }
+    } else {
+      notes.push('Invoices — skipped (no saved import preset)');
+    }
+
+    // 3. TRANSFERS
+    const transfersCfg = transferSyncPresets[0];
+    if (presetIsUsable(transfersCfg)) {
+      try {
+        const r = await syncTransfersFromConfig(transfersCfg, {
+          existingTransfers: curTransfers, skus, qaProducts, carriers,
+        });
+        curTransfers = applyTransferSyncResult(r, curTransfers);
+        notes.push(`Transfers — ${r.newTransfers.length} new, ${(r.updatedTransfers || []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+      } catch (e: any) {
+        notes.push(`Transfers — failed: ${e?.message || String(e)}`);
+      }
+    } else {
+      notes.push('Transfers — skipped (no saved import preset)');
+    }
+
+    // 4. HAMILTON LAB — lot codes
+    const lotCfg = lotCodeSyncPresets[0];
+    if (presetIsUsable(lotCfg)) {
+      try {
+        const r = await syncLotCodesFromConfig(lotCfg, { existingLotCodes: curLotCodes });
+        curLotCodes = applyLotCodeSyncResult(r, curLotCodes);
+        notes.push(`Hamilton Lab — ${r.newLotCodes.length} new, ${(r.updatedLotCodes || []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+      } catch (e: any) {
+        notes.push(`Hamilton Lab — failed: ${e?.message || String(e)}`);
+      }
+    } else {
+      notes.push('Hamilton Lab — skipped (no saved import preset)');
+    }
+
+    setSyncAllSummary(notes);
+    setIsSyncingAll(false);
+  };
   // Invoice page: progressive rendering — only paint the first N rows initially,
   // then add 200 at a time on "Show more". Keeps the DOM small when the table
   // has thousands of invoices so click / scroll / load stays fast.
@@ -7617,7 +7768,17 @@ export default function App() {
             title="Operational Dashboard"
             exportSheets={dashboardExportSheets}
             exportFileName="Dashboard"
-          />
+          >
+            <button
+              onClick={handleSyncAll}
+              disabled={isSyncingAll}
+              title="Run the Orders, Invoices, Transfers and Hamilton Lab sheet imports using each importer's saved preset, accepting all changes automatically."
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={isSyncingAll ? 'animate-spin' : ''} />
+              {isSyncingAll ? 'Syncing…' : 'Sync All'}
+            </button>
+          </PageBanner>
           <div className="p-6 space-y-8">
 
           {/* Weekly Completed Totals Chart */}
@@ -15742,6 +15903,53 @@ export default function App() {
           </div>
         )}
 
+        {/* Sync All — result summary. Every import was already applied; this is a
+            report of what changed (or why a mode was skipped), not a confirmation. */}
+        {syncAllSummary && (
+          <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center gap-3">
+                <RefreshCw size={18} />
+                <h3 className="text-xs font-bold uppercase tracking-widest">Sync All Complete</h3>
+              </div>
+              <div className="p-6 space-y-3">
+                <ul className="space-y-2">
+                  {syncAllSummary.map((line, i) => {
+                    const failed = / failed:/.test(line);
+                    const skipped = / skipped \(/.test(line);
+                    return (
+                      <li
+                        key={i}
+                        className={`text-xs border-l-2 pl-3 py-1 ${failed ? 'border-red-500 text-red-700' : skipped ? 'border-gray-300 opacity-60' : 'border-emerald-600'}`}
+                      >
+                        {line}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="text-[11px] opacity-70">
+                  Changes were applied automatically and save to the database within ~15 seconds.
+                  A mode is skipped when its importer has no saved preset — open that page&apos;s
+                  Sync button once, configure it, and save a preset.
+                </p>
+              </div>
+              <div className="p-4 border-t border-[#141414]/10 flex justify-end">
+                <button
+                  onClick={() => setSyncAllSummary(null)}
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
         {/* Orders Sheet Sync — Error popup */}
         {orderSyncError && (
           <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
@@ -16525,15 +16733,8 @@ export default function App() {
                 <button
                   disabled={invoiceSyncPreview.newInvoices.length === 0 && invoiceSyncPreview.updatedInvoices.length === 0}
                   onClick={() => {
-                    // Apply backfilled fields to existing invoices (by id), then append the new ones.
-                    const updatedById = new Map(invoiceSyncPreview.updatedInvoices.map(u => [u.id, u] as const));
-                    const merged = [
-                      ...invoices.map(inv => updatedById.get(inv.id) || inv),
-                      ...invoiceSyncPreview.newInvoices,
-                    ];
-                    setInvoices(merged);
-                    // Any order now sharing an invoiced BOL/PO is no longer an order.
-                    removeOrdersInvoicedBy(merged);
+                    // Shared with Sync All so the two paths can't drift.
+                    applyInvoiceSyncResult(invoiceSyncPreview, invoices);
                     setInvoiceSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
@@ -16753,30 +16954,8 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    const updatedById = new Map(updatedOrders.map((o): [string, Order] => [o.id, o]));
-                    if (orderSyncPreview.newOrders.length > 0 || updatedById.size > 0) {
-                      // When a sync update REPLACES an order's BOL (matched by PO),
-                      // carry the change to its linked shipments / invoices / return
-                      // orders so they don't orphan on the old BOL.
-                      const bolRemap = new Map<string, string>(); // oldBol -> newBol
-                      orders.forEach(o => {
-                        const u = updatedById.get(o.id) as Order | undefined;
-                        const oldBol = (o.bolNumber || '').trim();
-                        const newBol = (u?.bolNumber || '').trim();
-                        if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, newBol);
-                      });
-                      setOrders([
-                        ...orders.map(o => updatedById.get(o.id) || o),
-                        ...orderSyncPreview.newOrders,
-                      ]);
-                      if (bolRemap.size) {
-                        const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
-                        setHamiltonShipments(prev => prev.map(remapShip));
-                        setVancouverShipments(prev => prev.map(remapShip));
-                        setInvoices(prev => prev.map(i => bolRemap.has((i.bolNumber || '').trim()) ? { ...i, bolNumber: bolRemap.get((i.bolNumber || '').trim())! } : i));
-                        setReturnOrders(prev => prev.map(r => bolRemap.has((r.originalBolNumber || '').trim()) ? { ...r, originalBolNumber: bolRemap.get((r.originalBolNumber || '').trim())! } : r));
-                      }
-                    }
+                    // Shared with Sync All so the two paths can't drift.
+                    applyOrderSyncResult(orderSyncPreview, orders);
                     setOrderSyncPreview(null);
                   }}
                   disabled={orderSyncPreview.newOrders.length === 0 && updatedOrders.length === 0}
@@ -16903,12 +17082,8 @@ export default function App() {
                 <button
                   disabled={transferSyncPreview.newTransfers.length === 0 && (transferSyncPreview.updatedTransfers?.length || 0) === 0}
                   onClick={() => {
-                    // Replace existing transfers whose gaps were filled, then append the new ones.
-                    const upById = new Map((transferSyncPreview.updatedTransfers || []).map(t => [t.id, t]));
-                    setTransfers([
-                      ...transfers.map(t => upById.get(t.id) || t),
-                      ...transferSyncPreview.newTransfers,
-                    ]);
+                    // Shared with Sync All so the two paths can't drift.
+                    applyTransferSyncResult(transferSyncPreview, transfers);
                     setTransferSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
@@ -17024,12 +17199,8 @@ export default function App() {
                 <button
                   disabled={lotCodeSyncPreview.newLotCodes.length === 0 && (lotCodeSyncPreview.updatedLotCodes?.length || 0) === 0}
                   onClick={() => {
-                    // Replace existing lot codes whose gaps were filled, then append new ones.
-                    const upById = new Map((lotCodeSyncPreview.updatedLotCodes || []).map(lc => [lc.id, lc]));
-                    setLotCodes([
-                      ...lotCodes.map(lc => upById.get(lc.id) || lc),
-                      ...lotCodeSyncPreview.newLotCodes,
-                    ]);
+                    // Shared with Sync All so the two paths can't drift.
+                    applyLotCodeSyncResult(lotCodeSyncPreview, lotCodes);
                     setLotCodeSyncPreview(null);
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
