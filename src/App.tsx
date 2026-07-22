@@ -150,6 +150,28 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
     () => locations.filter(l => l.active !== false),
     [locations]
   );
+  // Products sited at a retired location shouldn't be offered on a lead. This
+  // component sits OUTSIDE App(), so it can't use the app-level helpers — same
+  // rule, computed locally, and fails open on a blank/unknown location.
+  const isInactiveLoc = React.useMemo(() => {
+    const keys = new Set(
+      locations
+        .filter(l => l.active === false)
+        .flatMap(l => [l.name, l.locationCode])
+        .filter(Boolean)
+        .map(v => String(v).trim().toLowerCase())
+    );
+    return (loc?: string) => {
+      const n = (loc || '').trim().toLowerCase();
+      return n ? keys.has(n) : false;
+    };
+  }, [locations]);
+  const leadQaProducts = qaProducts.filter(
+    qp => !isInactiveLoc(qp.location || skus.find(s => s.id === qp.skuId)?.location)
+  );
+  const leadSkus = skus.filter(
+    s => !qaProducts.some(qp => qp.skuName === s.name) && !isInactiveLoc(s.location)
+  );
   return (
     <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
       <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
@@ -167,8 +189,14 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
               <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
                 <option value="">Select product</option>
-                {qaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
-                {skus.filter(s => !qaProducts.some(qp => qp.skuName === s.name)).map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                {leadQaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
+                {leadSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                {/* Keep an already-saved product visible when editing an old lead. */}
+                {lead.product
+                  && !leadQaProducts.some(qp => qp.skuName === lead.product)
+                  && !leadSkus.some(s => s.name === lead.product) && (
+                  <option value={lead.product}>{lead.product} (inactive)</option>
+                )}
               </select></div>
           </div>
           <div className="grid grid-cols-3 gap-4">
@@ -537,7 +565,9 @@ export default function App() {
   // Reference data sent to the extractor so it can normalize names to our catalog.
   const buildScanHints = () => ({
     customers: customers.map(c => c.name).filter(Boolean),
-    products: Array.from(new Set(buildOrderProductOptions().flatMap(o => [o.label, o.value]).filter(Boolean))),
+    // selectableOnly: don't even SUGGEST a retired-site product to the extractor,
+    // or it will normalise a PO line onto a product the UI can no longer offer.
+    products: Array.from(new Set(buildOrderProductOptions(undefined, { selectableOnly: true }).flatMap(o => [o.label, o.value]).filter(Boolean))),
     contracts: contracts.map(c => c.contractNumber).filter(Boolean),
     carriers: carriers.map(c => c.name).filter(Boolean),
     learned: poLearned,
@@ -761,7 +791,9 @@ export default function App() {
     // blank the whole app. Normalize to a safe shape first.
     const po: ExtractedPO = (poRaw && typeof poRaw === 'object' ? poRaw : ({} as ExtractedPO));
     if (!Array.isArray(po.lineItems)) po.lineItems = [];
-    const opts = buildOrderProductOptions();
+    // selectableOnly: the auto-matcher must not pre-select a retired-site product
+    // that the review dropdown can no longer show.
+    const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
     // Customer: by name/number, else inferred from the ship-to address.
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned)
       || findCustomerByShipTo(po.shipToName, po.shipToAddress);
@@ -1320,7 +1352,10 @@ export default function App() {
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
     const contract = matchContract(po.contractNumber, contracts, poLearned);
     const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
-    const opts = buildOrderProductOptions();
+    // selectableOnly is most important HERE: this path auto-approves an order with
+    // NO human review, so an unfiltered pool would write a retired-site product
+    // straight into production.
+    const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
     const origin = contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || '';
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
@@ -6726,7 +6761,27 @@ export default function App() {
   // The label is the rendered Product Name (from the Naming Formula rules,
   // e.g. "20kg Bagged Granulated Conventional 45"). Falls back to the SKU's
   // stored name, then productFormat, then id so an option is always selectable.
-  const buildOrderProductOptions = (currentValue?: string): Array<{ value: string; label: string; key: string; location: string }> => {
+  /** Product options for a <select>.
+   *
+   *  `selectableOnly` hides products sited at an INACTIVE location — pass it for
+   *  any picker that CREATES or EDITS a record. Omit it for display/resolution
+   *  paths (lineItemToShortform, the "edit line item" prefills, ghost guards):
+   *  those must keep seeing the whole catalog or a stored product at a retired
+   *  site would vanish from an existing record.
+   *
+   *  The product currently selected (`currentValue`) is ALWAYS kept, inactive or
+   *  not, so editing an old order still shows its real product — with its real
+   *  key, which also avoids the `_ghost-` key never matching a select bound to
+   *  `opt.key`. */
+  const buildOrderProductOptions = (
+    currentValue?: string,
+    opts?: { selectableOnly?: boolean },
+  ): Array<{ value: string; label: string; key: string; location: string }> => {
+    const selectableOnly = opts?.selectableOnly === true;
+    // Keep an entry when we aren't filtering, when its site is active, or when it
+    // is the value already stored on the record being edited.
+    const keepEntry = (value: string, location: string) =>
+      !selectableOnly || !isInactiveLocation(location) || (!!currentValue && value === currentValue);
     const entries: Array<{ value: string; label: string; key: string; location: string }> = [];
     const seenValues = new Set<string>();
 
@@ -6767,7 +6822,9 @@ export default function App() {
       };
       const value = synthetic.name;
       const label = renderProductName(synthetic, qa);
-      entries.push({ value, label, key: qa.id, location: synthetic.location || '' });
+      const location = synthetic.location || '';
+      if (!keepEntry(value, location)) continue;
+      entries.push({ value, label, key: qa.id, location });
       if (value) seenValues.add(value);
     }
 
@@ -6779,7 +6836,9 @@ export default function App() {
       const value = (s.name && s.name.trim()) || s.id;
       // Use the rendered Product Name from the naming formula rules
       const label = renderProductName(s, null);
-      entries.push({ value, label, key: s.id, location: s.location || '' });
+      const location = s.location || '';
+      if (!keepEntry(value, location)) continue;
+      entries.push({ value, label, key: s.id, location });
       if (value) seenValues.add(value);
     }
 
@@ -10389,7 +10448,7 @@ export default function App() {
                         <select value={newSampleData.sampleProduct} onChange={e => setNewSampleData({ ...newSampleData, sampleProduct: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select product...</option>
-                          {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -10468,7 +10527,12 @@ export default function App() {
                         <select value={editingSampleRequest.sampleProduct} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, sampleProduct: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select product...</option>
-                          {skus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {/* Keep an already-saved product visible even if its site was retired,
+                              otherwise editing an old request silently blanks the field. */}
+                          {editingSampleRequest.sampleProduct && !selectableSkus.some(s => s.name === editingSampleRequest.sampleProduct) && (
+                            <option value={editingSampleRequest.sampleProduct}>{editingSampleRequest.sampleProduct} (inactive)</option>
+                          )}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -11523,7 +11587,7 @@ export default function App() {
                 setChepDraft({
                   id: `CHEP-${Date.now()}`,
                   date: new Date().toISOString().split('T')[0],
-                  location: locations[0]?.name || 'Hamilton',
+                  location: activeLocations[0]?.name || '',
                   type: 'in',
                   quantity: 0,
                   reference: 'Manual Add',
@@ -13558,14 +13622,14 @@ export default function App() {
                         <select
                           value={invLineItem.productKey}
                           onChange={(e) => {
-                            const opts = buildOrderProductOptions(invLineItem.productName);
+                            const opts = buildOrderProductOptions(invLineItem.productName, { selectableOnly: true });
                             const picked = opts.find(o => o.key === e.target.value);
                             setInvLineItem({ ...invLineItem, productKey: e.target.value, productName: picked?.value || '', productDisplayName: picked?.label || '' });
                           }}
                           className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]"
                         >
                           <option value="">Select product…</option>
-                          {buildOrderProductOptions(invLineItem.productName).map(opt => (
+                          {buildOrderProductOptions(invLineItem.productName, { selectableOnly: true }).map(opt => (
                             <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                           ))}
                         </select>
@@ -16154,7 +16218,12 @@ export default function App() {
                       <input type="text" value={t.tabName} onChange={e => { const tabs = [...scheduleSyncConfig.tabs]; tabs[idx] = { ...tabs[idx], tabName: e.target.value }; setScheduleSyncConfig({ ...scheduleSyncConfig, tabs }); }} placeholder="Sheet tab name" className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white" />
                       <select value={t.location} onChange={e => { const tabs = [...scheduleSyncConfig.tabs]; tabs[idx] = { ...tabs[idx], location: e.target.value }; setScheduleSyncConfig({ ...scheduleSyncConfig, tabs }); }} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none focus:bg-white">
                         <option value="">Location…</option>
-                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {/* A saved mapping pointing at a since-retired site must stay
+                            visible, or it renders blank and gets rewritten on save. */}
+                        {t.location && !activeLocations.some(l => l.name === t.location) && (
+                          <option value={t.location}>{t.location} (inactive)</option>
+                        )}
                       </select>
                       <button onClick={() => { const tabs = scheduleSyncConfig.tabs.filter((_, i) => i !== idx); setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: tabs.length ? tabs : [{ tabName: '', location: '' }] }); }} className="p-1.5 text-red-500 hover:bg-red-50 transition-all" title="Remove tab"><Trash2 size={13} /></button>
                     </div>
@@ -17930,7 +17999,7 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
-                        {skus.filter(s => !(editingContract.contractLines || []).some(cl => cl.productName === s.name)).map(s => (
+                        {selectableSkus.filter(s => !(editingContract.contractLines || []).some(cl => cl.productName === s.name)).map(s => (
                           <option key={s.id} value={s.name}>{s.name.toUpperCase()}</option>
                         ))}
                       </select>
@@ -18970,11 +19039,15 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
                     <select
                       value={newSku.location}
-                      onChange={(e) => setNewSku({ ...newSku, location: e.target.value as 'Hamilton' | 'Vancouver' })}
+                      onChange={(e) => setNewSku({ ...newSku, location: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
-                      <option value="Hamilton">Hamilton</option>
-                      <option value="Vancouver">Vancouver</option>
+                      {/* Was hardcoded to Hamilton/Vancouver, so a new SKU could never
+                          be sited at a real multi-site location like "Hamilton (Ferguson)"
+                          — and an inactive site could never be excluded. Driven by the
+                          Locations table now, active sites only. */}
+                      <option value="">Select location…</option>
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -20778,7 +20851,7 @@ export default function App() {
                               value={newLineItem.productKey}
                               onChange={(e) => {
                                 const pickedKey = e.target.value;
-                                const opts = buildOrderProductOptions(newLineItem.productName);
+                                const opts = buildOrderProductOptions(newLineItem.productName, { selectableOnly: true });
                                 const picked = opts.find(o => o.key === pickedKey);
                                 setNewLineItem({
                                   ...newLineItem,
@@ -20790,7 +20863,7 @@ export default function App() {
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">Select</option>
-                              {buildOrderProductOptions(newLineItem.productName).map(opt => (
+                              {buildOrderProductOptions(newLineItem.productName, { selectableOnly: true }).map(opt => (
                                 <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                               ))}
                             </select>
@@ -21129,7 +21202,7 @@ export default function App() {
 
         {/* Scan Purchase Order — AI document extraction → new order */}
         {isScanningPO && (() => {
-          const poProductOptions = buildOrderProductOptions();
+          const poProductOptions = buildOrderProductOptions(undefined, { selectableOnly: true });
           const totalToReview = poReviews.length;
           const createdCount = poReviews.filter(r => r.created).length;
           return (
@@ -21564,7 +21637,7 @@ export default function App() {
                                   className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                                 >
                                   <option value="">Select Product</option>
-                                  {buildOrderProductOptions(batchOrder.product).map(opt => (
+                                  {buildOrderProductOptions(batchOrder.product, { selectableOnly: true }).map(opt => (
                                     <option key={opt.key} value={opt.value}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                                   ))}
                                 </select>
@@ -23020,7 +23093,7 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
                       <select name="product" required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                         <option value="">Select Product</option>
-                        {buildOrderProductOptions().map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                        {buildOrderProductOptions(undefined, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
                       </select>
                     </div>
                     {newTransferLegs.length === 0 && (
@@ -23220,7 +23293,7 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
                     <select value={editingTransfer.product} onChange={(e) => setEditingTransfer({...editingTransfer, product: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                       <option value="">Select Product</option>
-                      {buildOrderProductOptions(editingTransfer.product).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                      {buildOrderProductOptions(editingTransfer.product, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
                       {editingTransfer.product && !buildOrderProductOptions().some(o => o.value === editingTransfer.product) && <option value={editingTransfer.product}>{editingTransfer.product}</option>}
                     </select>
                   </div>

@@ -105,18 +105,49 @@ async function writeScanStatus(ok: boolean, summary: any, errorMsg?: string, ext
 }
 
 async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints> {
-  const [custSnap, skuSnap, qaSnap, contractSnap, carrierSnap, learnedSnap] = await Promise.all([
+  const [custSnap, skuSnap, qaSnap, contractSnap, carrierSnap, learnedSnap, locSnap] = await Promise.all([
     db.collection('customers').get(),
     db.collection('products').get(),
     db.collection('qaProducts').get(),
     db.collection('contracts').get(),
     db.collection('carriers').get().catch(() => ({ docs: [] as any[] })),
     db.collection('poFieldMappings').get().catch(() => ({ docs: [] as any[] })),
+    // Needed to drop retired-site products from the hint list below.
+    db.collection('locations').get().catch(() => ({ docs: [] as any[] })),
   ]);
   const customers = custSnap.docs.map(d => (d.data() as any).name).filter(Boolean);
+
+  // Products at an INACTIVE location must not be suggested to the model — it
+  // would normalise a PO line onto a product the app can no longer offer. Mirrors
+  // the client-side rule (App.tsx inactiveLocationKeys) and FAILS OPEN: a product
+  // with a blank or unrecognised location is still suggested.
+  const inactiveLocKeys = new Set<string>();
+  for (const d of (locSnap.docs || [])) {
+    const l = (d.data() as any) || {};
+    if (l.active === false) {
+      for (const v of [l.name, l.locationCode]) {
+        if (v) inactiveLocKeys.add(String(v).trim().toLowerCase());
+      }
+    }
+  }
+  const atInactiveLocation = (loc: any) => {
+    const n = String(loc || '').trim().toLowerCase();
+    return n ? inactiveLocKeys.has(n) : false;
+  };
+  // A QA product inherits its SKU's location when it carries none of its own.
+  const skuLocById = new Map<string, any>();
+  for (const d of skuSnap.docs) skuLocById.set(d.id, (d.data() as any).location);
+
   const products = [
-    ...skuSnap.docs.map(d => (d.data() as any).name),
-    ...qaSnap.docs.map(d => (d.data() as any).skuName),
+    ...skuSnap.docs
+      .filter(d => !atInactiveLocation((d.data() as any).location))
+      .map(d => (d.data() as any).name),
+    ...qaSnap.docs
+      .filter(d => {
+        const q = d.data() as any;
+        return !atInactiveLocation(q.location || skuLocById.get(q.skuId));
+      })
+      .map(d => (d.data() as any).skuName),
   ].filter(Boolean);
   const contracts = contractSnap.docs.map(d => (d.data() as any).contractNumber).filter(Boolean);
   const carriers = (carrierSnap.docs || []).map((d: any) => d.data().name).filter(Boolean);

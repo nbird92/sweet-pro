@@ -331,7 +331,9 @@ export default function QualityAssurancePage({
     // Liquid/Bagged/Tote product is never silently stamped with the first group.
     productGroup: '',
     category: 'Conventional',
-    location: locations.length > 0 ? locations[0].name : '',
+    // First ACTIVE location — defaulting to a retired site would desync the draft
+    // from the (already active-only) Location select and silently save it.
+    location: locations.find(l => l.active !== false)?.name || '',
     netWeightKg: 0,
     grossWeightKg: 0,
     maxColor: 0,
@@ -519,7 +521,10 @@ export default function QualityAssurancePage({
             productCode: row.productCode || (existing?.productCode ?? undefined),
             productGroup: row.productGroup || (existing?.productGroup ?? ''),
             category,
-            location: row.location || existing?.location || (locations[0]?.name || ''),
+            // Only the final fallback changes: row.location (operator-supplied) and
+            // existing?.location (already stored) are left alone so a re-import can
+            // never rewrite a historical value.
+            location: row.location || existing?.location || (locations.find(l => l.active !== false)?.name || ''),
             sugarType: row.sugarType || existing?.sugarType,
             productFormat: row.productFormat || existing?.productFormat,
             packagingSupplier: row.packagingSupplier || existing?.packagingSupplier || '',
@@ -1080,7 +1085,7 @@ export default function QualityAssurancePage({
             code: '',
             description: '',
             packagingLine: '',
-            location: locations[0]?.name || '',
+            location: locations.find(l => l.active !== false)?.name || '',
           });
           setPkgFormatMode('add');
         }}
@@ -2300,7 +2305,15 @@ export default function QualityAssurancePage({
                     className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
                   >
                     <option value="">— Create from scratch —</option>
-                    {skus.map(s => (
+                    {/* Active sites only: prefilling from a retired-site SKU copies its
+                        location straight onto the new QA product (prefillFromSku),
+                        bypassing the already-filtered Location select below. */}
+                    {skus.filter(s => {
+                      const n = (s.location || '').trim().toLowerCase();
+                      if (!n) return true; // fail open on a blank location
+                      return !locations.some(l => l.active === false
+                        && ((l.name || '').trim().toLowerCase() === n || (l.locationCode || '').trim().toLowerCase() === n));
+                    }).map(s => (
                       <option key={s.id} value={s.id}>{s.name} ({s.productGroup} - {s.location})</option>
                     ))}
                   </select>

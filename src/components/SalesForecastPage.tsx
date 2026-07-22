@@ -758,18 +758,37 @@ export default function SalesForecastPage({
   }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, onUpdateCustomerForecasts]);
 
   // ── Available products for adding ───────────────────────────────────────
+  // Excludes products at an INACTIVE location: this list feeds the "Add Product"
+  // picker, which creates a BRAND-NEW forecast line. Stored lines are rendered
+  // from cf.lines elsewhere and are unaffected, so an existing Ferguson forecast
+  // still displays. Fails open on a blank/unrecognised location.
+  const isInactiveLoc = useCallback(
+    (loc?: string) => {
+      const n = (loc || '').trim().toLowerCase();
+      if (!n) return false;
+      return locations.some(l =>
+        l.active === false
+        && ((l.name || '').trim().toLowerCase() === n || (l.locationCode || '').trim().toLowerCase() === n)
+      );
+    },
+    [locations]
+  );
+
   const availableProducts = useMemo(() => {
     const prods: { name: string; location: string }[] = [];
     for (const qp of qaProducts) {
+      const loc = qp.location || skus.find(s => s.id === qp.skuId)?.location || '';
+      if (isInactiveLoc(loc)) continue;
       prods.push({ name: qp.skuName, location: qp.location });
     }
     for (const s of skus) {
+      if (isInactiveLoc(s.location)) continue;
       if (!prods.some((p) => p.name === s.name && p.location === s.location)) {
         prods.push({ name: s.name, location: s.location });
       }
     }
     return prods;
-  }, [qaProducts, skus]);
+  }, [qaProducts, skus, isInactiveLoc]);
 
   const filteredAvailableProducts = useMemo(() => {
     let filtered = availableProducts;
@@ -1566,7 +1585,8 @@ export default function SalesForecastPage({
                             className="appearance-none w-full px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
                           >
                             <option value="">All Locations</option>
-                            {locations.map((loc) => (
+                            {/* Inside the Add Product picker, so active sites only. */}
+                            {locations.filter((loc) => loc.active !== false).map((loc) => (
                               <option key={loc.id} value={loc.name}>
                                 {loc.name}
                               </option>
