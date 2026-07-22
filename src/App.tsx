@@ -854,13 +854,18 @@ export default function App() {
       return 0;
     };
     // Origin location for the order — also used to weight the customer's product
-    // history (products bought at this location score higher). An INACTIVE site
-    // (e.g. a contract or customer default still pointing at a retired plant) is
-    // dropped to blank: pre-selecting it would surface that location in the
-    // review dropdown via its "keep the current value" fallback option, which is
-    // exactly what we're trying to stop.
-    const origin = activeOrBlankLocation(
-      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    // history (products bought at this location score higher). Precedence:
+    //   1. the contract's shipping origin (an explicit commercial term),
+    //   2. a location actually stated in the scanned email,
+    //   3. the CUSTOMER CARD's default location — the fallback when the email
+    //      names no location at all.
+    // Inactive sites are skipped rather than blanking the whole chain, so a
+    // contract still pointing at a retired plant falls through to the customer
+    // default instead of leaving the order with no location.
+    const origin = firstActiveLocation(
+      contract?.origin,
+      detectOriginFromAddresses(po),
+      cust?.defaultLocation,
     );
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
@@ -1379,8 +1384,12 @@ export default function App() {
     // NO human review, so an unfiltered pool would write a retired-site product
     // straight into production.
     const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
-    const origin = activeOrBlankLocation(
-      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    // Same precedence as reviewFromExtraction: contract origin, then a location
+    // stated in the email, then the customer card's default.
+    const origin = firstActiveLocation(
+      contract?.origin,
+      detectOriginFromAddresses(po),
+      cust?.defaultLocation,
     );
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
       const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
@@ -1401,8 +1410,10 @@ export default function App() {
     if (lines.length === 0) return null;
     const lineItems = lines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    const location = activeOrBlankLocation(
-      contract?.origin || cust?.defaultLocation || detectOriginFromAddresses(po) || ''
+    const location = firstActiveLocation(
+      contract?.origin,
+      detectOriginFromAddresses(po),
+      cust?.defaultLocation,
     );
     const shipToLocationId = matchShipToForCustomer(cust?.id || '', po);
     const deliveryDate = po.deliveryDate || '';
@@ -6716,13 +6727,16 @@ export default function App() {
     [inactiveLocationKeys]
   );
 
-  /** A location value that is safe to PRE-SELECT on a new record: returns it
-   *  unchanged when the site is active (or unrecognised), and '' when the site is
-   *  inactive. Used for auto-detected origins — a contract or customer default
-   *  can still point at a retired plant, and seeding that made the retired site
-   *  appear in pickers through their "keep the current value" fallback option. */
-  const activeOrBlankLocation = React.useCallback(
-    (loc?: string) => (isInactiveLocation(loc) ? '' : (loc || '')),
+  /** First candidate location that is safe to PRE-SELECT on a new record —
+   *  skipping blanks and INACTIVE sites, returning '' when none qualify.
+   *
+   *  Takes a list rather than a single value on purpose: a contract or customer
+   *  default can still point at a retired plant, and blanking just that one value
+   *  used to abandon the whole chain, leaving the record with no location at all
+   *  instead of falling through to the next candidate. */
+  const firstActiveLocation = React.useCallback(
+    (...candidates: Array<string | undefined | null>) =>
+      candidates.find(c => !!c && !isInactiveLocation(c)) || '',
     [isInactiveLocation]
   );
 
