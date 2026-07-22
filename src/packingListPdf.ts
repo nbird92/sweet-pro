@@ -124,10 +124,15 @@ export function renderPackingListInto(doc: jsPDF, {
     footStyles: { fillColor: [245, 245, 245], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 8 },
     columnStyles: {
       0: { cellWidth: 'auto' },
-      1: { halign: 'center', cellWidth: 22 },
-      2: { halign: 'center', cellWidth: 22 },
+      1: { halign: 'right', cellWidth: 22 },
+      2: { halign: 'right', cellWidth: 22 },
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 },
+    },
+    // Force right alignment on every NUMERIC column across head, body AND foot —
+    // columnStyles alone left the "Total" row's figures aligned left.
+    didParseCell: (data: any) => {
+      if (data.column.index !== 0) data.cell.styles.halign = 'right';
     },
   });
 

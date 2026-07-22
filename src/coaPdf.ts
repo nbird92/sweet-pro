@@ -31,7 +31,7 @@ function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: nu
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 100, 100);
-  doc.text(label.toUpperCase(), x + 2, y + 4.5);
+  doc.text(label.toUpperCase(), x + 2, y + 4.2);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(BLACK);
@@ -40,7 +40,8 @@ function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: nu
   while (doc.getTextWidth(displayValue) > maxWidth && displayValue.length > 0) {
     displayValue = displayValue.slice(0, -1);
   }
-  doc.text(displayValue, x + 2, y + 10);
+  // Baseline scales with the row height — see pdfDocHelpers.drawFieldRow.
+  doc.text(displayValue, x + 2, y + Math.max(7.8, height - 2.5));
   doc.setDrawColor(200, 200, 200);
   doc.rect(x, y, width, height);
   return y + height;
@@ -303,7 +304,7 @@ function generateCoaPage(
   y = drawSectionHeader(doc, 'QA APPROVAL', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'AUTHORIZATION', rightCol, sigHeaderY, rightHalf);
 
-  const sigRowH = 10;
+  const sigRowH = 12;
   const lotCodeDates = [...new Set(shipmentLotCodes.map(lc => lc.date).filter(Boolean))].join(', ');
 
   let qy = y;

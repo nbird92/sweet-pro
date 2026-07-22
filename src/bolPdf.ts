@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation } from './types';
+import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation, LotCode } from './types';
 import { resolveLineWeights } from './pdfDocHelpers';
 
 interface GenerateBolParams {
@@ -12,6 +12,9 @@ interface GenerateBolParams {
   shipToCustomer?: Customer;
   shipToLocation?: ShipToLocation; // selected ship-to address (overrides customer's default address)
   qaProducts: QAProduct[];
+  /** Lot code records — used to fill the Colour cell from the same
+   *  Colour (ICUMSA) reading the COA certifies, so the two documents agree. */
+  lotCodes?: LotCode[];
 }
 
 const BLACK = '#141414';
@@ -34,7 +37,7 @@ function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: nu
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 100, 100);
-  doc.text(label.toUpperCase(), x + 2, y + 4.5);
+  doc.text(label.toUpperCase(), x + 2, y + 4.2);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(BLACK);
@@ -44,7 +47,9 @@ function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: nu
   while (doc.getTextWidth(displayValue) > maxWidth && displayValue.length > 0) {
     displayValue = displayValue.slice(0, -1);
   }
-  doc.text(displayValue, x + 2, y + 10);
+  // Baseline scales with the row height (see pdfDocHelpers.drawFieldRow): pinned
+  // at y+10 it landed exactly on a 10mm row's bottom rule and clipped the value.
+  doc.text(displayValue, x + 2, y + Math.max(7.8, height - 2.5));
   doc.setDrawColor(200, 200, 200);
   doc.rect(x, y, width, height);
   return y + height;
@@ -73,6 +78,7 @@ export function renderBolInto(doc: jsPDF, {
   shipFromLocation,
   shipToLocation,
   qaProducts,
+  lotCodes,
 }: GenerateBolParams): void {
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 14;
@@ -253,11 +259,17 @@ export function renderBolInto(doc: jsPDF, {
       fontSize: 8,
     },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 22 },
-      1: { halign: 'center', cellWidth: 22 },
+      0: { halign: 'right', cellWidth: 22 },
+      1: { halign: 'right', cellWidth: 22 },
       2: { cellWidth: 'auto' },
       3: { halign: 'right', cellWidth: 30 },
       4: { halign: 'right', cellWidth: 30 },
+    },
+    // Force right alignment on every NUMERIC column across head, body AND foot.
+    // columnStyles alone left the foot ("Total") cells aligned left, so the totals
+    // didn't line up under the figures they total.
+    didParseCell: (data: any) => {
+      if (data.column.index !== 2) data.cell.styles.halign = 'right';
     },
   });
 
@@ -274,7 +286,7 @@ export function renderBolInto(doc: jsPDF, {
   // through the signatures) won't fit on the physical page, start a fresh page so
   // nothing is clipped. (Threshold is the page edge, not the soft margin, so a
   // BOL that still fits — up to ~6 items — stays on one page.)
-  const fixedBlockH = 76;
+  const fixedBlockH = 84;
   if (y + fixedBlockH > pageHeight - 2) {
     doc.addPage();
     y = 20;
@@ -288,7 +300,19 @@ export function renderBolInto(doc: jsPDF, {
   const freightTerms = shippingTerms === 'FOB' ? 'Prepaid' : (shippingTerms === 'DAP' || shippingTerms === 'DDP') ? 'Collect' : shippingTerms === 'FCA' ? 'Third Party' : '';
   const originOfGoods = shipment.originOfGoods || shipFromLocation?.name || order?.location || '';
   const sealNums = shipment.sealNumbers?.filter(Boolean).join(', ') || '';
-  const lotNums = (shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : [])).join(', ');
+  const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
+  const lotNums = assignedLotNums.join(', ');
+  // Colour: prefer an explicit value on the shipment, else take the Colour (ICUMSA)
+  // reading off this shipment's lot codes — the same field the COA certifies, so
+  // the BOL and the COA can't disagree about the colour of the same load.
+  const lotColour = [...new Set(
+    assignedLotNums
+      .map(ln => (lotCodes || []).find(lc => lc.lotNumber === ln))
+      .filter((lc): lc is LotCode => !!lc)
+      .map(lc => (lc.color || '').trim())
+      .filter(Boolean),
+  )].join(', ');
+  const colourValue = shipment.colour || lotColour;
 
   drawInfoField(doc, 'Freight Terms', freightTerms, leftCol, y, thirdW);
   drawInfoField(doc, 'Trailer Number', shipment.trailerNo || '', leftCol + thirdW, y, thirdW);
@@ -297,7 +321,7 @@ export function renderBolInto(doc: jsPDF, {
 
   drawInfoField(doc, 'Origin of Goods', originOfGoods, leftCol, y, thirdW);
   drawInfoField(doc, 'Lot Code(s)', lotNums, leftCol + thirdW, y, thirdW);
-  drawInfoField(doc, 'Colour', shipment.colour || '', leftCol + thirdW * 2, y, thirdW);
+  drawInfoField(doc, 'Colour', colourValue, leftCol + thirdW * 2, y, thirdW);
   y += 15;
 
   // ═══════════════════════════════════════════════════════════
@@ -306,7 +330,9 @@ export function renderBolInto(doc: jsPDF, {
   y = drawSectionHeader(doc, 'CONSIGNOR', leftCol, y, halfWidth);
   drawSectionHeader(doc, 'RECEIVED IN GOOD CONDITION', rightCol, y - 7, rightHalf);
 
-  const sigRowH = 10;
+  // 12mm: the CONSIGNOR / RECEIVED IN GOOD CONDITION values are the ones users
+  // actually read and sign against, so give them clear space under the baseline.
+  const sigRowH = 12;
 
   // Consignor side
   let csy = y;

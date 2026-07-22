@@ -67,12 +67,18 @@ export function drawSectionHeader(doc: jsPDF, text: string, x: number, y: number
   return y + 7;
 }
 
-/** Bordered label/value cell (label on top, value below). Returns y + height. */
+/** Bordered label/value cell (label on top, value below). Returns y + height.
+ *
+ *  The value baseline SCALES with the row height instead of being pinned at y+10.
+ *  Pinned, a 10mm signature row put the baseline exactly on the bottom rule, so
+ *  descenders (and visually the whole value) were clipped by the border. Keep at
+ *  least ~2.5mm of clearance beneath the baseline, and never rise so high that the
+ *  value collides with the label above it. */
 export function drawFieldRow(doc: jsPDF, label: string, value: string, x: number, y: number, width: number, height = 13): number {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(100, 100, 100);
-  doc.text(label.toUpperCase(), x + 2, y + 4.5);
+  doc.text(label.toUpperCase(), x + 2, y + 4.2);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(BLACK);
@@ -81,7 +87,7 @@ export function drawFieldRow(doc: jsPDF, label: string, value: string, x: number
   while (doc.getTextWidth(displayValue) > maxWidth && displayValue.length > 0) {
     displayValue = displayValue.slice(0, -1);
   }
-  doc.text(displayValue, x + 2, y + 10);
+  doc.text(displayValue, x + 2, y + Math.max(7.8, height - 2.5));
   doc.setDrawColor(200, 200, 200);
   doc.rect(x, y, width, height);
   return y + height;

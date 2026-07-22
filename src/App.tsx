@@ -4102,6 +4102,7 @@ export default function App() {
         shipToCustomer: cust,
         shipToLocation: shipToLoc,
         qaProducts,
+        lotCodes,
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, templateType: 'Bill of Lading' });

@@ -38,7 +38,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
   // starts a fresh page before every document after the first. The Bag ID Report
   // is included only for packaged / tote shipments.
   const steps: Array<() => void> = [
-    () => renderBolInto(doc, { shipment, order, customer, carrier, shipFromLocation, shipToCustomer: customer, shipToLocation, qaProducts }),
+    () => renderBolInto(doc, { shipment, order, customer, carrier, shipFromLocation, shipToCustomer: customer, shipToLocation, qaProducts, lotCodes }),
     () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, lotCodes, qaProducts }),
     () => renderPackingListInto(doc, { shipment, order, customer, shipFromLocation, shipToLocation, qaProducts }),
   ];
