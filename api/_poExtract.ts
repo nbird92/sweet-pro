@@ -63,6 +63,47 @@ async function generateWithRetry(ai: GoogleGenAI, req: any, maxRetries = 4, dead
   }
 }
 
+/** True when the API rejected the REQUEST ITSELF (400 INVALID_ARGUMENT) — some
+ *  parameter we sent isn't valid for THIS model. Which parameters are accepted is
+ *  model-specific (the thinking budget in particular: some models reject a 0 budget
+ *  outright, others use a different field entirely), and the body pass runs on a
+ *  different, rolling-alias model than the attachment pass — which is exactly how a
+ *  config that works for attachments can 400 on every email body. Auth/permission
+ *  failures also surface as 400, so they're excluded: retrying those is pointless. */
+function isInvalidArgumentError(e: any): boolean {
+  const status = e?.status ?? e?.code;
+  const msg = String(e?.message || e);
+  if (/api[_\s-]*key|api_key_invalid|permission|unauthenticated|unauthorized|forbidden/i.test(msg)) return false;
+  return status === 400 || /\b400\b|INVALID_ARGUMENT/i.test(msg);
+}
+
+/** True when the model name itself is retired / unknown (404). */
+function isModelGoneError(e: any): boolean {
+  const status = e?.status ?? e?.code;
+  const msg = String(e?.message || e);
+  return status === 404 || /not[_\s-]*found|no longer available|is not found|does not exist|unsupported model/i.test(msg);
+}
+
+/** Surface Google's field-level `details[]` from an error. A bare 400 reads
+ *  "Request contains an invalid argument.", which says nothing about WHICH
+ *  argument — the details array names it, so log it. */
+function errorDetail(e: any): string {
+  const msg = String(e?.message || e);
+  const brace = msg.indexOf('{');
+  if (brace < 0) return '';
+  try {
+    const j = JSON.parse(msg.slice(brace));
+    const d = j?.error?.details;
+    if (Array.isArray(d) && d.length) return ` | details: ${JSON.stringify(d).slice(0, 500)}`;
+  } catch { /* not JSON — nothing extra to add */ }
+  return '';
+}
+
+/** Index of the first (model, config) attempt known to work for a given model
+ *  list, so a 200-email scan doesn't repeat a call we already learned this model
+ *  rejects. Per warm function instance; resets on cold start. */
+const workingAttempt = new Map<string, number>();
+
 /** Recover the COMPLETE document objects from a truncated batch response
  *  (`{ "documents": [ {…}, {…}, {…incomplete }`). Scans the array for balanced
  *  top-level `{…}` objects (string-aware) and parses each — so a partial batch
@@ -222,10 +263,12 @@ export interface ExtractHints {
 /** Schema entry for a NUMERIC field carried as a STRING (Type.NUMBER degenerates
  *  into a runaway "0.0000000000…" that burns the token budget). We keep the field
  *  a PLAIN string and coerce it back to a number in coerceDocNumbers. Note: we do
- *  NOT put `maxLength` / `pattern` here — the lite body model (gemini-2.5-flash-lite)
- *  rejects those in a responseSchema with 400 INVALID_ARGUMENT. The runaway is
- *  instead bounded by a modest maxOutputTokens (so it truncates fast) and recovered
- *  by salvageDocuments' repairTruncatedObject. */
+ *  NOT put `maxLength` / `pattern` here — not every model accepts those in a
+ *  responseSchema, and a rejected schema 400s the whole call. (Removing them alone
+ *  did NOT stop the body-pass 400s; the attempt ladder in extractPO now handles
+ *  whichever parameter a given model rejects.) The runaway is instead bounded by a
+ *  modest maxOutputTokens (so it truncates fast) and recovered by salvageDocuments'
+ *  repairTruncatedObject. */
 const numStr = (description: string) => ({
   type: Type.STRING,
   description: `${description} Return a short plain number (at most 2 decimals, no trailing zeros); empty if not stated.`,
@@ -632,21 +675,56 @@ export async function extractPO(
     thinkingConfig: { thinkingBudget: Number(process.env.PO_EXTRACT_THINKING_BUDGET ?? 0) },
   };
   const primaryModel = opts.model || DEFAULT_MODEL;
+  const models = [primaryModel, ...(opts.fallbackModel && opts.fallbackModel !== primaryModel ? [opts.fallbackModel] : [])];
+
+  // Build the attempt ladder. A model can fail for two recoverable reasons: it was
+  // RETIRED (404 — try the next model), or it REJECTED one of our parameters (400
+  // INVALID_ARGUMENT — drop the model-specific ones and retry). Previously only the
+  // 404 case was handled, so a 400 failed the email outright; that is what made every
+  // "(body)" extraction error out while attachments (a different model) succeeded.
+  const withoutThinking = (c: any) => { const { thinkingConfig, ...rest } = c; return rest; };
+  const withoutSchema = (c: any) => { const { responseSchema, ...rest } = c; return rest; };
+
+  const attempts: Array<{ model: string; label: string; config: any }> = [];
+  // Pass 1: every model WITH the structured-output schema (accuracy intact). The
+  // thinking budget is dropped first since its validity is the most model-specific.
+  for (const m of models) {
+    attempts.push({ model: m, label: 'default', config });
+    attempts.push({ model: m, label: 'no-thinking-budget', config: withoutThinking(config) });
+  }
+  // Pass 2: last resort — drop the response schema too. Output is still JSON
+  // (responseMimeType), and the parse/salvage below copes, but field fidelity drops,
+  // so this is only reached after every model has been tried WITH the schema.
+  for (const m of models) {
+    attempts.push({ model: m, label: 'no-thinking-budget+no-schema', config: withoutSchema(withoutThinking(config)) });
+  }
+
+  // Skip straight to the variant we already learned works for this model list.
+  const cacheKey = models.join('|');
+  const startAt = Math.min(workingAttempt.get(cacheKey) ?? 0, attempts.length - 1);
+  const gone = new Set<string>();
   let response: any;
-  try {
-    response = await generateWithRetry(ai, { model: primaryModel, contents: [{ role: 'user', parts }], config }, 4, opts.deadlineMs);
-  } catch (e: any) {
-    // A configured model can be retired (404 / NOT_FOUND / "no longer available").
-    // Don't let that break the scan — fall back to the full model when one is
-    // provided and differs from the one that just failed.
-    const msg = String(e?.message || e);
-    const status = e?.status ?? e?.code;
-    const modelGone = status === 404 || /not[_\s-]*found|no longer available|is not found|does not exist|unsupported model/i.test(msg);
-    if (modelGone && opts.fallbackModel && opts.fallbackModel !== primaryModel) {
-      response = await generateWithRetry(ai, { model: opts.fallbackModel, contents: [{ role: 'user', parts }], config }, 4, opts.deadlineMs);
-    } else {
-      throw e;
+  let lastErr: any;
+  const tried: string[] = [];
+  for (let i = startAt; i < attempts.length; i++) {
+    const a = attempts[i];
+    if (gone.has(a.model)) continue;
+    try {
+      response = await generateWithRetry(ai, { model: a.model, contents: [{ role: 'user', parts }], config: a.config }, 4, opts.deadlineMs);
+      workingAttempt.set(cacheKey, i);
+      break;
+    } catch (e: any) {
+      lastErr = e;
+      tried.push(`${a.model}/${a.label}`);
+      if (isModelGoneError(e)) { gone.add(a.model); continue; }
+      if (isInvalidArgumentError(e)) continue;
+      throw e; // auth / quota / spend-cap / timeout — not something a retry fixes
     }
+  }
+  if (!response) {
+    throw new Error(
+      `${String(lastErr?.message || lastErr)}${errorDetail(lastErr)} (tried: ${tried.join(', ') || 'nothing'})`,
+    );
   }
 
   const text = response.text;
