@@ -431,18 +431,22 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
 
 function resolveCustomer(raw: string, customers: Customer[]): string {
   if (!raw) return raw;
-  const norm = raw.trim().toLowerCase();
-  let m = customers.find(c => (c.name || '').trim().toLowerCase() === norm);
+  // Strong normalization: lowercase AND strip every non-alphanumeric, so casing,
+  // apostrophes, punctuation and spacing all collapse ("Chapman's", "CHAPMANS",
+  // "chapmans inc" reduce toward one key). Always returns the customer's CANONICAL
+  // (all-caps) name, so imported orders line up with the catalog. A plain lowercase
+  // compare used to miss on any punctuation difference and store the raw scanned
+  // name ("Chapmans"), which then didn't match "CHAPMANS" anywhere downstream.
+  const norm = (s: string | undefined) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const n = norm(raw);
+  if (!n) return raw;
+  // 1. Exact normalized match on name / ITAS name / customer number.
+  let m = customers.find(c => norm(c.name) === n || norm(c.itasCustomerName) === n || norm(c.customerNumber) === n);
   if (m) return m.name;
-  m = customers.find(c => {
-    const cn = (c.name || '').trim().toLowerCase();
-    return cn && (cn.startsWith(norm) || norm.startsWith(cn));
-  });
-  if (m) return m.name;
-  m = customers.find(c => {
-    const cn = (c.name || '').trim().toLowerCase();
-    return cn && (cn.includes(norm) || norm.includes(cn));
-  });
+  // 2. Prefix / containment on name or ITAS name (guard tiny strings so a 1-2 char
+  //    token can't match everything).
+  const contains = (a: string, b: string) => !!a && !!b && a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a) || a.includes(b) || b.includes(a));
+  m = customers.find(c => contains(norm(c.name), n) || contains(norm(c.itasCustomerName), n));
   return m ? m.name : raw;
 }
 

@@ -177,7 +177,10 @@ export function matchCustomer(
   let best: Customer | null = null;
   let bestScore = 0.45; // threshold
   for (const c of customers) {
-    const score = similarity(raw, c.name);
+    // Score against BOTH the display name and the ITAS name — a PO that spells the
+    // customer as their ITAS name (or vice-versa) would otherwise miss. similarity
+    // is case/punctuation-insensitive, so "Chapmans" already scores 1.0 vs "CHAPMANS".
+    const score = Math.max(similarity(raw, c.name), similarity(raw, c.itasCustomerName || ''));
     if (score > bestScore) { bestScore = score; best = c; }
   }
   return best;

@@ -501,6 +501,7 @@ export default function App() {
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
   const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
   const [orderLocation, setOrderLocation] = useState('');
+  const [orderCurrency, setOrderCurrency] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
   const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
   const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
@@ -2299,6 +2300,19 @@ export default function App() {
             continue;
           }
 
+          // PO uniqueness: a NEW order (no BOL match above) must not reuse a PO
+          // already on another order (existing or added earlier this import) or on
+          // an invoice. Skip the row rather than create a duplicate.
+          const csvPo = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
+          const csvPoKey = (csvPo || '').trim().toLowerCase();
+          if (csvPoKey && (
+            workingOrders.some(o => (o.po || '').trim().toLowerCase() === csvPoKey)
+            || invoices.some(inv => (inv.po || '').trim().toLowerCase() === csvPoKey)
+          )) {
+            skippedRows++;
+            continue;
+          }
+
           const lineItem: OrderLineItem = {
             id: `LI-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             productName: product,
@@ -3285,6 +3299,53 @@ export default function App() {
     });
     if (changed) setLotCodes(next);
   }, [lotCodes, invoices, orders]);
+
+  // Canonicalise customer names on existing orders/invoices to match the customer
+  // catalog (which is ALL-CAPS, e.g. "CHAPMANS"). Imports sometimes stored a
+  // variant like "Chapmans", which then failed to match the real customer in
+  // reports/forecasts. Self-converging and CONSERVATIVE: only rewrites when the
+  // stored name — with case, punctuation and spacing stripped — is an EXACT match
+  // for exactly ONE customer's name/ITAS name/number and differs from the canonical
+  // spelling. Never does a fuzzy/partial rename.
+  useEffect(() => {
+    if (!customers.length) return;
+    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    // Build a normalized-key → canonical name index; keys mapping to >1 distinct
+    // customer are AMBIGUOUS and excluded so we never guess.
+    const canonical = new Map<string, string | null>();
+    const note = (key: string, name: string) => {
+      if (!key) return;
+      if (!canonical.has(key)) canonical.set(key, name);
+      else if (canonical.get(key) !== name) canonical.set(key, null); // ambiguous
+    };
+    for (const c of customers) {
+      note(norm(c.name), c.name);
+      note(norm(c.itasCustomerName), c.name);
+      note(norm(c.customerNumber), c.name);
+    }
+    const fix = (stored?: string): string | null => {
+      const s = (stored || '').trim();
+      if (!s) return null;
+      const canon = canonical.get(norm(s));
+      return canon && canon !== s ? canon : null; // only when it differs
+    };
+
+    let ordersChanged = false;
+    const nextOrders = orders.map(o => {
+      const canon = fix(o.customer);
+      if (canon) { ordersChanged = true; return { ...o, customer: canon }; }
+      return o;
+    });
+    if (ordersChanged) setOrders(nextOrders);
+
+    let invoicesChanged = false;
+    const nextInvoices = invoices.map(i => {
+      const canon = fix(i.customer);
+      if (canon) { invoicesChanged = true; return { ...i, customer: canon }; }
+      return i;
+    });
+    if (invoicesChanged) setInvoices(nextInvoices);
+  }, [customers, orders, invoices]);
 
   // Backfill Lot Code Customer names from the Invoices AND Orders tables. A lot code
   // with a blank Customer gets it from an invoice/order matched by BOL number OR by PO
@@ -6143,9 +6204,40 @@ export default function App() {
 
   const applyLotCodeSyncResult = (preview: LotCodeSyncResult, current: LotCode[]): LotCode[] => {
     const upById = new Map((preview.updatedLotCodes || []).map((lc): [string, LotCode] => [lc.id, lc]));
-    const merged = [...current.map(lc => upById.get(lc.id) || lc), ...preview.newLotCodes];
+    const afterUpdates = current.map(lc => upById.get(lc.id) || lc);
+    // Lot numbers are UNIQUE. The importer dedups against the snapshot it was
+    // handed at preview time, but the live list can move between preview and apply
+    // (Firestore push, the lot-code backfill effects, or a prior sync in this
+    // session) — and this apply used to blind-append every "new" lot. So drop any
+    // new lot whose number already exists now (or was added earlier in this same
+    // apply). Blank lot numbers (numberless loads) are exempt — the importer
+    // dedups those on BOL|date|tank instead.
+    const norm = (s?: string) => (s || '').trim().toUpperCase();
+    const seen = new Set(afterUpdates.map(lc => norm(lc.lotNumber)).filter(Boolean));
+    const freshNew: LotCode[] = [];
+    for (const lc of preview.newLotCodes) {
+      const k = norm(lc.lotNumber);
+      if (k && seen.has(k)) continue; // already present — don't import a duplicate
+      if (k) seen.add(k);
+      freshNew.push(lc);
+    }
+    const merged = [...afterUpdates, ...freshNew];
     setLotCodes(merged);
     return merged;
+  };
+
+  /** True when a PO number is already used on ANOTHER order or on ANY invoice —
+   *  case-insensitive + trimmed. Every order-creation path funnels through this so
+   *  a duplicate PO can never be created. Pass excludeOrderId when editing an order
+   *  (so it doesn't trip on itself) and `reserved` for POs claimed earlier in a
+   *  multi-order batch. */
+  const poNumberInUse = (po: string, opts?: { excludeOrderId?: string; reserved?: Set<string> }): boolean => {
+    const k = (po || '').trim().toLowerCase();
+    if (!k) return false;
+    if (orders.some(o => o.id !== opts?.excludeOrderId && (o.po || '').trim().toLowerCase() === k)) return true;
+    if (invoices.some(i => (i.po || '').trim().toLowerCase() === k)) return true;
+    if (opts?.reserved?.has(k)) return true;
+    return false;
   };
 
   // ── Sync All ────────────────────────────────────────────────────────────
@@ -9373,6 +9465,7 @@ export default function App() {
                 setOrderPO('');
                 setOrderLineItems([]);
                 setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+                setOrderCurrency('');
                 setEditingOrder(null);
                 setIsAddingOrder(true);
               }}
@@ -9585,6 +9678,7 @@ export default function App() {
                               setOrderShippingTerms(ord.shippingTerms || '');
                               setOrderShipToId(ord.shipToLocationId || '');
                               setOrderLocation(ord.location || '');
+                              setOrderCurrency(ord.currency || '');
                               setOrderPapsNo(ord.papsNo || '');
                               setOrderCustomsEntryNo(ord.customsEntryNo || '');
                               setOrderLineItems(ord.lineItems);
@@ -14477,6 +14571,7 @@ export default function App() {
                         setOrderShippingTerms(viewingOrderCard.shippingTerms || '');
                         setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
+                        setOrderCurrency(viewingOrderCard.currency || '');
                         setOrderPapsNo(viewingOrderCard.papsNo || '');
                         setOrderCustomsEntryNo(viewingOrderCard.customsEntryNo || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
@@ -21091,6 +21186,18 @@ export default function App() {
                         ))}
                       </select>
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Currency</label>
+                      <select
+                        value={orderCurrency}
+                        onChange={(e) => setOrderCurrency(e.target.value)}
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                      >
+                        <option value="">Select</option>
+                        <option value="CAD">CAD</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    </div>
                   </div>
                   {/* Customs references — only surfaced when editing an existing
                       order (PAPS / entry numbers are assigned after the order is
@@ -21350,8 +21457,8 @@ export default function App() {
                       // blocked, even if a pre-existing duplicate PO is on another order.
                       const poUniqTrim = (orderPO || '').trim();
                       const poChanged = !editingOrder || poUniqTrim.toLowerCase() !== (editingOrder.po || '').trim().toLowerCase();
-                      if (poUniqTrim && poChanged && orders.some(o => o.id !== editingOrder?.id && (o.po || '').trim().toLowerCase() === poUniqTrim.toLowerCase())) {
-                        setErrorBox(`PO ${orderPO} already exists on another order — PO numbers must be unique.`);
+                      if (poUniqTrim && poChanged && poNumberInUse(orderPO, { excludeOrderId: editingOrder?.id })) {
+                        setErrorBox(`PO ${orderPO} already exists on another order or invoice — PO numbers must be unique.`);
                         return;
                       }
 
@@ -21374,6 +21481,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          currency: orderCurrency || undefined,
                           shipToLocationId: orderShipToId || undefined,
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
@@ -21399,6 +21507,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          currency: orderCurrency || undefined,
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
@@ -21416,6 +21525,7 @@ export default function App() {
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
                       setOrderLocation('');
+                      setOrderCurrency('');
                       setOrderShipToId('');
                       setOrderPapsNo('');
                       setOrderCustomsEntryNo('');
@@ -21432,8 +21542,8 @@ export default function App() {
                           setErrorBox('Please select customer, add line items, and enter PO number');
                           return;
                         }
-                        if (orders.some(o => (o.po || '').trim().toLowerCase() === (orderPO || '').trim().toLowerCase())) {
-                          setErrorBox(`PO ${orderPO} already exists on another order — PO numbers must be unique.`);
+                        if (poNumberInUse(orderPO, { excludeOrderId: editingOrder?.id })) {
+                          setErrorBox(`PO ${orderPO} already exists on another order or invoice — PO numbers must be unique.`);
                           return;
                         }
                         const totalAmount = orderLineItems.reduce((sum, item) => sum + (item.lineAmount || 0), 0);
@@ -21458,6 +21568,7 @@ export default function App() {
                           carrier: orderCarrier || undefined,
                           shippingTerms: orderShippingTerms || undefined,
                           location: resolvedLocation,
+                          currency: orderCurrency || undefined,
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
@@ -21474,6 +21585,7 @@ export default function App() {
                         setOrderCarrier('Customer Pick Up');
                         setOrderShippingTerms('');
                         setOrderLocation('');
+                        setOrderCurrency('');
                       }}
                       className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
                     >
@@ -21493,6 +21605,7 @@ export default function App() {
                       setOrderCarrier('Customer Pick Up');
                       setOrderShippingTerms('');
                       setOrderLocation('');
+                      setOrderCurrency('');
                       setOrderShipToId('');
                       setOrderPapsNo('');
                       setOrderCustomsEntryNo('');
@@ -22240,6 +22353,20 @@ export default function App() {
                             if (!product) {
                               setErrorBox('Product not found');
                               return;
+                            }
+                            // PO uniqueness: block if any entry's PO collides with an
+                            // existing order/invoice OR another entry in this batch.
+                            {
+                              const batchReserved = new Set<string>();
+                              for (const entry of batchOrder.entries) {
+                                const k = (entry.po || '').trim().toLowerCase();
+                                if (!k) continue;
+                                if (poNumberInUse(entry.po, { reserved: batchReserved })) {
+                                  setErrorBox(`PO ${entry.po} already exists (on another order, an invoice, or twice in this batch) — PO numbers must be unique.`);
+                                  return;
+                                }
+                                batchReserved.add(k);
+                              }
                             }
                             // Volume validation against contract — warn but allow override
                             if (selectedContract && totalWeightMT > selectedContract.volumeOutstanding) {
