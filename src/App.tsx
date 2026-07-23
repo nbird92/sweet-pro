@@ -13876,22 +13876,63 @@ export default function App() {
           // the footer totals can never disagree. Everything comes from the invoice's
           // OWN line items (post-billing these carry the SCALED quantities) — never the
           // order. Price/MT = Σ Line Amount ÷ Σ Total Weight.
+          // Invoices brought in by the Sync Invoices modal carry the SCALED
+          // (QTY DRY) figure in inv.qty — the value shown in the table's QTY (MT)
+          // column — while any line items were inherited from the matching order
+          // and still hold the UNSCALED ordered weights. For these, inv.qty is
+          // authoritative: it drives the header Quantity (MT) and, on the common
+          // single-line bulk invoice, the line's Qty (units) and Total Weight.
+          const isImportedInvoice = (inv.id || '').startsWith('INV-IMPORT-');
+          const scaledMt = typeof inv.qty === 'number' ? inv.qty : 0;
+          const useScaled = isImportedInvoice && scaledMt > 0;
           const invRows = items.map(item => {
             const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
             const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
             const resolved = resolveProduct(item.productName);
             const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
-            const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
-            const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
-            const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
+            const baseTotalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
+            const baseWeightPerUnit = item.netWeightPerUnit || (item.qty ? baseTotalWeight / item.qty : skuNetKg / 1000);
+            const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || (useScaled ? (inv.pricePerMt || 0) : 0);
+            // Only override the single-line case, where inv.qty unambiguously IS
+            // this line's quantity. Multi-line imported invoices keep per-line
+            // figures (splitting one scaled total across lines would be a guess).
+            const singleImported = useScaled && items.length === 1;
+            const qtyUnits = singleImported ? scaledMt : item.qty;
+            const totalWeight = singleImported ? scaledMt : baseTotalWeight;
+            const weightPerUnit = singleImported ? (qtyUnits ? totalWeight / qtyUnits : baseWeightPerUnit) : baseWeightPerUnit;
             const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
-            const lineAmount = item.lineAmount || (totalWeight * mtAmount);
+            const lineAmount = singleImported
+              ? (inv.amount || (totalWeight * mtAmount))
+              : (item.lineAmount || (baseTotalWeight * mtAmount));
             const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
-            return { item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
+            return { item, qtyUnits, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
           });
-          const totalMt = items.length
-            ? invRows.reduce((s, r) => s + r.totalWeight, 0)
-            : (typeof inv.qty === 'number' ? inv.qty : 0);
+          // Imported invoices with no matching order inherit no line items, but the
+          // scaled QTY still belongs in the line section — synthesise one display
+          // row from the invoice's own product + scaled quantity so QTY (units) and
+          // Total Weight (MT) appear instead of an empty section.
+          if (useScaled && invRows.length === 0) {
+            const mtAmount = inv.pricePerMt || 0;
+            invRows.push({
+              item: { id: 'scaled-line', productName: inv.product || '', productDisplayName: inv.product || '', qty: scaledMt } as OrderLineItem,
+              qtyUnits: scaledMt,
+              weightPerUnit: 1,
+              totalWeight: scaledMt,
+              unitAmount: mtAmount,
+              mtAmount,
+              lineAmount: inv.amount || (scaledMt * mtAmount),
+              contractNumber: inv.contractNumber || '',
+            });
+          }
+          // Header Quantity (MT): the scaled figure drives it only when it cleanly
+          // represents the whole invoice — a single real line, or the synthesised
+          // one. A rare multi-line imported invoice keeps the sum of its visible
+          // rows so the header, the rows and the footer total all agree.
+          const totalMt = (useScaled && invRows.length === 1)
+            ? scaledMt
+            : (invRows.length
+              ? invRows.reduce((s, r) => s + r.totalWeight, 0)
+              : scaledMt);
           const totalLineAmt = invRows.reduce((s, r) => s + r.lineAmount, 0);
           const headerAmount = totalLineAmt > 0 ? totalLineAmt : (inv.amount || 0);
           const derivedPricePerMt = totalMt > 0 && totalLineAmt > 0
@@ -13971,7 +14012,7 @@ export default function App() {
                 {/* Line Items & Contract Details — same layout as the order card. */}
                 <div className="border border-[#141414] overflow-hidden">
                   <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center">
-                    <h4 className="text-xs font-bold uppercase">Line Items &amp; Contract Details ({items.length})</h4>
+                    <h4 className="text-xs font-bold uppercase">Line Items &amp; Contract Details ({invRows.length})</h4>
                   </div>
                   <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
@@ -13983,11 +14024,11 @@ export default function App() {
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
                       <div className="text-sm">{inv.product || '—'}</div></div>
                   </div>
-                  {items.length > 0 ? (() => {
+                  {invRows.length > 0 ? (() => {
                     // Reuse the effective rows computed above so this table and the
                     // header always show identical totals.
                     const rows = invRows;
-                    const totalQty = rows.reduce((s, r) => s + r.item.qty, 0);
+                    const totalQty = rows.reduce((s, r) => s + r.qtyUnits, 0);
                     const totalWeightSum = totalMt;
                     const totalLineAmount = totalLineAmt;
                     return (
@@ -14005,10 +14046,10 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
-                        {rows.map(({ item, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber }) => (
+                        {rows.map(({ item, qtyUnits, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber }) => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
-                            <td className="p-3">{item.qty}</td>
+                            <td className="p-3">{qtyUnits}</td>
                             <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
                             <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
                             <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
@@ -14068,9 +14109,18 @@ export default function App() {
                       else setHamiltonShipments(prev => [...prev, created]);
                       target = created;
                     }
+                    // Carry the imported invoice's scaled QTY (DRY) — the QTY (MT)
+                    // column — into the shipment's Scaled Quantity, but only when
+                    // that field is still blank so a real scaled weight is never
+                    // overwritten. Edits the working copy passed to the editor;
+                    // Save persists it via saveShipmentEdits.
+                    const scaledFromInvoice = useScaled ? scaledMt : 0;
+                    const opened = (scaledFromInvoice > 0 && !(target.scaledQty && target.scaledQty > 0))
+                      ? { ...target, scaledQty: scaledFromInvoice }
+                      : target;
                     // The shipment editor is a global modal, so it opens straight
                     // over the Invoices page — no page navigation needed.
-                    setEditingShipment(target);
+                    setEditingShipment(opened);
                     setViewingInvoiceCard(null);
                   }}
                   title={invShipment
