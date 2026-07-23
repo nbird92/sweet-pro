@@ -1124,22 +1124,30 @@ export default function App() {
     }
     const lineItems = validLines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    const matchedContract = rev.contractNumber ? contracts.find(c => c.contractNumber === rev.contractNumber) : undefined;
-    // Contract volume guard: when a KNOWN contract is selected, block the order if
-    // it exceeds the contract's remaining volume. No contract (or a scanned code
-    // not in the catalog) → no restriction; the order can still be created.
-    if (matchedContract) {
-      const remaining = matchedContract.volumeOutstanding != null
-        ? matchedContract.volumeOutstanding
-        : Math.max(0, (matchedContract.contractVolume || 0) - (matchedContract.volumeTaken || 0));
-      const orderMt = lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
-      if (orderMt > remaining + 1e-6) {
-        setErrorBox(`Not enough contract volume on ${matchedContract.contractNumber}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining, but this order is ${orderMt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT. Reduce the quantity or choose a different contract.`);
+    // Per-contract volume guard: each product line can name its OWN contract, so
+    // sum the line weights PER contract and block if any KNOWN contract is
+    // over-booked. A scanned code not in the catalog → no restriction on it.
+    const mtByContract = new Map<string, number>();
+    for (const li of lineItems) {
+      const cn = (li.contractNumber || '').trim();
+      if (cn) mtByContract.set(cn, (mtByContract.get(cn) || 0) + (li.totalWeight || 0));
+    }
+    for (const [cn, mt] of mtByContract) {
+      const ct = contracts.find(c => c.contractNumber === cn);
+      if (!ct) continue; // scanned / unknown contract — not restricted
+      const remaining = ct.volumeOutstanding != null
+        ? ct.volumeOutstanding
+        : Math.max(0, (ct.contractVolume || 0) - (ct.volumeTaken || 0));
+      if (mt > remaining + 1e-6) {
+        setErrorBox(`Not enough contract volume on ${cn}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining, but this order books ${mt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT against it. Reduce the quantity or choose a different contract.`);
         return null;
       }
     }
     const lineContracts = Array.from(new Set(lineItems.map(li => li.contractNumber).filter(Boolean)));
-    const contractNumber = rev.contractNumber || lineContracts.join(', ');
+    // The order carries every distinct line contract; the FIRST known one supplies
+    // origin / pallet-type defaults when the fields weren't set on the review.
+    const contractNumber = lineContracts.join(', ');
+    const matchedContract = lineContracts.map(cn => contracts.find(c => c.contractNumber === cn)).find((c): c is Contract => !!c);
     const location = rev.location || matchedContract?.origin || customer.defaultLocation || '';
     const newOrder: Order = {
       id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1208,7 +1216,10 @@ export default function App() {
       if (l.productRaw) recordLearned('product', l.productRaw, l.productValue);
       if (l.productCodeRaw) recordLearned('product', l.productCodeRaw, l.productValue);
     });
-    if (rev.contractRaw && rev.contractNumber) recordLearned('contract', rev.contractRaw, rev.contractNumber);
+    // Learn the scanned contract text against the contract the user actually
+    // chose (the first line that has one), so the next scan maps it automatically.
+    const learnedContract = validLines.map(l => l.contractNumber).find(Boolean) || rev.contractNumber;
+    if (rev.contractRaw && learnedContract) recordLearned('contract', rev.contractRaw, learnedContract);
     // Learn the carrier by email domain (contrans.ca -> Contrans) and by any raw
     // name the extractor used, so the carrier auto-fills next time.
     if (rev.carrier) {
@@ -21598,15 +21609,20 @@ export default function App() {
                               const newId = e.target.value;
                               const c = customers.find(x => x.id === newId);
                               const newContracts = c ? contractsForCustomer(c) : [];
-                              // Drop a contract that is a KNOWN contract not belonging to the newly
+                              const newContractNums = new Set(newContracts.map(ct => ct.contractNumber));
+                              // Per line: drop a KNOWN contract that doesn't belong to the newly
                               // chosen customer; preserve a genuinely-unknown scanned code.
-                              const isKnown = !!rev.contractNumber && contracts.some(ct => ct.contractNumber === rev.contractNumber);
-                              const dropContract = isKnown && !newContracts.some(ct => ct.contractNumber === rev.contractNumber);
+                              const relinkedLines = rev.lines.map(l => {
+                                const isKnown = !!l.contractNumber && contracts.some(ct => ct.contractNumber === l.contractNumber);
+                                return (isKnown && !newContractNums.has(l.contractNumber)) ? { ...l, contractNumber: '' } : l;
+                              });
+                              const revContractInvalid = !!rev.contractNumber && contracts.some(ct => ct.contractNumber === rev.contractNumber) && !newContractNums.has(rev.contractNumber);
                               updateReview(rev.id, {
                                 customerId: newId,
                                 shipToLocationId: matchShipToForCustomer(newId, rev.source),
                                 ...(rev.locationTouched ? {} : { location: c?.defaultLocation || '' }),
-                                ...(dropContract ? { contractNumber: '', lines: rev.lines.map(l => ({ ...l, contractNumber: '' })) } : {}),
+                                lines: relinkedLines,
+                                ...(revContractInvalid ? { contractNumber: '' } : {}),
                               });
                             }}
                             disabled={rev.created}
@@ -21675,14 +21691,9 @@ export default function App() {
                             {rev.shippingTerms && !shippingTermsList.some(t => t.name === rev.shippingTerms) && <option value={rev.shippingTerms}>{rev.shippingTerms} (scanned)</option>}
                           </select>
                         </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase font-bold opacity-50">Contract {rev.contractRaw && <span className="opacity-60 normal-case">· read: "{rev.contractRaw}"</span>}</label>
-                          <select value={rev.contractNumber} onChange={(e) => updateReview(rev.id, { contractNumber: e.target.value, lines: rev.lines.map(l => ({ ...l, contractNumber: e.target.value })) })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none">
-                            <option value="">{selectedCustomer && customerContracts.length === 0 ? '— no contracts for this customer —' : '— None —'}</option>
-                            {customerContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
-                            {rev.contractNumber && !customerContracts.some(c => c.contractNumber === rev.contractNumber) && <option value={rev.contractNumber}>{rev.contractNumber} {contracts.some(c => c.contractNumber === rev.contractNumber) ? '(inactive / other customer)' : '(scanned — not in catalog)'}</option>}
-                          </select>
-                        </div>
+                        {/* Contract moved into the Line Items table — each product
+                            can be booked against its own contract, so one order can
+                            span several products and several contracts. */}
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">PAPS No.</label>
                           <input value={rev.papsNo} onChange={(e) => updateReview(rev.id, { papsNo: e.target.value })} disabled={rev.created} className="w-full bg-[#F5F5F5] border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none" />
@@ -21701,6 +21712,7 @@ export default function App() {
                               <th className="p-2 text-left font-bold">Product</th>
                               <th className="p-2 text-right font-bold w-28">Qty (MT)</th>
                               <th className="p-2 text-right font-bold w-28">Price/MT</th>
+                              <th className="p-2 text-left font-bold w-48">Contract</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -21737,6 +21749,22 @@ export default function App() {
                                 <td className="p-2 text-right">
                                   <input type="number" step="0.01" value={line.pricePerMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { pricePerMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
                                 </td>
+                                <td className="p-2">
+                                  <select
+                                    value={line.contractNumber}
+                                    disabled={rev.created}
+                                    onChange={(e) => updateReviewLine(rev.id, idx, { contractNumber: e.target.value })}
+                                    className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none"
+                                  >
+                                    <option value="">{selectedCustomer && customerContracts.length === 0 ? '— no contracts —' : '— None —'}</option>
+                                    {customerContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}</option>)}
+                                    {/* Keep a scanned / other-customer contract selectable so it isn't lost. */}
+                                    {line.contractNumber && !customerContracts.some(c => c.contractNumber === line.contractNumber) && (
+                                      <option value={line.contractNumber}>{line.contractNumber} {contracts.some(c => c.contractNumber === line.contractNumber) ? '(inactive / other customer)' : '(scanned — not in catalog)'}</option>
+                                    )}
+                                  </select>
+                                  {rev.contractRaw && idx === 0 && <div className="text-[9px] opacity-50 mt-0.5">read: "{rev.contractRaw}"</div>}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -21744,7 +21772,7 @@ export default function App() {
                         {!rev.created && (
                           <button
                             type="button"
-                            onClick={() => updateReview(rev.id, { lines: [...rev.lines, { productValue: '', productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: 0, pricePerMt: 0, contractNumber: rev.contractNumber }] })}
+                            onClick={() => updateReview(rev.id, { lines: [...rev.lines, { productValue: '', productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: 0, pricePerMt: 0, contractNumber: rev.lines[rev.lines.length - 1]?.contractNumber || rev.contractNumber || '' }] })}
                             className="w-full p-2 text-[10px] font-bold uppercase text-left border-t border-[#141414]/10 hover:bg-[#F5F5F5] transition-all flex items-center gap-1"
                           >
                             <Plus size={11} /> Add Product
