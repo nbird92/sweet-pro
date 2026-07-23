@@ -1151,7 +1151,9 @@ export default function App() {
     // origin / pallet-type defaults when the fields weren't set on the review.
     const contractNumber = lineContracts.join(', ');
     const matchedContract = lineContracts.map(cn => contracts.find(c => c.contractNumber === cn)).find((c): c is Contract => !!c);
-    const location = rev.location || matchedContract?.origin || customer.defaultLocation || '';
+    // Only ACTIVE locations may be stamped on a new order — a contract origin or
+    // customer default that points at a retired site is skipped, not applied.
+    const location = firstActiveLocation(rev.location, matchedContract?.origin, customer.defaultLocation);
     const newOrder: Order = {
       id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       bolNumber: generateBOLNumber(lineItems, reservedBols),
@@ -3351,6 +3353,36 @@ export default function App() {
     });
     if (invoicesChanged) setInvoices(nextInvoices);
   }, [customers, orders, invoices]);
+
+  // Heal EXISTING duplicate invoices — many were imported twice (a re-import minted
+  // a fresh id for the same invoice) before the sync-apply dedup was added. Collapse
+  // records sharing the same invoice NUMBER, keeping the most-complete one (most
+  // filled fields; ties broken by id for stability). Deliberately keyed on the
+  // invoice NUMBER only — split invoices legitimately share a BOL, so BOL-based
+  // collapsing would delete real invoices. Self-converging: once collapsed there
+  // are no same-number groups left to touch.
+  useEffect(() => {
+    const byNum = new Map<string, Invoice[]>();
+    for (const inv of invoices) {
+      const num = (inv.invoiceNumber || '').trim().toUpperCase();
+      if (!num) continue; // number-less invoices are never auto-collapsed
+      const arr = byNum.get(num); if (arr) arr.push(inv); else byNum.set(num, [inv]);
+    }
+    const filled = (inv: Invoice) => Object.values(inv).filter(v => v !== undefined && v !== null && v !== '').length;
+    const dropIds: string[] = [];
+    for (const group of byNum.values()) {
+      if (group.length < 2) continue;
+      // Winner = most-complete, then lowest id (stable).
+      const keep = [...group].sort((a, b) => (filled(b) - filled(a)) || a.id.localeCompare(b.id))[0];
+      for (const inv of group) if (inv.id !== keep.id) dropIds.push(inv.id);
+    }
+    if (!dropIds.length) return;
+    // Remove at most 15 per pass so the Firestore sync's mass-deletion guard
+    // (blocks > max(20, 50%)) never refuses the delete; the effect re-runs after
+    // each save and converges over a few passes for a large one-time cleanup.
+    const batch = new Set(dropIds.slice(0, 15));
+    setInvoices(prev => prev.filter(inv => !batch.has(inv.id)));
+  }, [invoices]);
 
   // Backfill Lot Code Customer names from the Invoices AND Orders tables. A lot code
   // with a blank Customer gets it from an invoice/order matched by BOL number OR by PO
@@ -6170,9 +6202,36 @@ export default function App() {
   // list — React won't have flushed a re-render between steps, so a chained run
   // must build each step on the previous step's result rather than on state.
 
+  /** Identity key for de-duplicating invoices. Invoice NUMBER is the true unique
+   *  key; for number-less invoices, fall back to BOL + numeric PO. Returns '' when
+   *  there's nothing to key on (never deduped). Deliberately NOT keyed on BOL
+   *  alone — split invoices legitimately share a BOL. */
+  const invoiceDedupKey = (i: Invoice): string => {
+    const num = (i.invoiceNumber || '').trim().toUpperCase();
+    if (num) return `NUM:${num}`;
+    const bol = (i.bolNumber || '').trim().toUpperCase();
+    const p = poKey(i.po);
+    return (bol || p) ? `BP:${bol}|${p}` : '';
+  };
+
   const applyInvoiceSyncResult = (preview: InvoiceSyncResult, current: Invoice[]): Invoice[] => {
     const updatedById = new Map(preview.updatedInvoices.map((u): [string, Invoice] => [u.id, u]));
-    const merged = [...current.map(inv => updatedById.get(inv.id) || inv), ...preview.newInvoices];
+    const afterUpdates = current.map(inv => updatedById.get(inv.id) || inv);
+    // Dedup new invoices against the live list. The importer keys on invoice NUMBER
+    // and dedups against the snapshot it was handed at preview time — but the live
+    // list can move between preview and apply (a Firestore push, or an earlier step
+    // of a Sync All run), and a re-import mints a fresh id, so the same invoice was
+    // being appended twice. Re-check here. For number-less invoices fall back to
+    // BOL|numericPO. NEVER dedup on BOL alone — split invoices share a BOL.
+    const seen = new Set(afterUpdates.map(invoiceDedupKey).filter(Boolean));
+    const freshNew: Invoice[] = [];
+    for (const inv of preview.newInvoices) {
+      const k = invoiceDedupKey(inv);
+      if (k && seen.has(k)) continue; // duplicate — skip
+      if (k) seen.add(k);
+      freshNew.push(inv);
+    }
+    const merged = [...afterUpdates, ...freshNew];
     setInvoices(merged);
     // Any order now sharing an invoiced BOL/PO is no longer an order. (Uses a
     // functional setOrders internally, so it is safe to call mid-chain.)
@@ -6193,7 +6252,32 @@ export default function App() {
       const newBol = (u?.bolNumber || '').trim();
       if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, newBol);
     });
-    const merged = [...current.map(o => updatedById.get(o.id) || o), ...preview.newOrders];
+    const afterUpdates = current.map(o => updatedById.get(o.id) || o);
+
+    // Never import an order that DUPLICATES one already present — by BOL or by
+    // NUMERIC PO. The importer dedups against the snapshot it was handed at preview
+    // time, but the live list can move between preview and apply (a Firestore push,
+    // or the earlier steps of a Sync All run), so re-check against the current list.
+    const seenBol = new Set(afterUpdates.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+    const seenPo = new Set(afterUpdates.map(o => poKey(o.po)).filter(Boolean));
+    const freshNew: Order[] = [];
+    for (const o of preview.newOrders) {
+      const b = (o.bolNumber || '').trim().toUpperCase();
+      const p = poKey(o.po);
+      if ((b && seenBol.has(b)) || (p && seenPo.has(p))) continue; // duplicate — skip
+      if (b) seenBol.add(b);
+      if (p) seenPo.add(p);
+      freshNew.push(o);
+    }
+
+    // Orders must never carry an INACTIVE location (e.g. a tab's default or contract
+    // origin still pointing at "Hamilton (Ferguson)"). Blank it — the order still
+    // imports, but reads as "no location" rather than a retired site, and any
+    // existing order gets healed on the next sync too.
+    const stripInactiveLoc = (o: Order): Order =>
+      isInactiveLocation(o.location) ? { ...o, location: '' } : o;
+
+    const merged = [...afterUpdates, ...freshNew].map(stripInactiveLoc);
     setOrders(merged);
     if (bolRemap.size) {
       const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
@@ -21189,15 +21273,18 @@ export default function App() {
                         onChange={(e) => setOrderLocation(e.target.value)}
                         className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
                       >
-                        <option value="">{(() => {
-                          const contractNums = orderLineItems.map(li => li.contractNumber).filter(Boolean);
-                          if (contractNums.length === 0) return 'Select';
-                          const c = contracts.find(ct => ct.contractNumber === contractNums[0]);
-                          return c?.origin ? `Auto: ${c.origin}` : 'Select';
-                        })()}</option>
+                        {/* Plain "Select" — the old "Auto: <contract origin>" text
+                            was confusing and could suggest an INACTIVE origin. */}
+                        <option value="">Select</option>
                         {activeLocations.map(loc => (
                           <option key={loc.id} value={loc.name}>{loc.name}</option>
                         ))}
+                        {/* If this order already carries an inactive location, keep it
+                            visible/selectable (labelled) so editing doesn't silently
+                            drop it — but it's never offered on a fresh order. */}
+                        {orderLocation && !activeLocations.some(l => l.name === orderLocation) && (
+                          <option value={orderLocation}>{orderLocation}{isInactiveLocation(orderLocation) ? ' (inactive)' : ''}</option>
+                        )}
                       </select>
                     </div>
                     <div className="space-y-1">
@@ -21480,7 +21567,10 @@ export default function App() {
 
                       // Location: user-entered takes priority; fall back to first contract's origin
                       const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
-                      const resolvedLocation = orderLocation || firstContract?.origin || (editingOrder?.location || '');
+                      // Location is the user's explicit pick, else the order's existing
+                      // value on edit. No auto-fill from the contract origin — that could
+                      // stamp an inactive site the user never chose.
+                      const resolvedLocation = orderLocation || (editingOrder?.location || '');
 
                       if (editingOrder) {
                         // Update existing order
@@ -21567,7 +21657,8 @@ export default function App() {
                         // New order — the split isn't known at creation, so it is
                         // not required here; it's added later from the order details.
                         const firstContract = contractNumbers.length > 0 ? contracts.find(c => c.contractNumber === contractNumbers[0]) : null;
-                        const resolvedLocation = orderLocation || firstContract?.origin || '';
+                        // No contract-origin auto-fill — location is the user's pick only.
+                        const resolvedLocation = orderLocation || '';
                         const newOrder: Order = {
                           id: `ORD-${Date.now()}`,
                           bolNumber: generateBOLNumber(orderLineItems),
