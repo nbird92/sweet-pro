@@ -4,6 +4,7 @@ import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, F
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import type { SheetSpec } from '../utils/exportExcel';
+import { samePoNumber } from '../utils/poNumber';
 
 interface LabPageProps {
   lotCodes: LotCode[];
@@ -400,7 +401,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     // Find matching shipment by BOL or PO
     const match = shipments.find(s =>
       (bolNumber && s.bol && s.bol === bolNumber) ||
-      (customerPo && s.po && s.po === customerPo)
+      samePoNumber(s.po, customerPo)
     );
     if (match) {
       const currentLotNums = match.lotNumbers || (match.lotNumber ? [match.lotNumber] : []);
@@ -732,7 +733,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                   {(formData.bolNumber || formData.customerPo) && (() => {
                     const matched = shipments.find(s =>
                       (formData.bolNumber && s.bol === formData.bolNumber) ||
-                      (formData.customerPo && s.po === formData.customerPo)
+                      samePoNumber(s.po, formData.customerPo)
                     );
                     return matched ? (
                       <div className="text-[10px] text-blue-700 bg-blue-100 border border-blue-200 px-2 py-1.5 flex items-center gap-2">

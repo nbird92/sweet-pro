@@ -20,6 +20,7 @@
 
 import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer, LotCode } from '../types';
 import { parseCSV } from './googleSheetsSync';
+import { poKey } from './poNumber';
 
 // Workbook containing the order tabs to import.
 export const ORDER_SHEET_ID = '1prdn1bw4roP-JamzaAhIVtZ7irw9ABWkjm2y0bm_NtM';
@@ -731,8 +732,10 @@ export function parsedRowsToOrders(
   const existingBOLs = new Set(
     existingOrders.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean),
   );
+  // PO keys are NUMERIC-value only (poKey), so "PO10115420"/"10115420"/"069000"
+  // all collapse to one key and an order won't duplicate an existing/invoiced PO.
   const existingPOs = new Set(
-    existingOrders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean),
+    existingOrders.map(o => poKey(o.po)).filter(Boolean),
   );
   const addedBOLs = new Set<string>();
   const addedPOs = new Set<string>();
@@ -797,7 +800,7 @@ export function parsedRowsToOrders(
       }
 
       const bolU = r.bolNumber.trim().toUpperCase();
-      const poU = r.poNumber.trim().toUpperCase();
+      const poU = poKey(r.poNumber);
 
       // Dedup against existing + in-batch additions
       if (bolU && (existingBOLs.has(bolU) || addedBOLs.has(bolU))) {
@@ -1456,7 +1459,7 @@ export function parsedRowsToOrdersConfigured(
   const existingOrderByPo = new Map<string, Order>();
   for (const o of existingOrders) {
     const b = (o.bolNumber || '').trim().toUpperCase();
-    const p = (o.po || '').trim().toUpperCase();
+    const p = poKey(o.po); // NUMERIC-value PO key ("PO10115420" == "10115420")
     if (b && !existingOrderByBol.has(b)) existingOrderByBol.set(b, o);
     if (p && !existingOrderByPo.has(p)) existingOrderByPo.set(p, o);
   }
@@ -1468,7 +1471,7 @@ export function parsedRowsToOrdersConfigured(
   // an invoiced BOL or PO can no longer be an order, so skip those rows.
   const billedInvoices = existingInvoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
   const invoicedBols = new Set(billedInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-  const invoicedPos = new Set(billedInvoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+  const invoicedPos = new Set(billedInvoices.map(i => poKey(i.po)).filter(Boolean));
 
   for (const r of parsed) {
     try {
@@ -1504,7 +1507,7 @@ export function parsedRowsToOrdersConfigured(
         continue;
       }
       const bolU = r.bolNumber.trim().toUpperCase();
-      const poU = r.poNumber.trim().toUpperCase();
+      const poU = poKey(r.poNumber); // NUMERIC-value PO key
 
       // Already invoiced? An invoiced BOL/PO can no longer be an order — skip
       // (otherwise an order sync would re-create the order an invoice import removed).

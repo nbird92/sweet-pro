@@ -86,6 +86,7 @@ import {
   matchesContractByNumberOrSplit,
   invoiceMatchesContract,
 } from './utils/contractMatch';
+import { poKey, samePoNumber } from './utils/poNumber';
 import SalesForecastPage from './components/SalesForecastPage';
 import ReportsPage from './components/ReportsPage';
 import PageBanner from './components/PageBanner';
@@ -1114,12 +1115,13 @@ export default function App() {
     if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
     const validLines = rev.lines.filter(l => l.productValue && l.qtyMt > 0);
     if (validLines.length === 0) { setErrorBox('Each order needs at least one product with a quantity (MT).'); return null; }
-    // PO numbers must be unique across all orders AND invoices (and within this batch).
-    const poTrim = (rev.po || '').trim();
-    const poLc = poTrim.toLowerCase();
-    if (poTrim && (orders.some(o => (o.po || '').trim().toLowerCase() === poLc)
-        || invoices.some(i => (i.po || '').trim().toLowerCase() === poLc)
-        || reservedPos.some(p => p.toLowerCase() === poLc))) {
+    // PO numbers must be unique across all orders AND invoices (and within this
+    // batch), matched by NUMERIC value ("PO10115420" == "10115420"). reservedPos
+    // holds poKey() values reserved earlier in the same batch.
+    const poK = poKey(rev.po);
+    if (poK && (orders.some(o => samePoNumber(o.po, rev.po))
+        || invoices.some(i => samePoNumber(i.po, rev.po))
+        || reservedPos.includes(poK))) {
       setErrorBox(`PO ${rev.po} already exists in an order or invoice — PO numbers must be unique.`);
       return null;
     }
@@ -1260,7 +1262,7 @@ export default function App() {
     poReviews.forEach(rev => {
       if (rev.created || !rev.customerId || !rev.lines.some(l => l.productValue && l.qtyMt > 0)) return;
       const bol = createOrderFromReview(rev, reserved, reservedPos);
-      if (bol) { reserved.push(bol); if ((rev.po || '').trim()) reservedPos.push(rev.po.trim()); }
+      if (bol) { reserved.push(bol); if (poKey(rev.po)) reservedPos.push(poKey(rev.po)); }
     });
   };
 
@@ -1527,9 +1529,9 @@ export default function App() {
     const amend = po.amendment || {};
     const amendPo = (po.amendsPoNumber || po.poNumber || '').trim();
     const isCancel = po.documentType === 'cancellation' || amend.cancel === true;
-    const order = amendPo ? orders.find(o => (o.po || '').trim() === amendPo) : undefined;
+    const order = amendPo ? orders.find(o => samePoNumber(o.po, amendPo)) : undefined;
     // A "Stock Request" split may target an invoice when no open order remains.
-    const matchInvoice = !order && amendPo ? invoices.find(inv => (inv.po || '').trim() === amendPo) : undefined;
+    const matchInvoice = !order && amendPo ? invoices.find(inv => samePoNumber(inv.po, amendPo)) : undefined;
     const prevQty = order ? order.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : undefined;
     const newSplit = (amend.newSplitNumber || po.splitNumber || '').trim();
     return {
@@ -1565,15 +1567,17 @@ export default function App() {
   const applyAmendment = (a: PoAmendment) => {
     if (a.status !== 'pending') return; // already applied/dismissed/unmatched
     const order = (a.orderId && orders.find(o => o.id === a.orderId))
-      || (a.poNumber ? orders.find(o => (o.po || '').trim() === a.poNumber!.trim()) : undefined);
+      || (a.poNumber ? orders.find(o => samePoNumber(o.po, a.poNumber)) : undefined);
     const split = (a.newSplitNumber || '').trim();
-    const poKey = (a.poNumber || order?.po || '').trim();
+    // The PO to attach a split to, matched by NUMERIC value (poRef — a raw string,
+    // not the poKey() helper, which the name would otherwise shadow).
+    const poRef = (a.poNumber || order?.po || '').trim();
     if (!order) {
       // No order to patch — a split number can still attach to matching invoices
       // (a "Stock Request" against an already-invoiced PO).
-      if (split && poKey) {
+      if (split && poRef) {
         let touched = 0;
-        setInvoices(prev => prev.map(inv => { if ((inv.po || '').trim() === poKey) { touched++; return { ...inv, splitNo: split }; } return inv; }));
+        setInvoices(prev => prev.map(inv => { if (samePoNumber(inv.po, poRef)) { touched++; return { ...inv, splitNo: split }; } return inv; }));
         if (touched > 0) {
           setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString() } : x));
           return;
@@ -1630,8 +1634,8 @@ export default function App() {
     }
     setOrders(prev => prev.map(o => o.id === order.id ? updated : o));
     // Mirror the split number onto the PO's invoices, too (not on a cancellation).
-    if (split && poKey && !(a.kind === 'cancellation' || a.cancel)) {
-      setInvoices(prev => prev.map(inv => (inv.po || '').trim() === poKey ? { ...inv, splitNo: split } : inv));
+    if (split && poRef && !(a.kind === 'cancellation' || a.cancel)) {
+      setInvoices(prev => prev.map(inv => samePoNumber(inv.po, poRef) ? { ...inv, splitNo: split } : inv));
     }
     setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
   };
@@ -1738,7 +1742,9 @@ export default function App() {
       const nowIso = new Date().toISOString();
       // PO numbers must be UNIQUE: an emailed PO whose number already exists in an
       // ORDER or an INVOICE is never imported (matched case/space-insensitively).
-      const poKeyOf = (s?: string) => (s || '').trim().toLowerCase();
+      // Match POs by NUMERIC value so an emailed PO "PO10115420" is recognised as
+      // the same order as an existing invoice "10115420".
+      const poKeyOf = (s?: string) => poKey(s);
       const seenPo = new Set([
         ...orders.map(o => poKeyOf(o.po)),
         ...invoices.map(i => poKeyOf(i.po)),
@@ -1792,7 +1798,7 @@ export default function App() {
             // Carriers often confirm against the BOL rather than the PO — match
             // the order by PO first, then by the referenced BOL (e.g. B6900117).
             const refBol = (po.bolNumber || '').trim().toUpperCase();
-            const order = (refPo ? orders.find(o => (o.po || '').trim() === refPo) : undefined)
+            const order = (refPo ? orders.find(o => samePoNumber(o.po, refPo)) : undefined)
               || (refBol ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
             if (order) {
               const cur = orderPatch.get(order.id) || {};
@@ -1866,7 +1872,7 @@ export default function App() {
               if (Object.keys(cur).length) orderPatch.set(order.id, cur);
               // Mirror the same fills onto the PO's invoices when they're blank.
               invoices.forEach(inv => {
-                if ((inv.po || '').trim() !== refPo) return;
+                if (!samePoNumber(inv.po, refPo)) return;
                 const ip = invoicePatch.get(inv.id) || {};
                 if (cur.carrier && !((ip.carrier ?? inv.carrier ?? '').trim())) ip.carrier = cur.carrier;
                 if (cur.splitNumber && !((ip.splitNo ?? inv.splitNo ?? '').trim())) ip.splitNo = cur.splitNumber;
@@ -1886,7 +1892,7 @@ export default function App() {
             const isCancel = po.documentType === 'cancellation' || amend.cancel === true;
             const hasReviewable = isCancel || !!amend.newShipmentDate || !!amend.newDeliveryDate || (typeof amend.newQuantityMt === 'number' && amend.newQuantityMt > 0);
             const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
-            const matchedOrder = refPo ? orders.some(o => (o.po || '').trim() === refPo) : false;
+            const matchedOrder = refPo ? orders.some(o => samePoNumber(o.po, refPo)) : false;
             const hasSplitOrContract = !!((po.splitNumber || amend.newSplitNumber || po.contractNumber || '').trim());
             if (hasReviewable || (hasSplitOrContract && !matchedOrder)) amendments.push(buildAmendmentFromExtraction(po, item, nowIso));
             continue;
@@ -1897,12 +1903,12 @@ export default function App() {
             continue;
           }
           const poNum = (po.poNumber || '').trim();
-          const poKey = poKeyOf(poNum);
-          if (poNum && seenPo.has(poKey)) {
+          const poNumKey = poKeyOf(poNum);
+          if (poNum && seenPo.has(poNumKey)) {
             logs.push({ ...logBase(item, po), result: 'duplicate', note: 'PO number already exists in an order or invoice — must be unique' });
             continue;
           }
-          if (poNum && pendingPoSet.has(poKey)) continue; // already awaiting review
+          if (poNum && pendingPoSet.has(poNumKey)) continue; // already awaiting review
 
           // Opt-in auto-approval: a high-confidence PO whose customer matches a
           // known customer is created straight away, skipping review.
@@ -1914,7 +1920,7 @@ export default function App() {
           if (autoOk) {
             const order = buildOrderFromExtraction(po, batchBols);
             if (order) {
-              built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poKey);
+              built.push(order); batchBols.push(order.bolNumber); if (poNum) seenPo.add(poNumKey);
               logs.push({ ...logBase(item, po), customer: order.customer, orderId: order.id, orderBol: order.bolNumber, amount: order.amount, productSummary: order.product, result: 'created', note: 'Auto-approved (high confidence, known customer)' });
               continue;
             }
@@ -2304,10 +2310,9 @@ export default function App() {
           // already on another order (existing or added earlier this import) or on
           // an invoice. Skip the row rather than create a duplicate.
           const csvPo = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
-          const csvPoKey = (csvPo || '').trim().toLowerCase();
-          if (csvPoKey && (
-            workingOrders.some(o => (o.po || '').trim().toLowerCase() === csvPoKey)
-            || invoices.some(inv => (inv.po || '').trim().toLowerCase() === csvPoKey)
+          if (poKey(csvPo) && (
+            workingOrders.some(o => samePoNumber(o.po, csvPo))
+            || invoices.some(inv => samePoNumber(inv.po, csvPo))
           )) {
             skippedRows++;
             continue;
@@ -3281,7 +3286,7 @@ export default function App() {
         const k = l.toUpperCase();
         if (!bolByLot.has(k)) bolByLot.set(k, bol);
       }
-      const po = (poRaw || '').trim().toUpperCase();
+      const po = poKey(poRaw);
       if (po && !bolByPo.has(po)) bolByPo.set(po, bol);
     };
     // Invoices first so an invoiced BOL wins over an order's reserved BOL on conflict.
@@ -3292,7 +3297,7 @@ export default function App() {
     const next = lotCodes.map(lc => {
       if ((lc.bolNumber || '').trim()) return lc; // already has a BOL
       const lot = (lc.lotNumber || '').trim().toUpperCase();
-      const po = (lc.customerPo || '').trim().toUpperCase();
+      const po = poKey(lc.customerPo);
       const bol = (lot && bolByLot.get(lot)) || (po && bolByPo.get(po));
       if (bol) { changed = true; return { ...lc, bolNumber: bol }; }
       return lc;
@@ -3361,7 +3366,7 @@ export default function App() {
       if (!cust) return;
       const bol = (bolRaw || '').trim().toUpperCase();
       if (bol && !custByBol.has(bol)) custByBol.set(bol, cust);
-      const po = (poRaw || '').trim().toUpperCase();
+      const po = poKey(poRaw);
       if (po && !custByPo.has(po)) custByPo.set(po, cust);
     };
     for (const inv of invoices) addSource(inv.customer, inv.bolNumber, inv.po);
@@ -3371,7 +3376,7 @@ export default function App() {
     const next = lotCodes.map(lc => {
       if ((lc.customerName || '').trim()) return lc; // already has a customer
       const bol = (lc.bolNumber || '').trim().toUpperCase();
-      const po = (lc.customerPo || '').trim().toUpperCase();
+      const po = poKey(lc.customerPo);
       const cust = (bol && custByBol.get(bol)) || (po && custByPo.get(po));
       if (cust) { changed = true; return { ...lc, customerName: cust }; }
       return lc;
@@ -3394,7 +3399,7 @@ export default function App() {
       const v = fmt(mt);
       const bol = (bolRaw || '').trim().toUpperCase();
       if (bol && !mtByBol.has(bol)) mtByBol.set(bol, v);
-      const po = (poRaw || '').trim().toUpperCase();
+      const po = poKey(poRaw);
       if (po && !mtByPo.has(po)) mtByPo.set(po, v);
     };
     // Invoices first (the invoiced qty is authoritative), then orders (line weights).
@@ -3413,7 +3418,7 @@ export default function App() {
     const next = lotCodes.map(lc => {
       if ((lc.qtyMt || '').trim()) return lc; // already has a QTY MT
       const bol = (lc.bolNumber || '').trim().toUpperCase();
-      const po = (lc.customerPo || '').trim().toUpperCase();
+      const po = poKey(lc.customerPo);
       const mt = (bol && mtByBol.get(bol)) || (po && mtByPo.get(po));
       if (mt) { changed = true; return { ...lc, qtyMt: mt }; }
       return lc;
@@ -3436,7 +3441,7 @@ export default function App() {
       if (!lot || lot === '-') continue;
       const bol = (lc.bolNumber || '').trim().toUpperCase();
       if (bol) { const a = lotsByBol.get(bol); if (a) a.push(lot); else lotsByBol.set(bol, [lot]); }
-      const po = (lc.customerPo || '').trim().toUpperCase();
+      const po = poKey(lc.customerPo);
       if (po) { const a = lotsByPo.get(po); if (a) a.push(lot); else lotsByPo.set(po, [lot]); }
     }
     if (!lotsByBol.size && !lotsByPo.size) return;
@@ -3444,7 +3449,7 @@ export default function App() {
     const next = invoices.map(inv => {
       if ((inv.lotCode || '').trim()) return inv; // already has a lot code
       const bol = (inv.bolNumber || '').trim().toUpperCase();
-      const po = (inv.po || '').trim().toUpperCase();
+      const po = poKey(inv.po);
       const lots = (bol && lotsByBol.get(bol)) || (po && lotsByPo.get(po));
       if (lots && lots.length) { changed = true; return { ...inv, lotCode: [...new Set(lots)].join(', ') }; }
       return inv;
@@ -3868,11 +3873,14 @@ export default function App() {
   const removeOrdersInvoicedBy = (invoiceList: Invoice[]) => {
     const billed = invoiceList.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
     const bols = new Set(billed.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-    const pos = new Set(billed.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+    // PO match is by NUMERIC value: an order "PO10115420" is the same order as an
+    // invoice "10115420" (and "069000" == "69000"), so it must be dropped once
+    // that PO is invoiced.
+    const pos = new Set(billed.map(i => poKey(i.po)).filter(Boolean));
     if (!bols.size && !pos.size) return;
     setOrders(prev => prev.filter(o => {
       const ob = (o.bolNumber || '').trim().toUpperCase();
-      const op = (o.po || '').trim().toUpperCase();
+      const op = poKey(o.po);
       return !((ob && bols.has(ob)) || (op && pos.has(op)));
     }));
   };
@@ -4720,10 +4728,12 @@ export default function App() {
         // load, including "Sync Now".
         const billed = (data.invoices || []).filter((i: any) => i.status !== 'Cancelled' && i.status !== 'Credit');
         const invBols = new Set(billed.map((i: any) => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-        const invPos = new Set(billed.map((i: any) => (i.po || '').trim().toUpperCase()).filter(Boolean));
+        // PO match by NUMERIC value: an order "PO10115420" is the same order as an
+        // invoice "10115420" and must be dropped once invoiced.
+        const invPos = new Set(billed.map((i: any) => poKey(i.po)).filter(Boolean));
         const cleaned = mapped.filter((o: any) => {
           const ob = (o.bolNumber || '').trim().toUpperCase();
-          const op = (o.po || '').trim().toUpperCase();
+          const op = poKey(o.po);
           return !((ob && invBols.has(ob)) || (op && invPos.has(op)));
         });
         setOrders(cleaned);
@@ -6232,10 +6242,12 @@ export default function App() {
    *  (so it doesn't trip on itself) and `reserved` for POs claimed earlier in a
    *  multi-order batch. */
   const poNumberInUse = (po: string, opts?: { excludeOrderId?: string; reserved?: Set<string> }): boolean => {
-    const k = (po || '').trim().toLowerCase();
+    // Compare by NUMERIC value only: "PO10115420", "10115420" and "069000" all
+    // key to the same order. `reserved` is expected to hold poKey() values.
+    const k = poKey(po);
     if (!k) return false;
-    if (orders.some(o => o.id !== opts?.excludeOrderId && (o.po || '').trim().toLowerCase() === k)) return true;
-    if (invoices.some(i => (i.po || '').trim().toLowerCase() === k)) return true;
+    if (orders.some(o => o.id !== opts?.excludeOrderId && samePoNumber(o.po, po))) return true;
+    if (invoices.some(i => samePoNumber(i.po, po))) return true;
     if (opts?.reserved?.has(k)) return true;
     return false;
   };
@@ -10050,11 +10062,13 @@ export default function App() {
       // Only surface POs awaiting approval that aren't already in the orders
       // table — a PO that's already an order no longer needs approval. Reactive:
       // if that order is later removed, its PO reappears here for review.
-      const orderPoSet = new Set(orders.map(o => (o.po || '').trim().toUpperCase()).filter(Boolean));
-      const invoicePoSet = new Set(invoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+      // PO sets keyed by NUMERIC value so "PO10115420" is recognised as the same
+      // PO as an existing "10115420" order/invoice.
+      const orderPoSet = new Set(orders.map(o => poKey(o.po)).filter(Boolean));
+      const invoicePoSet = new Set(invoices.map(i => poKey(i.po)).filter(Boolean));
       const visiblePendingImports = poPendingImports.filter(p => {
         // A PO that already exists in the ORDERS or INVOICES table is never a new PO.
-        const k = (p.poNumber || '').trim().toUpperCase();
+        const k = poKey(p.poNumber);
         if (k && (orderPoSet.has(k) || invoicePoSet.has(k))) return false;
         // Carrier / internal emails never suggest NEW POs (they can only amend).
         if (isInternalEmployeeEmail(p.fromEmail) || isLogisticsSenderEmail(p.fromEmail)) return false;
@@ -10075,10 +10089,10 @@ export default function App() {
       // moot — hide any amendment whose PO or BOL matches an active invoice
       // (Cancelled / Credit invoices don't count).
       const billedInv = invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
-      const invoicedPoSet = new Set(billedInv.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+      const invoicedPoSet = new Set(billedInv.map(i => poKey(i.po)).filter(Boolean));
       const invoicedBolSet = new Set(billedInv.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
       const visibleAmendments = poAmendments.filter(a => {
-        const po = (a.poNumber || '').trim().toUpperCase();
+        const po = poKey(a.poNumber);
         const bol = (a.orderBol || '').trim().toUpperCase();
         return !((po && invoicedPoSet.has(po)) || (bol && invoicedBolSet.has(bol)));
       });
@@ -12604,10 +12618,10 @@ export default function App() {
       // still lingers in the orders array.
       const billedInvoices = invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
       const invoicedBols = new Set(billedInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-      const invoicedPos = new Set(billedInvoices.map(i => (i.po || '').trim().toUpperCase()).filter(Boolean));
+      const invoicedPos = new Set(billedInvoices.map(i => poKey(i.po)).filter(Boolean));
       const isInvoiced = (o: Order) => {
         const ob = (o.bolNumber || '').trim().toUpperCase();
-        const op = (o.po || '').trim().toUpperCase();
+        const op = poKey(o.po);
         return (ob && invoicedBols.has(ob)) || (op && invoicedPos.has(op));
       };
       const stockRowsAll: StockRow[] = orders
@@ -21456,7 +21470,9 @@ export default function App() {
                       // PO. Saving edits to an existing order (PO unchanged) is never
                       // blocked, even if a pre-existing duplicate PO is on another order.
                       const poUniqTrim = (orderPO || '').trim();
-                      const poChanged = !editingOrder || poUniqTrim.toLowerCase() !== (editingOrder.po || '').trim().toLowerCase();
+                      // "Changed" by NUMERIC value — so re-saving the same order after
+                      // adding a "PO" prefix isn't treated as a new (colliding) PO.
+                      const poChanged = !editingOrder || !samePoNumber(orderPO, editingOrder.po);
                       if (poUniqTrim && poChanged && poNumberInUse(orderPO, { excludeOrderId: editingOrder?.id })) {
                         setErrorBox(`PO ${orderPO} already exists on another order or invoice — PO numbers must be unique.`);
                         return;
@@ -21688,7 +21704,7 @@ export default function App() {
                   {poReviews.map((rev, ri) => {
                     const selectedCustomer = customers.find(c => c.id === rev.customerId);
                     const poTrim = rev.po.trim().toLowerCase();
-                    const poExists = !!poTrim && orders.some(o => (o.po || '').trim().toLowerCase() === poTrim);
+                    const poExists = !!rev.po.trim() && orders.some(o => samePoNumber(o.po, rev.po));
                     // Once a customer is determined, restrict the contract list to
                     // that customer's available contracts; otherwise show all.
                     const customerContracts = selectedCustomer ? contractsForCustomer(selectedCustomer) : contracts;
@@ -22359,7 +22375,7 @@ export default function App() {
                             {
                               const batchReserved = new Set<string>();
                               for (const entry of batchOrder.entries) {
-                                const k = (entry.po || '').trim().toLowerCase();
+                                const k = poKey(entry.po);
                                 if (!k) continue;
                                 if (poNumberInUse(entry.po, { reserved: batchReserved })) {
                                   setErrorBox(`PO ${entry.po} already exists (on another order, an invoice, or twice in this batch) — PO numbers must be unique.`);
