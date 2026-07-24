@@ -14017,17 +14017,23 @@ export default function App() {
                     <div className="grid grid-cols-12 gap-2 items-end">
                       <div className="col-span-5 space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-50">Product</label>
+                        {/* An invoice is a HISTORICAL record, so its product list is
+                            NOT restricted to active locations — filtering by
+                            selectableOnly emptied the dropdown for catalogs whose
+                            products sit at a now-inactive site (e.g. Hamilton
+                            (Ferguson)), which left the Add button permanently
+                            disabled ("nothing happens"). Show the full catalog. */}
                         <select
                           value={invLineItem.productKey}
                           onChange={(e) => {
-                            const opts = buildOrderProductOptions(invLineItem.productName, { selectableOnly: true });
+                            const opts = buildOrderProductOptions(invLineItem.productName);
                             const picked = opts.find(o => o.key === e.target.value);
                             setInvLineItem({ ...invLineItem, productKey: e.target.value, productName: picked?.value || '', productDisplayName: picked?.label || '' });
                           }}
                           className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]"
                         >
                           <option value="">Select product…</option>
-                          {buildOrderProductOptions(invLineItem.productName, { selectableOnly: true }).map(opt => (
+                          {buildOrderProductOptions(invLineItem.productName).map(opt => (
                             <option key={opt.key} value={opt.key}>{opt.location ? `${opt.label} — ${opt.location}` : opt.label}</option>
                           ))}
                         </select>
@@ -14041,7 +14047,10 @@ export default function App() {
                         <input type="text" value={invLineItem.contractNumber} onChange={(e) => setInvLineItem({ ...invLineItem, contractNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs font-mono outline-none focus:border-[#141414]" />
                       </div>
                       <div className="col-span-2 flex gap-1">
-                        <button type="button" onClick={submitInvoiceLineItem} disabled={!invLineItem.productName || invLineItem.qty <= 0} className="flex-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30 flex items-center justify-center gap-1"><Plus size={12} /> {editingInvLineIdx !== null ? 'Update' : 'Add'}</button>
+                        {/* Not disabled — submitInvoiceLineItem validates and shows an
+                            error box, so a click always gives feedback (a disabled
+                            button just looked broken). Mirrors the order editor. */}
+                        <button type="button" onClick={submitInvoiceLineItem} className="flex-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-1"><Plus size={12} /> {editingInvLineIdx !== null ? 'Update' : 'Add'}</button>
                         {editingInvLineIdx !== null && (
                           <button type="button" onClick={() => { setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="px-2 py-1.5 border border-[#141414] text-[11px] font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
                         )}
