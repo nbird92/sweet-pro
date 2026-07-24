@@ -1044,40 +1044,53 @@ export default function App() {
   // header totals from it: Qty (MT) = sum of total weights; Amount / $/MT are
   // only overwritten when the lines carry pricing, so amount-only invoices keep
   // their figures.
-  const applyInvoiceLineItems = (list: OrderLineItem[]) => {
-    if (!editingInvoiceCard) return;
+  // Recompute an invoice card's derived fields from its line items. Pure (no
+  // setState) so both applyInvoiceLineItems AND the Save handler can build the
+  // final card synchronously. The top-level `product` string is re-derived from
+  // the lines (matching orders — see App.tsx buildOrderProductOptions / order
+  // save `product: lineItems.map(li => li.productDisplayName || li.productName)
+  // .join(', ')`), so the invoice TABLE's Product column (which renders the
+  // top-level product) reflects a line-item product change. Guarded so deleting
+  // every line doesn't blank an existing product.
+  const deriveInvoiceCard = (card: Invoice, list: OrderLineItem[]): Invoice => {
     const newQtyMt = list.reduce((s, li) => s + (li.totalWeight || 0), 0);
     const totalLineAmt = list.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    setEditingInvoiceCard({
-      ...editingInvoiceCard,
+    return {
+      ...card,
       lineItems: list,
+      product: list.length ? list.map(li => li.productDisplayName || li.productName).join(', ') : card.product,
       qty: Math.round(newQtyMt * 1000) / 1000,
-      amount: totalLineAmt > 0 ? Math.round(totalLineAmt * 100) / 100 : editingInvoiceCard.amount,
-      pricePerMt: totalLineAmt > 0 && newQtyMt > 0 ? Math.round((totalLineAmt / newQtyMt) * 100) / 100 : editingInvoiceCard.pricePerMt,
-    });
+      amount: totalLineAmt > 0 ? Math.round(totalLineAmt * 100) / 100 : card.amount,
+      pricePerMt: totalLineAmt > 0 && newQtyMt > 0 ? Math.round((totalLineAmt / newQtyMt) * 100) / 100 : card.pricePerMt,
+    };
+  };
+  const applyInvoiceLineItems = (list: OrderLineItem[]) => {
+    if (!editingInvoiceCard) return;
+    setEditingInvoiceCard(deriveInvoiceCard(editingInvoiceCard, list));
   };
 
   // Add or update a line item on the invoice being edited (mirrors
   // submitOrderLineItem). Resolves the product's net weight for the weight math
   // and prices from the contract line, else the invoice's current $/MT.
-  const submitInvoiceLineItem = () => {
-    if (!editingInvoiceCard) return;
-    if (!invLineItem.productName || invLineItem.qty <= 0) {
-      setErrorBox('Select a product and enter a quantity for the invoice line item.');
-      return;
-    }
+  // Pure builder for one invoice line item from the staging row (`item`). Returns
+  // null when the staging row is empty/invalid. Kept side-effect-free so it can be
+  // reused by the Save handler to flush an un-"Updated" staging edit synchronously
+  // (setState-based commits can't be read back in the same tick). Weight math is
+  // unchanged from the original submitInvoiceLineItem.
+  const buildInvoiceLineItem = (item: typeof invLineItem, card: Invoice): OrderLineItem | null => {
+    if (!item.productName || item.qty <= 0) return null;
     let netWeightKg = 0;
-    if (invLineItem.productKey) {
-      const qaByKey = qaProducts.find(q => q.id === invLineItem.productKey);
-      const skuByKey = skus.find(s => s.id === invLineItem.productKey);
+    if (item.productKey) {
+      const qaByKey = qaProducts.find(q => q.id === item.productKey);
+      const skuByKey = skus.find(s => s.id === item.productKey);
       netWeightKg = qaByKey?.netWeightKg || skuByKey?.netWeightKg || skuByKey?.netWeight || 0;
     }
     if (!netWeightKg) {
-      const sku = skus.find(s => s.name === invLineItem.productName);
-      const qaByName = qaProducts.find(q => q.skuName === invLineItem.productName);
+      const sku = skus.find(s => s.name === item.productName);
+      const qaByName = qaProducts.find(q => q.skuName === item.productName);
       netWeightKg = qaByName?.netWeightKg || sku?.netWeightKg || sku?.netWeight || 0;
     }
-    const existing = editingInvLineIdx !== null ? (editingInvoiceCard.lineItems || [])[editingInvLineIdx] : undefined;
+    const existing = editingInvLineIdx !== null ? (card.lineItems || [])[editingInvLineIdx] : undefined;
     // When the catalog has no per-unit weight for this product, recover it from the
     // line being edited instead of discarding it: totalWeight is always MT and qty
     // is units, so totalWeight*1000/qty is the kg/unit under either weight
@@ -1090,33 +1103,42 @@ export default function App() {
     let effNetKg = netWeightKg;
     if (!effNetKg && existing && existing.qty > 0 && existing.totalWeight > 0
         && (existing.netWeightPerUnit || 0) > 0
-        && existing.productName === invLineItem.productName) {
+        && existing.productName === item.productName) {
       effNetKg = (existing.totalWeight * 1000) / existing.qty;
     }
     // When the product has no per-unit weight (bulk/liquid), the quantity is the
     // MT figure directly (netWeightPerUnit 0); otherwise convert units -> MT.
     const hasUnitWeight = effNetKg > 0;
-    const totalWeight = hasUnitWeight ? (invLineItem.qty * effNetKg) / 1000 : invLineItem.qty; // MT
-    let mtAmount = editingInvoiceCard.pricePerMt || 0;
-    if (invLineItem.contractNumber) {
-      const contract = contracts.find(c => c.contractNumber === invLineItem.contractNumber);
-      const cl = contract?.contractLines?.find(l => l.productName === invLineItem.productName);
+    const totalWeight = hasUnitWeight ? (item.qty * effNetKg) / 1000 : item.qty; // MT
+    let mtAmount = card.pricePerMt || 0;
+    if (item.contractNumber) {
+      const contract = contracts.find(c => c.contractNumber === item.contractNumber);
+      const cl = contract?.contractLines?.find(l => l.productName === item.productName);
       if (cl) mtAmount = cl.finalPriceMt;
       else if (contract) mtAmount = contract.finalPrice;
     }
-    const built: OrderLineItem = {
+    return {
       id: existing?.id || `LI-INV-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      productName: invLineItem.productName,
-      productDisplayName: invLineItem.productDisplayName || undefined,
-      productKey: invLineItem.productKey || undefined,
-      qty: invLineItem.qty,
-      contractNumber: invLineItem.contractNumber,
+      productName: item.productName,
+      productDisplayName: item.productDisplayName || undefined,
+      productKey: item.productKey || undefined,
+      qty: item.qty,
+      contractNumber: item.contractNumber,
       netWeightPerUnit: hasUnitWeight ? effNetKg / 1000 : 0,
       totalWeight,
       unitAmount: hasUnitWeight ? (mtAmount * effNetKg) / 1000 : mtAmount,
       mtAmount,
       lineAmount: totalWeight * mtAmount,
     };
+  };
+
+  const submitInvoiceLineItem = () => {
+    if (!editingInvoiceCard) return;
+    const built = buildInvoiceLineItem(invLineItem, editingInvoiceCard);
+    if (!built) {
+      setErrorBox('Select a product and enter a quantity for the invoice line item.');
+      return;
+    }
     const list = [...(editingInvoiceCard.lineItems || [])];
     if (editingInvLineIdx !== null) list[editingInvLineIdx] = built;
     else list.push(built);
@@ -9274,7 +9296,20 @@ export default function App() {
                   // never the linked order's quantity. (Non-quantity metadata like
                   // location / contract # / terms may still fall back to the order.)
                   const invoiceLineItems = i.lineItems || [];
-                  const productOk = productMatches(i.product);
+                  // Product display + catalog check mirror the ORDERS table: per
+                  // LINE when the invoice carries line items (the top-level string
+                  // is a comma-joined derivation of the lines, which would never
+                  // exact-match a single SKU and false-flag ⚠️), and the top-level
+                  // string only as the no-line-items fallback.
+                  const productOk = invoiceLineItems.length
+                    ? invoiceLineItems.every(li => productMatches(li.productName))
+                    : productMatches(i.product);
+                  const productDisplay = invoiceLineItems.length
+                    ? invoiceLineItems.map(li => lineItemToShortform(li)).filter(Boolean).join(', ')
+                    : productShortformCached(i.product);
+                  const productTitle = invoiceLineItems.length
+                    ? invoiceLineItems.map(li => li.productName).join(', ')
+                    : i.product;
                   return (
                   <React.Fragment key={i.id}>
                     {/* content-visibility lets the browser skip render work for rows that aren't on screen.
@@ -9309,7 +9344,7 @@ export default function App() {
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
-                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${i.product}` : ''}>{productShortformCached(i.product)}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${productTitle}` : ''}>{productDisplay}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{(i.qty || 0).toFixed(2)}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
@@ -14057,8 +14092,8 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
                         {(editingInvoiceCard.lineItems || []).map((item, idx) => (
-                          <tr key={item.id} className="hover:bg-[#141414]/5">
-                            <td className="p-3">{lineItemToShortform(item)}</td>
+                          <tr key={item.id} className={editingInvLineIdx === idx ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : 'hover:bg-[#141414]/5'}>
+                            <td className="p-3">{lineItemToShortform(item)}{editingInvLineIdx === idx && <span className="ml-2 text-[9px] font-bold uppercase text-blue-600">editing…</span>}</td>
                             <td className="p-3">{lineItemUnits(item)}</td>
                             <td className="p-3">{item.netWeightPerUnit}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
@@ -14085,7 +14120,23 @@ export default function App() {
                                 className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-all" title="Edit line item"
                               ><Edit2 size={12} /></button>
                               <button
-                                onClick={() => applyInvoiceLineItems((editingInvoiceCard.lineItems || []).filter((_, i) => i !== idx))}
+                                onClick={() => {
+                                  applyInvoiceLineItems((editingInvoiceCard.lineItems || []).filter((_, i) => i !== idx));
+                                  // Keep the staging row consistent with the delete:
+                                  // deleting the row being edited disarms the edit
+                                  // (otherwise Save's staging flush would resurrect
+                                  // it at a stale index); deleting an earlier row
+                                  // shifts the edited index down so it still points
+                                  // at the same line.
+                                  if (editingInvLineIdx !== null) {
+                                    if (idx === editingInvLineIdx) {
+                                      setEditingInvLineIdx(null);
+                                      setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+                                    } else if (idx < editingInvLineIdx) {
+                                      setEditingInvLineIdx(editingInvLineIdx - 1);
+                                    }
+                                  }
+                                }}
                                 className="text-red-500 hover:bg-red-50 p-1 rounded transition-all" title="Delete line item"
                               ><Trash2 size={12} /></button>
                             </td>
@@ -14160,8 +14211,42 @@ export default function App() {
                   <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }}
                     className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
                   <button onClick={() => {
+                    // Flush a pending (un-"Updated") line-item edit first: the QTY /
+                    // Product / Contract inputs write only to the invLineItem staging
+                    // row and reach the card via the "Update" button. Users routinely
+                    // change a line then click Save without clicking Update — folding
+                    // valid staging in here is why those edits used to silently vanish.
+                    let card = editingInvoiceCard;
+                    const staged = buildInvoiceLineItem(invLineItem, card);
+                    // Fold ONLY a genuinely CHANGED staging row. The row pencil arms
+                    // invLineItem just to open a line for editing, so an untouched
+                    // armed row must not re-derive the card — that would clobber
+                    // manual top-level qty/product/amount/$-MT edits made afterwards
+                    // and re-round scaled post-billing line weights.
+                    const stagedExisting = editingInvLineIdx !== null ? (card.lineItems || [])[editingInvLineIdx] : undefined;
+                    const stagedChanged = !!staged && (!stagedExisting
+                      || staged.productName !== stagedExisting.productName
+                      || (staged.productKey || '') !== (stagedExisting.productKey || '')
+                      || (staged.contractNumber || '') !== (stagedExisting.contractNumber || '')
+                      || invLineItem.qty !== lineItemUnits(stagedExisting));
+                    if (staged && stagedChanged) {
+                      // A manually-typed top-level Product (differs from the join of
+                      // the current lines) is the user's most recent intent — keep it
+                      // across the re-derive; an auto-synced product re-derives.
+                      const prevJoin = (card.lineItems || []).length
+                        ? (card.lineItems || []).map(li => li.productDisplayName || li.productName).join(', ')
+                        : card.product;
+                      const manualProduct = card.product !== prevJoin ? card.product : null;
+                      const list = [...(card.lineItems || [])];
+                      // Bounds guard: a stale index must never write past the end.
+                      if (editingInvLineIdx !== null && editingInvLineIdx < list.length) list[editingInvLineIdx] = staged;
+                      else list.push(staged);
+                      card = deriveInvoiceCard(card, list);
+                      if (manualProduct !== null) card = { ...card, product: manualProduct };
+                    }
+                    const finalCard = card;
                     // Commit the edited working copy back to the invoices list (synced to Firestore).
-                    setInvoices(prev => prev.map(inv => inv.id === editingInvoiceCard.id ? { ...inv, ...editingInvoiceCard } : inv));
+                    setInvoices(prev => prev.map(inv => inv.id === finalCard.id ? { ...inv, ...finalCard } : inv));
                     setEditingInvoiceCard(null);
                     resetModalState('invoice');
                     setEditingInvLineIdx(null);
