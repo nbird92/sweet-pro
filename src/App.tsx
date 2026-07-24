@@ -1077,10 +1077,26 @@ export default function App() {
       const qaByName = qaProducts.find(q => q.skuName === invLineItem.productName);
       netWeightKg = qaByName?.netWeightKg || sku?.netWeightKg || sku?.netWeight || 0;
     }
+    const existing = editingInvLineIdx !== null ? (editingInvoiceCard.lineItems || [])[editingInvLineIdx] : undefined;
+    // When the catalog has no per-unit weight for this product, recover it from the
+    // line being edited instead of discarding it: totalWeight is always MT and qty
+    // is units, so totalWeight*1000/qty is the kg/unit under either weight
+    // convention (unit-safe, mirrors resolveLineWeights). Without this, the bulk
+    // fallback below overwrites totalWeight with the raw unit count — inflating the
+    // stored weight ~1000x for cased goods whose catalog entry moved/renamed. Only
+    // when the SAME product had a per-unit weight (netWeightPerUnit>0): a genuine
+    // bulk line (per-unit 0, qty already MT) keeps the bulk path, and a product swap
+    // doesn't inherit the previous product's weight.
+    let effNetKg = netWeightKg;
+    if (!effNetKg && existing && existing.qty > 0 && existing.totalWeight > 0
+        && (existing.netWeightPerUnit || 0) > 0
+        && existing.productName === invLineItem.productName) {
+      effNetKg = (existing.totalWeight * 1000) / existing.qty;
+    }
     // When the product has no per-unit weight (bulk/liquid), the quantity is the
     // MT figure directly (netWeightPerUnit 0); otherwise convert units -> MT.
-    const hasUnitWeight = netWeightKg > 0;
-    const totalWeight = hasUnitWeight ? (invLineItem.qty * netWeightKg) / 1000 : invLineItem.qty; // MT
+    const hasUnitWeight = effNetKg > 0;
+    const totalWeight = hasUnitWeight ? (invLineItem.qty * effNetKg) / 1000 : invLineItem.qty; // MT
     let mtAmount = editingInvoiceCard.pricePerMt || 0;
     if (invLineItem.contractNumber) {
       const contract = contracts.find(c => c.contractNumber === invLineItem.contractNumber);
@@ -1088,7 +1104,6 @@ export default function App() {
       if (cl) mtAmount = cl.finalPriceMt;
       else if (contract) mtAmount = contract.finalPrice;
     }
-    const existing = editingInvLineIdx !== null ? (editingInvoiceCard.lineItems || [])[editingInvLineIdx] : undefined;
     const built: OrderLineItem = {
       id: existing?.id || `LI-INV-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       productName: invLineItem.productName,
@@ -1096,9 +1111,9 @@ export default function App() {
       productKey: invLineItem.productKey || undefined,
       qty: invLineItem.qty,
       contractNumber: invLineItem.contractNumber,
-      netWeightPerUnit: hasUnitWeight ? netWeightKg / 1000 : 0,
+      netWeightPerUnit: hasUnitWeight ? effNetKg / 1000 : 0,
       totalWeight,
-      unitAmount: hasUnitWeight ? (mtAmount * netWeightKg) / 1000 : mtAmount,
+      unitAmount: hasUnitWeight ? (mtAmount * effNetKg) / 1000 : mtAmount,
       mtAmount,
       lineAmount: totalWeight * mtAmount,
     };
@@ -1108,6 +1123,52 @@ export default function App() {
     applyInvoiceLineItems(list);
     setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
     setEditingInvLineIdx(null);
+  };
+
+  // MANUAL duplicate-invoice cleanup (invoked only from the "Merge Duplicates"
+  // toolbar button). Collapses invoices sharing the same invoice NUMBER, keeping the
+  // most-complete record and filling any of its blank fields from the duplicates so
+  // no data is lost. Keyed on the invoice NUMBER only — split invoices legitimately
+  // share a BOL, so BOL-based collapsing would delete real invoices. Never runs
+  // automatically, so it cannot race an in-progress edit.
+  const mergeDuplicateInvoices = () => {
+    if (invoices.length === 0) return;
+    const byNum = new Map<string, Invoice[]>();
+    for (const inv of invoices) {
+      const num = (inv.invoiceNumber || '').trim().toUpperCase();
+      if (!num) continue; // number-less invoices are never collapsed
+      const arr = byNum.get(num); if (arr) arr.push(inv); else byNum.set(num, [inv]);
+    }
+    const filled = (inv: Invoice) => Object.values(inv).filter(v => v !== undefined && v !== null && v !== '').length;
+    const dropIds: string[] = [];
+    const patchById = new Map<string, Partial<Invoice>>();
+    for (const group of byNum.values()) {
+      if (group.length < 2) continue;
+      // Survivor = most-complete, then lowest id (stable).
+      const keep = [...group].sort((a, b) => (filled(b) - filled(a)) || a.id.localeCompare(b.id))[0];
+      const patch: Record<string, unknown> = {};
+      for (const inv of group) {
+        if (inv.id === keep.id) continue;
+        dropIds.push(inv.id);
+        // Fill fields the survivor left blank from the duplicate (survivor wins ties).
+        for (const [k, v] of Object.entries(inv)) {
+          if (v === undefined || v === null || v === '') continue;
+          const cur = (keep as Record<string, unknown>)[k] ?? patch[k];
+          if (cur === undefined || cur === null || cur === '') patch[k] = v;
+        }
+      }
+      if (Object.keys(patch).length) patchById.set(keep.id, patch as Partial<Invoice>);
+    }
+    if (dropIds.length === 0) { setErrorBox('No duplicate invoices found.'); return; }
+    if (!window.confirm(`Merge ${dropIds.length} duplicate invoice${dropIds.length === 1 ? '' : 's'} (same invoice number)? The most complete record of each number is kept, with any blank fields filled from its duplicates. This cannot be undone.`)) return;
+    const dropSet = new Set(dropIds);
+    // Delete the duplicate docs directly — the auto-sync's mass-delete guard would
+    // otherwise refuse to remove this many at once.
+    deleteDocs(COLLECTIONS.invoices, dropIds).catch(() => {});
+    setInvoices(prev => prev.filter(inv => !dropSet.has(inv.id)).map(inv => {
+      const patch = patchById.get(inv.id);
+      return patch ? { ...inv, ...patch } : inv;
+    }));
   };
 
   const createOrderFromReview = (rev: POReview, reservedBols: string[] = [], reservedPos: string[] = []): string | null => {
@@ -3354,35 +3415,12 @@ export default function App() {
     if (invoicesChanged) setInvoices(nextInvoices);
   }, [customers, orders, invoices]);
 
-  // Heal EXISTING duplicate invoices — many were imported twice (a re-import minted
-  // a fresh id for the same invoice) before the sync-apply dedup was added. Collapse
-  // records sharing the same invoice NUMBER, keeping the most-complete one (most
-  // filled fields; ties broken by id for stability). Deliberately keyed on the
-  // invoice NUMBER only — split invoices legitimately share a BOL, so BOL-based
-  // collapsing would delete real invoices. Self-converging: once collapsed there
-  // are no same-number groups left to touch.
-  useEffect(() => {
-    const byNum = new Map<string, Invoice[]>();
-    for (const inv of invoices) {
-      const num = (inv.invoiceNumber || '').trim().toUpperCase();
-      if (!num) continue; // number-less invoices are never auto-collapsed
-      const arr = byNum.get(num); if (arr) arr.push(inv); else byNum.set(num, [inv]);
-    }
-    const filled = (inv: Invoice) => Object.values(inv).filter(v => v !== undefined && v !== null && v !== '').length;
-    const dropIds: string[] = [];
-    for (const group of byNum.values()) {
-      if (group.length < 2) continue;
-      // Winner = most-complete, then lowest id (stable).
-      const keep = [...group].sort((a, b) => (filled(b) - filled(a)) || a.id.localeCompare(b.id))[0];
-      for (const inv of group) if (inv.id !== keep.id) dropIds.push(inv.id);
-    }
-    if (!dropIds.length) return;
-    // Remove at most 15 per pass so the Firestore sync's mass-deletion guard
-    // (blocks > max(20, 50%)) never refuses the delete; the effect re-runs after
-    // each save and converges over a few passes for a large one-time cleanup.
-    const batch = new Set(dropIds.slice(0, 15));
-    setInvoices(prev => prev.filter(inv => !batch.has(inv.id)));
-  }, [invoices]);
+  // NOTE: Collapsing duplicate invoices is a MANUAL action (the "Merge Duplicates"
+  // button on the invoices toolbar), never an automatic effect. An always-on heal
+  // races user edits — editing one twin re-triggers the heal, which can pick the
+  // OTHER twin as survivor and drop the just-edited record, so the edit "doesn't
+  // hold". New duplicates are already prevented at import (applyInvoiceSyncResult),
+  // so there is nothing to heal continuously. See mergeDuplicateInvoices below.
 
   // Backfill Lot Code Customer names from the Invoices AND Orders tables. A lot code
   // with a blank Customer gets it from an invoice/order matched by BOL number OR by PO
@@ -9164,6 +9202,14 @@ export default function App() {
             <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
               className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
               <Upload size={12} /> Import &amp; Replace
+            </button>
+            <button
+              onClick={mergeDuplicateInvoices}
+              disabled={invoices.length === 0}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Merge duplicate invoices that share an invoice number, keeping the most complete record (blank fields filled from the duplicates)."
+            >
+              <Trash2 size={12} /> Merge Duplicates
             </button>
             <button className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Printer size={12} /> Batch Print

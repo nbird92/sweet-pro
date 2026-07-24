@@ -304,14 +304,45 @@ export default function QualityAssurancePage({
       p.location.toLowerCase().includes(term);
   });
 
+  // The "Product Name" and "Shortform" columns are COMPUTED at render (they are not
+  // fields on QAProduct), so sorting must read the SAME resolved strings the cells
+  // show — otherwise those two keys read `undefined` on every row, the comparator
+  // returns 0 for all pairs, and the table appears "stuck" (the header chevron moves
+  // but nothing reorders). Mirror the cell logic (lines ~952-958 / ~969-980).
+  const displayNameFor = (p: QAProduct): string => {
+    const resolved = resolveProductName(namingFormulas, p, { sugarTypes, productGroups });
+    if (resolved && resolved.trim()) return resolved;
+    return (p.productFormat && p.sugarType)
+      ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
+      : '';
+  };
+  const shortformFor = (p: QAProduct): string => {
+    const resolved = resolveShortForm(namingFormulas, p, { sugarTypes, productGroups });
+    if (resolved && resolved.trim()) return resolved;
+    if (p.sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(s => s.name === p.sugarType);
+    if (!st) return '';
+    const co = p.category === 'Conventional' ? 'C' : 'B';
+    if (p.productGroup === 'Bulk') return `${st.abbreviation}${co}${p.maxColor}`;
+    const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
+    return `${wt}${st.abbreviation}${co}${p.maxColor}`;
+  };
+  const sortValueFor = (p: QAProduct, key: string): string | number => {
+    if (key === 'productName') return displayNameFor(p);
+    if (key === 'shortform') return shortformFor(p);
+    const v = (p as any)[key];
+    return v == null ? '' : v;
+  };
+
   const sorted = [...filtered].sort((a, b) => {
     if (!sortConfig) return 0;
     const { key, direction } = sortConfig;
-    const aVal = (a as any)[key];
-    const bVal = (b as any)[key];
-    if (aVal < bVal) return direction === 'asc' ? -1 : 1;
-    if (aVal > bVal) return direction === 'asc' ? 1 : -1;
-    return 0;
+    const aVal = sortValueFor(a, key);
+    const bVal = sortValueFor(b, key);
+    const cmp = (typeof aVal === 'number' && typeof bVal === 'number')
+      ? aVal - bVal
+      : String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
+    return direction === 'asc' ? cmp : -cmp;
   });
 
   const handleSort = (key: string) => {
