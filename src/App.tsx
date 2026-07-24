@@ -1153,7 +1153,7 @@ export default function App() {
         // Fill fields the survivor left blank from the duplicate (survivor wins ties).
         for (const [k, v] of Object.entries(inv)) {
           if (v === undefined || v === null || v === '') continue;
-          const cur = (keep as Record<string, unknown>)[k] ?? patch[k];
+          const cur = (keep as unknown as Record<string, unknown>)[k] ?? patch[k];
           if (cur === undefined || cur === null || cur === '') patch[k] = v;
         }
       }
@@ -4536,6 +4536,9 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
   const [orderSortConfig, setOrderSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'shipmentDate', direction: 'asc' });
+  // Orders with 'Completed' status are auto-hidden from the Orders table by
+  // default; this toggle reveals them (they also surface while searching).
+  const [showCompletedOrders, setShowCompletedOrders] = useState(false);
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
@@ -9462,12 +9465,23 @@ export default function App() {
           .map(inv => inv.bolNumber)
       );
 
+      // How many Completed orders the auto-hide rule is currently suppressing
+      // (i.e. would show if the toggle were on) — surfaced on the toggle button.
+      const completedHiddenCount = orders.filter(o =>
+        o.status === 'Completed'
+        && !(o.bolNumber && invoicedBols.has(o.bolNumber))
+        && !o.hidden
+      ).length;
+
       const filteredOrders = orders.filter(ord => {
         // Hide orders that have already been completed + billed (matching
         // invoice by BOL number, regardless of order status).
         if (ord.bolNumber && invoicedBols.has(ord.bolNumber)) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
+        // Auto-hide Completed orders unless the user opts to show them, or is
+        // searching (so a specific completed order stays findable by search).
+        if (ord.status === 'Completed' && !showCompletedOrders && !searchTerm) return false;
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -9557,6 +9571,23 @@ export default function App() {
             exportSheets={orderExportSheets}
             exportFileName="Orders"
           >
+            {/* A search always surfaces completed orders (the auto-hide is gated on
+                !searchTerm), so while searching the toggle would be a visible no-op
+                that silently flips the stored preference — disable it and show the
+                real, effective state instead. */}
+            <button
+              onClick={() => setShowCompletedOrders(v => !v)}
+              disabled={!!searchTerm}
+              className={`px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 transition-all whitespace-nowrap ${searchTerm ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'}`}
+              title={searchTerm
+                ? 'Completed orders are shown while searching'
+                : (showCompletedOrders ? 'Hide completed orders from the table' : 'Completed orders are hidden by default — show them')}
+            >
+              {(showCompletedOrders || !!searchTerm) ? <EyeOff size={12} /> : <Eye size={12} />}
+              {searchTerm
+                ? 'Completed Shown'
+                : (showCompletedOrders ? 'Hide Completed' : `Show Completed${completedHiddenCount ? ` (${completedHiddenCount})` : ''}`)}
+            </button>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + orderCsvHeaders.join(",");
                 const link = document.createElement("a");
@@ -9684,7 +9715,27 @@ export default function App() {
                 {filteredOrders.length === 0 && (
                   <tr>
                     <td colSpan={17} className="p-6 text-center text-xs font-bold opacity-40 italic">
-                      No orders yet. Use "Add Order" to create new orders.
+                      {orders.length === 0 ? (
+                        'No orders yet. Use "Add Order" to create new orders.'
+                      ) : searchTerm ? (
+                        'No orders match your search.'
+                      ) : completedHiddenCount > 0 && !showCompletedOrders ? (
+                        // Orders exist but are all completed (and auto-hidden) — say
+                        // so and offer a one-click reveal, so the empty table never
+                        // reads as "your data is gone".
+                        <span>
+                          {completedHiddenCount} completed {completedHiddenCount === 1 ? 'order is' : 'orders are'} hidden.{' '}
+                          <button
+                            type="button"
+                            onClick={() => setShowCompletedOrders(true)}
+                            className="underline not-italic opacity-100 hover:opacity-70"
+                          >
+                            Show completed
+                          </button>{' '}to view {completedHiddenCount === 1 ? 'it' : 'them'}.
+                        </span>
+                      ) : (
+                        'No orders to display.'
+                      )}
                     </td>
                   </tr>
                 )}
