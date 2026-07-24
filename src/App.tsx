@@ -36,6 +36,7 @@ import {
   Clock,
   Eye,
   EyeOff,
+  Search,
   Settings,
   Mail,
   Send,
@@ -4564,6 +4565,15 @@ export default function App() {
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
+  // Lot-code picker (edit-shipment modal): search text + dropdown visibility.
+  // Reset whenever a different shipment is opened so a previous search doesn't
+  // leak into the next edit session.
+  const [shipLotSearch, setShipLotSearch] = useState('');
+  const [shipLotDropdownOpen, setShipLotDropdownOpen] = useState(false);
+  useEffect(() => {
+    setShipLotSearch('');
+    setShipLotDropdownOpen(false);
+  }, [editingShipment?.id]);
   const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
   // Confirm + summary popup shown before Complete & Bill actually runs.
   // Holds the order being confirmed; null hides the dialog.
@@ -18233,43 +18243,83 @@ export default function App() {
                             );
                           })}
                         </div>
-                        <div className="flex gap-2">
-                          <select
-                            id="lot-code-select"
-                            className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
-                            defaultValue=""
-                          >
-                            <option value="" disabled>— Select lot code to add —</option>
-                            {lotCodes
-                              .filter(lc => !(editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : [])).includes(lc.lotNumber))
-                              .map(lc => (
-                                <option key={lc.id} value={lc.lotNumber}>{lc.lotNumber}{lc.sugarType ? ` (${lc.sugarType})` : ''}{lc.countryOfOrigin ? ` — ${lc.countryOfOrigin}` : ''}</option>
-                              ))}
-                          </select>
-                          <button
-                            onClick={() => {
-                              const select = document.getElementById('lot-code-select') as HTMLSelectElement;
-                              const val = select?.value;
-                              if (val) {
-                                const current = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
-                                const updated = [...current, val];
-                                const origins = updated.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
-                                const uniqueOrigins = [...new Set(origins)].join(', ');
-                                // Auto-populate colour from the first lot code that has a color value
-                                const firstColorLot = updated.map(ln => lotCodes.find(lc => lc.lotNumber === ln)).find(lc => lc?.color);
-                                setEditingShipment({
-                                  ...editingShipment,
-                                  lotNumbers: updated,
-                                  lotNumber: updated[0] || '',
-                                  originOfGoods: uniqueOrigins,
-                                  colour: firstColorLot?.color ?? editingShipment.colour ?? '',
-                                });
-                                select.value = '';
-                              }
-                            }}
-                            className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs uppercase font-bold hover:bg-opacity-80 transition-all"
-                          >Add</button>
-                        </div>
+                        {/* Searchable lot-code picker: type to filter, click a result
+                            to add it. Replaces the old scroll-through <select>. */}
+                        {(() => {
+                          const current = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
+                          const addLot = (val: string) => {
+                            const updated = [...current, val];
+                            const origins = updated.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
+                            const uniqueOrigins = [...new Set(origins)].join(', ');
+                            // Auto-populate colour from the first lot code that has a color value
+                            const firstColorLot = updated.map(ln => lotCodes.find(lc => lc.lotNumber === ln)).find(lc => lc?.color);
+                            setEditingShipment({
+                              ...editingShipment,
+                              lotNumbers: updated,
+                              lotNumber: updated[0] || '',
+                              originOfGoods: uniqueOrigins,
+                              colour: firstColorLot?.color ?? editingShipment.colour ?? '',
+                            });
+                            // Clear the search but keep the dropdown open so several
+                            // lots can be added in a row.
+                            setShipLotSearch('');
+                          };
+                          const term = shipLotSearch.trim().toLowerCase();
+                          const matches = lotCodes
+                            .filter(lc => !current.includes(lc.lotNumber))
+                            .filter(lc => !term
+                              || lc.lotNumber.toLowerCase().includes(term)
+                              || (lc.sugarType || '').toLowerCase().includes(term)
+                              || (lc.countryOfOrigin || '').toLowerCase().includes(term)
+                              || (lc.customerName || '').toLowerCase().includes(term)
+                              || (lc.customerPo || '').toLowerCase().includes(term)
+                              || (lc.bolNumber || '').toLowerCase().includes(term));
+                          const shown = matches.slice(0, 50);
+                          return (
+                            <div className="relative">
+                              <div className="relative">
+                                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 opacity-40 pointer-events-none" />
+                                <input
+                                  type="text"
+                                  value={shipLotSearch}
+                                  onChange={(e) => { setShipLotSearch(e.target.value); setShipLotDropdownOpen(true); }}
+                                  onFocus={() => setShipLotDropdownOpen(true)}
+                                  onBlur={() => setShipLotDropdownOpen(false)}
+                                  placeholder="Search lot codes by lot #, sugar type, origin, customer, PO, BOL…"
+                                  className="w-full bg-[#F5F5F5] border border-[#141414] py-2 pl-8 pr-2 text-sm focus:outline-none focus:bg-white"
+                                />
+                              </div>
+                              {shipLotDropdownOpen && (
+                                <div className="absolute z-30 left-0 right-0 top-full mt-1 max-h-56 overflow-auto bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                                  {shown.map(lc => (
+                                    <button
+                                      key={lc.id}
+                                      type="button"
+                                      // preventDefault on mousedown keeps the input
+                                      // focused so onBlur can't close the list before
+                                      // this click lands.
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => addLot(lc.lotNumber)}
+                                      className="block w-full text-left px-3 py-2 text-sm hover:bg-[#F5F5F5] border-b border-[#141414]/10 last:border-b-0"
+                                    >
+                                      <span className="font-mono font-bold">{lc.lotNumber}</span>
+                                      {lc.sugarType && <span className="ml-2 text-[10px] uppercase opacity-60">{lc.sugarType}</span>}
+                                      {lc.countryOfOrigin && <span className="ml-2 text-[10px] opacity-50">{lc.countryOfOrigin}</span>}
+                                      {lc.customerName && <span className="ml-2 text-[10px] opacity-50">{lc.customerName}</span>}
+                                      {lc.bolNumber && <span className="ml-2 text-[10px] font-mono opacity-50">BOL {lc.bolNumber}</span>}
+                                    </button>
+                                  ))}
+                                  {shown.length === 0 && (
+                                    <div className="px-3 py-2 text-xs opacity-50 italic">No matching lot codes</div>
+                                  )}
+                                  {matches.length > shown.length && (
+                                    <div className="px-3 py-2 text-[10px] opacity-50 border-t border-[#141414]/10">{matches.length - shown.length} more — keep typing to narrow</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="space-y-1 md:col-span-3">
                         <label className="text-[10px] uppercase font-bold opacity-60">Seal Numbers</label>
