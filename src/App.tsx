@@ -2726,6 +2726,9 @@ export default function App() {
         };
 
         const newInvoices: Invoice[] = [];
+        // Existing-invoice ids already claimed by a CSV row this import (split
+        // invoices share a BOL — each row must get a distinct id).
+        const usedExistingIds = new Set<string>();
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = parseCSVRow(lines[i]);
@@ -2752,8 +2755,13 @@ export default function App() {
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
           const location = get(entry, 'location', 'shiplocation', 'origin', 'warehouse');
 
-          // Preserve the existing ID if this BOL existed before
-          const existingInv = invoices.find(inv => inv.bolNumber === bolNumber);
+          // Preserve the existing ID if this BOL existed before — but never hand
+          // the SAME id to two CSV rows: split invoices legitimately share a BOL,
+          // and a reused id makes the second row overwrite the first in Firestore
+          // (one split silently lost). First unconsumed match wins; later rows on
+          // the same BOL mint fresh ids.
+          const existingInv = invoices.find(inv => inv.bolNumber === bolNumber && !usedExistingIds.has(inv.id));
+          if (existingInv) usedExistingIds.add(existingInv.id);
 
           newInvoices.push({
             id: existingInv?.id || `INV-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
@@ -2783,7 +2791,11 @@ export default function App() {
         setInvoices(newInvoices);
         // Any order now sharing an invoiced BOL/PO is no longer an order.
         removeOrdersInvoicedBy(newInvoices);
-        syncCollection(COLLECTIONS.invoices, newInvoices).then(() => {
+        // allowMassDelete: this is an explicit, twice-confirmed REPLACE ALL — the
+        // guard would otherwise silently keep every dropped invoice (they'd
+        // resurrect on reload as duplicates) while this alert claims they were
+        // removed.
+        syncCollection(COLLECTIONS.invoices, newInvoices, { allowMassDelete: true }).then(() => {
           lastSyncedData.current.invoices = JSON.stringify(newInvoices);
           setSyncStatus('synced');
           setLastSynced(new Date());
@@ -4766,7 +4778,11 @@ export default function App() {
         setHamiltonShipments(dedupHamilton);
         setVancouverShipments(dedupVancouver);
         const dedupAll = [...dedupHamilton, ...dedupVancouver];
-        // If duplicates were removed, sync cleaned data to Firebase
+        // If duplicates were removed, sync cleaned data to Firebase. The synced
+        // marker is set ONLY in the .then — recording it before the write settles
+        // would make the autosave believe the cleanup already persisted, so a
+        // failed/blocked write would leave the duplicates in Firestore forever
+        // (re-deduped locally on every load, never actually cleaned up).
         if (totalRemoved > 0) {
           console.log(`Removed ${totalRemoved} duplicate shipment(s)`);
           syncCollection(COLLECTIONS.shipments, dedupAll).then(() => {
@@ -4774,8 +4790,9 @@ export default function App() {
             setSyncStatus('synced');
             setLastSynced(new Date());
           }).catch(e => console.error('Shipment dedup sync failed:', e));
+        } else {
+          lastSyncedData.current.shipments = JSON.stringify(dedupAll);
         }
-        lastSyncedData.current.shipments = JSON.stringify(dedupAll);
       }
       if (data.locations?.length) {
         const mapped = data.locations.map((l: any, idx: number) => ({
@@ -5020,14 +5037,9 @@ export default function App() {
     }
   }, [user]);
 
-  // Sync data to Firestore with debounce
-  const isSyncing = useRef(false);
-  useEffect(() => {
-    const syncAll = async () => {
-      if (isSyncing.current || !lastSynced || !user) return;
-      isSyncing.current = true;
-
-      const syncTasks: { collection: string; key: string; data: any[]; allowMassDelete?: boolean }[] = [
+  // One collection-to-state map for BOTH the debounced autosave and the manual
+  // "Sync Now" push. Re-created each render so it always reads current state.
+  const buildSyncTasks = (): { collection: string; key: string; data: any[]; allowMassDelete?: boolean }[] => [
         { collection: COLLECTIONS.customers, key: 'customers', data: customers },
         { collection: COLLECTIONS.products, key: 'products', data: skus },
         { collection: COLLECTIONS.logistics, key: 'logistics', data: supplyChain },
@@ -5069,18 +5081,37 @@ export default function App() {
         { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage, allowMassDelete: true },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments, allowMassDelete: true },
         { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), allowMassDelete: true },
-      ];
+  ];
+
+  // Push every collection whose current state differs from what was last synced.
+  // Shared by the debounced autosave and the manual "Sync Now" push-before-pull.
+  const pushDirtyCollections = async () => {
+    for (const task of buildSyncTasks()) {
+      const dataStr = JSON.stringify(task.data);
+      if (dataStr === lastSyncedData.current[task.key]) continue;
+      setSyncStatus('syncing');
+      await syncCollection(task.collection, task.data, { allowMassDelete: task.allowMassDelete });
+      lastSyncedData.current[task.key] = dataStr;
+    }
+  };
+
+  // Sync data to Firestore with debounce
+  const isSyncing = useRef(false);
+  useEffect(() => {
+    const syncAll = async () => {
+      if (!lastSynced || !user) return;
+      if (isSyncing.current) {
+        // A previous run is still writing. This timer was the ONLY trigger for
+        // the edits made in this debounce window — dropping it would leave them
+        // unsynced until some unrelated state change fired the effect again (or
+        // never, if the user closes the tab). Retry shortly instead.
+        timeout = setTimeout(syncAll, 5000);
+        return;
+      }
+      isSyncing.current = true;
 
       try {
-        for (const task of syncTasks) {
-          const dataStr = JSON.stringify(task.data);
-          if (dataStr === lastSyncedData.current[task.key]) continue;
-
-          setSyncStatus('syncing');
-          await syncCollection(task.collection, task.data, { allowMassDelete: task.allowMassDelete });
-          lastSyncedData.current[task.key] = dataStr;
-        }
-
+        await pushDirtyCollections();
         setSyncStatus('synced');
         setLastSynced(new Date());
         setSyncError(null);
@@ -5092,9 +5123,36 @@ export default function App() {
       }
     };
 
-    const timeout = setTimeout(syncAll, 15000);
+    let timeout = setTimeout(syncAll, 15000);
     return () => clearTimeout(timeout);
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+    // fiscalYears + customerForecasts are in syncTasks, so they MUST be deps —
+    // without them an edit touching only those collections never armed the timer
+    // and silently stayed unsynced for the whole session.
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+
+  // Manual "Sync Now": PUSH local changes first, THEN pull. Pulling first would
+  // replace state with the pre-edit Firestore snapshot AND reset lastSyncedData
+  // to it — silently reverting anything edited inside the 15s autosave debounce
+  // window (the classic "I clicked Sync Now to make sure it saved" data loss).
+  const handleSyncNow = async () => {
+    // Wait out an in-flight autosave (bounded ~10s) so two whole-collection
+    // writes never interleave.
+    for (let i = 0; i < 40 && isSyncing.current; i++) await new Promise(r => setTimeout(r, 250));
+    if (isSyncing.current) return; // autosave still writing — it IS the push; try again after
+    isSyncing.current = true;
+    try {
+      await pushDirtyCollections();
+    } catch (e) {
+      // Do NOT pull after a failed push — that would clobber the very edits
+      // the push was protecting.
+      setSyncStatus('error');
+      setSyncError((e as Error).message);
+      isSyncing.current = false;
+      return;
+    }
+    isSyncing.current = false;
+    await loadDataFromFirestore();
+  };
 
   // Fast-persist the review queues so a dismissed / approved PO or amendment
   // sticks immediately and never reappears on a quick refresh. The main autosave
@@ -9709,9 +9767,14 @@ export default function App() {
                 if (!first) return;
                 const second = window.confirm(`Really delete every order? Type-check: this removes ${count} records permanently.`);
                 if (!second) return;
+                // Explicit doc deletes — syncCollection's mass-delete guard would
+                // silently skip a wipe this large while still resolving, so the
+                // "Cleared" alert would lie and every order would resurrect on the
+                // next reload.
+                const ids = orders.map(o => o.id);
                 setOrders([]);
                 try {
-                  await syncCollection(COLLECTIONS.orders, []);
+                  await deleteDocs(COLLECTIONS.orders, ids);
                   alert(`Cleared ${count} orders.`);
                 } catch (err) {
                   alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Orders may reappear on reload.`);
@@ -12419,9 +12482,12 @@ export default function App() {
                 if (!first) return;
                 const second = window.confirm(`Really delete every contract? Type-check: this removes ${count} records permanently.`);
                 if (!second) return;
+                // Explicit doc deletes — see the orders Clear All: the mass-delete
+                // guard would silently skip the wipe while resolving successfully.
+                const ids = contracts.map(c => c.id);
                 setContracts([]);
                 try {
-                  await syncCollection(COLLECTIONS.contracts, []);
+                  await deleteDocs(COLLECTIONS.contracts, ids);
                   alert(`Cleared ${count} contracts.`);
                 } catch (err) {
                   alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Contracts may reappear on reload.`);
@@ -13835,7 +13901,7 @@ export default function App() {
             <div className="flex justify-between items-center mb-2">
               <div className="text-[10px] uppercase opacity-50 font-bold">Sync Status</div>
               <button
-                onClick={() => loadDataFromFirestore()}
+                onClick={handleSyncNow}
                 disabled={syncStatus === 'syncing'}
                 className="text-[9px] font-bold uppercase hover:underline disabled:opacity-50"
               >

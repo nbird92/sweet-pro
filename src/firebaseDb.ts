@@ -174,10 +174,13 @@ export async function syncCollection<T extends { id: string }>(
   // and logs (poPendingImports, poAmendments, poImportLog, emailLog, inboxTriage)
   // are EXEMPT — emptying/clearing them is a normal operator action — so callers
   // pass { allowMassDelete: true } for those.
-  const massDelete = !opts?.allowMassDelete && (
-    (data.length === 0 && existingCount > 0) ||
-    toDelete.length > Math.max(20, existingCount * 0.5)
-  );
+  // NOTE: no special case for an empty incoming array — deleting the LAST record
+  // of a small collection is a legitimate user action and must persist (with the
+  // old `data.length === 0` clause the delete was silently skipped and the record
+  // resurrected on every reload). Emptying a collection of more than 20 docs still
+  // trips the threshold below, which is the actual mass-delete signature.
+  const massDelete = !opts?.allowMassDelete &&
+    toDelete.length > Math.max(20, existingCount * 0.5);
   if (massDelete && toDelete.length > 0) {
     console.warn(
       `[syncCollection] Refusing to delete ${toDelete.length} of ${existingCount} docs in "${collectionName}" ` +
