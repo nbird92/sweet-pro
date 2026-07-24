@@ -9048,7 +9048,7 @@ export default function App() {
     }
 
     if (activePage === 'Invoices') {
-      const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['bolNumber', 'customer', 'product', 'po', 'status']);
+      const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['invoiceNumber', 'bolNumber', 'customer', 'product', 'po', 'status']);
       // Progressive rendering: paint only the first invoiceVisibleCount rows.
       // The browser's content-visibility hint (applied to each <tr> below) also
       // skips render work for off-screen rows that ARE in the DOM.
@@ -9178,7 +9178,7 @@ export default function App() {
             <SearchInput
               value={searchTerm}
               onChange={setSearchTerm}
-              placeholder="Search invoices by BOL, Customer, PO, Product..."
+              placeholder="Search invoices by Invoice #, BOL, Customer, PO, Product..."
             />
           </div>
           <div className="px-6 pb-6">
