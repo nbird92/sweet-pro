@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -2361,20 +2361,38 @@ export default function App() {
           const splitNumber = get(entry, 'splitnumber', 'splitno', 'split', 'split#', 'splno');
           const currency = get(entry, 'currency', 'curr');
 
-          const existingIdx = workingOrders.findIndex(o => o.bolNumber === bolNumber);
+          const bolU = bolNumber.trim().toUpperCase();
+          // Case/whitespace-insensitive BOL match, so "p001" doesn't create a
+          // duplicate of "P001".
+          const existingIdx = workingOrders.findIndex(o => (o.bolNumber || '').trim().toUpperCase() === bolU);
           if (existingIdx >= 0) {
             updatedCount++;
             const o = workingOrders[existingIdx];
-            const updatedLineItems = o.lineItems.map((li, idx) => idx === 0 ? {
-              ...li,
-              productName: product || li.productName,
-              qty: qty || li.qty,
-              contractNumber: contractNumber || li.contractNumber,
-              totalWeight: qty || li.totalWeight,
-              unitAmount: amount > 0 ? amount / (qty || 1) : li.unitAmount,
-              mtAmount: amount > 0 ? amount / (qty || 1) : li.mtAmount,
-              lineAmount: amount || li.lineAmount
-            } : li);
+            const updatedLineItems = o.lineItems.map((li, idx) => {
+              if (idx !== 0) return li;
+              // The order CSV's qty column is TOTAL WEIGHT in MT (matches the
+              // export). Respect the line's convention: for a cased-goods line
+              // (per-unit weight > 0) derive the UNIT count from MT ÷ per-unit;
+              // for bulk the unit count IS the MT figure. The old code stored the
+              // MT value into qty (units) and a $/MT into unitAmount, breaking the
+              // qty/weight invariant (~40x-wrong downstream unit/pallet weights).
+              const perUnitMt = (li.netWeightPerUnit || 0) > 2 ? (li.netWeightPerUnit || 0) / 1000 : (li.netWeightPerUnit || 0);
+              const newTotalWeight = qty || li.totalWeight;
+              const newUnits = perUnitMt > 0
+                ? (qty ? Math.max(1, Math.round(newTotalWeight / perUnitMt)) : li.qty)
+                : newTotalWeight;
+              const newMt = amount > 0 && newTotalWeight > 0 ? amount / newTotalWeight : li.mtAmount;
+              return {
+                ...li,
+                productName: product || li.productName,
+                qty: newUnits,
+                contractNumber: contractNumber || li.contractNumber,
+                totalWeight: newTotalWeight,
+                mtAmount: newMt,
+                unitAmount: perUnitMt > 0 ? (newMt || 0) * perUnitMt : newMt,
+                lineAmount: amount || li.lineAmount,
+              };
+            });
             workingOrders[existingIdx] = {
               ...o,
               customer: customer || o.customer,
@@ -2397,6 +2415,14 @@ export default function App() {
             continue;
           }
 
+          // A NEW order whose BOL is already billed by an ACTIVE invoice would be
+          // hidden immediately by the Orders page and deleted by the next invoice
+          // sync — skip it rather than create an invisible ghost. (Auto-generated
+          // ORD-… BOLs never match an invoice, so real imports are unaffected.)
+          if (bolU && invoices.some(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && (inv.bolNumber || '').trim().toUpperCase() === bolU)) {
+            skippedRows++;
+            continue;
+          }
           // PO uniqueness: a NEW order (no BOL match above) must not reuse a PO
           // already on another order (existing or added earlier this import) or on
           // an invoice. Skip the row rather than create a duplicate.
@@ -2530,13 +2556,18 @@ export default function App() {
           const product = get(entry, 'product', 'productname', 'item', 'sku', 'description');
           const contractNumber = get(entry, 'contractnumber', 'contract', 'contractno', 'contract#');
           const po = get(entry, 'po', 'ponumber', 'pono', 'po#', 'purchaseorder');
-          const date = normalizeDate(get(entry, 'date', 'invoicedate', 'invdate') || new Date().toISOString().split('T')[0]);
+          // Keep the RAW date/status cells so a blank column doesn't rewrite an
+          // existing invoice's date to today or its status to 'Pending' — the
+          // fallbacks apply only when CREATING a new invoice.
+          const rawDate = get(entry, 'date', 'invoicedate', 'invdate');
+          const date = normalizeDate(rawDate || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
           const qty = parseLooseNumber(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight'));
           const pricePerMt = parseLooseNumber(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton'));
           const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseLooseNumber(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value')));
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
-          const status = get(entry, 'status', 'invoicestatus') || 'Pending';
+          const rawStatus = get(entry, 'status', 'invoicestatus');
+          const status = rawStatus || 'Pending';
           const splitNo = get(entry, 'splitno', 'split', 'splitnumber', 'split#', 'splno', 'splitnum');
           const lotCode = get(entry, 'lotcode', 'lot', 'lotnumber', 'lotcodes', 'lot#');
           const shippingTerms = get(entry, 'shippingterms', 'terms', 'shipterms', 'incoterms');
@@ -2551,24 +2582,27 @@ export default function App() {
           if (existingIdx !== -1) {
             updatedCount++;
             const inv = workingInvoices[existingIdx];
+            // Merge, never clobber: only a NON-BLANK CSV cell overwrites a stored
+            // value. A partial CSV (e.g. just invoiceNumber + lotCode to bulk-fix
+            // lot codes) must not wipe amount/customer/date/status.
             workingInvoices[existingIdx] = {
               ...inv,
               invoiceNumber,
-              customer,
-              product,
-              po,
-              date,
-              qty,
-              pricePerMt: pricePerMt || undefined,
-              amount,
-              carrier,
-              status,
-              splitNo: splitNo || undefined,
-              lotCode: lotCode || inv.lotCode || undefined,
-              dueDate: dueDate || undefined,
-              contractNumber: contractNumber || undefined,
-              shippingTerms: shippingTerms || undefined,
-              location: location || undefined,
+              customer: customer || inv.customer,
+              product: product || inv.product,
+              po: po || inv.po,
+              date: rawDate ? date : inv.date,
+              qty: qty || inv.qty,
+              pricePerMt: pricePerMt || inv.pricePerMt,
+              amount: amount || inv.amount,
+              carrier: carrier || inv.carrier,
+              status: rawStatus || inv.status,
+              splitNo: splitNo || inv.splitNo,
+              lotCode: lotCode || inv.lotCode,
+              dueDate: dueDate || inv.dueDate,
+              contractNumber: contractNumber || inv.contractNumber,
+              shippingTerms: shippingTerms || inv.shippingTerms,
+              location: location || inv.location,
             };
             continue;
           }
@@ -4672,6 +4706,29 @@ export default function App() {
     poamendments: JSON.stringify([]),
   });
 
+  // Per-document baseline for the autosave's per-doc diff: collectionKey ->
+  // (docId -> JSON of the doc as last synced by THIS session). Derived from
+  // lastSyncedData (the load-time / last-push snapshot) so the many places that
+  // set lastSyncedData don't each need updating. It is SELF-VALIDATING: the
+  // cache remembers which raw snapshot string it was built from and rebuilds
+  // whenever that string changes (a reload, Sync Now, or a direct import all set
+  // a fresh lastSyncedData), so the baseline is never stale.
+  const lastSyncedDocs = useRef<Record<string, { fromRaw: string; map: Map<string, string> }>>({});
+  const getDocBaseline = (key: string): Map<string, string> => {
+    const raw = lastSyncedData.current[key] || '';
+    const cached = lastSyncedDocs.current[key];
+    if (cached && cached.fromRaw === raw) return cached.map;
+    const m = new Map<string, string>();
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) for (const d of arr) if (d && d.id) m.set(d.id, JSON.stringify(d));
+      } catch { /* ignore malformed baseline */ }
+    }
+    lastSyncedDocs.current[key] = { fromRaw: raw, map: m };
+    return m;
+  };
+
   // Fetch initial data from Firestore
   const loadDataFromFirestore = async () => {
     try {
@@ -5097,12 +5154,29 @@ export default function App() {
 
   // Push every collection whose current state differs from what was last synced.
   // Shared by the debounced autosave and the manual "Sync Now" push-before-pull.
+  // Writes are PER-DOCUMENT (only the docs this session changed + the ids it
+  // deleted), so a stale tab can no longer overwrite another session's edits or
+  // resurrect its deletions by re-pushing the whole collection.
   const pushDirtyCollections = async () => {
     for (const task of buildSyncTasks()) {
       const dataStr = JSON.stringify(task.data);
-      if (dataStr === lastSyncedData.current[task.key]) continue;
+      if (dataStr === lastSyncedData.current[task.key]) continue; // collection unchanged
       setSyncStatus('syncing');
-      await syncCollection(task.collection, task.data, { allowMassDelete: task.allowMassDelete });
+      const baseline = getDocBaseline(task.key);
+      const upserts: any[] = [];
+      const currentIds = new Set<string>();
+      for (const d of task.data) {
+        if (!d || d.id === undefined || d.id === null) continue;
+        currentIds.add(d.id);
+        if (baseline.get(d.id) !== JSON.stringify(d)) upserts.push(d);
+      }
+      const deleteIds: string[] = [];
+      for (const id of baseline.keys()) if (!currentIds.has(id)) deleteIds.push(id);
+      if (upserts.length || deleteIds.length) {
+        await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
+      }
+      // Advance the baseline to the just-pushed snapshot (getDocBaseline rebuilds
+      // its per-doc map from this on next read).
       lastSyncedData.current[task.key] = dataStr;
     }
   };
@@ -5130,6 +5204,10 @@ export default function App() {
       } catch (e) {
         setSyncStatus('error');
         setSyncError((e as Error).message);
+        // Retry a transient failure on its own — otherwise the failed edits sit
+        // unsynced until some unrelated state change happens to re-arm the timer
+        // (and are lost if the user closes the tab first).
+        timeout = setTimeout(syncAll, 15000);
       } finally {
         isSyncing.current = false;
       }
@@ -5141,6 +5219,23 @@ export default function App() {
     // without them an edit touching only those collections never armed the timer
     // and silently stayed unsynced for the whole session.
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+
+  // Warn before leaving with unsynced edits. The autosave is debounced 15s, so a
+  // quick tab-close/refresh can otherwise drop the last edits with no cue (the
+  // header still reads the previous "Synced"). dirtyCheckRef is refreshed every
+  // render, so the once-registered listener always sees current state.
+  const dirtyCheckRef = useRef<() => boolean>(() => false);
+  dirtyCheckRef.current = () => {
+    if (!user || !lastSynced) return false;
+    return buildSyncTasks().some(t => JSON.stringify(t.data) !== lastSyncedData.current[t.key]);
+  };
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (dirtyCheckRef.current()) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   // Manual "Sync Now": PUSH local changes first, THEN pull. Pulling first would
   // replace state with the pre-edit Firestore snapshot AND reset lastSyncedData
@@ -6359,7 +6454,20 @@ export default function App() {
 
   const applyInvoiceSyncResult = (preview: InvoiceSyncResult, current: Invoice[]): Invoice[] => {
     const updatedById = new Map(preview.updatedInvoices.map((u): [string, Invoice] => [u.id, u]));
-    const afterUpdates = current.map(inv => updatedById.get(inv.id) || inv);
+    let afterUpdates = current.map(inv => updatedById.get(inv.id) || inv);
+    // Belt-and-braces for the Complete & Bill duplication: a NUMBERED new invoice
+    // whose BOL|numeric-PO matches a live NUMBER-LESS invoice (an in-app C&B
+    // invoice awaiting its SI number) is the same document. Adopt just the number
+    // onto the existing invoice (no field replacement, so its line items/amount
+    // are preserved) and drop the incoming duplicate.
+    const numberlessIdByBolPo = new Map<string, string>();
+    afterUpdates.forEach(inv => {
+      if ((inv.invoiceNumber || '').trim()) return;
+      const bol = (inv.bolNumber || '').trim().toUpperCase();
+      const p = poKey(inv.po);
+      if (bol && p) numberlessIdByBolPo.set(`${bol}|${p}`, inv.id);
+    });
+    const adoptNumber = new Map<string, string>(); // existing invoice id -> SI number
     // Dedup new invoices against the live list. The importer keys on invoice NUMBER
     // and dedups against the snapshot it was handed at preview time — but the live
     // list can move between preview and apply (a Firestore push, or an earlier step
@@ -6369,10 +6477,19 @@ export default function App() {
     const seen = new Set(afterUpdates.map(invoiceDedupKey).filter(Boolean));
     const freshNew: Invoice[] = [];
     for (const inv of preview.newInvoices) {
+      const num = (inv.invoiceNumber || '').trim().toUpperCase();
+      if (num) {
+        const bp = `${(inv.bolNumber || '').trim().toUpperCase()}|${poKey(inv.po)}`;
+        const existingId = numberlessIdByBolPo.get(bp);
+        if (existingId && !adoptNumber.has(existingId)) { adoptNumber.set(existingId, num); continue; }
+      }
       const k = invoiceDedupKey(inv);
       if (k && seen.has(k)) continue; // duplicate — skip
       if (k) seen.add(k);
       freshNew.push(inv);
+    }
+    if (adoptNumber.size) {
+      afterUpdates = afterUpdates.map(inv => adoptNumber.has(inv.id) ? { ...inv, invoiceNumber: adoptNumber.get(inv.id)! } : inv);
     }
     const merged = [...afterUpdates, ...freshNew];
     setInvoices(merged);
@@ -9261,7 +9378,7 @@ export default function App() {
         return v;
       };
 
-      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'carrier', 'status', 'splitNo', 'lotCode', 'reversals', 'shippingTerms', 'location'];
+      const invoiceCsvHeaders = ['invoiceNumber', 'bolNumber', 'customer', 'product', 'contractNumber', 'po', 'date', 'dueDate', 'qty', 'pricePerMt', 'amount', 'carrier', 'status', 'splitNo', 'lotCode', 'reversals', 'shippingTerms', 'location'];
       const invoiceExportSheets = (): SheetSpec[] => [{
         sheetName: 'Invoices',
         title: 'Customer Invoices',
@@ -9597,24 +9714,33 @@ export default function App() {
       // Pre-compute the set of BOL numbers that already have an invoice.
       // Any order whose BOL appears in the invoices table is treated as
       // 'completed and billed' and is filtered out of the Orders page.
+      // Only an ACTIVE invoice bills out an order. A Cancelled/Credit invoice
+      // does NOT — the order stays workable (matches removeOrdersInvoicedBy and
+      // the sheet importer, which both keep such orders). Normalise BOLs
+      // (trim/upper) so "p001" and "P001 " compare equal.
       const invoicedBols = new Set(
         invoices
-          .filter(inv => inv.bolNumber)
-          .map(inv => inv.bolNumber)
+          .filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber)
+          .map(inv => (inv.bolNumber || '').trim().toUpperCase())
       );
+      const isInvoicedBol = (bol?: string) => {
+        const b = (bol || '').trim().toUpperCase();
+        return !!b && invoicedBols.has(b);
+      };
 
       // How many Completed orders the auto-hide rule is currently suppressing
       // (i.e. would show if the toggle were on) — surfaced on the toggle button.
       const completedHiddenCount = orders.filter(o =>
         o.status === 'Completed'
-        && !(o.bolNumber && invoicedBols.has(o.bolNumber))
+        && !isInvoicedBol(o.bolNumber)
         && !o.hidden
       ).length;
 
       const filteredOrders = orders.filter(ord => {
-        // Hide orders that have already been completed + billed (matching
-        // invoice by BOL number, regardless of order status).
-        if (ord.bolNumber && invoicedBols.has(ord.bolNumber)) return false;
+        // Hide orders billed out by an ACTIVE invoice — but let a search reveal
+        // one, so a billed order stays findable by explicit BOL/PO search (and a
+        // Cancelled invoice no longer hides its order at all).
+        if (isInvoicedBol(ord.bolNumber) && !searchTerm) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
         // Auto-hide Completed orders unless the user opts to show them, or is
@@ -12600,7 +12726,9 @@ export default function App() {
                         // haven't been invoiced yet. Match orders by their own
                         // contractNumber, any line item's contractNumber, OR
                         // splitNumber prefix → contract number.
-                        const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
+                        // Only ACTIVE invoices count as "taken" — a Cancelled/Credit
+                        // invoice leaves the order's volume outstanding.
+                        const invoicedBols = new Set(invoices.filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber).map(inv => (inv.bolNumber || '').trim().toUpperCase()));
                         const ordersOnContract = orders.filter(o => {
                           if (o.status === 'Cancelled') return false;
                           if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, c.contractNumber)) return true;
@@ -12618,7 +12746,7 @@ export default function App() {
                           return (o.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
                         };
                         const volumeOnOrderComputed = ordersOnContract
-                          .filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
+                          .filter(o => !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
                           .reduce((sum, o) => sum + sumOrderWeight(o), 0);
                         // Volume Outstanding is always Contract Volume − Volume Taken.
                         // (Source of truth: the computed Volume Taken from
@@ -21267,7 +21395,9 @@ export default function App() {
                 // '<contractNumber>:taken', or '<contractNumber>:onorder'.
                 const raw = contractOrdersPopup;
                 const [popupContract, popupFilter] = raw.includes(':') ? raw.split(':') : [raw, 'all'];
-                const invoicedBols = new Set(invoices.filter(inv => inv.bolNumber).map(inv => inv.bolNumber));
+                // Cancelled/Credit invoices don't take volume — exclude them, and
+                // normalise BOLs so the taken/on-order split matches everywhere else.
+                const invoicedBols = new Set(invoices.filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber).map(inv => (inv.bolNumber || '').trim().toUpperCase()));
                 const titleLabel = popupFilter === 'taken'
                   ? 'Invoices on Contract'
                   : popupFilter === 'onorder'
@@ -21361,9 +21491,9 @@ export default function App() {
                   ? Array.from(new Set([...allMatching, ...orders.filter(o => o.bolNumber && invoiceMatchedBols.has(o.bolNumber))]))
                   : allMatching;
                 const contractOrders = popupFilter === 'taken'
-                  ? allMatchingPlus.filter(o => o.bolNumber && invoicedBols.has(o.bolNumber))
+                  ? allMatchingPlus.filter(o => invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
                   : popupFilter === 'onorder'
-                  ? allMatching.filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
+                  ? allMatching.filter(o => !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
                   : allMatching;
 
                 const openOrderForEdit = (ord: Order) => {

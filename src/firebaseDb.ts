@@ -216,3 +216,48 @@ export async function syncCollection<T extends { id: string }>(
   for (const b of batches) await b.commit();
 }
 
+// Per-document sync: write ONLY the docs this session actually changed (upserts)
+// and delete ONLY the ids it removed (deleteIds), leaving every other doc in the
+// collection untouched. This is what the debounced autosave uses so a stale tab
+// can no longer overwrite another session's edits or resurrect its deletes by
+// re-pushing the whole collection. `baselineCount` is how many docs this session
+// last knew about (its load-time / last-push snapshot size); the mass-delete
+// guard blocks a delete larger than max(20, 50% of that) unless allowMassDelete.
+// No getDocs here — we never touch docs we didn't change, which is both faster
+// and the whole point.
+export async function syncCollectionDiff<T extends { id: string }>(
+  collectionName: string,
+  upserts: T[],
+  deleteIds: string[],
+  baselineCount: number,
+  opts?: { allowMassDelete?: boolean },
+): Promise<void> {
+  const massDelete = !opts?.allowMassDelete && deleteIds.length > Math.max(20, baselineCount * 0.5);
+  if (massDelete && deleteIds.length > 0) {
+    console.warn(
+      `[syncCollectionDiff] Refusing to delete ${deleteIds.length} docs in "${collectionName}" ` +
+      `(baseline ${baselineCount}) — looks like a bulk wipe; preserving them. Use an explicit clear.`,
+    );
+  }
+  const batchSize = 450;
+  const batches: ReturnType<typeof writeBatch>[] = [];
+  let batch = writeBatch(db);
+  let count = 0;
+  const rotate = () => { if (count >= batchSize) { batches.push(batch); batch = writeBatch(db); count = 0; } };
+
+  for (const item of upserts) {
+    batch.set(doc(db, collectionName, item.id), stripUndefinedDeep(item));
+    count++;
+    rotate();
+  }
+  if (!massDelete) {
+    for (const id of deleteIds) {
+      batch.delete(doc(db, collectionName, id));
+      count++;
+      rotate();
+    }
+  }
+  if (count > 0) batches.push(batch);
+  for (const b of batches) await b.commit();
+}
+

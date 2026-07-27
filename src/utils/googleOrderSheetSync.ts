@@ -1852,6 +1852,21 @@ export function parsedRowsToInvoicesConfigured(
     const n = (i.invoiceNumber || '').trim().toUpperCase();
     if (n && !existingInvoiceByNumber.has(n)) existingInvoiceByNumber.set(n, i);
   }
+  // Number-LESS existing invoices — e.g. those created in-app by Complete & Bill
+  // BEFORE accounting typed an SI number into the sheet — keyed by BOL|numeric-PO
+  // (the same key invoiceDedupKey uses; never BOL alone, so split invoices stay
+  // distinct). When a sheet row's invoice number matches nothing numbered, we
+  // still recognise it as that already-billed in-app invoice and backfill the SI
+  // number onto it instead of minting a duplicate.
+  const existingInvoiceByBolPo = new Map<string, Invoice>();
+  for (const i of existingInvoices) {
+    if ((i.invoiceNumber || '').trim()) continue;
+    const bolU = (i.bolNumber || '').trim().toUpperCase();
+    const pk = poKey(i.po);
+    if (!bolU || !pk) continue;
+    const key = `${bolU}|${pk}`;
+    if (!existingInvoiceByBolPo.has(key)) existingInvoiceByBolPo.set(key, i);
+  }
   const updatedInvoiceIds = new Set<string>(); // each existing invoice touched at most once per run
   const addedInvoiceNumbers = new Set<string>();
 
@@ -1923,7 +1938,12 @@ export function parsedRowsToInvoicesConfigured(
 
       // 6. Existing invoice (matched by invoice NUMBER only)? Backfill its BLANK
       //    fields from the sheet — never overwrite a value already present.
-      const existingInv = existingInvoiceByNumber.get(invU) || null;
+      // Match by invoice NUMBER first; failing that, by BOL|numeric-PO against a
+      // number-less in-app (Complete & Bill) invoice so its SI number is
+      // backfilled here rather than a duplicate being created.
+      const existingInv = existingInvoiceByNumber.get(invU)
+        || existingInvoiceByBolPo.get(`${(r.bolNumber || '').trim().toUpperCase()}|${poKey(r.poNumber)}`)
+        || null;
       if (existingInv) {
         if (updatedInvoiceIds.has(existingInv.id)) {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Existing invoice already updated earlier in this run' });
