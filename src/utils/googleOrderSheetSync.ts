@@ -1858,14 +1858,17 @@ export function parsedRowsToInvoicesConfigured(
   // distinct). When a sheet row's invoice number matches nothing numbered, we
   // still recognise it as that already-billed in-app invoice and backfill the SI
   // number onto it instead of minting a duplicate.
-  const existingInvoiceByBolPo = new Map<string, Invoice>();
+  // A BOL|numeric-PO may carry several number-less split invoices, so keep a LIST
+  // and let each numbered row consume the first not-yet-updated one (below) — so
+  // split 1's SI number lands on split 1 and split 2's on split 2.
+  const existingInvoiceByBolPo = new Map<string, Invoice[]>();
   for (const i of existingInvoices) {
     if ((i.invoiceNumber || '').trim()) continue;
     const bolU = (i.bolNumber || '').trim().toUpperCase();
     const pk = poKey(i.po);
     if (!bolU || !pk) continue;
     const key = `${bolU}|${pk}`;
-    if (!existingInvoiceByBolPo.has(key)) existingInvoiceByBolPo.set(key, i);
+    const arr = existingInvoiceByBolPo.get(key); if (arr) arr.push(i); else existingInvoiceByBolPo.set(key, [i]);
   }
   const updatedInvoiceIds = new Set<string>(); // each existing invoice touched at most once per run
   const addedInvoiceNumbers = new Set<string>();
@@ -1942,7 +1945,7 @@ export function parsedRowsToInvoicesConfigured(
       // number-less in-app (Complete & Bill) invoice so its SI number is
       // backfilled here rather than a duplicate being created.
       const existingInv = existingInvoiceByNumber.get(invU)
-        || existingInvoiceByBolPo.get(`${(r.bolNumber || '').trim().toUpperCase()}|${poKey(r.poNumber)}`)
+        || (existingInvoiceByBolPo.get(`${(r.bolNumber || '').trim().toUpperCase()}|${poKey(r.poNumber)}`) || []).find(inv => !updatedInvoiceIds.has(inv.id))
         || null;
       if (existingInv) {
         if (updatedInvoiceIds.has(existingInv.id)) {

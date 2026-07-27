@@ -2562,9 +2562,14 @@ export default function App() {
           const rawDate = get(entry, 'date', 'invoicedate', 'invdate');
           const date = normalizeDate(rawDate || new Date().toISOString().split('T')[0]);
           const dueDate = normalizeDate(get(entry, 'duedate', 'due', 'paymentdue'));
-          const qty = parseLooseNumber(get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight'));
-          const pricePerMt = parseLooseNumber(get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton'));
-          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : (parseLooseNumber(get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value')));
+          // Raw numeric cells too, so an EXPLICIT "0" (a real correction) is
+          // distinguishable from an absent column on the update path.
+          const rawQty = get(entry, 'qty', 'qtymt', 'quantity', 'volume', 'mt', 'weight');
+          const rawPrice = get(entry, 'pricepermt', 'pricepmt', 'pricemt', 'price', 'pricepermetricton');
+          const rawAmount = get(entry, 'amount', 'total', 'totalamount', 'invoiceamount', 'value');
+          const qty = parseLooseNumber(rawQty);
+          const pricePerMt = parseLooseNumber(rawPrice);
+          const amount = pricePerMt > 0 && qty > 0 ? Math.round(pricePerMt * qty * 100) / 100 : parseLooseNumber(rawAmount);
           const carrier = get(entry, 'carrier', 'carriername', 'trucker', 'transport');
           const rawStatus = get(entry, 'status', 'invoicestatus');
           const status = rawStatus || 'Pending';
@@ -2592,9 +2597,18 @@ export default function App() {
               product: product || inv.product,
               po: po || inv.po,
               date: rawDate ? date : inv.date,
-              qty: qty || inv.qty,
-              pricePerMt: pricePerMt || inv.pricePerMt,
-              amount: amount || inv.amount,
+              // Honour an explicit "0" (raw cell non-blank), and recompute amount
+              // from the MERGED price/qty when only one pricing cell is uploaded
+              // so the total never drifts out of sync with price x qty.
+              qty: rawQty ? qty : inv.qty,
+              pricePerMt: rawPrice ? pricePerMt : inv.pricePerMt,
+              amount: rawAmount
+                ? amount
+                : (() => {
+                    const mq = rawQty ? qty : (inv.qty || 0);
+                    const mp = rawPrice ? pricePerMt : (inv.pricePerMt || 0);
+                    return mp > 0 && mq > 0 ? Math.round(mp * mq * 100) / 100 : inv.amount;
+                  })(),
               carrier: carrier || inv.carrier,
               status: rawStatus || inv.status,
               splitNo: splitNo || inv.splitNo,
@@ -5038,8 +5052,13 @@ export default function App() {
       }
       if (data.emailSettings?.length) {
         const settings = (data.emailSettings as EmailSettings[]).find(s => s.id === 'settings') || data.emailSettings[0] as EmailSettings;
-        setEmailSettings({ ...INITIAL_EMAIL_SETTINGS, ...settings });
-        lastSyncedData.current.emailsettings = JSON.stringify([settings]);
+        // Baseline must equal what buildSyncTasks emits ([emailSettings]) — i.e.
+        // the DEFAULTS-MERGED object, not the raw stored doc. Otherwise a legacy
+        // doc missing a newer field reads as permanently "dirty" (spurious
+        // beforeunload prompt + a redundant first-autosave write every load).
+        const mergedSettings = { ...INITIAL_EMAIL_SETTINGS, ...settings };
+        setEmailSettings(mergedSettings);
+        lastSyncedData.current.emailsettings = JSON.stringify([mergedSettings]);
       }
       if (data.returnOrders?.length) {
         setReturnOrders(data.returnOrders as ReturnOrder[]);
@@ -6460,14 +6479,22 @@ export default function App() {
     // invoice awaiting its SI number) is the same document. Adopt just the number
     // onto the existing invoice (no field replacement, so its line items/amount
     // are preserved) and drop the incoming duplicate.
-    const numberlessIdByBolPo = new Map<string, string>();
+    // A BOL|numeric-PO can carry SEVERAL number-less split invoices (one order
+    // split-billed into split 1, split 2, …). Keep a LIST per key and consume one
+    // per incoming numbered row, so SI-A adopts onto the first split and SI-B onto
+    // the second — never collapsing them (which stamped a wrong number on one and
+    // duplicated the other).
+    const numberlessIdsByBolPo = new Map<string, string[]>();
     afterUpdates.forEach(inv => {
       if ((inv.invoiceNumber || '').trim()) return;
       const bol = (inv.bolNumber || '').trim().toUpperCase();
       const p = poKey(inv.po);
-      if (bol && p) numberlessIdByBolPo.set(`${bol}|${p}`, inv.id);
+      if (!bol || !p) return;
+      const key = `${bol}|${p}`;
+      const arr = numberlessIdsByBolPo.get(key); if (arr) arr.push(inv.id); else numberlessIdsByBolPo.set(key, [inv.id]);
     });
     const adoptNumber = new Map<string, string>(); // existing invoice id -> SI number
+    const consumed = new Set<string>();
     // Dedup new invoices against the live list. The importer keys on invoice NUMBER
     // and dedups against the snapshot it was handed at preview time — but the live
     // list can move between preview and apply (a Firestore push, or an earlier step
@@ -6480,8 +6507,9 @@ export default function App() {
       const num = (inv.invoiceNumber || '').trim().toUpperCase();
       if (num) {
         const bp = `${(inv.bolNumber || '').trim().toUpperCase()}|${poKey(inv.po)}`;
-        const existingId = numberlessIdByBolPo.get(bp);
-        if (existingId && !adoptNumber.has(existingId)) { adoptNumber.set(existingId, num); continue; }
+        const cands = numberlessIdsByBolPo.get(bp) || [];
+        const freeId = cands.find(id => !consumed.has(id));
+        if (freeId) { adoptNumber.set(freeId, num); consumed.add(freeId); continue; }
       }
       const k = invoiceDedupKey(inv);
       if (k && seen.has(k)) continue; // duplicate — skip
