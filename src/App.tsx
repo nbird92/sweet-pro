@@ -1041,6 +1041,62 @@ export default function App() {
     });
   };
 
+  // SINGLE SOURCE OF TRUTH for an invoice's line-item figures. Everything — the
+  // invoice table (Price/MT, qty), the details modal, and the edit modal — reads
+  // through this so they can never disagree. Resolves each line's EFFECTIVE qty
+  // (units), weight, and pricing, applying the scaled-quantity handling that
+  // sheet-imported invoices need (their inherited order line items are unscaled,
+  // but inv.qty carries the billed/scaled MT). Also returns an `effectiveItem`
+  // per row so the edit modal can be seeded with the SAME numbers the view shows.
+  const resolveInvoiceRows = (inv: Invoice) => {
+    const items = inv.lineItems || [];
+    const isImportedInvoice = (inv.id || '').startsWith('INV-IMPORT-');
+    const scaledMt = typeof inv.qty === 'number' ? inv.qty : 0;
+    const useScaled = isImportedInvoice && scaledMt > 0;
+    const rows = items.map(item => {
+      const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
+      const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
+      const resolved = resolveProduct(item.productName);
+      const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
+      const baseTotalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
+      const baseWeightPerUnit = item.netWeightPerUnit || (item.qty ? baseTotalWeight / item.qty : skuNetKg / 1000);
+      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || (useScaled ? (inv.pricePerMt || 0) : 0);
+      const singleImported = useScaled && items.length === 1;
+      const qtyUnits = singleImported ? scaledMt : item.qty;
+      const totalWeight = singleImported ? scaledMt : baseTotalWeight;
+      const weightPerUnit = singleImported ? (qtyUnits ? totalWeight / qtyUnits : baseWeightPerUnit) : baseWeightPerUnit;
+      const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
+      const lineAmount = singleImported
+        ? (inv.amount || (totalWeight * mtAmount))
+        : (item.lineAmount || (baseTotalWeight * mtAmount));
+      const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
+      const effectiveItem: OrderLineItem = { ...item, qty: qtyUnits, netWeightPerUnit: weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
+      return { item, qtyUnits, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber, effectiveItem };
+    });
+    if (useScaled && rows.length === 0) {
+      const mtAmount = inv.pricePerMt || 0;
+      const syntheticItem = { id: 'scaled-line', productName: inv.product || '', productDisplayName: inv.product || '', qty: scaledMt, contractNumber: inv.contractNumber || '', netWeightPerUnit: 1, totalWeight: scaledMt, unitAmount: mtAmount, mtAmount, lineAmount: inv.amount || (scaledMt * mtAmount) } as OrderLineItem;
+      rows.push({ item: syntheticItem, qtyUnits: scaledMt, weightPerUnit: 1, totalWeight: scaledMt, unitAmount: mtAmount, mtAmount, lineAmount: inv.amount || (scaledMt * mtAmount), contractNumber: inv.contractNumber || '', effectiveItem: syntheticItem });
+    }
+    const totalMt = (useScaled && rows.length === 1)
+      ? scaledMt
+      : (rows.length ? rows.reduce((s, r) => s + r.totalWeight, 0) : scaledMt);
+    const totalLineAmt = rows.reduce((s, r) => s + r.lineAmount, 0);
+    const headerAmount = totalLineAmt > 0 ? totalLineAmt : (inv.amount || 0);
+    const derivedPricePerMt = totalMt > 0 && totalLineAmt > 0
+      ? totalLineAmt / totalMt
+      : (typeof inv.pricePerMt === 'number' ? inv.pricePerMt : 0);
+    return { rows, totalMt, totalLineAmt, headerAmount, derivedPricePerMt };
+  };
+
+  // Open an invoice in the EDIT modal with its line items normalised to the SAME
+  // effective figures the details view shows, so the units/weights don't jump to
+  // the raw (order-inherited, unscaled) values when you switch from view to edit.
+  const openInvoiceForEdit = (inv: Invoice) => {
+    const { rows } = resolveInvoiceRows(inv);
+    setEditingInvoiceCard(rows.length ? { ...inv, lineItems: rows.map(r => r.effectiveItem) } : { ...inv });
+  };
+
   // Commit a new line-item list onto the invoice being edited and recompute the
   // header totals from it: Qty (MT) = sum of total weights; Amount / $/MT are
   // only overwritten when the lines carry pricing, so amount-only invoices keep
@@ -4769,6 +4825,30 @@ export default function App() {
   useEffect(() => {
     setShipLotSearch('');
     setShipLotDropdownOpen(false);
+  }, [editingShipment?.id]);
+  // When the edit-shipment modal opens, auto-fill from linked records — ONLY when
+  // the shipment's own field is blank, so a real value is never overwritten:
+  //  • Lot code(s): from a matching invoice (by BOL) that captured a lot code.
+  //  • Trailer No.: from a matching lot code (by BOL or numeric PO) that has one.
+  useEffect(() => {
+    if (!editingShipment) return;
+    const bol = (editingShipment.bol || '').trim();
+    const pk = poKey(editingShipment.po);
+    const patch: Partial<Shipment> = {};
+    const hasLots = (editingShipment.lotNumbers && editingShipment.lotNumbers.length > 0) || !!(editingShipment.lotNumber || '').trim();
+    if (!hasLots && bol) {
+      const inv = invoices.find(i => (i.bolNumber || '').trim() === bol && (i.lotCode || '').trim());
+      const lots = (inv?.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      if (lots.length) { patch.lotNumbers = lots; patch.lotNumber = lots[0]; }
+    }
+    if (!(editingShipment.trailerNo || '').trim()) {
+      const lc = lotCodes.find(l => (l.trailerNumber || '').trim()
+        && ((bol && (l.bolNumber || '').trim() === bol) || (!!pk && poKey(l.customerPo) === pk)));
+      if (lc?.trailerNumber) patch.trailerNo = lc.trailerNumber;
+    }
+    if (Object.keys(patch).length) setEditingShipment(prev => prev ? { ...prev, ...patch } : prev);
+    // Keyed on the shipment id so it runs once per open and can't loop on its own patch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingShipment?.id]);
   const [pendingCompleteOrderId, setPendingCompleteOrderId] = useState<string | null>(null);
   // Confirm + summary popup shown before Complete & Bill actually runs.
@@ -9727,6 +9807,13 @@ export default function App() {
                   const productTitle = invoiceLineItems.length
                     ? invoiceLineItems.map(li => li.productName).join(', ')
                     : i.product;
+                  // Price/MT + Qty (MT) come from the SAME resolver the details view
+                  // uses, so a blank top-level pricePerMt still shows the value its
+                  // line items imply (Σ line amount ÷ Σ total weight).
+                  const rowResolved = resolveInvoiceRows(i);
+                  const rowPricePerMt = (typeof i.pricePerMt === 'number' && i.pricePerMt > 0)
+                    ? i.pricePerMt
+                    : (rowResolved.derivedPricePerMt || 0);
                   return (
                   <React.Fragment key={i.id}>
                     {/* content-visibility lets the browser skip render work for rows that aren't on screen.
@@ -9768,8 +9855,8 @@ export default function App() {
                         <input
                           type="number"
                           step="0.01"
-                          key={i.pricePerMt ?? ''}
-                          defaultValue={i.pricePerMt ?? ''}
+                          key={rowPricePerMt || ''}
+                          defaultValue={rowPricePerMt ? Number(rowPricePerMt.toFixed(2)) : ''}
                           onBlur={(e) => {
                             const ppm = parseFloat(e.target.value) || 0;
                             if (ppm !== (i.pricePerMt ?? 0)) {
@@ -14552,7 +14639,11 @@ export default function App() {
                         {(editingInvoiceCard.lineItems || []).map((item, idx) => (
                           <tr key={item.id} className={editingInvLineIdx === idx ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : 'hover:bg-[#141414]/5'}>
                             <td className="p-3">{lineItemToShortform(item)}{editingInvLineIdx === idx && <span className="ml-2 text-[9px] font-bold uppercase text-blue-600">editing…</span>}</td>
-                            <td className="p-3">{lineItemUnits(item)}</td>
+                            {/* Read the line item's OWN effective qty (openInvoiceForEdit
+                                seeds these from resolveInvoiceRows) so the value matches
+                                the Invoice Details view and never jumps to catalog/order-
+                                derived numbers. */}
+                            <td className="p-3">{Number((item.qty || 0).toFixed(3))}</td>
                             <td className="p-3">{item.qty ? (item.totalWeight / item.qty).toFixed(3) : (item.netWeightPerUnit || 0).toFixed(3)}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
                             <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
@@ -14571,7 +14662,8 @@ export default function App() {
                                     productName: item.productName,
                                     productKey: item.productKey || matchingOpt?.key || '',
                                     productDisplayName: item.productDisplayName || matchingOpt?.label || '',
-                                    qty: lineItemUnits(item),
+                                    // Use the line's own effective qty (matches the row display).
+                                    qty: Number((item.qty || 0).toFixed(3)),
                                     contractNumber: item.contractNumber,
                                   });
                                 }}
@@ -14722,7 +14814,6 @@ export default function App() {
       <AnimatePresence>
         {viewingInvoiceCard && (() => {
           const inv = viewingInvoiceCard;
-          const items = inv.lineItems || [];
           // Resolve each line's EFFECTIVE figures once (weight, $/MT, line amount) with
           // the same fallbacks the Line Items table below uses, so the header totals and
           // the footer totals can never disagree. Everything comes from the invoice's
@@ -14734,62 +14825,9 @@ export default function App() {
           // and still hold the UNSCALED ordered weights. For these, inv.qty is
           // authoritative: it drives the header Quantity (MT) and, on the common
           // single-line bulk invoice, the line's Qty (units) and Total Weight.
-          const isImportedInvoice = (inv.id || '').startsWith('INV-IMPORT-');
-          const scaledMt = typeof inv.qty === 'number' ? inv.qty : 0;
-          const useScaled = isImportedInvoice && scaledMt > 0;
-          const invRows = items.map(item => {
-            const contract = item.contractNumber ? contracts.find(c => c.contractNumber === item.contractNumber) : null;
-            const contractLine = contract?.contractLines?.find(cl => cl.productName === item.productName);
-            const resolved = resolveProduct(item.productName);
-            const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
-            const baseTotalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
-            const baseWeightPerUnit = item.netWeightPerUnit || (item.qty ? baseTotalWeight / item.qty : skuNetKg / 1000);
-            const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || (useScaled ? (inv.pricePerMt || 0) : 0);
-            // Only override the single-line case, where inv.qty unambiguously IS
-            // this line's quantity. Multi-line imported invoices keep per-line
-            // figures (splitting one scaled total across lines would be a guess).
-            const singleImported = useScaled && items.length === 1;
-            const qtyUnits = singleImported ? scaledMt : item.qty;
-            const totalWeight = singleImported ? scaledMt : baseTotalWeight;
-            const weightPerUnit = singleImported ? (qtyUnits ? totalWeight / qtyUnits : baseWeightPerUnit) : baseWeightPerUnit;
-            const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
-            const lineAmount = singleImported
-              ? (inv.amount || (totalWeight * mtAmount))
-              : (item.lineAmount || (baseTotalWeight * mtAmount));
-            const contractNumber = item.contractNumber || contract?.contractNumber || inv.contractNumber || '';
-            return { item, qtyUnits, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber };
-          });
-          // Imported invoices with no matching order inherit no line items, but the
-          // scaled QTY still belongs in the line section — synthesise one display
-          // row from the invoice's own product + scaled quantity so QTY (units) and
-          // Total Weight (MT) appear instead of an empty section.
-          if (useScaled && invRows.length === 0) {
-            const mtAmount = inv.pricePerMt || 0;
-            invRows.push({
-              item: { id: 'scaled-line', productName: inv.product || '', productDisplayName: inv.product || '', qty: scaledMt } as OrderLineItem,
-              qtyUnits: scaledMt,
-              weightPerUnit: 1,
-              totalWeight: scaledMt,
-              unitAmount: mtAmount,
-              mtAmount,
-              lineAmount: inv.amount || (scaledMt * mtAmount),
-              contractNumber: inv.contractNumber || '',
-            });
-          }
-          // Header Quantity (MT): the scaled figure drives it only when it cleanly
-          // represents the whole invoice — a single real line, or the synthesised
-          // one. A rare multi-line imported invoice keeps the sum of its visible
-          // rows so the header, the rows and the footer total all agree.
-          const totalMt = (useScaled && invRows.length === 1)
-            ? scaledMt
-            : (invRows.length
-              ? invRows.reduce((s, r) => s + r.totalWeight, 0)
-              : scaledMt);
-          const totalLineAmt = invRows.reduce((s, r) => s + r.lineAmount, 0);
-          const headerAmount = totalLineAmt > 0 ? totalLineAmt : (inv.amount || 0);
-          const derivedPricePerMt = totalMt > 0 && totalLineAmt > 0
-            ? totalLineAmt / totalMt
-            : (typeof inv.pricePerMt === 'number' ? inv.pricePerMt : 0);
+          // All figures come from the shared resolver so the header, the line rows,
+          // the footer totals, the invoice table and the edit modal always agree.
+          const { rows: invRows, totalMt, totalLineAmt, headerAmount, derivedPricePerMt } = resolveInvoiceRows(inv);
           // The REAL shipment behind this invoice, for the Edit Shipment button.
           // Must be a genuine record — the stub resolveInvoiceShipment builds for
           // PDFs is fine to print from but editing one would save nothing. Match by
@@ -14838,25 +14876,19 @@ export default function App() {
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
                     <div className="text-sm">{inv.carrier || '—'}</div></div>
                 </div>
+                {/* Quantity (MT), Total Weight (KG), Price/MT and Split No. moved
+                    out of the header — they live in the Line Items section below. */}
                 <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Quantity (MT)</label>
-                    <div className="text-sm font-bold">{totalMt.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
-                    <div className="text-sm font-bold">{(totalMt * 1000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
-                    <div className="text-sm font-mono">{derivedPricePerMt > 0 ? `$${derivedPricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
                     <div className="text-sm font-bold">${headerAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
-                    <div className="text-sm font-mono">{inv.splitNo || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Lot Code</label>
                     <div className="text-sm font-mono">{inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
                     <div className="text-sm font-mono">{inv.papsNo || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
                     <div className="text-sm font-mono">{inv.customsEntryNo || '—'}</div></div>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
                     <div className="text-sm">{inv.reversals || '—'}</div></div>
                 </div>
@@ -14867,6 +14899,8 @@ export default function App() {
                     <h4 className="text-xs font-bold uppercase">Line Items &amp; Contract Details ({invRows.length})</h4>
                   </div>
                   <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                      <div className="text-sm font-mono">{inv.splitNo || '—'}</div></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
                       <div className="text-sm font-mono font-bold">{inv.contractNumber || '—'}</div></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
@@ -14901,7 +14935,7 @@ export default function App() {
                         {rows.map(({ item, qtyUnits, weightPerUnit, totalWeight, unitAmount, mtAmount, lineAmount, contractNumber }) => (
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
-                            <td className="p-3">{qtyUnits}</td>
+                            <td className="p-3">{Number((qtyUnits || 0).toFixed(3))}</td>
                             <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
                             <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
                             <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
@@ -14966,7 +15000,7 @@ export default function App() {
                     // that field is still blank so a real scaled weight is never
                     // overwritten. Edits the working copy passed to the editor;
                     // Save persists it via saveShipmentEdits.
-                    const scaledFromInvoice = useScaled ? scaledMt : 0;
+                    const scaledFromInvoice = ((inv.id || '').startsWith('INV-IMPORT-') && typeof inv.qty === 'number' && inv.qty > 0) ? inv.qty : 0;
                     const opened = (scaledFromInvoice > 0 && !(target.scaledQty && target.scaledQty > 0))
                       ? { ...target, scaledQty: scaledFromInvoice }
                       : target;
@@ -14983,7 +15017,7 @@ export default function App() {
                   <Truck size={14} /> {invShipment ? 'Edit Shipment' : 'Create Shipment'}
                 </button>
                 <button
-                  onClick={() => { setEditingInvoiceCard(inv); setViewingInvoiceCard(null); }}
+                  onClick={() => { openInvoiceForEdit(inv); setViewingInvoiceCard(null); }}
                   className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
                 >
                   <Edit2 size={14} /> Edit Invoice
@@ -15045,13 +15079,10 @@ export default function App() {
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
                     <div className="text-sm">{viewingOrderCard.carrier || '—'}</div></div>
                 </div>
+                {/* Split Number, Total Weight (KG) and Total Weight (MT) moved out
+                    of the header — Split No. lives in the Line Items section below
+                    and the weights are in the per-line Total Weight column. */}
                 <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split Number</label>
-                    <div className="text-sm font-mono">{viewingOrderCard.splitNumber || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (KG)</label>
-                    <div className="text-sm font-bold">{(viewingOrderCard.lineItems.reduce((sum, item) => sum + item.totalWeight, 0) * 1000).toFixed(0)}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Weight (MT)</label>
-                    <div className="text-sm font-bold">{viewingOrderCard.lineItems.reduce((sum, item) => sum + item.totalWeight, 0).toFixed(2)}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Total Pallets</label>
                     <div className="text-sm font-bold">{(() => {
                       let pallets = 0;
@@ -15072,6 +15103,8 @@ export default function App() {
                   </div>
                   {/* Contract-dependent summary */}
                   <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
+                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                      <div className="text-sm font-mono">{viewingOrderCard.splitNumber || '—'}</div></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
                       <div className="text-sm font-mono font-bold">{viewingOrderCard.contractNumber || viewingOrderCard.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</div></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
@@ -21668,7 +21701,7 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
                         {contractInvoices.map(inv => (
-                          <tr key={inv.id} className="hover:bg-blue-50 cursor-pointer transition-colors" onClick={() => { setEditingInvoiceCard(inv); setContractOrdersPopup(null); }}>
+                          <tr key={inv.id} className="hover:bg-blue-50 cursor-pointer transition-colors" onClick={() => { openInvoiceForEdit(inv); setContractOrdersPopup(null); }}>
                             <td className="px-3 py-2 font-mono">{inv.invoiceNumber || '—'}</td>
                             <td className="px-3 py-2 font-mono">{inv.bolNumber || '—'}</td>
                             <td className="px-3 py-2">{inv.customer}</td>
