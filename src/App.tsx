@@ -18716,9 +18716,11 @@ export default function App() {
                           };
                           const term = shipLotSearch.trim().toLowerCase();
                           const matches = lotCodes
-                            .filter(lc => !current.includes(lc.lotNumber))
+                            // A lot code with no lot number isn't addable and would
+                            // crash the search (undefined.toLowerCase) — skip it.
+                            .filter(lc => lc.lotNumber && !current.includes(lc.lotNumber))
                             .filter(lc => !term
-                              || lc.lotNumber.toLowerCase().includes(term)
+                              || (lc.lotNumber || '').toLowerCase().includes(term)
                               || (lc.sugarType || '').toLowerCase().includes(term)
                               || (lc.countryOfOrigin || '').toLowerCase().includes(term)
                               || (lc.customerName || '').toLowerCase().includes(term)
