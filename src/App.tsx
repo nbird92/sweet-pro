@@ -9087,11 +9087,13 @@ export default function App() {
                                                       );
                                                     }
                                                     const s = shipments[0];
+                                                    // Unified resolver: fill blank display cells from the same BOL/PO's order/invoice/lot-code record.
+                                                    const sRes = resolveRecord({ bol: s.bol, po: s.po });
                                                     return (
                                                       <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${(s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-50 hover:bg-yellow-100' : !isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} onClick={() => setEditingShipment(s)}>
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer || sRes.customer || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{(() => {
                                                           // Look up ship-to via linked order's shipToLocationId
                                                           const linkedOrder = orders.find(o => o.bolNumber === s.bol);
@@ -9099,14 +9101,14 @@ export default function App() {
                                                           const cust = customers.find(c => c.name === linkedOrder.customer);
                                                           return cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)?.name || '—';
                                                         })()}</td>
-                                                        <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol}</td>
+                                                        <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product || sRes.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || sRes.contractNumber || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po || sRes.po || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol || sRes.bolNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier || sRes.carrier || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || sRes.trailerNo || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.start}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.out}</td>
@@ -9116,7 +9118,7 @@ export default function App() {
                                                             <option value="Scheduled">Scheduled</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || ''}>{(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || ''}>{(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || sRes.lotCode || '—'}</td>
                                                         <td className="px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
                                                           {/* No "Add Shipment" here — the slot is taken; adding is only
                                                               offered on rows whose appointment time is still available. */}
@@ -9885,6 +9887,9 @@ export default function App() {
                   const rowPricePerMt = (typeof i.pricePerMt === 'number' && i.pricePerMt > 0)
                     ? i.pricePerMt
                     : (rowResolved.derivedPricePerMt || 0);
+                  // Unified resolver: fill blank display cells (customer, PO, lot
+                  // code) from the same BOL/PO's order/shipment/lot-code record.
+                  const invRes = resolveRecord({ bol: i.bolNumber, po: i.po });
                   return (
                   <React.Fragment key={i.id}>
                     {/* content-visibility lets the browser skip render work for rows that aren't on screen.
@@ -9918,9 +9923,9 @@ export default function App() {
                       </td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer || invRes.customer || '—'}</td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${productTitle}` : ''}>{productDisplay}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
+                      <td className="p-4 text-xs border-r border-[#141414]/10">{i.po || invRes.po || '—'}</td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 font-bold ${(i.qty || 0) > 150 ? 'bg-red-50 text-red-700' : ''}`} title={(i.qty || 0) > 150 ? 'Over 150 MT — likely a x1000 / unit-vs-MT glitch. Edit the invoice to correct the quantity.' : ''}>{(i.qty || 0).toFixed(2)}{(i.qty || 0) > 150 && <span className="ml-1" title="Implausible quantity">⚠️</span>}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -9988,7 +9993,7 @@ export default function App() {
                         <input
                           type="text"
                           key={i.lotCode || ''}
-                          defaultValue={i.lotCode || lotCodeFromShipment({ shipmentId: i.shipmentId, bol: i.bolNumber })}
+                          defaultValue={i.lotCode || lotCodeFromShipment({ shipmentId: i.shipmentId, bol: i.bolNumber }) || invRes.lotCode}
                           onBlur={(e) => {
                             const v = e.target.value;
                             if (v !== (i.lotCode || '')) {
@@ -10404,19 +10409,22 @@ export default function App() {
                   const shipToName = ord.shipToLocationId
                     ? (ordCustomerRec?.shipToLocations?.find(l => l.id === ord.shipToLocationId)?.name || '—')
                     : '—';
+                  // Unified resolver: fill any blank display cell from the same
+                  // BOL/PO's invoice / shipment / lot-code record (display-only).
+                  const ordRes = resolveRecord({ bol: ord.bolNumber, po: ord.po });
                   return (
                     <React.Fragment key={ord.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer}</td>
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer || ordRes.customer || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
                         <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || ordRes.contractNumber || '—'}</td>
                         <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${totalWeight.toFixed(2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{(totalWeight * 1000).toFixed(0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po || ordRes.po || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || ordRes.carrier || '—'}</td>
                         {(() => {
                           // Price/MT prefers the matching contract's finalPrice
                           // (robust match: comma lists, line-item contracts, and
@@ -10465,8 +10473,8 @@ export default function App() {
                             {ord.status === 'Completed' && <option value="Completed">Completed</option>}
                           </select>
                         </td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || ordRes.location || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || ordRes.splitNo || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           {ord.status === 'Confirmed' ? (
                             <button
