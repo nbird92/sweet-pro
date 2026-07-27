@@ -236,7 +236,12 @@ export default function SalesForecastPage({
         const k = `${inv.customer}|${li.productName}|${idx}`;
         map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
       }
-    } else if (inv.product) {
+    } else if (inv.product && !inv.product.includes(',')) {
+      // Only a SINGLE product name. inv.product on a mixed load is a comma-joined
+      // display string ("GC100, LC170") that is not a real product — keying
+      // historical actuals under it invents a phantom the customer never bought
+      // and hides the real per-product history. Such invoices are counted only
+      // through their line items above.
       const k = `${inv.customer}|${inv.product}|${idx}`;
       map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
     }
@@ -660,7 +665,11 @@ export default function SalesForecastPage({
             addToMap(inv.customer, li.productName, inv.location || '', li.totalWeight);
           }
         }
-      } else if (inv.qty && inv.product) {
+      } else if (inv.qty && inv.product && !inv.product.includes(',')) {
+        // Skip comma-joined mixed-load product strings — they are not real
+        // products, so seeding a forecast line from one creates a phantom
+        // product the customer never actually bought. Line-item invoices above
+        // already carry the real per-product breakdown.
         addToMap(inv.customer, inv.product, inv.location || '', inv.qty);
       }
     }
@@ -671,6 +680,9 @@ export default function SalesForecastPage({
     //    counted through its invoice — the old code ingested both and double-counted.
     for (const s of shipments) {
       if (!s.qty || !s.customer || !s.product || !inWindow(s.date)) continue;
+      // Same phantom guard as invoices: a comma-joined mixed-load product string
+      // is not a real product, so don't seed a forecast line from it.
+      if (s.product.includes(',')) continue;
       const bol = (s.bol || '').trim();
       if (bol && invoicedBols.has(bol)) continue;
       addToMap(s.customer, s.product, s.location || '', s.qty);
@@ -777,12 +789,22 @@ export default function SalesForecastPage({
   const availableProducts = useMemo(() => {
     const prods: { name: string; location: string }[] = [];
     for (const qp of qaProducts) {
-      const loc = qp.location || skus.find(s => s.id === qp.skuId)?.location || '';
+      const linkedSku = skus.find(s => s.id === qp.skuId);
+      const loc = qp.location || linkedSku?.location || '';
       if (isInactiveLoc(loc)) continue;
-      prods.push({ name: qp.skuName, location: qp.location });
+      // QA products frequently store skuId but leave skuName blank (their display
+      // name is derived). Fall back to the linked SKU's name so the Add Product
+      // picker never renders a blank row.
+      const name = (qp.skuName || linkedSku?.name || '').trim();
+      if (!name) continue;
+      const rowLoc = qp.location || loc;
+      if (!prods.some((p) => p.name === name && p.location === rowLoc)) {
+        prods.push({ name, location: rowLoc });
+      }
     }
     for (const s of skus) {
       if (isInactiveLoc(s.location)) continue;
+      if (!s.name) continue;
       if (!prods.some((p) => p.name === s.name && p.location === s.location)) {
         prods.push({ name: s.name, location: s.location });
       }
@@ -1610,7 +1632,7 @@ export default function SalesForecastPage({
                             onClick={() => handleAddProductLine(p.name, p.location)}
                             className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100 border-b border-gray-100 transition-colors"
                           >
-                            <span className="font-medium">{p.name}</span>
+                            <span className="font-medium">{productToShortform?.(p.name) || p.name}</span>
                             <span className="ml-2 text-gray-400">{p.location}</span>
                           </button>
                         ))}
@@ -1685,7 +1707,7 @@ export default function SalesForecastPage({
                           return (
                             <tr key={line.id} className="border-b border-gray-200">
                               <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium border border-gray-200">
-                                <div>{line.productName}</div>
+                                <div>{productToShortform?.(line.productName) || line.productName}</div>
                                 <div className="text-[10px] text-gray-400">{line.location}</div>
                               </td>
                               {Array.from({ length: modalColumnCount }, (_, i) => {

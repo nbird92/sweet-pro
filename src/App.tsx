@@ -1105,7 +1105,12 @@ export default function App() {
     if (!effNetKg && existing && existing.qty > 0 && existing.totalWeight > 0
         && (existing.netWeightPerUnit || 0) > 0
         && existing.productName === item.productName) {
-      effNetKg = (existing.totalWeight * 1000) / existing.qty;
+      const recovered = (existing.totalWeight * 1000) / existing.qty;
+      // Cap at 2000 kg/unit — no single package weighs more, so a larger value
+      // means the existing line is already inflated (~x1000). Don't perpetuate
+      // it (that's the "editing the invoice never corrects the QTY" symptom);
+      // fall back to treating qty as MT so the user's fix can take.
+      if (recovered > 0 && recovered <= 2000) effNetKg = recovered;
     }
     // When the product has no per-unit weight (bulk/liquid), the quantity is the
     // MT figure directly (netWeightPerUnit 0); otherwise convert units -> MT.
@@ -4762,11 +4767,18 @@ export default function App() {
           : [];
         const vancouver = mapped.filter((s: any) => vancBays.some((b: string) => s.bay === b));
         const hamilton = mapped.filter((s: any) => !vancBays.some((b: string) => s.bay === b));
-        // Deduplicate: one shipment per week+day+time+bay, keep first occurrence
+        // Deduplicate by DOCUMENT ID only — genuine duplicates. The old
+        // week|day|time|bay key deleted legitimate distinct shipments that
+        // share a slot: a multi-line order schedules one shipment per line
+        // into the SAME bay/time, and every blank-slot draft stub keys to
+        // "|||". Those are real records (with their own lot codes, seals and
+        // quantities), not duplicates — collapsing them by slot silently
+        // destroyed data on every load. Same id can only occur from a bad
+        // merge, so id-based dedup is safe and non-destructive.
         const dedup = (arr: Shipment[]) => {
           const seen = new Set<string>();
           return arr.filter(s => {
-            const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
+            const key = s.id;
             if (seen.has(key)) return false;
             seen.add(key);
             return true;
@@ -7427,9 +7439,26 @@ export default function App() {
       setErrorBox(`Product "${newLineItem.productName}" not found in catalog`);
       return;
     }
-    const netWeightKg = product.netWeightKg || product.netWeight;
-    const totalWeightKg = newLineItem.qty * netWeightKg;
-    const totalWeight = totalWeightKg / 1000; // Convert to MT for contract/pricing
+    const catalogNetKg = product.netWeightKg || product.netWeight || 0;
+    const existingLine = editingLineItemIdx !== null ? orderLineItems[editingLineItemIdx] : undefined;
+    // Resolve the effective per-unit weight (kg). Prefer the catalog; when it has
+    // none (bulk/liquid, or a product whose catalog entry moved/renamed) recover
+    // it from the line being edited so re-saving never zeroes a bulk line's
+    // weight/amount. totalWeight is MT and qty is units, so totalWeight*1000/qty
+    // is kg/unit. Capped at 2000 kg/unit: a single package never weighs more, so
+    // a larger value means the stored line is already inflated (~x1000) and must
+    // NOT be perpetuated — fall back to treating qty as MT directly.
+    let effNetKg = catalogNetKg;
+    if (!effNetKg && existingLine && existingLine.qty > 0 && existingLine.totalWeight > 0
+        && (existingLine.netWeightPerUnit || 0) > 0
+        && existingLine.productName === newLineItem.productName) {
+      const recovered = (existingLine.totalWeight * 1000) / existingLine.qty;
+      if (recovered > 0 && recovered <= 2000) effNetKg = recovered;
+    }
+    const hasUnitWeight = effNetKg > 0;
+    // Cased goods: qty is a unit count -> MT via per-unit weight. Bulk/liquid:
+    // the entered qty IS the MT figure (netWeightPerUnit 0).
+    const totalWeight = hasUnitWeight ? (newLineItem.qty * effNetKg) / 1000 : newLineItem.qty; // MT
     // Contract is optional. When provided, validate product fit and volume.
     let mtAmount = 0;
     let unitAmount = 0;
@@ -7463,10 +7492,16 @@ export default function App() {
       // Use contract line price if available, otherwise use contract finalPrice
       const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
       mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
-      unitAmount = mtAmount * netWeightKg / 1000;
+      unitAmount = hasUnitWeight ? mtAmount * effNetKg / 1000 : mtAmount;
+      lineAmount = totalWeight * mtAmount;
+    } else if (existingLine && (existingLine.mtAmount || 0) > 0 && existingLine.productName === newLineItem.productName) {
+      // Contract-less priced line (e.g. sheet-synced Price/MT): preserve the
+      // prior $/MT and rescale to the new weight instead of zeroing pricing.
+      mtAmount = existingLine.mtAmount!;
+      unitAmount = hasUnitWeight ? mtAmount * effNetKg / 1000 : mtAmount;
       lineAmount = totalWeight * mtAmount;
     }
-    // If no contract, pricing fields remain 0 (caller may fill them later)
+    // Otherwise (brand-new contract-less line) pricing stays 0 for the caller.
 
     if (editingLineItemIdx !== null) {
       // Update existing line item
@@ -7477,7 +7512,7 @@ export default function App() {
         productKey: newLineItem.productKey || undefined,
         qty: newLineItem.qty,
         contractNumber: newLineItem.contractNumber,
-        netWeightPerUnit: netWeightKg / 1000,
+        netWeightPerUnit: hasUnitWeight ? effNetKg / 1000 : 0,
         totalWeight,
         unitAmount,
         mtAmount,
@@ -7496,7 +7531,7 @@ export default function App() {
         productKey: newLineItem.productKey || undefined,
         qty: newLineItem.qty,
         contractNumber: newLineItem.contractNumber,
-        netWeightPerUnit: netWeightKg / 1000,
+        netWeightPerUnit: hasUnitWeight ? effNetKg / 1000 : 0,
         totalWeight,
         unitAmount,
         mtAmount,
@@ -9414,7 +9449,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer}</td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${productTitle}` : ''}>{productDisplay}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po}</td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{(i.qty || 0).toFixed(2)}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 font-bold ${(i.qty || 0) > 150 ? 'bg-red-50 text-red-700' : ''}`} title={(i.qty || 0) > 150 ? 'Over 150 MT — likely a x1000 / unit-vs-MT glitch. Edit the invoice to correct the quantity.' : ''}>{(i.qty || 0).toFixed(2)}{(i.qty || 0) > 150 && <span className="ml-1" title="Implausible quantity">⚠️</span>}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
@@ -9876,7 +9911,7 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
                         <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '—'}</td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{(totalWeight * 1000).toFixed(0)}</td>
+                        <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${totalWeight.toFixed(2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{(totalWeight * 1000).toFixed(0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
