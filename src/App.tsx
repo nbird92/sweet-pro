@@ -1199,6 +1199,106 @@ export default function App() {
     }));
   };
 
+  // ── Global order-uniqueness guard ──────────────────────────────────────────
+  // Refs mirroring live orders/invoices so every add path can check the CURRENT
+  // list synchronously — not a stale closure/snapshot. This is what let the Sync
+  // Orders modal and the scan-email importer each create the same PO/BOL: they
+  // deduped against a snapshot taken before the other had committed.
+  const ordersRef = useRef(orders);
+  const invoicesRef = useRef(invoices);
+  useEffect(() => { ordersRef.current = orders; }, [orders]);
+  useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
+
+  // Is this PO (by numeric value) or BOL already taken by a live order or invoice?
+  // Returns 'po' | 'bol' | null. excludeOrderId lets an EDIT skip its own row.
+  const orderPoBolConflict = (po?: string, bol?: string, excludeOrderId?: string): 'po' | 'bol' | null => {
+    const pk = poKey(po || '');
+    const b = (bol || '').trim().toUpperCase();
+    if (pk) {
+      if (ordersRef.current.some(o => o.id !== excludeOrderId && poKey(o.po) === pk)) return 'po';
+      if (invoicesRef.current.some(i => poKey(i.po) === pk)) return 'po';
+    }
+    if (b) {
+      if (ordersRef.current.some(o => o.id !== excludeOrderId && (o.bolNumber || '').trim().toUpperCase() === b)) return 'bol';
+      if (invoicesRef.current.some(i => (i.bolNumber || '').trim().toUpperCase() === b)) return 'bol';
+    }
+    return null;
+  };
+
+  // THE single entry point for adding new orders. Drops any candidate whose
+  // numeric PO or normalized BOL already exists on a live order/invoice, or
+  // repeats within the batch — regardless of which path (sync modal, scan
+  // importer, manual add, CSV, batch, sheet preview) produced it. ordersRef is
+  // advanced synchronously so back-to-back adds in the same tick can't slip a
+  // duplicate through; the commit is a FUNCTIONAL setOrders that re-dedups
+  // against the authoritative prev so it can't clobber a concurrent edit either.
+  // Returns the orders actually added.
+  const addOrdersUnique = (candidates: Order[]): Order[] => {
+    const accepted: Order[] = [];
+    const batchPo = new Set<string>();
+    const batchBol = new Set<string>();
+    for (const c of candidates) {
+      const pk = poKey(c.po);
+      const b = (c.bolNumber || '').trim().toUpperCase();
+      if ((pk && batchPo.has(pk)) || (b && batchBol.has(b))) continue; // dup within this batch
+      if (orderPoBolConflict(c.po, c.bolNumber)) continue;             // dup vs existing order/invoice
+      if (pk) batchPo.add(pk);
+      if (b) batchBol.add(b);
+      accepted.push(c);
+    }
+    if (accepted.length) {
+      ordersRef.current = [...ordersRef.current, ...accepted]; // synchronous for same-tick adds
+      setOrders(prev => {
+        const poSeen = new Set(prev.map(o => poKey(o.po)).filter(Boolean));
+        const bolSeen = new Set(prev.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+        const add = accepted.filter(c => {
+          const pk = poKey(c.po);
+          const b = (c.bolNumber || '').trim().toUpperCase();
+          const dup = (pk && poSeen.has(pk)) || (b && bolSeen.has(b));
+          if (!dup) { if (pk) poSeen.add(pk); if (b) bolSeen.add(b); }
+          return !dup;
+        });
+        return add.length ? [...prev, ...add] : prev;
+      });
+    }
+    return accepted;
+  };
+
+  // MANUAL cleanup for EXISTING duplicate orders (toolbar "Remove Duplicates").
+  // Collapses orders that share a numeric PO OR a normalized BOL, keeping the
+  // most-progressed / most-complete record of each. Never runs automatically.
+  const removeDuplicateOrders = () => {
+    if (orders.length === 0) return;
+    const statusRank = (s?: string): number => {
+      const x = (s || '').toLowerCase();
+      if (x.includes('complet') || x.includes('bill')) return 0;
+      if (x.includes('ship')) return 1;
+      if (x.includes('confirm')) return 2;
+      if (x.includes('open')) return 3;
+      if (x.includes('cancel')) return 5;
+      return 4;
+    };
+    const filled = (o: Order) => Object.values(o).filter(v => v !== undefined && v !== null && v !== '').length;
+    // Best record first, so the survivor of each group is the most meaningful one.
+    const sorted = [...orders].sort((a, b) => statusRank(a.status) - statusRank(b.status) || filled(b) - filled(a) || a.id.localeCompare(b.id));
+    const seenPo = new Set<string>();
+    const seenBol = new Set<string>();
+    const dropIds: string[] = [];
+    for (const o of sorted) {
+      const pk = poKey(o.po);
+      const b = (o.bolNumber || '').trim().toUpperCase();
+      if ((pk && seenPo.has(pk)) || (b && seenBol.has(b))) { dropIds.push(o.id); continue; }
+      if (pk) seenPo.add(pk);
+      if (b) seenBol.add(b);
+    }
+    if (dropIds.length === 0) { setErrorBox('No duplicate orders found (by PO or BOL number).'); return; }
+    if (!window.confirm(`Remove ${dropIds.length} duplicate order${dropIds.length === 1 ? '' : 's'} that share a PO or BOL number? The most-progressed record of each is kept. This cannot be undone.`)) return;
+    const dropSet = new Set(dropIds);
+    deleteDocs(COLLECTIONS.orders, dropIds).catch(() => {});
+    ordersRef.current = ordersRef.current.filter(o => !dropSet.has(o.id));
+    setOrders(prev => prev.filter(o => !dropSet.has(o.id)));
+  };
+
   const createOrderFromReview = (rev: POReview, reservedBols: string[] = [], reservedPos: string[] = []): string | null => {
     const customer = customers.find(c => c.id === rev.customerId);
     if (!customer) { setErrorBox('Select a customer before creating the order.'); return null; }
@@ -1208,9 +1308,10 @@ export default function App() {
     // batch), matched by NUMERIC value ("PO10115420" == "10115420"). reservedPos
     // holds poKey() values reserved earlier in the same batch.
     const poK = poKey(rev.po);
-    if (poK && (orders.some(o => samePoNumber(o.po, rev.po))
-        || invoices.some(i => samePoNumber(i.po, rev.po))
-        || reservedPos.includes(poK))) {
+    // Uniqueness via the shared refs (current list, not a stale closure) + the
+    // in-batch reserved set. PO is checked here for the early error; the BOL is
+    // generated below and re-checked at commit by addOrdersUnique.
+    if ((poK && reservedPos.includes(poK)) || orderPoBolConflict(rev.po)) {
       setErrorBox(`PO ${rev.po} already exists in an order or invoice — PO numbers must be unique.`);
       return null;
     }
@@ -1266,7 +1367,10 @@ export default function App() {
       papsNo: rev.papsNo.trim() || undefined,
       customsEntryNo: rev.customsEntryNo.trim() || undefined,
     };
-    setOrders(prev => [...prev, newOrder]);
+    // Commit through the shared uniqueness chokepoint (re-checks PO + the just-
+    // generated BOL against the live list). If a race means it was already added,
+    // addOrdersUnique drops it — no duplicate.
+    if (addOrdersUnique([newOrder]).length === 0) return null;
     // Schedule a shipment appointment for the new PO (every PO needs one). The
     // appointment date is the shipment date (= pick-up date); time is the pick-up
     // time. Filed in the Hamilton or Vancouver scheduler by the order's origin.
@@ -2037,14 +2141,13 @@ export default function App() {
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
         }
       }
-      // Apply auto-enrichment patches to existing orders, then append new orders.
-      if (built.length || orderPatch.size) {
-        setOrders(prev => {
-          let next = orderPatch.size ? prev.map(o => orderPatch.has(o.id) ? { ...o, ...orderPatch.get(o.id)! } : o) : prev;
-          if (built.length) next = [...next, ...built];
-          return next;
-        });
+      // Apply auto-enrichment patches to existing orders, then append new orders
+      // through the shared uniqueness guard so an emailed PO that was ALSO pulled
+      // in via the Sync Orders modal (same PO/BOL) is not duplicated.
+      if (orderPatch.size) {
+        setOrders(prev => prev.map(o => orderPatch.has(o.id) ? { ...o, ...orderPatch.get(o.id)! } : o));
       }
+      if (built.length) addOrdersUnique(built);
       if (invoicePatch.size) setInvoices(prev => prev.map(i => invoicePatch.has(i.id) ? { ...i, ...invoicePatch.get(i.id)! } : i));
       if (custPatch.size) setCustomers(prev => prev.map(c => custPatch.has(c.id) ? { ...c, ...custPatch.get(c.id)! } : c));
       // File carrier-confirmed appointments into the schedule (Hamilton/Vancouver).
@@ -6543,11 +6646,20 @@ export default function App() {
     const afterUpdates = current.map(o => updatedById.get(o.id) || o);
 
     // Never import an order that DUPLICATES one already present — by BOL or by
-    // NUMERIC PO. The importer dedups against the snapshot it was handed at preview
-    // time, but the live list can move between preview and apply (a Firestore push,
-    // or the earlier steps of a Sync All run), so re-check against the current list.
-    const seenBol = new Set(afterUpdates.map(o => (o.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-    const seenPo = new Set(afterUpdates.map(o => poKey(o.po)).filter(Boolean));
+    // NUMERIC PO. Seed the seen-sets from BOTH the passed snapshot AND the live
+    // refs (ordersRef/invoicesRef), because the list can move between preview and
+    // apply (a Firestore push, an earlier Sync-All step, or the scan-email
+    // importer) — checking only `current` is exactly how the same PO got imported
+    // once as an L-BOL here and once as a B-BOL by the scanner.
+    const seenBol = new Set<string>();
+    const seenPo = new Set<string>();
+    const addKeys = (bol?: string, po?: string) => {
+      const b = (bol || '').trim().toUpperCase(); if (b) seenBol.add(b);
+      const p = poKey(po || ''); if (p) seenPo.add(p);
+    };
+    afterUpdates.forEach(o => addKeys(o.bolNumber, o.po));
+    ordersRef.current.forEach(o => addKeys(o.bolNumber, o.po));
+    invoicesRef.current.forEach(i => addKeys(i.bolNumber, i.po));
     const freshNew: Order[] = [];
     for (const o of preview.newOrders) {
       const b = (o.bolNumber || '').trim().toUpperCase();
@@ -6566,6 +6678,7 @@ export default function App() {
       isInactiveLocation(o.location) ? { ...o, location: '' } : o;
 
     const merged = [...afterUpdates, ...freshNew].map(stripInactiveLoc);
+    ordersRef.current = merged; // advance synchronously so a following sync/ingest sees these
     setOrders(merged);
     if (bolRemap.size) {
       const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
@@ -9893,6 +10006,14 @@ export default function App() {
             <button onClick={() => orderFileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
+            </button>
+            <button
+              onClick={removeDuplicateOrders}
+              disabled={orders.length === 0}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Remove duplicate orders that share a PO or BOL number, keeping the most-progressed record of each."
+            >
+              <Trash2 size={12} /> Remove Duplicates
             </button>
             <button
               onClick={() => { setPoScanFiles([]); setPoReviews([]); setPoScanError(null); setIsScanningPO(true); }}
@@ -16681,7 +16802,7 @@ export default function App() {
                     // Vancouver shipment lists (both Ferguson and Sherman
                     // locations are Hamilton-side).
                     if (sheetSyncPreview.newOrders.length > 0) {
-                      setOrders([...orders, ...sheetSyncPreview.newOrders]);
+                      addOrdersUnique(sheetSyncPreview.newOrders);
                     }
                     if (sheetSyncPreview.newShipments.length > 0) {
                       const hamiltonAdds = sheetSyncPreview.newShipments.filter(s =>
@@ -22118,7 +22239,14 @@ export default function App() {
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
                         };
-                        setOrders([...orders, newOrder]);
+                        {
+                          const conflict = orderPoBolConflict(newOrder.po, newOrder.bolNumber);
+                          if (conflict) {
+                            setErrorBox(`This order duplicates an existing ${conflict === 'bol' ? `BOL ${newOrder.bolNumber}` : `PO ${newOrder.po}`} — duplicate PO/BOL numbers are not allowed.`);
+                            return;
+                          }
+                        }
+                        addOrdersUnique([newOrder]);
                       }
                       setIsAddingOrder(false);
                       setEditingOrder(null);
@@ -22180,7 +22308,14 @@ export default function App() {
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
                         };
-                        setOrders([...orders, newOrder]);
+                        {
+                          const conflict = orderPoBolConflict(newOrder.po, newOrder.bolNumber);
+                          if (conflict) {
+                            setErrorBox(`This order duplicates an existing ${conflict === 'bol' ? `BOL ${newOrder.bolNumber}` : `PO ${newOrder.po}`} — duplicate PO/BOL numbers are not allowed.`);
+                            return;
+                          }
+                        }
+                        addOrdersUnique([newOrder]);
                         setIsAddingOrder(false);
                         setEditingOrder(null);
                         setOrderLineItems([]);
@@ -23023,7 +23158,12 @@ export default function App() {
                                 palletType: selectedContract?.palletType || '',
                               };
                             });
-                            setOrders([...orders, ...newOrders]);
+                            {
+                              const added = addOrdersUnique(newOrders);
+                              if (added.length < newOrders.length) {
+                                setErrorBox(`${newOrders.length - added.length} of ${newOrders.length} batch order(s) skipped — duplicate PO or BOL number.`);
+                              }
+                            }
                             setIsAddingBatchOrder(false);
                             setBatchOrder({
                               customer: '',
