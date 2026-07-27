@@ -85,7 +85,10 @@ export async function fetchCollection<T>(collectionName: string): Promise<T[]> {
 // Delete specific documents from a collection by id (used to drain the
 // incomingPoOrders queue after the app ingests them into orders).
 export async function deleteDocs(collectionName: string, ids: string[]): Promise<void> {
-  await Promise.all(ids.map(id => deleteDoc(doc(db, collectionName, id)).catch(() => {})));
+  // Let failures propagate so callers with a try/catch (e.g. Clear All) actually
+  // surface a "sync failed" warning instead of falsely reporting success.
+  // Best-effort callers attach their own .catch() at the call site.
+  await Promise.all(ids.map(id => deleteDoc(doc(db, collectionName, id))));
 }
 
 // Atomically CLAIM a queue doc: in a transaction, read it and (if it still

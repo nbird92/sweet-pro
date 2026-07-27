@@ -1325,14 +1325,29 @@ export default function App() {
       const cn = (li.contractNumber || '').trim();
       if (cn) mtByContract.set(cn, (mtByContract.get(cn) || 0) + (li.totalWeight || 0));
     }
+    // Volume already committed by OTHER unbilled open orders on each contract —
+    // order creation never decrements volumeOutstanding (only Complete & Bill
+    // does), so without netting this out two open orders could each pass the
+    // per-order check and together over-book the contract. Built from the live
+    // ref, which advances synchronously as a batch creates orders one by one.
+    const committedByContract = new Map<string, number>();
+    for (const o of ordersRef.current) {
+      const st = (o.status || '').toLowerCase();
+      if (st.includes('cancel') || st.includes('complet') || st.includes('bill')) continue;
+      for (const li of (o.lineItems || [])) {
+        const c = (li.contractNumber || '').trim();
+        if (c) committedByContract.set(c, (committedByContract.get(c) || 0) + (li.totalWeight || 0));
+      }
+    }
     for (const [cn, mt] of mtByContract) {
       const ct = contracts.find(c => c.contractNumber === cn);
       if (!ct) continue; // scanned / unknown contract — not restricted
-      const remaining = ct.volumeOutstanding != null
+      const base = ct.volumeOutstanding != null
         ? ct.volumeOutstanding
         : Math.max(0, (ct.contractVolume || 0) - (ct.volumeTaken || 0));
+      const remaining = base - (committedByContract.get(cn) || 0);
       if (mt > remaining + 1e-6) {
-        setErrorBox(`Not enough contract volume on ${cn}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining, but this order books ${mt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT against it. Reduce the quantity or choose a different contract.`);
+        setErrorBox(`Not enough contract volume on ${cn}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining (after open orders), but this order books ${mt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT against it. Reduce the quantity or choose a different contract.`);
         return null;
       }
     }
@@ -1869,7 +1884,7 @@ export default function App() {
       locationObj?.appointmentEndTime || '18:00',
       locationObj?.appointmentDuration || 30,
     );
-    const booked = new Set(list.filter(s => s.date === dateISO).map(s => `${s.time}|${s.bay}`));
+    const booked = new Set(list.filter(s => s.date === dateISO && s.status !== 'Cancelled').map(s => `${s.time}|${s.bay}`));
     const freeBayAt = (t: string) => bays.find(b => !booked.has(`${t}|${b}`));
     const bay = freeBayAt(time);
     if (bay) {
@@ -2684,8 +2699,9 @@ export default function App() {
           // Match an existing invoice by its UNIQUE invoice number (BOL numbers
           // are shared across invoices, so we never match/overwrite by BOL). A
           // row with no invoice number always creates a new invoice.
-          const existingIdx = invoiceNumber.trim()
-            ? workingInvoices.findIndex(inv => (inv.invoiceNumber || '').trim() === invoiceNumber.trim())
+          const invU = invoiceNumber.trim().toUpperCase();
+          const existingIdx = invU
+            ? workingInvoices.findIndex(inv => (inv.invoiceNumber || '').trim().toUpperCase() === invU)
             : -1;
           if (existingIdx !== -1) {
             updatedCount++;
@@ -3245,8 +3261,16 @@ export default function App() {
             let newCount = 0;
             let updatedCount = 0;
             for (const s of incoming) {
-              const key = `${s.week}|${s.day}|${s.time}|${s.bay}`;
-              const existingIdx = working.findIndex(ex => `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === key);
+              const slot = `${s.week}|${s.day}|${s.time}|${s.bay}`;
+              // Match existing shipments by STABLE identity (id, then BOL), not
+              // slot — two distinct shipments legitimately share a slot (multi-line
+              // orders, blank-slot stubs) and a rescheduled shipment changes slot.
+              // Slot is only a last resort when the row has neither id nor BOL.
+              const sBol = (s.bol || '').trim().toUpperCase();
+              const existingIdx = working.findIndex(ex =>
+                (s.id && ex.id === s.id) ||
+                (!s.id && sBol && (ex.bol || '').trim().toUpperCase() === sBol) ||
+                (!s.id && !sBol && `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === slot));
               if (existingIdx >= 0) {
                 const ex = working[existingIdx];
                 const mergedBol = s.bol || ex.bol;
@@ -3277,8 +3301,11 @@ export default function App() {
                 updatedCount++;
                 continue;
               }
-              if (importSlots.has(key)) continue;
-              importSlots.add(key);
+              // Intra-batch dedup on identity too, so two distinct blank/same-slot
+              // rows in one file aren't collapsed into one.
+              const dedupKey = s.id || (sBol ? `BOL:${sBol}` : slot);
+              if (importSlots.has(dedupKey)) continue;
+              importSlots.add(dedupKey);
               newCount++;
               working.push(s);
             }
@@ -4374,6 +4401,7 @@ export default function App() {
       shippingTerms: ro.shippingTerms || '',
       location: ro.location || '',
       contractNumber: ro.contractNumber || '',
+      splitNo: ro.splitNumber || undefined,
     };
     setInvoices(prev => prev.some(i => i.shipmentId === ro.id && i.status === 'Credit') ? prev : [...prev, creditInvoice]);
 
@@ -4816,6 +4844,11 @@ export default function App() {
     qatemplates: JSON.stringify([]),
     customergroups: JSON.stringify([]),
     shippingterms: JSON.stringify(INITIAL_SHIPPING_TERMS),
+    // Seed these two demo-populated baselines so a FAILED initial load (state
+    // still holds the INITIAL_ defaults) doesn't read as "dirty" and push the
+    // demo sugar types / naming formulas over real records on the first autosave.
+    sugartypes: JSON.stringify(INITIAL_SUGAR_TYPES),
+    namingformulas: JSON.stringify(INITIAL_NAMING_FORMULAS),
     emaillog: JSON.stringify([]),
     emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
     returnorders: JSON.stringify([]),
@@ -6257,6 +6290,7 @@ export default function App() {
         shippingTerms: linkedOrder?.shippingTerms || '',
         location: linkedOrder?.location || '',
         contractNumber: linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
+        splitNo: shipment.splitNumber || linkedOrder?.splitNumber || undefined,
         lotCode: ((shipment.lotNumbers && shipment.lotNumbers.length > 0) ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : [])).filter(Boolean).join(', ') || undefined,
       };
 
@@ -6326,6 +6360,11 @@ export default function App() {
   const completeAndBillOrder = (orderId: string, opts?: { invoiceQtyMt?: number; shipmentId?: string }) => {
     const order = orders.find(o => o.id === orderId);
     if (!order || order.status === 'Completed') return;
+    // Whole-function guard: if this order is already invoiced, do nothing — the
+    // in-updater dedup (below) prevents the duplicate invoice, but the contract
+    // drawdown, CHEP movement, and BOL/COA auto-emails happen OUTSIDE it, so
+    // without this early return they would fire again on a suppressed duplicate.
+    if (invoices.some(inv => inv.shipmentId === orderId)) return;
 
     // Set order status to Completed
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Completed' } : o));
@@ -6374,6 +6413,7 @@ export default function App() {
       shippingTerms: order.shippingTerms || '',
       location: order.location || '',
       contractNumber: order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
+      splitNo: order.splitNumber || undefined,
       lotCode: lotCodeFromShipment({ shipmentId: opts?.shipmentId, bol: order.bolNumber }) || undefined,
     };
 
@@ -6576,7 +6616,23 @@ export default function App() {
 
   const applyInvoiceSyncResult = (preview: InvoiceSyncResult, current: Invoice[]): Invoice[] => {
     const updatedById = new Map(preview.updatedInvoices.map((u): [string, Invoice] => [u.id, u]));
-    let afterUpdates = current.map(inv => updatedById.get(inv.id) || inv);
+    // The importer's "updated" invoice is a whole-record snapshot taken at FETCH
+    // time. Replacing the live invoice with it would revert any edit made after
+    // the fetch started. Instead merge ONLY the fields the importer backfills —
+    // blank on the current record (amount fillable when 0, matching the importer).
+    const isSyncBlank = (v: unknown) => v === undefined || v === null || v === '';
+    let afterUpdates = current.map(inv => {
+      const u = updatedById.get(inv.id);
+      if (!u) return inv;
+      const merged: Invoice = { ...inv };
+      let changed = false;
+      (Object.keys(u) as (keyof Invoice)[]).forEach(k => {
+        if (k === 'id') return;
+        const fillable = k === 'amount' ? (!merged.amount || merged.amount === 0) : isSyncBlank(merged[k]);
+        if (fillable && !isSyncBlank(u[k])) { (merged as any)[k] = u[k]; changed = true; }
+      });
+      return changed ? merged : inv;
+    });
     // Belt-and-braces for the Complete & Bill duplication: a NUMBERED new invoice
     // whose BOL|numeric-PO matches a live NUMBER-LESS invoice (an in-app C&B
     // invoice awaiting its SI number) is the same document. Adopt just the number
@@ -8931,7 +8987,7 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" onClick={(e) => e.stopPropagation()}>
                                                           <select value={s.status} onChange={(e) => updateShipmentStatus(s.id, e.target.value)}
                                                             className={`px-1 py-0 rounded-full font-bold uppercase text-[7px] focus:outline-none cursor-pointer ${(s.status || '').toLowerCase().includes('confirmed') ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
-                                                            <option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Cancelled">Cancelled</option>
+                                                            <option value="Scheduled">Scheduled</option><option value="Confirmed">Confirmed</option><option value="In Progress">In Progress</option><option value="Completed">Completed</option><option value="Cancelled">Cancelled</option>
                                                           </select>
                                                         </td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5" title={(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || ''}>{(s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(', ') || '—'}</td>
@@ -9717,7 +9773,17 @@ export default function App() {
                           onBlur={(e) => {
                             const ppm = parseFloat(e.target.value) || 0;
                             if (ppm !== (i.pricePerMt ?? 0)) {
-                              setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100 } : inv));
+                              setInvoices(prev => prev.map(inv => {
+                                if (inv.id !== i.id) return inv;
+                                // Keep the line items in step with the header price, else
+                                // the detail modal (which sums line amounts) disagrees and a
+                                // later line-item edit reverts the price from stale mtAmount.
+                                const lineItems = (inv.lineItems || []).map(li => {
+                                  const tw = li.totalWeight || 0;
+                                  return { ...li, mtAmount: ppm, lineAmount: tw > 0 ? Math.round(tw * ppm * 100) / 100 : li.lineAmount, unitAmount: undefined };
+                                });
+                                return { ...inv, pricePerMt: ppm, amount: Math.round(ppm * inv.qty * 100) / 100, lineItems };
+                              }));
                             }
                           }}
                           placeholder="—"
@@ -9736,6 +9802,7 @@ export default function App() {
                           <option value="Paid">Paid</option>
                           <option value="Overdue">Overdue</option>
                           <option value="Cancelled">Cancelled</option>
+                          <option value="Credit">Credit</option>
                         </select>
                       </td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
@@ -10051,6 +10118,7 @@ export default function App() {
                 setOrderPO('');
                 setOrderLineItems([]);
                 setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
+                setEditingLineItemIdx(null);
                 setOrderCurrency('');
                 setEditingOrder(null);
                 setIsAddingOrder(true);
@@ -10293,6 +10361,8 @@ export default function App() {
                               setOrderPapsNo(ord.papsNo || '');
                               setOrderCustomsEntryNo(ord.customsEntryNo || '');
                               setOrderLineItems(ord.lineItems);
+                              setEditingLineItemIdx(null);
+                              setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                               if (cust) {
                                 setFilteredOrderContracts(contractsForCustomer(cust));
                               }
@@ -14483,7 +14553,7 @@ export default function App() {
                           <tr key={item.id} className={editingInvLineIdx === idx ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : 'hover:bg-[#141414]/5'}>
                             <td className="p-3">{lineItemToShortform(item)}{editingInvLineIdx === idx && <span className="ml-2 text-[9px] font-bold uppercase text-blue-600">editing…</span>}</td>
                             <td className="p-3">{lineItemUnits(item)}</td>
-                            <td className="p-3">{item.netWeightPerUnit}</td>
+                            <td className="p-3">{item.qty ? (item.totalWeight / item.qty).toFixed(3) : (item.netWeightPerUnit || 0).toFixed(3)}</td>
                             <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
                             <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
                             <td className="p-3">{item.mtAmount ? `$${item.mtAmount.toFixed(2)}` : '—'}</td>
@@ -18154,7 +18224,7 @@ export default function App() {
                   const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                   const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                  const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber));
+                  const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber && s.status !== 'Cancelled'));
                   return (
                     <div className="border border-[#141414] overflow-hidden">
                       <div className="bg-[#141414] text-[#E4E3E0] p-3">
@@ -18245,7 +18315,7 @@ export default function App() {
                       const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                       const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                       const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                      const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber));
+                      const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber && s.status !== 'Cancelled'));
 
                       const filteredBOLOrders = unscheduledOrders.filter(o => {
                         const matchesCustomer = !shipmentSearchCustomer || o.customer === shipmentSearchCustomer;
@@ -18465,7 +18535,7 @@ export default function App() {
                             const shipLoc = editingShipment.location || (scheduleLocation.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver');
                             const locIsHam = shipLoc.toLowerCase().includes('hamilton');
                             const dayShipments = (locIsHam ? hamiltonShipments : vancouverShipments)
-                              .filter(s => s.date === editingShipment.date && s.id !== editingShipment.id);
+                              .filter(s => s.date === editingShipment.date && s.id !== editingShipment.id && s.status !== 'Cancelled');
                             const bays = locations.find(l => l.name.toLowerCase().includes(shipLoc.toLowerCase()))?.bays || [];
                             const booked = new Set(dayShipments.map(s => `${s.time}|${s.bay}`));
                             const isOpen = (slot: string) => editingShipment.bay
@@ -18498,8 +18568,10 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, status: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
+                          <option value="Scheduled">Scheduled</option>
                           <option value="Confirmed">Confirmed</option>
                           <option value="In Progress">In Progress</option>
+                          <option value="Completed">Completed</option>
                           <option value="Cancelled">Cancelled</option>
                         </select>
                       </div>
@@ -21646,6 +21718,13 @@ export default function App() {
                   : allMatching;
 
                 const openOrderForEdit = (ord: Order) => {
+                  // Match the canonical edit handler: only Open orders are editable,
+                  // and hydrate the SAME form state (currency was being dropped, so
+                  // Save wrote currency = '' and wiped e.g. USD).
+                  if (ord.status !== 'Open') {
+                    setErrorBox(`Only Open orders can be edited. This order is currently ${ord.status}.`);
+                    return;
+                  }
                   const cust = customers.find(c => c.name === ord.customer);
                   setOrderCustomerId(cust?.id || '');
                   setOrderCustomerNumberInput(cust?.customerNumber || '');
@@ -21656,9 +21735,12 @@ export default function App() {
                   setOrderShippingTerms((ord.shippingTerms as any) || '');
                   setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
+                  setOrderCurrency(ord.currency || '');
                   setOrderPapsNo(ord.papsNo || '');
                   setOrderCustomsEntryNo(ord.customsEntryNo || '');
                   setOrderLineItems(ord.lineItems);
+                  setEditingLineItemIdx(null);
+                  setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                   if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
                   setEditingOrder(ord);
                   setIsAddingOrder(false);
@@ -22216,6 +22298,27 @@ export default function App() {
                           customsEntryNo: orderCustomsEntryNo.trim() || undefined,
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
+                        // Cascade the mirrored fields to the linked shipment row(s)
+                        // (matched by the unchanged BOL) so the scheduler and the
+                        // BOL/COA PDFs don't keep stale customer/product/PO/qty.
+                        const cascadeBol = (updatedOrder.bolNumber || '').trim();
+                        if (cascadeBol) {
+                          const cascade = (prev: Shipment[]) => prev.map((s, idx) => {
+                            if ((s.bol || '').trim() !== cascadeBol) return s;
+                            const li = updatedOrder.lineItems.find(l => l.productName === s.product) ?? updatedOrder.lineItems[idx] ?? updatedOrder.lineItems[0];
+                            return {
+                              ...s,
+                              customer: updatedOrder.customer,
+                              po: updatedOrder.po,
+                              carrier: updatedOrder.carrier || s.carrier,
+                              product: li ? li.productName : s.product,
+                              contractNumber: li ? li.contractNumber : s.contractNumber,
+                              qty: li ? li.totalWeight : s.qty,
+                            };
+                          });
+                          setHamiltonShipments(cascade);
+                          setVancouverShipments(cascade);
+                        }
                       } else {
                         // Create new order
                         const newOrder: Order = {
@@ -22652,7 +22755,7 @@ export default function App() {
                           // Null-safe sort: an imported shipment can have an empty time —
                           // a.time.localeCompare(...) on undefined would throw and crash
                           // the whole review modal ("Review all" renders every scheduler).
-                          const apptsForDay = rev.shipmentDate ? allLocShipments.filter(s => s.date === rev.shipmentDate).sort((a, b) => (a.time || '').localeCompare(b.time || '')) : [];
+                          const apptsForDay = rev.shipmentDate ? allLocShipments.filter(s => s.date === rev.shipmentDate && s.status !== 'Cancelled').sort((a, b) => (a.time || '').localeCompare(b.time || '')) : [];
                           const bookedSlots = new Set(apptsForDay.map(s => `${s.time || ''}|${s.bay || ''}`));
                           const getAvailBays = (slot: string) => validBays.filter(bay => !bookedSlots.has(`${slot}|${bay}`));
                           const isSlotAvailable = (slot: string) => rev.apptBay ? !bookedSlots.has(`${slot}|${rev.apptBay}`) : getAvailBays(slot).length > 0;
@@ -23618,7 +23721,11 @@ export default function App() {
                   const totalWeight = order.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
                   const isCancelling = pendingStatusChange.newStatus === 'Cancelled';
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                  const associatedShipments = allShipments.filter(s => s.bol === order.bolNumber);
+                  // Only match on a NON-BLANK BOL — otherwise cancelling an order
+                  // with no BOL would sweep up every unlinked (blank-BOL) shipment
+                  // at both sites.
+                  const orderBol = (order.bolNumber || '').trim();
+                  const associatedShipments = orderBol ? allShipments.filter(s => (s.bol || '').trim() === orderBol) : [];
                   // New fields shown alongside the existing summary so the
                   // operator can confirm product / destination / dates /
                   // contract without leaving the modal.
@@ -23686,9 +23793,9 @@ export default function App() {
                             if (isCancelling) {
                               // Cancel order and delete associated shipments
                               setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Cancelled' } : o));
-                              if (associatedShipments.length > 0) {
-                                setHamiltonShipments(prev => prev.filter(s => s.bol !== order.bolNumber));
-                                setVancouverShipments(prev => prev.filter(s => s.bol !== order.bolNumber));
+                              if (orderBol && associatedShipments.length > 0) {
+                                setHamiltonShipments(prev => prev.filter(s => (s.bol || '').trim() !== orderBol));
+                                setVancouverShipments(prev => prev.filter(s => (s.bol || '').trim() !== orderBol));
                               }
                             } else {
                               setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Confirmed' } : o));
