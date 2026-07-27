@@ -2324,6 +2324,52 @@ export default function App() {
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
   const [hamiltonShipments, setHamiltonShipments] = useState<Shipment[]>([]);
   const [vancouverShipments, setVancouverShipments] = useState<Shipment[]>([]);
+
+  // ── Unified BOL / PO resolver (prototype) ─────────────────────────────────
+  // Consolidates every field known about a BOL or PO across orders, invoices,
+  // shipments and lot codes into ONE record. Read-time only: it fills gaps for
+  // DISPLAY (a value present in any table surfaces in the others) — it never
+  // mutates or persists. Tables route their blank cells through this so a field
+  // missing in one table but present in another still shows.
+  const RESOLVE_FIELDS = ['bolNumber', 'po', 'customer', 'product', 'contractNumber', 'splitNo', 'location', 'carrier', 'shippingTerms', 'lotCode', 'trailerNo', 'papsNo', 'customsEntryNo', 'countryOfOrigin'] as const;
+  type ResolvedRecord = Record<(typeof RESOLVE_FIELDS)[number], string>;
+  const recordIndex = useMemo(() => {
+    const byBol = new Map<string, Partial<ResolvedRecord>[]>();
+    const byPo = new Map<string, Partial<ResolvedRecord>[]>();
+    const push = (c: Partial<ResolvedRecord>) => {
+      const bolU = (c.bolNumber || '').trim().toUpperCase();
+      const pk = poKey(c.po);
+      if (bolU) { const a = byBol.get(bolU); if (a) a.push(c); else byBol.set(bolU, [c]); }
+      if (pk) { const a = byPo.get(pk); if (a) a.push(c); else byPo.set(pk, [c]); }
+    };
+    // Push order = precedence (first non-blank wins): invoice → order → shipment → lot code.
+    for (const inv of invoices) push({ bolNumber: inv.bolNumber, po: inv.po, customer: inv.customer, product: inv.product, contractNumber: inv.contractNumber, splitNo: inv.splitNo, location: inv.location, carrier: inv.carrier, shippingTerms: inv.shippingTerms, lotCode: inv.lotCode, papsNo: inv.papsNo, customsEntryNo: inv.customsEntryNo });
+    for (const o of orders) push({ bolNumber: o.bolNumber, po: o.po, customer: o.customer, product: o.product, contractNumber: o.contractNumber, splitNo: o.splitNumber, location: o.location, carrier: o.carrier, shippingTerms: o.shippingTerms as string | undefined, lotCode: o.lotCode, papsNo: o.papsNo, customsEntryNo: o.customsEntryNo });
+    for (const s of [...hamiltonShipments, ...vancouverShipments]) push({ bolNumber: s.bol, po: s.po, customer: s.customer, product: s.product, carrier: s.carrier, location: s.location, lotCode: (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers.join(', ') : s.lotNumber), trailerNo: s.trailerNo });
+    for (const lc of lotCodes) push({ bolNumber: lc.bolNumber, po: lc.customerPo, customer: lc.customerName, lotCode: lc.lotNumber, trailerNo: lc.trailerNumber, countryOfOrigin: lc.countryOfOrigin });
+    return { byBol, byPo };
+  }, [invoices, orders, hamiltonShipments, vancouverShipments, lotCodes]);
+
+  const resolveRecord = (opts: { bol?: string; po?: string }): ResolvedRecord => {
+    const bolU = (opts.bol || '').trim().toUpperCase();
+    const pk = poKey(opts.po || '');
+    const contribs: Partial<ResolvedRecord>[] = [];
+    const seen = new Set<Partial<ResolvedRecord>>();
+    const add = (arr?: Partial<ResolvedRecord>[]) => { if (arr) for (const c of arr) if (!seen.has(c)) { seen.add(c); contribs.push(c); } };
+    if (bolU) add(recordIndex.byBol.get(bolU));
+    if (pk) add(recordIndex.byPo.get(pk));
+    const out = {} as ResolvedRecord;
+    for (const f of RESOLVE_FIELDS) {
+      let v = '';
+      for (const c of contribs) { const cv = (c as Record<string, unknown>)[f]; if (cv != null && String(cv).trim() !== '') { v = String(cv); break; } }
+      out[f] = v;
+    }
+    return out;
+  };
+  // Convenience wrappers requested by the design.
+  const resolveByBol = (bol?: string) => resolveRecord({ bol });
+  const resolveByPo = (po?: string) => resolveRecord({ po });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
@@ -9348,7 +9394,27 @@ export default function App() {
     }
 
     if (activePage === 'Transfers') {
-      const filteredTransfers = getSortedAndFilteredData<Transfer>(transfers, ['transferNumber', 'from', 'to', 'carrier', 'product', 'status', 'lotCode']);
+      // Route through the unified resolver: fill any blank field from the same
+      // BOL/PO's order/invoice/shipment/lot-code record so the transfer table
+      // shows information entered elsewhere. Non-destructive (only blanks filled);
+      // enriched before sort/filter so search + export see the filled values too.
+      const enrichedTransfers: Transfer[] = transfers.map(t => {
+        const r = resolveByPo(t.po);
+        return {
+          ...t,
+          customer: t.customer || r.customer || undefined,
+          product: t.product || r.product,
+          contractNumber: t.contractNumber || r.contractNumber || undefined,
+          splitNumber: t.splitNumber || r.splitNo || undefined,
+          lotCode: t.lotCode || r.lotCode || undefined,
+          countryOfOrigin: t.countryOfOrigin || r.countryOfOrigin || undefined,
+          carrier: t.carrier || r.carrier,
+          trailerNo: t.trailerNo || r.trailerNo || undefined,
+          papsNo: t.papsNo || r.papsNo || undefined,
+          customsEntryNo: t.customsEntryNo || r.customsEntryNo || undefined,
+        };
+      });
+      const filteredTransfers = getSortedAndFilteredData<Transfer>(enrichedTransfers, ['transferNumber', 'from', 'to', 'carrier', 'product', 'status', 'lotCode']);
 
       const transferExportSheets = (): SheetSpec[] => [{
         sheetName: 'Transfers',
@@ -9598,7 +9664,12 @@ export default function App() {
             ]}
             rows={filteredTransfers}
             getRowKey={(t) => t.id}
-            onRowClick={(t) => { setEditingTransfer({ ...t }); setIsAddingTransfer(false); }}
+            onRowClick={(t) => {
+              // Edit the ORIGINAL stored transfer, not the resolver-enriched display
+              // row, so opening + saving never silently persists resolved values.
+              const orig = transfers.find(x => x.id === t.id) || t;
+              setEditingTransfer({ ...orig }); setIsAddingTransfer(false);
+            }}
             emptyMessage='No transfers yet. Use "New Transfer" to create one.'
             defaultSortKey="transferNumber"
           />
@@ -11026,6 +11097,10 @@ export default function App() {
           productGroups={productGroups}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           transfers={transfers}
+          resolveLot={(lc) => {
+            const r = resolveRecord({ bol: lc.bolNumber, po: lc.customerPo });
+            return { bolNumber: r.bolNumber, customerName: r.customer, trailerNumber: r.trailerNo };
+          }}
           onUpdateLotCodes={setLotCodes}
           onSyncLotCodes={() => {
             const preset = lotCodeSyncPresets[0] || DEFAULT_LOTCODE_IMPORT_CONFIG;

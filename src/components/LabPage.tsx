@@ -17,6 +17,10 @@ interface LabPageProps {
   onUpdateShipments: (shipments: Shipment[]) => void;
   /** Opens the shared Google-Sheets sync modal in lot-code mode. */
   onSyncLotCodes?: () => void;
+  /** Unified BOL/PO resolver: fills a lot code's blank display cells (BOL,
+   *  Customer, Trailer) from the same PO/BOL's order/invoice/shipment record.
+   *  Display-only — never mutates or persists. */
+  resolveLot?: (lc: LotCode) => { bolNumber?: string; customerName?: string; trailerNumber?: string };
 }
 
 const EMPTY_FORM = {
@@ -137,7 +141,7 @@ function weekKeyOf(raw?: string): string {
   return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
@@ -488,8 +492,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const columns: LotCol[] = filterSugarType === 'Granulated' ? [
     { key: 'date', label: 'Date', render: (lc) => dash(formatDisplayDate(lc.date)) },
     { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
-    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
-    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber || resolveLot?.(lc).bolNumber) },
+    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName || resolveLot?.(lc).customerName) },
     { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
     { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
     { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
@@ -513,14 +517,14 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
   ] : [
     { key: 'date', label: 'Date', render: (lc) => dash(formatDisplayDate(lc.date)) },
-    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName) },
+    { key: 'customerName', label: 'Customer', render: (lc) => dash(lc.customerName || resolveLot?.(lc).customerName) },
     { key: 'customerPo', label: 'PO #', mono: true, render: (lc) => dash(lc.customerPo) },
-    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber) },
+    { key: 'bolNumber', label: 'BOL #', mono: true, render: (lc) => dash(lc.bolNumber || resolveLot?.(lc).bolNumber) },
     { key: 'qtyMt', label: 'QTY MT', render: (lc) => dash(lc.qtyMt) },
     { key: 'arrivalTime', label: 'Arrival Time', render: (lc) => dash(lc.arrivalTime) },
     { key: 'exitTime', label: 'Exit Time', render: (lc) => dash(lc.exitTime) },
     { key: 'carrierName', label: 'Carrier Name', render: (lc) => dash(lc.carrierName) },
-    { key: 'trailerNumber', label: 'Trailer #', render: (lc) => dash(lc.trailerNumber) },
+    { key: 'trailerNumber', label: 'Trailer #', render: (lc) => dash(lc.trailerNumber || resolveLot?.(lc).trailerNumber) },
     { key: 'loaderName', label: 'Loader Name', render: (lc) => dash(lc.loaderName) },
     { key: 'lotNumber', label: 'Lot #', mono: true, bold: true, widthClass: 'min-w-[120px]' },
     { key: 'tankNumber', label: 'Tank #', render: (lc) => dash(lc.tankNumber) },
