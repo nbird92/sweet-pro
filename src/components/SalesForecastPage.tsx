@@ -222,13 +222,13 @@ export default function SalesForecastPage({
 
   // ── Actuals computation ─────────────────────────────────────────────────
 
-  /** Resolve a location string to a canonical lowercase key so an invoice's
-   *  location and a forecast line's location compare equal regardless of whether
-   *  one holds the display name, the id, or the location code. Deliberately NO
-   *  prefix matching — a bare "Hamilton" is NOT folded into "Hamilton (Ferguson)"
-   *  or "Hamilton (Sherman)", which would attribute volume to the wrong plant. */
-  const locCanon = useCallback(
-    (loc?: string) => {
+  /** Resolve a location string (display name, id, or location code) to the
+   *  canonical location DISPLAY name. Deliberately NO prefix matching — a bare
+   *  "Hamilton" is NOT folded into "Hamilton (Ferguson)" or "Hamilton (Sherman)",
+   *  which would attribute volume to the wrong plant. Falls back to the trimmed
+   *  input when no location record matches. */
+  const resolveLocName = useCallback(
+    (loc?: string): string => {
       const raw = (loc || '').trim();
       if (!raw) return '';
       const n = raw.toLowerCase();
@@ -237,87 +237,17 @@ export default function SalesForecastPage({
         locations.find((l) => l.id === raw) ||
         locations.find((l) => (l.locationCode || '').trim().toLowerCase() === n) ||
         locations.find((l) => (l.name || '').trim().toLowerCase() === n);
-      return ((found?.name ?? raw) || '').trim().toLowerCase();
+      return found?.name ?? raw;
     },
     [locations]
   );
 
-  /** The location an invoice line's actuals belong to. Mirrors EXACTLY how an
-   *  auto-generated forecast line is located (see the historical-basis builder):
-   *  the invoice's own location, then the product's catalog location, then the
-   *  customer's default — so an invoice's actual lands under the SAME location
-   *  key as the forecast row it should fill. */
-  const actualsLocation = (customerName: string, productName: string, invLocation?: string): string => {
-    if (invLocation && invLocation.trim()) return invLocation;
-    const qaProd = qaProducts.find((p) => p.skuName === productName);
-    const skuProd = skus.find((s) => s.name === productName);
-    const cust = customers.find((c) => c.name === customerName);
-    return qaProd?.location || skuProd?.location || cust?.defaultLocation || '';
-  };
-
-  /** Add an invoice's actual MT to `map` under
-   *  `${customer}|${productName}|${locationKey}|${idx}`.
-   *  Emits one entry PER LINE ITEM when the invoice has them: forecast lines are
-   *  keyed on the individual product name, but Invoice.product is a COMMA-JOINED
-   *  display string for any multi-product order — so keying the actuals on it
-   *  meant the lookup never matched and the grid showed zero actuals against a
-   *  real forecast. Falls back to the headline product for legacy/imported
-   *  invoices that carry no line items.
-   *
-   *  The location dimension is REQUIRED: a customer can forecast the same product
-   *  at several plants (e.g. Hamilton Ferguson AND Hamilton Sherman). Without it,
-   *  every location row for that product showed the SAME actuals — the identical
-   *  sales appeared under both plants, which is physically impossible. */
-  const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
-    if (inv.lineItems?.length) {
-      for (const li of inv.lineItems) {
-        if (!li.productName) continue;
-        const loc = locCanon(actualsLocation(inv.customer, li.productName, inv.location));
-        const k = `${inv.customer}|${li.productName}|${loc}|${idx}`;
-        map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
-      }
-    } else if (inv.product && !inv.product.includes(',')) {
-      // Only a SINGLE product name. inv.product on a mixed load is a comma-joined
-      // display string ("GC100, LC170") that is not a real product — keying
-      // historical actuals under it invents a phantom the customer never bought
-      // and hides the real per-product history. Such invoices are counted only
-      // through their line items above.
-      const loc = locCanon(actualsLocation(inv.customer, inv.product, inv.location));
-      const k = `${inv.customer}|${inv.product}|${loc}|${idx}`;
-      map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
-    }
-  };
-
-  /** Build a map: `${customerName}|${productName}|${locationKey}|${periodIndex}` -> actual MT */
-  const actualsMap = useMemo(() => {
-    if (!selectedFY) return new Map<string, number>();
-    const map = new Map<string, number>();
-    for (const inv of invoices) {
-      const invDate = inv.date;
-      if (!invDate) continue;
-      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
-      const pIdx = periodIndexForDate(invDate, selectedFY.periods);
-      if (pIdx < 0) continue;
-      addInvoiceActuals(map, inv, pIdx);
-    }
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, selectedFY, locCanon, qaProducts, skus, customers]);
-
-  /** Same for weekly */
-  const weeklyActualsMap = useMemo(() => {
-    if (!selectedFY) return new Map<string, number>();
-    const map = new Map<string, number>();
-    for (const inv of invoices) {
-      const invDate = inv.date;
-      if (!invDate) continue;
-      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
-      const wIdx = weekIndexForDate(invDate, selectedFY.startDate);
-      addInvoiceActuals(map, inv, wIdx);
-    }
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, selectedFY, locCanon, qaProducts, skus, customers]);
+  /** Canonical lowercase location KEY so an invoice's location and a forecast
+   *  line's location compare equal regardless of stored form. */
+  const locCanon = useCallback(
+    (loc?: string) => resolveLocName(loc).trim().toLowerCase(),
+    [resolveLocName]
+  );
 
   // ── Catalog resolution ──────────────────────────────────────────────────
   // The product tables used to gate on byte-exact SKU.name membership, which
@@ -343,6 +273,110 @@ export default function SalesForecastPage({
     },
     [catalogIndex]
   );
+
+  /** Canonical product identity for a raw product name: resolve to the catalog
+   *  SKU/QA name so naming variants ("GC45", "GC 45", differing case or stray
+   *  whitespace) that refer to the same product collapse to ONE identity. Names
+   *  with no catalog match keep their own trimmed form. Used as the product
+   *  dimension of BOTH the actuals key and the auto-populate dedup key, so a
+   *  product's forecast row and its historical actuals always land on one row
+   *  instead of splitting into a separate row per name spelling. */
+  const canonProduct = useCallback(
+    (name?: string): string => {
+      const raw = (name || '').trim();
+      if (!raw) return '';
+      const hit = catalogEntry(raw);
+      return hit?.sku?.name || hit?.qa?.skuName || raw;
+    },
+    [catalogEntry]
+  );
+
+  /** Canonical customer key — trims and lowercases so an invoice's customer string
+   *  and a customer record's name compare equal despite stray case/whitespace,
+   *  keeping actuals attributed to (and forecasts rebuilt for) the right customer. */
+  const custKey = useCallback((name?: string) => (name || '').trim().toLowerCase(), []);
+
+  /** The location an invoice line's actuals belong to. Mirrors EXACTLY how an
+   *  auto-generated forecast line is located (see the historical-basis builder):
+   *  the invoice's own location, then the product's catalog location, then the
+   *  customer's default — so an invoice's actual lands under the SAME location
+   *  key as the forecast row it should fill. */
+  const actualsLocation = (customerName: string, productName: string, invLocation?: string): string => {
+    if (invLocation && invLocation.trim()) return invLocation;
+    // Resolve the catalog/default fallback using the CANONICAL product name and a
+    // case-insensitive customer match — identical to how the auto-populate line
+    // builder locates a blank-location row — so the actuals key and the forecast
+    // row land on the same location when the source transaction carried none.
+    const cName = canonProduct(productName);
+    const qaProd = qaProducts.find((p) => p.skuName === cName);
+    const skuProd = skus.find((s) => s.name === cName);
+    const cust = customers.find((c) => custKey(c.name) === custKey(customerName));
+    return qaProd?.location || skuProd?.location || cust?.defaultLocation || '';
+  };
+
+  /** Add an invoice's actual MT to `map` under
+   *  `${customer}|${productName}|${locationKey}|${idx}`.
+   *  Emits one entry PER LINE ITEM when the invoice has them: forecast lines are
+   *  keyed on the individual product name, but Invoice.product is a COMMA-JOINED
+   *  display string for any multi-product order — so keying the actuals on it
+   *  meant the lookup never matched and the grid showed zero actuals against a
+   *  real forecast. Falls back to the headline product for legacy/imported
+   *  invoices that carry no line items.
+   *
+   *  The location dimension is REQUIRED: a customer can forecast the same product
+   *  at several plants (e.g. Hamilton Ferguson AND Hamilton Sherman). Without it,
+   *  every location row for that product showed the SAME actuals — the identical
+   *  sales appeared under both plants, which is physically impossible. */
+  const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
+    if (inv.lineItems?.length) {
+      for (const li of inv.lineItems) {
+        if (!li.productName) continue;
+        const loc = locCanon(actualsLocation(inv.customer, li.productName, inv.location));
+        const k = `${custKey(inv.customer)}|${canonProduct(li.productName)}|${loc}|${idx}`;
+        map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
+      }
+    } else if (inv.product && !inv.product.includes(',')) {
+      // Only a SINGLE product name. inv.product on a mixed load is a comma-joined
+      // display string ("GC100, LC170") that is not a real product — keying
+      // historical actuals under it invents a phantom the customer never bought
+      // and hides the real per-product history. Such invoices are counted only
+      // through their line items above.
+      const loc = locCanon(actualsLocation(inv.customer, inv.product, inv.location));
+      const k = `${custKey(inv.customer)}|${canonProduct(inv.product)}|${loc}|${idx}`;
+      map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
+    }
+  };
+
+  /** Build a map: `${customerName}|${productName}|${locationKey}|${periodIndex}` -> actual MT */
+  const actualsMap = useMemo(() => {
+    if (!selectedFY) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const inv of invoices) {
+      const invDate = inv.date;
+      if (!invDate) continue;
+      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
+      const pIdx = periodIndexForDate(invDate, selectedFY.periods);
+      if (pIdx < 0) continue;
+      addInvoiceActuals(map, inv, pIdx);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, selectedFY, locCanon, canonProduct, custKey, qaProducts, skus, customers]);
+
+  /** Same for weekly */
+  const weeklyActualsMap = useMemo(() => {
+    if (!selectedFY) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const inv of invoices) {
+      const invDate = inv.date;
+      if (!invDate) continue;
+      if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
+      const wIdx = weekIndexForDate(invDate, selectedFY.startDate);
+      addInvoiceActuals(map, inv, wIdx);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, selectedFY, locCanon, canonProduct, custKey, qaProducts, skus, customers]);
 
   /** Product group for a forecast line — falls back to the QA record so QA-only
    *  products land in their real group instead of 'Ungrouped'. */
@@ -541,16 +575,48 @@ export default function SalesForecastPage({
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
+  /** Merge forecast lines that refer to the SAME product+location (after
+   *  canonicalisation) into a single line, summing their per-period entries. Two
+   *  lines for one product+plant are a data error — Add Product added a second, or
+   *  an earlier auto-populate left a variant-named twin — and collapsing them is
+   *  what guarantees exactly one row per product+location. Keeps the first line's
+   *  id and product label; returns fresh clones so callers can seed edit state. */
+  const dedupeLines = useCallback(
+    (lines: CustomerForecastLine[]): CustomerForecastLine[] => {
+      const byKey = new Map<string, CustomerForecastLine>();
+      const order: string[] = [];
+      for (const line of lines) {
+        const key = `${canonProduct(line.productName)}||${locCanon(line.location)}`;
+        const existing = byKey.get(key);
+        if (!existing) {
+          byKey.set(key, { ...line, entries: line.entries.map((e) => ({ ...e })) });
+          order.push(key);
+        } else {
+          const merged = new Map<number, number>();
+          for (const e of existing.entries) merged.set(e.periodIndex, (merged.get(e.periodIndex) ?? 0) + e.value);
+          for (const e of line.entries) merged.set(e.periodIndex, (merged.get(e.periodIndex) ?? 0) + e.value);
+          existing.entries = [...merged.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([periodIndex, value]) => ({ periodIndex, value }));
+        }
+      }
+      return order.map((k) => byKey.get(k)!);
+    },
+    [canonProduct, locCanon]
+  );
+
   const openCustomerModal = useCallback(
     (customerId: string) => {
       const cf = mergedForecasts.find((f) => f.customerId === customerId);
       if (!cf) return;
       setEditingCustomerId(customerId);
       setModalViewMode(cf.viewMode || 'Monthly');
-      setModalLines(cf.lines.map((l) => ({ ...l, entries: l.entries.map((e) => ({ ...e })) })));
+      // Collapse any pre-existing duplicate rows the moment the modal opens, so the
+      // operator sees one row per product+location even for legacy data.
+      setModalLines(dedupeLines(cf.lines));
       setCustomerModalOpen(true);
     },
-    [mergedForecasts]
+    [mergedForecasts, dedupeLines]
   );
 
   const handleDeleteForecast = useCallback(
@@ -570,7 +636,10 @@ export default function SalesForecastPage({
     const cust = customers.find((c) => c.id === editingCustomerId);
     if (!cust) return;
 
-    const annualForecast = modalLines.reduce(
+    // Collapse duplicate product+location rows on the way out too, so a manual
+    // edit session can never persist two rows for the same product+plant.
+    const savedLines = dedupeLines(modalLines);
+    const annualForecast = savedLines.reduce(
       (sum, line) => sum + line.entries.reduce((s, e) => s + e.value, 0),
       0
     );
@@ -589,7 +658,7 @@ export default function SalesForecastPage({
       fiscalYearId: selectedFY.id,
       type: forecastType,
       viewMode: modalViewMode,
-      lines: modalLines,
+      lines: savedLines,
       annualForecast,
     };
 
@@ -617,23 +686,26 @@ export default function SalesForecastPage({
     forecastType,
     modalViewMode,
     modalLines,
+    dedupeLines,
     onUpdateCustomerForecasts,
   ]);
 
   const handleAddProductLine = useCallback(
     (productName: string, location: string) => {
-      const newLine: CustomerForecastLine = {
-        id: generateId('CFL'),
-        productName,
-        location,
-        entries: [],
-      };
-      setModalLines((prev) => [...prev, newLine]);
+      const key = `${canonProduct(productName)}||${locCanon(location)}`;
+      setModalLines((prev) => {
+        // Don't add a second row for a product+location that's already present —
+        // that is exactly the duplicate the customer complained about.
+        if (prev.some((l) => `${canonProduct(l.productName)}||${locCanon(l.location)}` === key)) {
+          return prev;
+        }
+        return [...prev, { id: generateId('CFL'), productName, location, entries: [] }];
+      });
       setAddProductDropdownOpen(false);
       setAddProductSearch('');
       setAddProductLocation('');
     },
-    []
+    [canonProduct, locCanon]
   );
 
   const handleRemoveProductLine = useCallback((lineId: string) => {
@@ -681,17 +753,24 @@ export default function SalesForecastPage({
     )).toISOString().slice(0, 10);
     const inWindow = (d?: string) => !!d && d >= windowStart && d <= windowEnd;
 
-    // customerName -> "productName|location" -> total MT. Location is a REAL key
-    // dimension: a customer's Ferguson and Sherman volume for the same product are
-    // separate forecast lines, not one merged number stamped with whichever
-    // location a name-only .find() happened to hit first.
-    const salesMap = new Map<string, Map<string, number>>();
+    // custKey -> compositeKey(canonProduct + locCanon) -> aggregate. Product
+    // identity and location are BOTH canonicalised, so a customer's purchases of
+    // the same real product+plant collapse to ONE aggregate however the product
+    // name was spelled or the location was recorded — that is what stops the same
+    // product appearing as several near-duplicate rows in the customer's forecast.
+    type Agg = { productName: string; location: string; qty: number };
+    const salesMap = new Map<string, Map<string, Agg>>();
     const addToMap = (customerName: string, productName: string, location: string, qty: number) => {
       if (!customerName || !productName || !qty) return;
-      if (!salesMap.has(customerName)) salesMap.set(customerName, new Map());
-      const prodMap = salesMap.get(customerName)!;
-      const key = `${productName}|${location || ''}`;
-      prodMap.set(key, (prodMap.get(key) ?? 0) + qty);
+      const ck = custKey(customerName);
+      if (!ck) return;
+      if (!salesMap.has(ck)) salesMap.set(ck, new Map());
+      const prodMap = salesMap.get(ck)!;
+      const cName = canonProduct(productName);
+      const key = `${cName}||${locCanon(location)}`;
+      const cur = prodMap.get(key);
+      if (cur) cur.qty += qty;
+      else prodMap.set(key, { productName: cName, location: resolveLocName(location), qty });
     };
 
     // 1. Invoices — the billed record, and authoritative. Prefer the per-line
@@ -733,48 +812,41 @@ export default function SalesForecastPage({
 
     const numMonths = LOOKBACK_MONTHS;
 
-    // Build forecast entries for each customer
+    // Build forecast entries for each customer. This is an AUTHORITATIVE rebuild:
+    // for every customer with recent purchases we REPLACE their forecast with
+    // exactly the products they actually bought (one row per product+location), so
+    // stale/phantom rows from earlier runs cannot survive. Customers with NO
+    // qualifying purchases are left untouched — we have nothing to source for them,
+    // so we must not wipe a manually-entered forecast.
     const updatedForecasts = [...customerForecasts];
 
     for (const cust of customers) {
-      const prodMap = salesMap.get(cust.name);
+      const prodMap = salesMap.get(custKey(cust.name));
       if (!prodMap || prodMap.size === 0) continue;
 
-      // Check if this customer already has a forecast for this FY + type
       const existingIdx = updatedForecasts.findIndex(
         (cf) => cf.customerId === cust.id && cf.fiscalYearId === selectedFY.id && cf.type === forecastType
       );
 
       const lines: CustomerForecastLine[] = [];
-      let annualTotal = 0;
 
-      for (const [key, totalQty] of prodMap) {
-        // Split the composite "productName|location" key (product names may
-        // themselves contain '|', so split on the LAST separator).
-        const sep = key.lastIndexOf('|');
-        const productName = sep >= 0 ? key.slice(0, sep) : key;
-        const rowLocation = sep >= 0 ? key.slice(sep + 1) : '';
-
-        const monthlyAvg = totalQty / numMonths;
+      for (const { productName, location, qty } of prodMap.values()) {
+        const monthlyAvg = qty / numMonths;
         const rounded = Math.round(monthlyAvg * 10) / 10;
         // A pair whose monthly average rounds to 0.0 has no meaningful recent
-        // demand — emit no line at all rather than a row of zeros that still
-        // carried a non-zero annual figure into the reports.
+        // demand — emit no line at all rather than a row of zeros.
         if (rounded <= 0) continue;
 
         const entries: ForecastEntry[] = [];
         for (let m = 0; m < 12; m++) {
           entries.push({ periodIndex: m, value: rounded });
         }
-        // Accumulate from the SAME rounded value that is persisted, so the stored
-        // annualForecast can never disagree with the twelve monthly cells.
-        annualTotal += rounded * 12;
 
-        // Location comes from the transaction itself; the product catalog is only
-        // a fallback when the source row carried no location.
+        // Location resolved from the transaction; product catalog is only the
+        // fallback when the source row carried no location.
         const qaProd = qaProducts.find((p) => p.skuName === productName);
         const skuProd = skus.find((s) => s.name === productName);
-        const prodLocation = rowLocation || qaProd?.location || skuProd?.location || cust.defaultLocation;
+        const prodLocation = location || resolveLocName(qaProd?.location || skuProd?.location || cust.defaultLocation);
 
         lines.push({
           id: generateId('CFL'),
@@ -783,8 +855,22 @@ export default function SalesForecastPage({
           entries,
         });
       }
-      // Every pair rounded away — don't create/overwrite a forecast with nothing in it.
-      if (lines.length === 0) continue;
+
+      // Collapse any rows that resolved to the SAME product+location — e.g. a
+      // blank-location transaction whose catalog fallback lands on the same plant
+      // as an explicit-location one. dedupeLines sums their per-period values, so
+      // the merged row carries the correct combined average and the customer-table
+      // annual (which reads actuals once per row) can't double-count.
+      const finalLines = dedupeLines(lines);
+      const annualTotal = finalLines.reduce(
+        (sum, l) => sum + l.entries.reduce((s, e) => s + e.value, 0),
+        0
+      );
+
+      // Nothing bought worth a line AND no existing forecast to clean up: don't
+      // manufacture an empty record. (If a forecast DOES exist we still fall
+      // through and overwrite it with the empty set, clearing stale phantoms.)
+      if (finalLines.length === 0 && existingIdx < 0) continue;
 
       const forecast: CustomerForecast = {
         id: existingIdx >= 0 ? updatedForecasts[existingIdx].id : generateId('CF'),
@@ -797,8 +883,10 @@ export default function SalesForecastPage({
         location: cust.defaultLocation,
         fiscalYearId: selectedFY.id,
         type: forecastType,
+        // Auto-populate ALWAYS emits 12 monthly cells, so the record must be
+        // Monthly — preserving a prior 'Weekly' label here would mislabel the data.
         viewMode: 'Monthly',
-        lines,
+        lines: finalLines,
         annualForecast: Math.round(annualTotal * 10) / 10,
       };
 
@@ -810,50 +898,49 @@ export default function SalesForecastPage({
     }
 
     onUpdateCustomerForecasts(updatedForecasts);
-  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, onUpdateCustomerForecasts]);
+  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, canonProduct, custKey, locCanon, resolveLocName, dedupeLines, onUpdateCustomerForecasts]);
 
   // ── Available products for adding ───────────────────────────────────────
-  // Excludes products at an INACTIVE location: this list feeds the "Add Product"
-  // picker, which creates a BRAND-NEW forecast line. Stored lines are rendered
-  // from cf.lines elsewhere and are unaffected, so an existing Ferguson forecast
-  // still displays. Fails open on a blank/unrecognised location.
-  const isInactiveLoc = useCallback(
-    (loc?: string) => {
-      const n = (loc || '').trim().toLowerCase();
-      if (!n) return false;
-      return locations.some(l =>
-        l.active === false
-        && ((l.name || '').trim().toLowerCase() === n || (l.locationCode || '').trim().toLowerCase() === n)
-      );
-    },
-    [locations]
-  );
-
+  // Feeds the "Add Product" picker. Includes EVERY catalog product at EVERY
+  // location — active OR inactive, because a customer's history at a now-inactive
+  // plant must still be addable — PLUS every product+location combo that appears
+  // in historical invoices/shipments, so anything a customer actually bought can
+  // be added even when it is not (or no longer) in the SKU/QA catalog. Entries are
+  // de-duplicated by canonical product + location.
   const availableProducts = useMemo(() => {
     const prods: { name: string; location: string }[] = [];
+    const seen = new Set<string>();
+    const add = (rawName?: string, rawLoc?: string) => {
+      const name = canonProduct(rawName);
+      if (!name) return;
+      const location = resolveLocName(rawLoc);
+      const key = `${name.trim().toLowerCase()}||${locCanon(location)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      prods.push({ name, location });
+    };
+    // Catalog — QA products (fall back to the linked SKU's name/location so a
+    // QA row that stores only skuId still resolves a display name) …
     for (const qp of qaProducts) {
-      const linkedSku = skus.find(s => s.id === qp.skuId);
-      const loc = qp.location || linkedSku?.location || '';
-      if (isInactiveLoc(loc)) continue;
-      // QA products frequently store skuId but leave skuName blank (their display
-      // name is derived). Fall back to the linked SKU's name so the Add Product
-      // picker never renders a blank row.
-      const name = (qp.skuName || linkedSku?.name || '').trim();
-      if (!name) continue;
-      const rowLoc = qp.location || loc;
-      if (!prods.some((p) => p.name === name && p.location === rowLoc)) {
-        prods.push({ name, location: rowLoc });
+      const linkedSku = skus.find((s) => s.id === qp.skuId);
+      add(qp.skuName || linkedSku?.name, qp.location || linkedSku?.location || '');
+    }
+    // … and every SKU.
+    for (const s of skus) add(s.name, s.location);
+    // History — every product+location a customer has actually bought (skip the
+    // comma-joined mixed-load strings, which are not real products).
+    for (const inv of invoices) {
+      if (inv.lineItems?.length) {
+        for (const li of inv.lineItems) if (li.productName) add(li.productName, inv.location || '');
+      } else if (inv.product && !inv.product.includes(',')) {
+        add(inv.product, inv.location || '');
       }
     }
-    for (const s of skus) {
-      if (isInactiveLoc(s.location)) continue;
-      if (!s.name) continue;
-      if (!prods.some((p) => p.name === s.name && p.location === s.location)) {
-        prods.push({ name: s.name, location: s.location });
-      }
+    for (const s of shipments) {
+      if (s.product && !s.product.includes(',')) add(s.product, s.location || '');
     }
-    return prods;
-  }, [qaProducts, skus, isInactiveLoc]);
+    return prods.sort((a, b) => a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
+  }, [qaProducts, skus, invoices, shipments, canonProduct, resolveLocName, locCanon]);
 
   const filteredAvailableProducts = useMemo(() => {
     let filtered = availableProducts;
@@ -915,13 +1002,15 @@ export default function SalesForecastPage({
         const map = isWeekly ? weeklyActualsMap : actualsMap;
         // Location is part of the key so a product forecast at two plants shows
         // each plant's OWN actuals — not the same sales mirrored under both.
-        const key = `${customerName}|${productName}|${locCanon(location)}|${periodIndex}`;
+        // Customer + product are canonicalised the same way the map is built so a
+        // name-spelling variant on the forecast line still finds its actuals.
+        const key = `${custKey(customerName)}|${canonProduct(productName)}|${locCanon(location)}|${periodIndex}`;
         const actual = map.get(key) ?? 0;
         return { value: actual, isActual: true };
       }
       return { value: forecastValue, isActual: false };
     },
-    [selectedFY, actualsMap, weeklyActualsMap, locCanon]
+    [selectedFY, actualsMap, weeklyActualsMap, locCanon, canonProduct, custKey]
   );
 
   // ── Location name lookup ────────────────────────────────────────────────
@@ -1567,6 +1656,7 @@ export default function SalesForecastPage({
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {editingCf.lines.length > 0 ? 'Edit' : 'Add'} Customer {typeLabel} &mdash;{' '}
                   {editingCf.customerName}
+                  {selectedFY?.name ? <span className="opacity-60"> &middot; {selectedFY.name}</span> : ''}
                 </h3>
                 <div className="flex items-center gap-1">
                   {/* Delete moved here from the table's old Actions column. */}
@@ -1653,10 +1743,11 @@ export default function SalesForecastPage({
                             className="appearance-none w-full px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
                           >
                             <option value="">All Locations</option>
-                            {/* Inside the Add Product picker, so active sites only. */}
-                            {locations.filter((loc) => loc.active !== false).map((loc) => (
+                            {/* ALL sites — active and inactive — so a customer's
+                                history at a closed plant is still selectable. */}
+                            {locations.map((loc) => (
                               <option key={loc.id} value={loc.name}>
-                                {loc.name}
+                                {loc.name}{loc.active === false ? ' (inactive)' : ''}
                               </option>
                             ))}
                           </select>
