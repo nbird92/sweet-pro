@@ -3,6 +3,7 @@ import {
   X,
   Edit2,
   Trash2,
+  Eraser,
   Plus,
   ChevronDown,
   Save,
@@ -296,6 +297,43 @@ export default function SalesForecastPage({
    *  keeping actuals attributed to (and forecasts rebuilt for) the right customer. */
   const custKey = useCallback((name?: string) => (name || '').trim().toLowerCase(), []);
 
+  /** True only for invoices that represent a REAL purchase the customer kept.
+   *  Cancelled, Credit/return, Void, Draft, Proforma and Refund invoices are NOT
+   *  products the customer actually bought — counting them is exactly what seeded
+   *  phantom rows into the forecast — so both the actuals overlay and Auto-Populate
+   *  ignore them. Also honours the business's short cancel tokens (x / cxl / dnl),
+   *  matching the app's own cancel vocabulary (see googleOrderSheetSync). */
+  const isCountableInvoice = useCallback((inv: Invoice) => {
+    const s = (inv.status || '').trim().toLowerCase();
+    if (s === 'x' || s === 'cxl' || s === 'dnl') return false;
+    return !/cancel|credit|void|draft|proforma|refund|return/.test(s);
+  }, []);
+
+  /** True for shipments that actually moved product — a Cancelled/Void shipment is
+   *  not a real sale and must not seed a forecast row. */
+  const isCountableShipment = useCallback((s: Shipment) => {
+    const st = (s.status || '').trim().toLowerCase();
+    if (st === 'x' || st === 'cxl' || st === 'dnl') return false;
+    return !/cancel|void/.test(st);
+  }, []);
+
+  /** A location that exists in the catalog and is explicitly inactive. Used to
+   *  block ADDING a new forecast line at a closed plant. Historical rows already
+   *  stored at an inactive plant still render — this only gates new manual adds.
+   *  Fails open on a blank/unrecognised location. */
+  const isInactiveLoc = useCallback(
+    (loc?: string) => {
+      const n = (loc || '').trim().toLowerCase();
+      if (!n) return false;
+      return locations.some(
+        (l) =>
+          l.active === false &&
+          ((l.name || '').trim().toLowerCase() === n || (l.locationCode || '').trim().toLowerCase() === n)
+      );
+    },
+    [locations]
+  );
+
   /** The location an invoice line's actuals belong to. Mirrors EXACTLY how an
    *  auto-generated forecast line is located (see the historical-basis builder):
    *  the invoice's own location, then the product's catalog location, then the
@@ -330,12 +368,12 @@ export default function SalesForecastPage({
   const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
     if (inv.lineItems?.length) {
       for (const li of inv.lineItems) {
-        if (!li.productName) continue;
+        if (!li.productName || !(li.totalWeight > 0)) continue; // ignore zero/negative lines
         const loc = locCanon(actualsLocation(inv.customer, li.productName, inv.location));
         const k = `${custKey(inv.customer)}|${canonProduct(li.productName)}|${loc}|${idx}`;
-        map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
+        map.set(k, (map.get(k) ?? 0) + li.totalWeight);
       }
-    } else if (inv.product && !inv.product.includes(',')) {
+    } else if (inv.qty > 0 && inv.product && !inv.product.includes(',')) {
       // Only a SINGLE product name. inv.product on a mixed load is a comma-joined
       // display string ("GC100, LC170") that is not a real product — keying
       // historical actuals under it invents a phantom the customer never bought
@@ -343,7 +381,7 @@ export default function SalesForecastPage({
       // through their line items above.
       const loc = locCanon(actualsLocation(inv.customer, inv.product, inv.location));
       const k = `${custKey(inv.customer)}|${canonProduct(inv.product)}|${loc}|${idx}`;
-      map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
+      map.set(k, (map.get(k) ?? 0) + inv.qty);
     }
   };
 
@@ -352,6 +390,7 @@ export default function SalesForecastPage({
     if (!selectedFY) return new Map<string, number>();
     const map = new Map<string, number>();
     for (const inv of invoices) {
+      if (!isCountableInvoice(inv)) continue;
       const invDate = inv.date;
       if (!invDate) continue;
       if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
@@ -361,13 +400,14 @@ export default function SalesForecastPage({
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, selectedFY, locCanon, canonProduct, custKey, qaProducts, skus, customers]);
+  }, [invoices, selectedFY, locCanon, canonProduct, custKey, isCountableInvoice, qaProducts, skus, customers]);
 
   /** Same for weekly */
   const weeklyActualsMap = useMemo(() => {
     if (!selectedFY) return new Map<string, number>();
     const map = new Map<string, number>();
     for (const inv of invoices) {
+      if (!isCountableInvoice(inv)) continue;
       const invDate = inv.date;
       if (!invDate) continue;
       if (invDate < selectedFY.startDate || invDate > selectedFY.endDate) continue;
@@ -376,7 +416,7 @@ export default function SalesForecastPage({
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoices, selectedFY, locCanon, canonProduct, custKey, qaProducts, skus, customers]);
+  }, [invoices, selectedFY, locCanon, canonProduct, custKey, isCountableInvoice, qaProducts, skus, customers]);
 
   /** Product group for a forecast line — falls back to the QA record so QA-only
    *  products land in their real group instead of 'Ungrouped'. */
@@ -631,6 +671,34 @@ export default function SalesForecastPage({
     [customerForecasts, selectedFiscalYearId, forecastType, typeLabel, onUpdateCustomerForecasts]
   );
 
+  /** Clear Forecast — empties every product row for the customer being edited but
+   *  KEEPS the forecast record (unlike Delete). A quick way to wipe phantom/stale
+   *  rows and start fresh. Persists immediately and clears the open editor. */
+  const handleClearForecast = useCallback(() => {
+    if (!editingCustomerId || !selectedFY) return;
+    if (!confirm(`Clear all ${typeLabel.toLowerCase()} product rows for this customer? The customer stays, but every product line is removed.`)) return;
+    const cust = customers.find((c) => c.id === editingCustomerId);
+    const idx = customerForecasts.findIndex(
+      (cf) => cf.customerId === editingCustomerId && cf.fiscalYearId === selectedFY.id && cf.type === forecastType
+    );
+    const cleared: CustomerForecast = {
+      id: idx >= 0 ? customerForecasts[idx].id : generateId('CF'),
+      customerId: editingCustomerId,
+      customerNumber: cust?.customerNumber ?? '',
+      customerName: cust?.name ?? '',
+      location: cust?.defaultLocation ?? '',
+      fiscalYearId: selectedFY.id,
+      type: forecastType,
+      viewMode: modalViewMode,
+      lines: [],
+      annualForecast: 0,
+    };
+    const updated = [...customerForecasts];
+    if (idx >= 0) updated[idx] = cleared; else updated.push(cleared);
+    onUpdateCustomerForecasts(updated);
+    setModalLines([]);
+  }, [editingCustomerId, selectedFY, customers, customerForecasts, forecastType, typeLabel, modalViewMode, onUpdateCustomerForecasts]);
+
   const handleSaveCustomerForecast = useCallback(() => {
     if (!editingCustomerId || !selectedFY) return;
     const cust = customers.find((c) => c.id === editingCustomerId);
@@ -692,6 +760,8 @@ export default function SalesForecastPage({
 
   const handleAddProductLine = useCallback(
     (productName: string, location: string) => {
+      // A new forecast line cannot be created at a closed plant.
+      if (isInactiveLoc(location)) return;
       const key = `${canonProduct(productName)}||${locCanon(location)}`;
       setModalLines((prev) => {
         // Don't add a second row for a product+location that's already present —
@@ -705,7 +775,7 @@ export default function SalesForecastPage({
       setAddProductSearch('');
       setAddProductLocation('');
     },
-    [canonProduct, locCanon]
+    [canonProduct, locCanon, isInactiveLoc]
   );
 
   const handleRemoveProductLine = useCallback((lineId: string) => {
@@ -714,6 +784,9 @@ export default function SalesForecastPage({
 
   const handleCellChange = useCallback(
     (lineId: string, periodIndex: number, value: number) => {
+      // Forecasts are whole, non-negative MT — round and clamp (min="0" only guards
+      // the spinner, not a typed/pasted negative).
+      const v = Math.max(0, Math.round(value) || 0);
       setModalLines((prev) =>
         prev.map((line) => {
           if (line.id !== lineId) return line;
@@ -721,10 +794,10 @@ export default function SalesForecastPage({
           let newEntries: ForecastEntry[];
           if (existing) {
             newEntries = line.entries.map((e) =>
-              e.periodIndex === periodIndex ? { ...e, value } : e
+              e.periodIndex === periodIndex ? { ...e, value: v } : e
             );
           } else {
-            newEntries = [...line.entries, { periodIndex, value }];
+            newEntries = [...line.entries, { periodIndex, value: v }];
           }
           return { ...line, entries: newEntries };
         })
@@ -779,15 +852,23 @@ export default function SalesForecastPage({
     const invoicedBols = new Set<string>();
     for (const inv of invoices) {
       if (!inv.customer || !inWindow(inv.date)) continue;
+      // Register the BOL for EVERY in-window invoice — even a cancelled/credit one —
+      // BEFORE the countability check, so a cancelled invoice still suppresses its
+      // matching shipment below (otherwise the cancelled volume leaks back in via
+      // the shipment path).
       const bol = (inv.bolNumber || '').trim();
       if (bol) invoicedBols.add(bol);
+      // Only REAL purchases seed a forecast: a Cancelled or Credit/return invoice is
+      // not something the customer bought, and counting it is exactly the phantom-
+      // product bug being fixed here.
+      if (!isCountableInvoice(inv)) continue;
       if (inv.lineItems?.length) {
         for (const li of inv.lineItems) {
-          if (li.productName && li.totalWeight) {
+          if (li.productName && li.totalWeight && li.totalWeight > 0) {
             addToMap(inv.customer, li.productName, inv.location || '', li.totalWeight);
           }
         }
-      } else if (inv.qty && inv.product && !inv.product.includes(',')) {
+      } else if (inv.qty && inv.qty > 0 && inv.product && !inv.product.includes(',')) {
         // Skip comma-joined mixed-load product strings — they are not real
         // products, so seeding a forecast line from one creates a phantom
         // product the customer never actually bought. Line-item invoices above
@@ -801,7 +882,9 @@ export default function SalesForecastPage({
     //    Open order is pipeline rather than history, and a Completed one is already
     //    counted through its invoice — the old code ingested both and double-counted.
     for (const s of shipments) {
-      if (!s.qty || !s.customer || !s.product || !inWindow(s.date)) continue;
+      if (!s.qty || s.qty <= 0 || !s.customer || !s.product || !inWindow(s.date)) continue;
+      // A cancelled/void shipment never moved product — don't seed a forecast row.
+      if (!isCountableShipment(s)) continue;
       // Same phantom guard as invoices: a comma-joined mixed-load product string
       // is not a real product, so don't seed a forecast line from it.
       if (s.product.includes(',')) continue;
@@ -832,8 +915,9 @@ export default function SalesForecastPage({
 
       for (const { productName, location, qty } of prodMap.values()) {
         const monthlyAvg = qty / numMonths;
-        const rounded = Math.round(monthlyAvg * 10) / 10;
-        // A pair whose monthly average rounds to 0.0 has no meaningful recent
+        // Forecasts are whole MT — round the monthly average to the nearest integer.
+        const rounded = Math.round(monthlyAvg);
+        // A pair whose monthly average rounds to 0 has no meaningful recent
         // demand — emit no line at all rather than a row of zeros.
         if (rounded <= 0) continue;
 
@@ -898,15 +982,16 @@ export default function SalesForecastPage({
     }
 
     onUpdateCustomerForecasts(updatedForecasts);
-  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, canonProduct, custKey, locCanon, resolveLocName, dedupeLines, onUpdateCustomerForecasts]);
+  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, canonProduct, custKey, locCanon, resolveLocName, dedupeLines, isCountableInvoice, isCountableShipment, onUpdateCustomerForecasts]);
 
   // ── Available products for adding ───────────────────────────────────────
-  // Feeds the "Add Product" picker. Includes EVERY catalog product at EVERY
-  // location — active OR inactive, because a customer's history at a now-inactive
-  // plant must still be addable — PLUS every product+location combo that appears
-  // in historical invoices/shipments, so anything a customer actually bought can
-  // be added even when it is not (or no longer) in the SKU/QA catalog. Entries are
-  // de-duplicated by canonical product + location.
+  // Feeds the "Add Product" picker. Includes every catalog product PLUS every
+  // product+location combo that appears in historical invoices/shipments, so
+  // anything a customer actually bought can be added even when it is not in the
+  // SKU/QA catalog. INACTIVE locations are excluded — a NEW forecast line can only
+  // be created at an active plant (historical rows already stored at a closed
+  // plant still render; this only gates new manual adds). De-duplicated by
+  // canonical product + location.
   const availableProducts = useMemo(() => {
     const prods: { name: string; location: string }[] = [];
     const seen = new Set<string>();
@@ -914,6 +999,7 @@ export default function SalesForecastPage({
       const name = canonProduct(rawName);
       if (!name) return;
       const location = resolveLocName(rawLoc);
+      if (isInactiveLoc(location)) return; // can't add a forecast at a closed plant
       const key = `${name.trim().toLowerCase()}||${locCanon(location)}`;
       if (seen.has(key)) return;
       seen.add(key);
@@ -940,7 +1026,7 @@ export default function SalesForecastPage({
       if (s.product && !s.product.includes(',')) add(s.product, s.location || '');
     }
     return prods.sort((a, b) => a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
-  }, [qaProducts, skus, invoices, shipments, canonProduct, resolveLocName, locCanon]);
+  }, [qaProducts, skus, invoices, shipments, canonProduct, resolveLocName, locCanon, isInactiveLoc]);
 
   const filteredAvailableProducts = useMemo(() => {
     let filtered = availableProducts;
@@ -1659,6 +1745,17 @@ export default function SalesForecastPage({
                   {selectedFY?.name ? <span className="opacity-60"> &middot; {selectedFY.name}</span> : ''}
                 </h3>
                 <div className="flex items-center gap-1">
+                  {/* Clear empties the product rows but keeps the customer's
+                      forecast record; Delete removes the record entirely. */}
+                  {modalLines.length > 0 && (
+                    <button
+                      onClick={handleClearForecast}
+                      className="px-3 py-1 border border-amber-400 text-amber-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-amber-500 hover:text-white transition-all"
+                      title={`Clear all ${typeLabel.toLowerCase()} rows for this customer`}
+                    >
+                      <Eraser size={12} /> Clear Forecast
+                    </button>
+                  )}
                   {/* Delete moved here from the table's old Actions column. */}
                   {editingCf.lines.length > 0 && (
                     <button
@@ -1743,11 +1840,11 @@ export default function SalesForecastPage({
                             className="appearance-none w-full px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
                           >
                             <option value="">All Locations</option>
-                            {/* ALL sites — active and inactive — so a customer's
-                                history at a closed plant is still selectable. */}
-                            {locations.map((loc) => (
+                            {/* Active sites only — a NEW forecast line cannot be
+                                created at a closed plant. */}
+                            {locations.filter((loc) => loc.active !== false).map((loc) => (
                               <option key={loc.id} value={loc.name}>
-                                {loc.name}{loc.active === false ? ' (inactive)' : ''}
+                                {loc.name}
                               </option>
                             ))}
                           </select>
@@ -1873,7 +1970,7 @@ export default function SalesForecastPage({
                                     {editable && !isActual ? (
                                       <input
                                         type="number"
-                                        step="0.1"
+                                        step="1"
                                         min="0"
                                         value={forecastVal || ''}
                                         onChange={(e) =>
@@ -1887,10 +1984,12 @@ export default function SalesForecastPage({
                                       />
                                     ) : (
                                       <span className="text-xs">
+                                        {/* Actual (past) cells keep their real MT precision;
+                                            forecast cells are whole numbers. */}
                                         {cellVal > 0
                                           ? cellVal.toLocaleString(undefined, {
-                                              minimumFractionDigits: 1,
-                                              maximumFractionDigits: 1,
+                                              minimumFractionDigits: isActual ? 1 : 0,
+                                              maximumFractionDigits: isActual ? 1 : 0,
                                             })
                                           : '—'}
                                       </span>
