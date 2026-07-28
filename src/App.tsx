@@ -1788,6 +1788,16 @@ export default function App() {
     return undefined;
   };
 
+  // A split number scanned from an email is only trustworthy when it matches the
+  // canonical format X#####.X## — one letter, five digits, a dot, one letter, two
+  // digits (e.g. S04953.S00). Anything else (a partial code, a PO mistaken for a
+  // split, OCR noise) must NOT be suggested as a split amendment.
+  const SPLIT_FORMAT = /^[A-Za-z]\d{5}\.[A-Za-z]\d{2}$/;
+  const validSplit = (s?: string): string => {
+    const v = (s || '').trim();
+    return SPLIT_FORMAT.test(v) ? v : '';
+  };
+
   // Turn an emailed amendment/cancellation extraction into a review-queue entry,
   // matching the existing order (or, for a split-only note, invoice) by PO number
   // and capturing its before-values.
@@ -1799,7 +1809,8 @@ export default function App() {
     // A "Stock Request" split may target an invoice when no open order remains.
     const matchInvoice = !order && amendPo ? invoices.find(inv => samePoNumber(inv.po, amendPo)) : undefined;
     const prevQty = order ? order.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : undefined;
-    const newSplit = (amend.newSplitNumber || po.splitNumber || '').trim();
+    // Only suggest a split when it matches the canonical X#####.X## format.
+    const newSplit = validSplit(amend.newSplitNumber || po.splitNumber);
     return {
       id: `POAMEND-${item?.id || Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       createdAt,
@@ -2054,7 +2065,7 @@ export default function App() {
               && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail) || isLogisticsSenderEmail(item?.fromEmail))) {
             po.documentType = 'amendment';
             po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
-            if (po.splitNumber) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = po.splitNumber; }
+            if (validSplit(po.splitNumber)) { po.amendment = po.amendment || {}; if (!po.amendment.newSplitNumber) po.amendment.newSplitNumber = validSplit(po.splitNumber); }
           }
           // Auto-enrichment (no approval): when this email references an EXISTING
           // order, fill the carrier (from a carrier email) and any MISSING split /
@@ -2090,8 +2101,9 @@ export default function App() {
                 const craw = (po.carrier || '').trim();
                 if (craw && craw.toLowerCase() !== carrierName.toLowerCase()) { recordLearned('carrier', craw, carrierName); learnedCarrier = true; }
               }
-              // Split number — only when the order is MISSING one.
-              const refSplit = (po.splitNumber || po.amendment?.newSplitNumber || '').trim();
+              // Split number — only when the order is MISSING one AND the scanned
+              // split matches the canonical X#####.X## format (else don't touch it).
+              const refSplit = validSplit(po.splitNumber || po.amendment?.newSplitNumber);
               if (refSplit && !((cur.splitNumber ?? order.splitNumber ?? '').trim())) { cur.splitNumber = refSplit; changes.push(`split → ${refSplit}`); }
               // Contract number — only when the order is MISSING one.
               const refContract = (po.contractNumber || '').trim();
@@ -2159,7 +2171,7 @@ export default function App() {
             const hasReviewable = isCancel || !!amend.newShipmentDate || !!amend.newDeliveryDate || (typeof amend.newQuantityMt === 'number' && amend.newQuantityMt > 0);
             const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
             const matchedOrder = refPo ? orders.some(o => samePoNumber(o.po, refPo)) : false;
-            const hasSplitOrContract = !!((po.splitNumber || amend.newSplitNumber || po.contractNumber || '').trim());
+            const hasSplitOrContract = !!(validSplit(po.splitNumber || amend.newSplitNumber) || (po.contractNumber || '').trim());
             if (hasReviewable || (hasSplitOrContract && !matchedOrder)) amendments.push(buildAmendmentFromExtraction(po, item, nowIso));
             continue;
           }
