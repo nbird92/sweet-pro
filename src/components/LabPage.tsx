@@ -143,6 +143,7 @@ function weekKeyOf(raw?: string): string {
 
 export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
+  const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [editingLot, setEditingLot] = useState<LotCode | null>(null);
   const [clearAllConfirm, setClearAllConfirm] = useState(false);
@@ -157,9 +158,23 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
 
   const qaPeople = people.filter(p => p.department === 'QA');
 
-  const filtered = filterSugarType
+  const bySugar = filterSugarType
     ? lotCodes.filter(lc => lc.sugarType === filterSugarType)
     : lotCodes;
+  const searchQ = search.trim().toLowerCase();
+  const filtered = !searchQ ? bySugar : bySugar.filter(lc => {
+    // Match the lot's own text fields first (cheap)...
+    const own = [
+      lc.lotNumber, lc.bolNumber, lc.customerPo, lc.customerName, lc.trailerNumber,
+      lc.countryOfOrigin, lc.tankNumber, lc.sugarType, lc.productGroup, lc.carrierName,
+      lc.notes, toIsoDate(lc.date),
+    ];
+    if (own.some(f => (f || '').toString().toLowerCase().includes(searchQ))) return true;
+    // ...then the resolver-filled BOL / Customer / Trailer (only if own fields miss),
+    // so a search matches the same values shown in the table.
+    const r = resolveLot?.(lc);
+    return !!r && [r.bolNumber, r.customerName, r.trailerNumber].some(f => (f || '').toString().toLowerCase().includes(searchQ));
+  });
 
   // Filter shipments for the search picker
   const filteredShipments = useMemo(() => {
@@ -550,13 +565,15 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
     const wk = weekKeyOf(lc.date) || 'undated';
     (byWeek.get(wk) || byWeek.set(wk, []).get(wk)!).push(lc);
   }
-  if (!byWeek.has(currentWeekKey)) byWeek.set(currentWeekKey, []); // always show the current week
+  if (!searchQ && !byWeek.has(currentWeekKey)) byWeek.set(currentWeekKey, []); // always show the current week (except while searching)
   const weekKeys = Array.from(byWeek.keys()).sort((a, b) => {
     if (a === 'undated') return 1;
     if (b === 'undated') return -1;
     return b.localeCompare(a); // newest week first
   });
-  const isWeekExpanded = (key: string) => key === currentWeekKey ? !expandedWeeks.has(`collapse-${key}`) : expandedWeeks.has(key);
+  // While searching, force every week open so matches in otherwise-collapsed
+  // weeks are visible (empty weeks are hidden below, so no clutter).
+  const isWeekExpanded = (key: string) => searchQ ? true : (key === currentWeekKey ? !expandedWeeks.has(`collapse-${key}`) : expandedWeeks.has(key));
   const toggleWeek = (key: string) => {
     setExpandedWeeks(prev => {
       const next = new Set(prev);
@@ -590,6 +607,21 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
           >
             {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
           </select>
+          <div className="relative ml-1">
+            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search lot #, BOL, PO, customer, trailer…"
+              className="bg-[#2a2a2a] text-[#E4E3E0] placeholder:text-[#E4E3E0]/40 border border-[#E4E3E0]/20 pl-7 pr-6 py-1 text-xs focus:outline-none focus:border-[#E4E3E0]/50 w-64"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 hover:text-[#E4E3E0]" title="Clear search">
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
         <button
           onClick={handleDownloadTemplate}
