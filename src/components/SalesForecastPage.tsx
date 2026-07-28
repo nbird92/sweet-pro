@@ -222,18 +222,58 @@ export default function SalesForecastPage({
 
   // ── Actuals computation ─────────────────────────────────────────────────
 
-  /** Add an invoice's actual MT to `map` under `${customer}|${productName}|${idx}`.
+  /** Resolve a location string to a canonical lowercase key so an invoice's
+   *  location and a forecast line's location compare equal regardless of whether
+   *  one holds the display name, the id, or the location code. Deliberately NO
+   *  prefix matching — a bare "Hamilton" is NOT folded into "Hamilton (Ferguson)"
+   *  or "Hamilton (Sherman)", which would attribute volume to the wrong plant. */
+  const locCanon = useCallback(
+    (loc?: string) => {
+      const raw = (loc || '').trim();
+      if (!raw) return '';
+      const n = raw.toLowerCase();
+      const found =
+        locations.find((l) => l.name === raw) ||
+        locations.find((l) => l.id === raw) ||
+        locations.find((l) => (l.locationCode || '').trim().toLowerCase() === n) ||
+        locations.find((l) => (l.name || '').trim().toLowerCase() === n);
+      return ((found?.name ?? raw) || '').trim().toLowerCase();
+    },
+    [locations]
+  );
+
+  /** The location an invoice line's actuals belong to. Mirrors EXACTLY how an
+   *  auto-generated forecast line is located (see the historical-basis builder):
+   *  the invoice's own location, then the product's catalog location, then the
+   *  customer's default — so an invoice's actual lands under the SAME location
+   *  key as the forecast row it should fill. */
+  const actualsLocation = (customerName: string, productName: string, invLocation?: string): string => {
+    if (invLocation && invLocation.trim()) return invLocation;
+    const qaProd = qaProducts.find((p) => p.skuName === productName);
+    const skuProd = skus.find((s) => s.name === productName);
+    const cust = customers.find((c) => c.name === customerName);
+    return qaProd?.location || skuProd?.location || cust?.defaultLocation || '';
+  };
+
+  /** Add an invoice's actual MT to `map` under
+   *  `${customer}|${productName}|${locationKey}|${idx}`.
    *  Emits one entry PER LINE ITEM when the invoice has them: forecast lines are
    *  keyed on the individual product name, but Invoice.product is a COMMA-JOINED
    *  display string for any multi-product order — so keying the actuals on it
    *  meant the lookup never matched and the grid showed zero actuals against a
    *  real forecast. Falls back to the headline product for legacy/imported
-   *  invoices that carry no line items. */
+   *  invoices that carry no line items.
+   *
+   *  The location dimension is REQUIRED: a customer can forecast the same product
+   *  at several plants (e.g. Hamilton Ferguson AND Hamilton Sherman). Without it,
+   *  every location row for that product showed the SAME actuals — the identical
+   *  sales appeared under both plants, which is physically impossible. */
   const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
     if (inv.lineItems?.length) {
       for (const li of inv.lineItems) {
         if (!li.productName) continue;
-        const k = `${inv.customer}|${li.productName}|${idx}`;
+        const loc = locCanon(actualsLocation(inv.customer, li.productName, inv.location));
+        const k = `${inv.customer}|${li.productName}|${loc}|${idx}`;
         map.set(k, (map.get(k) ?? 0) + (li.totalWeight || 0));
       }
     } else if (inv.product && !inv.product.includes(',')) {
@@ -242,12 +282,13 @@ export default function SalesForecastPage({
       // historical actuals under it invents a phantom the customer never bought
       // and hides the real per-product history. Such invoices are counted only
       // through their line items above.
-      const k = `${inv.customer}|${inv.product}|${idx}`;
+      const loc = locCanon(actualsLocation(inv.customer, inv.product, inv.location));
+      const k = `${inv.customer}|${inv.product}|${loc}|${idx}`;
       map.set(k, (map.get(k) ?? 0) + (inv.qty || 0));
     }
   };
 
-  /** Build a map: `${customerName}|${productName}|${periodIndex}` -> actual MT from invoices */
+  /** Build a map: `${customerName}|${productName}|${locationKey}|${periodIndex}` -> actual MT */
   const actualsMap = useMemo(() => {
     if (!selectedFY) return new Map<string, number>();
     const map = new Map<string, number>();
@@ -260,7 +301,8 @@ export default function SalesForecastPage({
       addInvoiceActuals(map, inv, pIdx);
     }
     return map;
-  }, [invoices, selectedFY]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, selectedFY, locCanon, qaProducts, skus, customers]);
 
   /** Same for weekly */
   const weeklyActualsMap = useMemo(() => {
@@ -274,7 +316,8 @@ export default function SalesForecastPage({
       addInvoiceActuals(map, inv, wIdx);
     }
     return map;
-  }, [invoices, selectedFY]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, selectedFY, locCanon, qaProducts, skus, customers]);
 
   // ── Catalog resolution ──────────────────────────────────────────────────
   // The product tables used to gate on byte-exact SKU.name membership, which
@@ -856,6 +899,7 @@ export default function SalesForecastPage({
     (
       customerName: string,
       productName: string,
+      location: string,
       periodIndex: number,
       isWeekly: boolean,
       forecastValue: number
@@ -869,13 +913,15 @@ export default function SalesForecastPage({
 
       if (isPast) {
         const map = isWeekly ? weeklyActualsMap : actualsMap;
-        const key = `${customerName}|${productName}|${periodIndex}`;
+        // Location is part of the key so a product forecast at two plants shows
+        // each plant's OWN actuals — not the same sales mirrored under both.
+        const key = `${customerName}|${productName}|${locCanon(location)}|${periodIndex}`;
         const actual = map.get(key) ?? 0;
         return { value: actual, isActual: true };
       }
       return { value: forecastValue, isActual: false };
     },
-    [selectedFY, actualsMap, weeklyActualsMap]
+    [selectedFY, actualsMap, weeklyActualsMap, locCanon]
   );
 
   // ── Location name lookup ────────────────────────────────────────────────
@@ -923,7 +969,7 @@ export default function SalesForecastPage({
         for (let i = 0; i < count; i++) {
           const entry = line.entries.find((e) => e.periodIndex === i);
           const forecastVal = entry?.value ?? 0;
-          const { value } = getCellValue(cf.customerName, line.productName, i, cf.viewMode === 'Weekly', forecastVal);
+          const { value } = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
           total += value;
         }
       }
@@ -1695,6 +1741,7 @@ export default function SalesForecastPage({
                               const { value } = getCellValue(
                                 editingCf.customerName,
                                 line.productName,
+                                line.location,
                                 i,
                                 modalViewMode === 'Weekly',
                                 fv
@@ -1716,6 +1763,7 @@ export default function SalesForecastPage({
                                 const { value: cellVal, isActual } = getCellValue(
                                   editingCf.customerName,
                                   line.productName,
+                                  line.location,
                                   i,
                                   modalViewMode === 'Weekly',
                                   forecastVal
@@ -1799,6 +1847,7 @@ export default function SalesForecastPage({
                           const { value } = getCellValue(
                             editingCf.customerName,
                             line.productName,
+                            line.location,
                             i,
                             modalViewMode === 'Weekly',
                             fv
