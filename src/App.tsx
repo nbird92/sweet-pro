@@ -6645,6 +6645,10 @@ export default function App() {
   const [isAddingFreightRate, setIsAddingFreightRate] = useState(false);
   const [isAddingCarrier, setIsAddingCarrier] = useState(false);
   const [showPreviousWeeks, setShowPreviousWeeks] = useState(false);
+  // Toolbar search for the Shipment Schedule page (lab-style): filters the grid to
+  // just the matching shipments and force-reveals only the weeks/bays/days/slots
+  // that contain a match, so hits in collapsed or previous weeks always surface.
+  const [scheduleSearch, setScheduleSearch] = useState('');
   const [isAddingBatchShipment, setIsAddingBatchShipment] = useState(false);
   // Google Sheets shipment-schedule sync
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
@@ -8822,16 +8826,21 @@ export default function App() {
       const locDuration = locationObj?.appointmentDuration || 30;
       const locationTimeSlots = generateTimeSlots(locStartTime, locEndTime, locDuration);
 
+      const scheduleQ = scheduleSearch.trim().toLowerCase();
+      const searchingSchedule = scheduleQ.length > 0;
       const filteredShipments = locationShipments.filter(s => {
-        const matchesSearch = !searchTerm ||
-          (s.customer || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.product || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.po || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.bol || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.carrier || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.contractNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (s.notes || '').toLowerCase().includes(searchTerm.toLowerCase());
-        return matchesSearch;
+        if (!searchingSchedule) return true;
+        // Match the shipment's own fields first, then resolver-filled values so a
+        // search finds the same customer/product/BOL/PO/carrier/lot shown in the grid.
+        const sRes = resolveRecord({ bol: s.bol, po: s.po });
+        const lots = (s.lotNumbers || (s.lotNumber ? [s.lotNumber] : [])).join(' ');
+        const fields = [
+          s.customer, s.product, s.po, s.bol, s.carrier, s.contractNumber, s.trailerNo,
+          s.notes, s.status, lots,
+          sRes.customer, sRes.product, sRes.po, sRes.bolNumber, sRes.carrier,
+          sRes.contractNumber, sRes.trailerNo, sRes.lotCode,
+        ];
+        return fields.some(f => (f || '').toString().toLowerCase().includes(scheduleQ));
       });
 
       // Group by Week -> Bay -> Day -> Time
@@ -8850,12 +8859,19 @@ export default function App() {
         }
       });
 
-      const visibleWeeks = showPreviousWeeks
-        ? weeksList
-        : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
+      // While searching, show only the weeks that actually contain a match (across
+      // ALL weeks incl. previous), so hits are never hidden behind week collapse.
+      const matchedWeeks = new Set(filteredShipments.map(s => s.week));
+      const visibleWeeks = searchingSchedule
+        ? weeksList.filter(w => matchedWeeks.has(w))
+        : showPreviousWeeks
+          ? weeksList
+          : weeksList.filter(w => parseInt(w.replace('Week ', '')) >= Number(currentWeekNum));
 
-      // Current week is expanded by default, but can be collapsed by the user
+      // Current week is expanded by default, but can be collapsed by the user.
+      // While searching, force every visible week open.
       const isCurrentWeekExpanded = (week: string) => {
+        if (searchingSchedule) return true;
         if (week === currentWeek) return !expandedRows.has(`collapse-${week}`);
         return expandedRows.has(week);
       };
@@ -8904,6 +8920,21 @@ export default function App() {
               >
                 {activeLocations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
               </select>
+            </div>
+            <div className="relative">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 pointer-events-none" />
+              <input
+                type="text"
+                value={scheduleSearch}
+                onChange={(e) => setScheduleSearch(e.target.value)}
+                placeholder="Search customer, product, PO, BOL, carrier, trailer, lot…"
+                className="bg-[#E4E3E0] text-[#141414] placeholder:text-[#141414]/40 border border-[#E4E3E0] pl-7 pr-6 py-1.5 text-xs font-bold focus:outline-none w-72"
+              />
+              {scheduleSearch && (
+                <button onClick={() => setScheduleSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#141414]/40 hover:text-[#141414]" title="Clear search">
+                  <X size={12} />
+                </button>
+              )}
             </div>
             <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
@@ -8962,9 +8993,12 @@ export default function App() {
           </PageBanner>
           <div className="p-4 space-y-3">
 
-          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by customer, product, PO, BOL, carrier, contract or notes..." />
-
           <div className="space-y-2">
+            {searchingSchedule && visibleWeeks.length === 0 && (
+              <div className="bg-white border-2 border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)] p-6 text-center text-xs font-bold uppercase tracking-widest text-[#141414]/50">
+                No shipments match "{scheduleSearch}"
+              </div>
+            )}
             {visibleWeeks.map(week => {
               const isCurrentWk = week === currentWeek;
               const isExpanded = isCurrentWeekExpanded(week);
@@ -8994,7 +9028,11 @@ export default function App() {
                         <div className="p-2 space-y-2">
                           {locationBays.map(bay => {
                             const bayKey = `${week}-${bay}`;
-                            const isBayExpanded = expandedBays.has(bayKey);
+                            // While searching, hide bays with no matches and force-open the rest.
+                            const bayShipmentCount = daysList.reduce((sum, d) =>
+                              sum + Object.values(groupedData[week]?.[bay]?.[d] || {}).reduce((s2, arr) => s2 + arr.length, 0), 0);
+                            if (searchingSchedule && bayShipmentCount === 0) return null;
+                            const isBayExpanded = searchingSchedule ? true : expandedBays.has(bayKey);
 
                             return (
                               <div key={bay} className="border border-[#141414] overflow-hidden">
@@ -9014,7 +9052,6 @@ export default function App() {
                                   <div className="space-y-1 bg-white p-1">
                                     {daysList.map(day => {
                                       const dayKey = `${week}-${bay}-${day}`;
-                                      const isDayExpanded = expandedDays.has(dayKey);
                                       const weekNum = parseInt(week.replace('Week ', ''));
                                       const dateObj = getDateForWeekDay(weekNum, day);
                                       const dateStr = toLocalDateString(dateObj);
@@ -9028,6 +9065,9 @@ export default function App() {
                                       const nonStandardTimes = allDayTimes.filter(t => !locationTimeSlots.includes(t));
                                       const mergedTimeSlots = [...locationTimeSlots, ...nonStandardTimes].sort();
                                       const shipmentCount = Object.values(dayShipments).reduce((sum, arr) => sum + arr.length, 0);
+                                      // While searching, hide days with no matches and force-open the rest.
+                                      if (searchingSchedule && shipmentCount === 0) return null;
+                                      const isDayExpanded = searchingSchedule ? true : expandedDays.has(dayKey);
 
                                       return (
                                         <div key={day} className={`border overflow-hidden ${isToday ? 'border-emerald-400 bg-emerald-50/30' : 'border-[#141414]/10'}`}>
@@ -9079,6 +9119,8 @@ export default function App() {
                                                     const shipments = groupedData[week]?.[bay]?.[day]?.[slot] || [];
                                                     // Non-standard slot with no shipments: skip (only shows when it has data)
                                                     if (!isStandardSlot && shipments.length === 0) return null;
+                                                    // While searching, show only matched slots — hide the empty grid placeholders.
+                                                    if (searchingSchedule && shipments.length === 0) return null;
                                                     if (shipments.length === 0) {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
