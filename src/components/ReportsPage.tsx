@@ -13,7 +13,9 @@ import {
   Calendar,
   Mail,
 } from 'lucide-react';
-import ExcelJS from 'exceljs';
+// Type-only: ExcelJS is dynamic-imported at each export handler below so it stays
+// out of the main bundle (all ExcelJS.* uses here are erased type positions).
+import type ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import type {
   Invoice,
@@ -1418,7 +1420,8 @@ export default function ReportsPage({
   }, [sortedGroupSales, groupSalesData, groupGrandTotalMt, groupGrandTotalRev]);
 
   const exportAllReports = useCallback(async () => {
-    const wb = new ExcelJS.Workbook();
+    const ExcelJSRuntime = (await import('exceljs')).default;
+    const wb = new ExcelJSRuntime.Workbook();
     wb.creator = 'Sweet Pro';
     wb.created = new Date();
     buildCustomerSheet(wb);
@@ -1573,7 +1576,8 @@ export default function ReportsPage({
   /** The selected customer's report as an .xlsx Blob — one source for both the
    *  download and the email attachment. */
   const buildCustomerReportBlob = useCallback(async (row: typeof customerReport[number]) => {
-    const wb = new ExcelJS.Workbook();
+    const ExcelJSRuntime = (await import('exceljs')).default;
+    const wb = new ExcelJSRuntime.Workbook();
     buildCustomerReportSheet(wb, row);
     const buf = await wb.xlsx.writeBuffer();
     return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1632,7 +1636,8 @@ export default function ReportsPage({
   }, [sendReportTo, buildCustomerReportBlob]);
 
   const exportSingleReport = useCallback(async (sheetName: string) => {
-    const wb = new ExcelJS.Workbook();
+    const ExcelJSRuntime = (await import('exceljs')).default;
+    const wb = new ExcelJSRuntime.Workbook();
     wb.creator = 'Sweet Pro';
     wb.created = new Date();
     switch (sheetName) {

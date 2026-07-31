@@ -2382,6 +2382,28 @@ export default function App() {
   const resolveByBol = (bol?: string) => resolveRecord({ bol });
   const resolveByPo = (po?: string) => resolveRecord({ po });
 
+  // Enrich transfers ONCE per data change (not per render) via the unified
+  // resolver, so the Transfers page's search/sort/filter no longer re-resolve
+  // every transfer on each keystroke. recordIndex drives resolveByPo, so it is
+  // the only meaningful dependency.
+  const enrichedTransfers = useMemo<Transfer[]>(() => transfers.map(t => {
+    const r = resolveByPo(t.po);
+    return {
+      ...t,
+      customer: t.customer || r.customer || undefined,
+      product: t.product || r.product,
+      contractNumber: t.contractNumber || r.contractNumber || undefined,
+      splitNumber: t.splitNumber || r.splitNo || undefined,
+      lotCode: t.lotCode || r.lotCode || undefined,
+      countryOfOrigin: t.countryOfOrigin || r.countryOfOrigin || undefined,
+      carrier: t.carrier || r.carrier,
+      trailerNo: t.trailerNo || r.trailerNo || undefined,
+      papsNo: t.papsNo || r.papsNo || undefined,
+      customsEntryNo: t.customsEntryNo || r.customsEntryNo || undefined,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [transfers, recordIndex]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
@@ -7034,6 +7056,8 @@ export default function App() {
   // has thousands of invoices so click / scroll / load stays fast.
   const INVOICE_PAGE_SIZE = 200;
   const [invoiceVisibleCount, setInvoiceVisibleCount] = useState(INVOICE_PAGE_SIZE);
+  const ORDER_PAGE_SIZE = 200;
+  const [orderVisibleCount, setOrderVisibleCount] = useState(ORDER_PAGE_SIZE);
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -7344,6 +7368,23 @@ export default function App() {
   //   2. any line item's contractNumber (also possibly comma-joined),
   //   3. order.splitNumber whose contract prefix is the contract number.
   // Strict equality (the old behaviour) missed cases 1-list, 2, and 3.
+  // O(1) contract lookup by contract number — built once per contracts change so
+  // contractForOrder (called per order row AND twice per sort comparison) no longer
+  // scans the whole contracts array on every render.
+  const contractByNumber = useMemo(() => {
+    const m = new Map<string, Contract>();
+    for (const c of contracts) if (c.contractNumber) m.set(c.contractNumber, c);
+    return m;
+  }, [contracts]);
+
+  // O(1) customer lookup by name — shared by the orders + invoice tables so a row
+  // no longer does customers.find() on every render.
+  const customersByName = useMemo(() => {
+    const m = new Map<string, Customer>();
+    for (const c of customers) m.set(c.name, c);
+    return m;
+  }, [customers]);
+
   const contractForOrder = (ord: Order): Contract | undefined => {
     const nums = new Set<string>();
     const addAll = (s: string | undefined) =>
@@ -7355,14 +7396,19 @@ export default function App() {
       if (fromSplit) nums.add(fromSplit);
     }
     if (nums.size === 0) return undefined;
-    return contracts.find(c => c.contractNumber && nums.has(c.contractNumber));
+    for (const n of nums) {
+      const c = contractByNumber.get(n);
+      if (c) return c;
+    }
+    return undefined;
   };
 
   // Price/MT for an order: prefer the matching contract's finalPrice, then fall
   // back to the order's own amount ÷ total weight (MT). Returns 0 when neither
-  // is available so the caller can render an em-dash.
-  const orderPricePerMt = (ord: Order): number => {
-    const c = contractForOrder(ord);
+  // is available so the caller can render an em-dash. Accepts an already-resolved
+  // contract so a caller that also needs the contract doesn't resolve it twice.
+  const orderPricePerMt = (ord: Order, contract?: Contract): number => {
+    const c = contract ?? contractForOrder(ord);
     if (c?.finalPrice) return c.finalPrice;
     const totalWeight = ord.lineItems.reduce((s, li) => s + li.totalWeight, 0);
     if (totalWeight > 0 && ord.amount) return ord.amount / totalWeight;
@@ -9450,26 +9496,9 @@ export default function App() {
     }
 
     if (activePage === 'Transfers') {
-      // Route through the unified resolver: fill any blank field from the same
-      // BOL/PO's order/invoice/shipment/lot-code record so the transfer table
-      // shows information entered elsewhere. Non-destructive (only blanks filled);
-      // enriched before sort/filter so search + export see the filled values too.
-      const enrichedTransfers: Transfer[] = transfers.map(t => {
-        const r = resolveByPo(t.po);
-        return {
-          ...t,
-          customer: t.customer || r.customer || undefined,
-          product: t.product || r.product,
-          contractNumber: t.contractNumber || r.contractNumber || undefined,
-          splitNumber: t.splitNumber || r.splitNo || undefined,
-          lotCode: t.lotCode || r.lotCode || undefined,
-          countryOfOrigin: t.countryOfOrigin || r.countryOfOrigin || undefined,
-          carrier: t.carrier || r.carrier,
-          trailerNo: t.trailerNo || r.trailerNo || undefined,
-          papsNo: t.papsNo || r.papsNo || undefined,
-          customsEntryNo: t.customsEntryNo || r.customsEntryNo || undefined,
-        };
-      });
+      // enrichedTransfers is memoized at component scope (fills any blank field
+      // from the same BOL/PO's order/invoice/shipment/lot-code record via the
+      // unified resolver) so search/sort no longer re-resolve on every keystroke.
       const filteredTransfers = getSortedAndFilteredData<Transfer>(enrichedTransfers, ['transferNumber', 'from', 'to', 'carrier', 'product', 'status', 'lotCode']);
 
       const transferExportSheets = (): SheetSpec[] => [{
@@ -10198,6 +10227,13 @@ export default function App() {
         return 0;
       });
 
+      // Progressive rendering: paint only the first orderVisibleCount rows unless
+      // the user is searching (then show the full filtered result so a hit isn't
+      // hidden). content-visibility on each row (below) skips off-screen layout.
+      const orderEffectiveLimit = searchTerm ? filteredOrders.length : orderVisibleCount;
+      const visibleOrders = filteredOrders.slice(0, orderEffectiveLimit);
+      const ordersRemaining = filteredOrders.length - visibleOrders.length;
+
       const buildOrderRows = () => orders.map(o => {
         const li = o.lineItems[0];
         const totalWeight = o.lineItems.reduce((s, l) => s + l.totalWeight, 0);
@@ -10442,7 +10478,7 @@ export default function App() {
                     </td>
                   </tr>
                 )}
-                {filteredOrders.map(ord => {
+                {visibleOrders.map(ord => {
                   const totalWeight = ord.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
                   // Build the product display by resolving each line item to its
                   // shortform via lineItemToShortform — which prefers the stored
@@ -10458,8 +10494,8 @@ export default function App() {
                   const productUnmatched = ord.product
                     ? !productMatchesCurrentSku(ord.product)
                     : ord.lineItems.some(li => !productMatchesCurrentSku(li.productName));
-                  // Resolve ship-to location name from the order's customer
-                  const ordCustomerRec = customers.find(c => c.name === ord.customer);
+                  // Resolve ship-to location name from the order's customer (O(1) map)
+                  const ordCustomerRec = customersByName.get(ord.customer);
                   const shipToName = ord.shipToLocationId
                     ? (ordCustomerRec?.shipToLocations?.find(l => l.id === ord.shipToLocationId)?.name || '—')
                     : '—';
@@ -10468,7 +10504,7 @@ export default function App() {
                   const ordRes = resolveRecord({ bol: ord.bolNumber, po: ord.po });
                   return (
                     <React.Fragment key={ord.id}>
-                      <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" onClick={() => setViewingOrderCard({ ...ord })}>
+                      <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 52px' } as React.CSSProperties} onClick={() => setViewingOrderCard({ ...ord })}>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer || ordRes.customer || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
@@ -10485,7 +10521,7 @@ export default function App() {
                           // split-number prefixes), then falls back to the order's
                           // own amount ÷ total weight.
                           const ordContract = contractForOrder(ord);
-                          const priceMt = orderPricePerMt(ord);
+                          const priceMt = orderPricePerMt(ord, ordContract);
                           return (<>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
                               {priceMt > 0 ? `$${priceMt.toFixed(2)}` : '—'}
@@ -10619,6 +10655,17 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {ordersRemaining > 0 && (
+            <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
+              <span className="opacity-50 normal-case font-mono">Showing {visibleOrders.length} of {filteredOrders.length}</span>
+              <button onClick={() => setOrderVisibleCount(c => c + ORDER_PAGE_SIZE)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">
+                Show {Math.min(ORDER_PAGE_SIZE, ordersRemaining)} more
+              </button>
+              <button onClick={() => setOrderVisibleCount(filteredOrders.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">
+                Show all ({ordersRemaining})
+              </button>
+            </div>
+          )}
           </div>
         </div>
       );

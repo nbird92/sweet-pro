@@ -146,6 +146,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   const [statusFilter, setStatusFilter] = useState<EmailStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<EmailDocumentType | 'all'>('all');
   const [viewingLog, setViewingLog] = useState<EmailLog | null>(null);
+  // Progressive rendering: the append-only email log is the fastest-growing table.
+  const [logVisibleCount, setLogVisibleCount] = useState(200);
 
   const filtered = useMemo(() => {
     const list = emailLog.filter(e => {
@@ -156,6 +158,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     // newest first
     return [...list].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [emailLog, statusFilter, typeFilter]);
+  const visibleLogs = filtered.slice(0, logVisibleCount);
+  const logsRemaining = filtered.length - visibleLogs.length;
 
   const counts = useMemo(() => {
     const c = { total: emailLog.length, sent: 0, failed: 0, queued: 0, testMode: 0 };
@@ -606,8 +610,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
-              {filtered.map(log => (
-                <tr key={log.id} className="hover:bg-[#F9F9F9] cursor-pointer" onClick={() => setViewingLog(log)}>
+              {visibleLogs.map(log => (
+                <tr key={log.id} className="hover:bg-[#F9F9F9] cursor-pointer" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 44px' } as React.CSSProperties} onClick={() => setViewingLog(log)}>
                   <td className="p-3 text-xs font-mono">{log.createdAt ? new Date(log.createdAt).toLocaleString() : '—'}</td>
                   <td className="p-3 text-xs">{TYPE_LABELS[log.type]}</td>
                   <td className="p-3 text-xs font-bold">{log.customerName || '—'}</td>
@@ -625,6 +629,13 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               )}
             </tbody>
           </table>
+          {logsRemaining > 0 && (
+            <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
+              <span className="opacity-50 normal-case font-mono">Showing {visibleLogs.length} of {filtered.length}</span>
+              <button onClick={() => setLogVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">Show 200 more</button>
+              <button onClick={() => setLogVisibleCount(filtered.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">Show all ({logsRemaining})</button>
+            </div>
+          )}
         </div>
       </div>
 

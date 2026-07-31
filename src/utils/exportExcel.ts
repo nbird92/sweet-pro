@@ -1,4 +1,8 @@
-import ExcelJS from 'exceljs';
+// Type-only import: ExcelJS (~230 KB gzip) is loaded on demand inside
+// exportSheetsToExcel (below) so it never lands in the main bundle every page
+// downloads. All the `ExcelJS.*` uses in this file are type positions, which are
+// erased at compile time.
+import type ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -151,7 +155,9 @@ function buildSheet(wb: ExcelJS.Workbook, spec: SheetSpec, usedNames: Set<string
  * Multi-table pages pass multiple sheets; each becomes its own worksheet.
  */
 export async function exportSheetsToExcel(sheets: SheetSpec[], fileBaseName: string): Promise<void> {
-  const wb = new ExcelJS.Workbook();
+  // Load ExcelJS only when the user actually exports — keeps it out of the cold load.
+  const ExcelJSRuntime = (await import('exceljs')).default;
+  const wb = new ExcelJSRuntime.Workbook();
   wb.creator = 'Sweet Pro';
   wb.created = new Date();
 
