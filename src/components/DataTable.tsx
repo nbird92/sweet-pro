@@ -99,6 +99,11 @@ const HIDDEN_PREFIX = 'dt-colhidden:';
 const NATURAL_ORDER: string[] = []; // stable empty reference = "use the caller's column order"
 const NO_HIDDEN: string[] = [];      // stable empty reference = "nothing hidden"
 
+// Progressive rendering: paint only the first PAGE_SIZE rows, with a "Show more"
+// control for the rest. Rendering thousands of <tr>s at once is what made big
+// tables (e.g. Transfers) lag on every keystroke; this mirrors the invoice table.
+const PAGE_SIZE = 200;
+
 // Read a persisted column-key list (order or hidden set) from localStorage.
 // Always returns an array of strings (empty when absent / malformed) so callers
 // never have to guard.
@@ -132,6 +137,8 @@ export default function DataTable<T>({
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey || null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir);
+  // How many rows are currently painted. Grows via the "Show more" control.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   // Persisted column order (array of column keys). Empty = use the natural order
   // the caller passed. Drag-and-drop on the headers rewrites this. Source of
@@ -241,6 +248,12 @@ export default function DataTable<T>({
       return 0;
     });
   }, [rows, columns, sortKey, sortDir]);
+
+  // Only the first `visibleCount` rows are turned into DOM. `content-visibility`
+  // on each row (below) additionally skips layout/paint for the ones scrolled
+  // off-screen, so even after "Show all" the table stays responsive.
+  const visibleRows = useMemo(() => sorted.slice(0, visibleCount), [sorted, visibleCount]);
+  const remaining = sorted.length - visibleRows.length;
 
   const toggleSort = (key: string, sortable: boolean) => {
     if (!sortable) return;
@@ -374,10 +387,14 @@ export default function DataTable<T>({
           </tr>
         </thead>
         <tbody className="divide-y divide-[#141414]/10">
-          {sorted.map(row => (
+          {visibleRows.map(row => (
             <tr
               key={getRowKey(row)}
               onClick={() => onRowClick?.(row)}
+              // content-visibility lets the browser skip render/layout for rows
+              // scrolled off-screen; contain-intrinsic-size keeps the scrollbar
+              // accurate for those un-rendered rows.
+              style={{ contentVisibility: 'auto', containIntrinsicSize: '0 44px' } as React.CSSProperties}
               className={`hover:bg-[#F9F9F9] transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
             >
               {visibleColumns.map(col => {
@@ -406,6 +423,25 @@ export default function DataTable<T>({
         {footer && <tfoot>{footer}</tfoot>}
       </table>
       </div>
+      {remaining > 0 && (
+        <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
+          <span className="opacity-50 normal-case font-mono">
+            Showing {visibleRows.length} of {sorted.length}
+          </span>
+          <button
+            onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
+            className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all"
+          >
+            Show {Math.min(PAGE_SIZE, remaining)} more
+          </button>
+          <button
+            onClick={() => setVisibleCount(sorted.length)}
+            className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all"
+          >
+            Show all ({remaining})
+          </button>
+        </div>
+      )}
     </div>
   );
 }
