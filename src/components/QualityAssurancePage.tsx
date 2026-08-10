@@ -158,6 +158,7 @@ export default function QualityAssurancePage({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [qaVisibleCount, setQaVisibleCount] = useState(200); // progressive rendering
 
   // Add product modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -344,6 +345,10 @@ export default function QualityAssurancePage({
       : String(aVal).localeCompare(String(bVal), undefined, { numeric: true, sensitivity: 'base' });
     return direction === 'asc' ? cmp : -cmp;
   });
+  // Progressive rendering: paint only the first qaVisibleCount rows.
+  const visibleSorted = sorted.slice(0, qaVisibleCount);
+  const qaRemaining = sorted.length - visibleSorted.length;
+  const productGroupByName = new Map(productGroups.map(g => [g.name, g]));
 
   const handleSort = (key: string) => {
     setSortConfig(prev =>
@@ -965,8 +970,8 @@ export default function QualityAssurancePage({
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
-              {sorted.length > 0 ? sorted.map((p) => {
-                const pg = productGroups.find(g => g.name === p.productGroup);
+              {sorted.length > 0 ? visibleSorted.map((p) => {
+                const pg = productGroupByName.get(p.productGroup);
                 // Row color based on approval status
                 const hasApprovals = p.artworkApprovals.length > 0;
                 const allApproved = hasApprovals && p.artworkApprovals.every(a => a.status === 'approved');
@@ -976,7 +981,7 @@ export default function QualityAssurancePage({
                   <tr
                     key={p.id}
                     className={`${rowBg} hover:bg-opacity-70 transition-colors cursor-pointer group`}
-                    style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none' }}
+                    style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none', contentVisibility: 'auto', containIntrinsicSize: '0 52px' } as React.CSSProperties}
                     onClick={() => openDetail(p)}
                   >
                     <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.productCode || '—'}</td>
@@ -1025,6 +1030,13 @@ export default function QualityAssurancePage({
               )}
             </tbody>
           </table>
+          {qaRemaining > 0 && (
+            <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
+              <span className="opacity-50 normal-case font-mono">Showing {visibleSorted.length} of {sorted.length}</span>
+              <button onClick={() => setQaVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">Show 200 more</button>
+              <button onClick={() => setQaVisibleCount(sorted.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">Show all ({qaRemaining})</button>
+            </div>
+          )}
         </div>
       </div>
 

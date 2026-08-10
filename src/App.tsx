@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import {
   Calculator,
   TrendingUp,
@@ -72,24 +72,27 @@ import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
 import { generateDocumentPackagePdf } from './documentPackagePdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
 import type { EmailDocumentType } from './types';
-import EmailCenterPage from './components/EmailCenterPage';
-import ReturnOrdersPage from './components/ReturnOrdersPage';
+// Full-page components are code-split (React.lazy) so their code loads only when
+// the page is first opened, shrinking the initial bundle. Rendered inside one
+// <Suspense> at the renderContent() call site.
+const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
+const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
-import ConferencesPage from './components/ConferencesPage';
-import PeoplePage from './components/PeoplePage';
-import QualityAssurancePage from './components/QualityAssurancePage';
-import LabPage from './components/LabPage';
-import FinancePage from './components/FinancePage';
+const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
+const PeoplePage = lazy(() => import('./components/PeoplePage'));
+const QualityAssurancePage = lazy(() => import('./components/QualityAssurancePage'));
+const LabPage = lazy(() => import('./components/LabPage'));
+const FinancePage = lazy(() => import('./components/FinancePage'));
 import {
   contractNumberFromSplit,
   matchesContractByNumberOrSplit,
   invoiceMatchesContract,
 } from './utils/contractMatch';
 import { poKey, samePoNumber } from './utils/poNumber';
-import SalesForecastPage from './components/SalesForecastPage';
-import ReportsPage from './components/ReportsPage';
+const SalesForecastPage = lazy(() => import('./components/SalesForecastPage'));
+const ReportsPage = lazy(() => import('./components/ReportsPage'));
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
@@ -143,6 +146,34 @@ import {
   type LearnedMapping,
 } from './utils/poScan';
 // import SalesStatsPage from './components/SalesStatsPage';
+
+// Error boundary around the code-split pages. A page chunk can 404 after a fresh
+// deploy (its hashed filename changes while a user is still on the old index.html);
+// the dynamic import then throws, which would otherwise blank the whole app. This
+// catches it and offers a one-click reload to pull the new build.
+class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  // `this.props`/`this.state` typing doesn't propagate cleanly from React 19's
+  // Component generics in this project's type setup, so read them through a small
+  // local cast — runtime behaviour is the standard error-boundary contract.
+  private get self() { return this as unknown as { state: { failed: boolean }; props: { children: React.ReactNode } }; }
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.self.state = { failed: false };
+  }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(err: unknown) { console.error('Page load/render error:', err); }
+  render() {
+    if (this.self.state.failed) {
+      return (
+        <div className="p-12 text-center">
+          <div className="text-xs uppercase tracking-widest opacity-60 mb-3">This page failed to load — a new version may have just been published.</div>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-all">Reload</button>
+        </div>
+      );
+    }
+    return this.self.props.children;
+  }
+}
 
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
@@ -14664,7 +14695,13 @@ export default function App() {
 
         <ColumnOrderContext.Provider value={columnOrderStore}>
           <ColumnVisibilityContext.Provider value={columnVisibilityStore}>
-            {renderContent()}
+            {/* One Suspense boundary for every code-split page component, wrapped in
+                an error boundary that recovers from a stale-chunk 404 after a deploy. */}
+            <PageErrorBoundary>
+              <Suspense fallback={<div className="p-12 text-center text-xs uppercase tracking-widest opacity-50">Loading…</div>}>
+                {renderContent()}
+              </Suspense>
+            </PageErrorBoundary>
           </ColumnVisibilityContext.Provider>
         </ColumnOrderContext.Provider>
       </div>

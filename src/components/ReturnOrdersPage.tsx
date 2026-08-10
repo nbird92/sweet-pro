@@ -147,7 +147,7 @@ export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
               {filtered.map(r => (
-                <tr key={r.id} className="hover:bg-[#F9F9F9] cursor-pointer" onClick={() => onViewDetails(r)}>
+                <tr key={r.id} className="hover:bg-[#F9F9F9] cursor-pointer" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 48px' } as React.CSSProperties} onClick={() => onViewDetails(r)}>
                   <td className="p-3 text-xs font-bold font-mono">{r.bolNumber || '—'}</td>
                   <td className="p-3 text-xs font-mono">{r.originalBolNumber || '—'}</td>
                   <td className="p-3 text-xs font-bold">{r.customer || '—'}</td>
