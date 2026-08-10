@@ -242,6 +242,26 @@ function isStockRequest(subject: string | undefined): boolean {
   return /stock\s*request/i.test(String(subject || ''));
 }
 
+/** Canonical PO key — digits only, leading zeros dropped — mirroring the client's
+ *  poKey so "PO67139", "67139" and "067139" compare equal. */
+function poNumKey(s: string | undefined): string {
+  const digits = String(s || '').replace(/\D/g, '');
+  return digits.replace(/^0+/, '') || digits || String(s || '').trim().toLowerCase();
+}
+
+/** PO-number candidates encoded in an email's subject or attachment filenames,
+ *  as canonical keys. Only the "PO"-prefixed form is matched (e.g. "PO67139",
+ *  "PO #67139", "PO67139 - ….pdf") to keep false positives low — a bare number in
+ *  a subject line is too ambiguous to treat as a PO. */
+function poCandidatesFrom(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of String(text || '').matchAll(/\bP\.?\s*O\.?[\s#:._-]*0*(\d{4,})/gi)) {
+    const k = poNumKey(m[1]);
+    if (k) out.add(k);
+  }
+  return Array.from(out);
+}
+
 // Current weekday (0=Sun..6=Sat) and minutes-since-midnight in a given IANA zone.
 function nowInZone(tz: string): { dow: number; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
@@ -337,7 +357,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ ok: true, skipped: 'window-closed', message: 'Outside the Mon 4AM ET – Fri 5PM PT run window; scan skipped.' });
   }
 
-  const summary = { scanned: 0, skipped: 0, bodySkipped: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
+  const summary = { scanned: 0, skipped: 0, bodySkipped: 0, skippedExisting: 0, attachments: 0, queued: 0, remaining: 0, partial: false, errors: [] as Array<{ where: string; message: string }> };
 
   // Each Gemini extraction takes a few seconds, so a backlog can exceed the
   // function's time limit (-> HTTP 504). Stop cleanly before that: progress is
@@ -364,6 +384,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hints = await buildHints(db);
     const carrierDomains = hints.carrierDomains || [];
     const carrierNames = hints.carriers || [];
+    // Existing PO numbers (orders + invoices) as canonical keys — used to SKIP the
+    // paid Gemini extraction on an email whose PO already exists (a resend of an
+    // already-imported PO). Only the `po` field is read to keep the cost minimal.
+    const existingPoKeys = new Set<string>();
+    try {
+      const [ordSnap, invSnap] = await Promise.all([
+        db.collection('orders').select('po').get().catch(() => ({ docs: [] as any[] })),
+        db.collection('invoices').select('po').get().catch(() => ({ docs: [] as any[] })),
+      ]);
+      for (const d of [...(ordSnap.docs || []), ...(invSnap.docs || [])]) {
+        const po = (d.data() as any)?.po;
+        if (po) { const k = poNumKey(po); if (k) existingPoKeys.add(k); }
+      }
+    } catch (e) {
+      console.warn('existing-PO preload failed (extraction will not skip existing POs):', e instanceof Error ? e.message : e);
+    }
     const token = await gmailAccessToken(inbox);
     const processedRef = db.collection('processedPoEmails');
     const feedRef = db.collection('inboxFeed');
@@ -445,15 +481,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         const feedBody = getMessageBody(msg.payload);
+        const allAttachments0 = collectAttachments(msg.payload);
+        const supported = allAttachments0.filter(a => isSupportedAttachment(a.filename, a.mimeType));
+        const isImage = (a: { filename: string; mimeType: string }) =>
+          /\.(png|jpe?g|gif|webp)$/i.test(a.filename) || (a.mimeType || '').toLowerCase().startsWith('image/');
+        const docAtts = supported.filter(a => !isImage(a));   // PDF / Excel / CSV
+        const imgAtts = supported.filter(isImage);            // inline logos / scans
+
+        // Token-saver: an obvious RESEND of an already-imported PO — a customer
+        // email whose ATTACHMENT FILENAME (e.g. "PO67139 - ….pdf") is named after a
+        // PO that already exists — is skipped BEFORE any paid Gemini call. Deliberately
+        // scoped tight to avoid dropping real orders:
+        //   - PO candidates come from FILENAMES ONLY, never the subject (a thread
+        //     subject often references an OLD PO while attaching a NEW one).
+        //   - a subject that hints at a change (revised / amended / cancel / update)
+        //     is NEVER skipped — a customer-revised PO must still be read.
+        //   - only customer senders with a document attachment qualify.
+        const poCandidates = poCandidatesFrom(allAttachments0.map(a => a.filename || '').join(' '));
+        const existingPoHit = poCandidates.find(k => existingPoKeys.has(k));
+        const looksRevised = /revis|amend|change|updat|correct|cancel|\bnew\s+price\b/i.test(subject || '');
+        const skipExisting = !force && senderCategory === 'customer' && docAtts.length > 0 && !!existingPoHit && !looksRevised;
 
         // Run PO/amendment extraction only when this email hasn't been extracted
-        // before (a feed-pruned email reappearing must not re-queue its PO).
-        if (force || !processedIds.has(meta.id)) {
-          const supported = collectAttachments(msg.payload).filter(a => isSupportedAttachment(a.filename, a.mimeType));
-          const isImage = (a: { filename: string; mimeType: string }) =>
-            /\.(png|jpe?g|gif|webp)$/i.test(a.filename) || (a.mimeType || '').toLowerCase().startsWith('image/');
-          const docAtts = supported.filter(a => !isImage(a));   // PDF / Excel / CSV
-          const imgAtts = supported.filter(isImage);            // inline logos / scans
+        // before (a feed-pruned email reappearing must not re-queue its PO) AND it
+        // isn't a resend of an already-imported PO.
+        if ((force || !processedIds.has(meta.id)) && !skipExisting) {
           let foundOrder = false;
           const noteOrder = (docs: any[]) => { if (docs.some(d => d?.documentType && d.documentType !== 'other')) foundOrder = true; };
 
@@ -490,6 +542,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   try { docs = await extractPO(bodyFile, hints, { apiKey, model, deadlineMs: hardDeadlineMs }); } catch { /* keep the lite result */ }
                 }
                 noteOrder(docs);
+                // Queue BOTH the body and the attachment extractions — the client
+                // ingestion keeps the RICHEST per PO (attachment over detail-less
+                // body), so a document attachment wins WITHOUT risking the loss of a
+                // body-stated order when the attachment is unrelated or its
+                // extraction fails.
                 for (const extraction of docs) await queueExtraction(extraction, '(email body)');
               }
             } catch (e) {
@@ -534,6 +591,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           // Record the message as PO-processed so it isn't re-extracted later.
           await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString() });
+        } else if (skipExisting) {
+          // Skipped the paid extraction: this attachment PO already exists. Note it
+          // in the feed as a known PO and mark processed so it isn't re-evaluated.
+          summary.skippedExisting++;
+          suggestion = 'none';
+          suggestionPo = existingPoHit || suggestionPo;
+          await processedRef.doc(meta.id).set({ id: meta.id, subject, fromEmail, processedAt: new Date().toISOString(), skippedExistingPo: existingPoHit });
         }
 
         // An internal-employee or logistics-carrier email must never be a NEW-PO

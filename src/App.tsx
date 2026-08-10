@@ -2000,6 +2000,24 @@ export default function App() {
     try {
       const incoming = await fetchCollection<any>(COLLECTIONS.incomingPoOrders);
       if (!incoming.length) return;
+      // A single email can queue TWO extractions of the same PO — a detail-less
+      // body pass and a full attachment pass. The per-PO dedup below is first-wins,
+      // so process the RICHEST extraction first (real line items + prices + ship-to,
+      // attachment-sourced) and let the poorer duplicate be skipped — otherwise the
+      // empty body extraction shadowed the attachment and dropped item/price/ship-to.
+      const extractionRichness = (it: any): number => {
+        const e = it?.extraction;
+        if (!e || typeof e !== 'object') return -1;
+        const lis = Array.isArray(e.lineItems) ? e.lineItems : [];
+        let s = 0;
+        if (lis.length) s += 1;
+        if (lis.some((li: any) => typeof li?.pricePerMt === 'number' && li.pricePerMt > 0)) s += 2;
+        if (lis.some((li: any) => (li?.description || '').trim() || (li?.itemNumber || '').trim())) s += 1;
+        if ((e.shipToAddress || '').trim() || (e.shipToName || '').trim()) s += 1;
+        if (it?.sourceFile && it.sourceFile !== '(email body)') s += 1; // attachment over body
+        return s;
+      };
+      incoming.sort((a, b) => extractionRichness(b) - extractionRichness(a));
       const logs: PoImportLogEntry[] = [];
       const amendments: PoAmendment[] = [];
       const pendingImports: PoPendingImport[] = [];
@@ -2218,7 +2236,7 @@ export default function App() {
             customer: po.customerName || undefined,
             extraction: po,
           });
-          if (poNum) pendingPoSet.add(poKey);
+          if (poNum) pendingPoSet.add(poNumKey);
         } catch (e) {
           // The doc is already claimed/deleted, so always leave a dashboard trail.
           logs.push({ ...logBase(item, item?.extraction), result: 'skipped', note: 'Import error: ' + (e instanceof Error ? e.message : String(e)) });
