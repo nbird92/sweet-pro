@@ -12663,6 +12663,43 @@ export default function App() {
             const set = (patch: Partial<DemurrageInvoice>) => setDemurrageDraft({ ...d, ...patch });
             const fieldCls = "w-full bg-white border border-[#141414]/20 p-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#141414]";
             const labelCls = "text-[9px] uppercase font-bold tracking-widest opacity-50 block mb-1";
+            // Dropdown option lists sourced from the live orders / invoices /
+            // customers tables so PO #, BOL # and Customer can be picked rather
+            // than retyped. They stay editable (combobox) so a demurrage invoice
+            // referencing a PO/BOL not yet in the system can still be entered.
+            const poOptions = Array.from(new Set([
+              ...orders.map(o => (o.po || '').trim()),
+              ...invoices.map(i => (i.po || '').trim()),
+            ].filter(Boolean))).sort();
+            const bolOptions = Array.from(new Set([
+              ...orders.map(o => (o.bolNumber || '').trim()),
+              ...invoices.map(i => (i.bolNumber || '').trim()),
+            ].filter(Boolean))).sort();
+            const customerOptions = Array.from(new Set(customers.map(c => (c.name || '').trim()).filter(Boolean))).sort();
+            // Fill any BLANK customer/location/shipment-date from the matched
+            // order/invoice — non-destructive, so a value the operator already
+            // typed is never clobbered.
+            const fillCommon = (patch: Partial<DemurrageInvoice>, match: { customer?: string; location?: string; shipmentDate?: string } | undefined) => {
+              if (!match) return patch;
+              if (!(d.customer || '').trim() && (match.customer || '').trim()) patch.customer = (match.customer || '').trim();
+              if (!(d.location || '').trim() && (match.location || '').trim()) patch.location = (match.location || '').trim();
+              if (!(d.shipmentDate || '').trim() && (match.shipmentDate || '').trim()) patch.shipmentDate = match.shipmentDate;
+              return patch;
+            };
+            const setFromPo = (po: string) => {
+              const refPo = po.trim();
+              const match = refPo ? (orders.find(o => samePoNumber(o.po, refPo)) || invoices.find(i => samePoNumber(i.po, refPo))) : undefined;
+              const patch = fillCommon({ po }, match);
+              if (match && !(d.bolNumber || '').trim() && (match.bolNumber || '').trim()) patch.bolNumber = (match.bolNumber || '').trim();
+              set(patch);
+            };
+            const setFromBol = (bol: string) => {
+              const refBol = bol.trim().toUpperCase();
+              const match = refBol ? (orders.find(o => (o.bolNumber || '').trim().toUpperCase() === refBol) || invoices.find(i => (i.bolNumber || '').trim().toUpperCase() === refBol)) : undefined;
+              const patch = fillCommon({ bolNumber: bol }, match);
+              if (match && !(d.po || '').trim() && (match.po || '').trim()) patch.po = (match.po || '').trim();
+              set(patch);
+            };
             return (
               <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setDemurrageDraft(null)}>
                 <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] w-full max-w-2xl my-8" onClick={e => e.stopPropagation()}>
@@ -12673,9 +12710,18 @@ export default function App() {
                   <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className={labelCls}>Carrier</label><input className={fieldCls} value={d.carrier} onChange={e => set({ carrier: e.target.value })} /></div>
                     <div><label className={labelCls}>Invoice #</label><input className={fieldCls} value={d.invoiceNumber} onChange={e => set({ invoiceNumber: e.target.value })} /></div>
-                    <div><label className={labelCls}>PO #</label><input className={fieldCls} value={d.po} onChange={e => set({ po: e.target.value })} /></div>
-                    <div><label className={labelCls}>BOL #</label><input className={fieldCls} value={d.bolNumber} onChange={e => set({ bolNumber: e.target.value })} /></div>
-                    <div><label className={labelCls}>Customer</label><input className={fieldCls} value={d.customer || ''} onChange={e => set({ customer: e.target.value })} /></div>
+                    <div><label className={labelCls}>PO #</label>
+                      <input list="dem-po-list" className={fieldCls} value={d.po} onChange={e => setFromPo(e.target.value)} placeholder="Select or type a PO #" />
+                      <datalist id="dem-po-list">{poOptions.map(v => <option key={v} value={v} />)}</datalist>
+                    </div>
+                    <div><label className={labelCls}>BOL #</label>
+                      <input list="dem-bol-list" className={fieldCls} value={d.bolNumber} onChange={e => setFromBol(e.target.value)} placeholder="Select or type a BOL #" />
+                      <datalist id="dem-bol-list">{bolOptions.map(v => <option key={v} value={v} />)}</datalist>
+                    </div>
+                    <div><label className={labelCls}>Customer</label>
+                      <input list="dem-customer-list" className={fieldCls} value={d.customer || ''} onChange={e => set({ customer: e.target.value })} placeholder="Select or type a customer" />
+                      <datalist id="dem-customer-list">{customerOptions.map(v => <option key={v} value={v} />)}</datalist>
+                    </div>
                     <div><label className={labelCls}>Location</label>
                       <select className={fieldCls} value={d.location || ''} onChange={e => set({ location: e.target.value })}>
                         <option value="">—</option>
