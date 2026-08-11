@@ -947,7 +947,7 @@ export default function App() {
       po: po.poNumber || '',
       shipmentDate,
       deliveryDate,
-      carrier: po.carrier || '',
+      carrier: resolveOrderCarrier(po, cust),
       currency,
       shippingTerms: normShipTerms(po.shippingTerms),
       contractNumber,
@@ -1746,7 +1746,7 @@ export default function App() {
       status: 'Open',
       lineItems,
       amount: totalAmount,
-      carrier: po.carrier || undefined,
+      carrier: resolveOrderCarrier(po, cust) || undefined,
       shippingTerms: normShipTerms(po.shippingTerms) || undefined,
       location: location || undefined,
       shipToLocationId: shipToLocationId || undefined,
@@ -1760,6 +1760,13 @@ export default function App() {
   // at most it amends an existing PO (a split number / quantity). These let the
   // client downgrade any new_order that slips through (e.g. queued before deploy).
   const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca', 'surco.us'];
+  // Shared/free mailbox domains that must never identify a carrier by domain — a
+  // carrier may list a gmail contact, but that domain also carries customers and
+  // brokers, so resolving a carrier from it would mis-tag orders. Mirrors the
+  // server denylist in api/scan-po-inbox.ts.
+  const FREEMAIL_DOMAINS = ['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'yahoo.ca', 'aol.com', 'icloud.com', 'me.com', 'msn.com', 'protonmail.com', 'proton.me'];
+  const isNonCarrierDomain = (dom: string): boolean =>
+    !!dom && (FREEMAIL_DOMAINS.includes(dom) || INTERNAL_SENDER_DOMAINS.some(d => dom === d || dom.endsWith('.' + d)));
   const isInternalSenderEmail = (fromEmail?: string): boolean => {
     const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
     return !!domain && INTERNAL_SENDER_DOMAINS.some(d => domain === d || domain.endsWith('.' + d));
@@ -1812,15 +1819,37 @@ export default function App() {
       const partial = carriers.find(c => norm(c.name) && (nm.includes(norm(c.name)) || norm(c.name).includes(nm)));
       if (partial) return partial;
     }
-    if (dom) {
+    // Never resolve a carrier from a shared/free or Sucro-internal domain — those
+    // ride on ordinary customer mail and would mis-tag the order.
+    if (dom && !isNonCarrierDomain(dom)) {
       const byDom = carriers.find(c => carrierEmailsOf(c).some(e => {
         const cd = norm(e.split('@')[1]);
-        return !!cd && (cd === dom || cd.endsWith('.' + dom) || dom.endsWith('.' + cd));
+        return !!cd && !isNonCarrierDomain(cd) && (cd === dom || cd.endsWith('.' + dom) || dom.endsWith('.' + cd));
       }));
       if (byDom) return byDom;
     }
     return undefined;
   };
+
+  // The customer card's default carrier, resolved to a carrier NAME. defaultCarrierCode
+  // stores the carrier NUMBER (that's what the enrichment writes), but tolerate a name too.
+  const customerDefaultCarrierName = (cust?: Customer): string => {
+    const code = (cust?.defaultCarrierCode || '').trim();
+    if (!code) return '';
+    const rec = carriers.find(c => (c.carrierNumber || '').trim() === code)
+      || carriers.find(c => (c.name || '').trim().toLowerCase() === code.toLowerCase());
+    return rec?.name || '';
+  };
+
+  // Carrier for an order built from an emailed/scanned PO. Priority:
+  //   1. a carrier resolved from the extracted name or the CC'd carrier domain,
+  //   2. the raw extracted carrier name,
+  //   3. the customer's default carrier from their customer card.
+  // So a customer PO that CC's their carrier (or names none) still lands with one.
+  const resolveOrderCarrier = (po: ExtractedPO, cust?: Customer): string =>
+    resolveCarrierRecord(po.carrier, po.carrierDomain)?.name
+    || (po.carrier || '').trim()
+    || customerDefaultCarrierName(cust);
 
   // A split number scanned from an email is only trustworthy when it matches the
   // canonical format X#####.X## — one letter, five digits, a dot, one letter, two

@@ -159,7 +159,11 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
       const emails = [data.contactEmail, ...(Array.isArray(data.contactEmails) ? data.contactEmails : [])].filter(Boolean);
       return emails.map((e: any) => String(e).toLowerCase().split('@')[1] || '');
     })
-    .filter((dom: string) => !!dom)));
+    // Drop shared/free + Sucro-internal domains: a carrier listing a gmail
+    // contact must not turn 'gmail.com' into a carrier-identifying domain (it
+    // rides on nearly every email), which would mis-tag senders and mis-stamp
+    // the CC'd-carrier on imported POs.
+    .filter((dom: string) => !!dom && !isNonCarrierDomain(dom))));
   // Ignore learned corrections older than 60 days (matches the client TTL) so a
   // stale alias can't keep steering extractions after it should have expired.
   // The client physically deletes them; this is a belt-and-suspenders read guard.
@@ -185,6 +189,14 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
 // Sucro employee, never a customer purchase order. Includes the "surco.ca" /
 // "surco.us" spellings the team also uses.
 const INTERNAL_SENDER_DOMAINS = ['sucro.ca', 'sucrocan.ca', 'sucrocan.com', 'sucro.us', 'sucrocanada.com', 'surco.ca', 'surco.us'];
+// Shared/free mailbox domains that are NEVER carrier-identifying: a small carrier
+// or owner-operator may list a gmail contact, but that domain also carries
+// customers, brokers and Sucro staff, so matching a participant on it would
+// mis-tag the whole email. Excluded from carrier-domain recognition entirely.
+const FREEMAIL_DOMAINS = ['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'yahoo.ca', 'aol.com', 'icloud.com', 'me.com', 'msn.com', 'protonmail.com', 'proton.me'];
+// A domain that must never be treated as a carrier's identifying domain.
+const isNonCarrierDomain = (dom: string): boolean =>
+  FREEMAIL_DOMAINS.includes(dom) || INTERNAL_SENDER_DOMAINS.some(d => dom === d || dom.endsWith('.' + d));
 function isInternalSender(fromEmail: string | undefined): boolean {
   const domain = String(fromEmail || '').toLowerCase().match(/[a-z0-9._%+-]+@([a-z0-9.-]+)/)?.[1] || '';
   if (!domain) return false;
@@ -232,6 +244,23 @@ function senderCategoryOf(fromEmail: string | undefined, carrierDomains: string[
   if (isInternalEmployee(fromEmail)) return 'internal';
   if (isLogisticsSender(fromEmail, carrierDomains, carrierNames)) return 'logistics';
   return 'customer';
+}
+// A customer often emails a PO with THEIR carrier CC'd (or on the To line). The
+// PO document itself rarely names the carrier, so scan the recipient headers for
+// a participant whose domain belongs to a known carrier and return that domain —
+// it gets stamped onto the extraction so the imported order lands with the right
+// carrier (the client resolves the domain to the carrier record).
+function carrierDomainFromRecipients(payload: any, carrierDomains: string[]): string {
+  if (!carrierDomains || !carrierDomains.length) return '';
+  const raw = ['To', 'Cc'].map((n) => header(payload, n)).filter(Boolean).join(', ').toLowerCase();
+  if (!raw) return '';
+  const domains = Array.from(new Set((raw.match(/@([a-z0-9.-]+)/g) || [])
+    .map((s) => s.slice(1).replace(/[.,;:>)\]]+$/, ''))
+    .filter(Boolean)));
+  for (const dom of domains) {
+    if (carrierDomains.some((cd) => cd && (dom === cd || dom.endsWith('.' + cd) || cd.endsWith('.' + dom)))) return dom;
+  }
+  return '';
 }
 // Cheap keyword gate: does this text look order-related at all? Used to skip a
 // paid Gemini call on obvious non-orders (newsletters, out-of-office, replies).
@@ -453,6 +482,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const senderCategory = senderCategoryOf(fromEmail, carrierDomains, carrierNames);
         const notCustomer = senderCategory !== 'customer'; // internal employee OR logistics
         const stockRequest = isStockRequest(subject);
+        // A carrier CC'd (or on the To line) of a customer's PO email — used as a
+        // fallback so the imported order carries the right carrier even when the
+        // PO document itself doesn't name one.
+        const ccCarrierDomain = carrierDomainFromRecipients(msg.payload, carrierDomains);
         // Queue an extraction unless the model classified it as unrelated mail.
         const queueExtraction = async (extraction: any, sourceFile: string) => {
           // An email from a Sucro EMPLOYEE or a LOGISTICS carrier (and any "Stock
@@ -469,6 +502,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!extraction.amendment.summary) extraction.amendment.summary = stockRequest
               ? 'Internal Stock Request — split number for an existing order/invoice'
               : (senderCategory === 'logistics' ? 'Carrier email — update to an existing order' : 'Internal email — update to an existing order');
+          }
+          // Stamp the CC'd carrier's domain onto the extraction (unless it already
+          // carries a carrier name/domain) so a customer PO that CC's their carrier
+          // imports with that carrier. The client resolves the domain to a carrier
+          // record; a real carrier NAME read from the document still takes priority.
+          if (extraction && ccCarrierDomain && !extraction.carrierDomain && !(extraction.carrier || '').trim()) {
+            extraction.carrierDomain = ccCarrierDomain;
           }
           noteSuggestion(extraction);
           if (!extraction || extraction.documentType === 'other') return;
