@@ -299,7 +299,7 @@ const PO_SCHEMA = {
     totalAmount: numStr('Order total price as a plain decimal string (e.g. "14746.20") — no currency symbol or thousands separators, at most 2 decimals. Empty string if not stated.'),
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
     confidence: numStr('Overall extraction confidence 0..1 as a short decimal string (e.g. "0.85").'),
-    isCallOff: { type: Type.BOOLEAN, description: 'True for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of scheduled deliveries (one row per delivery with quantity + date + time).' },
+    isCallOff: { type: Type.BOOLEAN, description: 'True ONLY for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of MULTIPLE scheduled deliveries on DIFFERENT dates. A normal PO with a single delivery is NOT a call-off (false).' },
     documentType: {
       type: Type.STRING,
       format: 'enum',
@@ -374,7 +374,8 @@ INTERNAL emails are NOT new orders:
 - An email whose SUBJECT contains "Stock Request" is ALWAYS an INTERNAL note that supplies a SPLIT NUMBER for an existing PO or invoice — it is NEVER a new order, regardless of sender. Classify it 'amendment', set amendsPoNumber to the referenced PO/invoice number, and put the split number in amendment.newSplitNumber AND the top-level splitNumber field.
 
 CALL-OFF / delivery-schedule releases (e.g. Ferrero "CALL OFF" PDFs):
-- Some customers release ONE bulk order number and a TABLE of scheduled deliveries — one row per delivery with a quantity, a delivery date, and a delivery time. Recognize these by a "CALL OFF" title or a delivery-schedule table under a single order number.
+- A call-off is ONE bulk order number with a TABLE of MULTIPLE scheduled deliveries on DIFFERENT dates — several rows, each a distinct delivery date/time + quantity. Recognize these by a "CALL OFF" title or a multi-row delivery-schedule table under a single order number.
+- Set isCallOff = true ONLY for that case. A normal purchase order with a SINGLE delivery (one line item / one due date), even when it has "Pickup Date" / "Delivery Time" columns or the word "Delivery" in the filename, is NOT a call-off — set isCallOff = false, classify it 'new_order', keep its PO number exactly as printed, and capture its Unit Price / Line Total and Shipping Term like any other PO. Never emit more delivery rows than are actually printed.
 - Return the WHOLE document as ONE 'new_order' entry with isCallOff = true. poNumber = the bulk order number only (e.g. "UP Order nr.: 9330104660" -> "9330104660") — do NOT invent per-delivery PO numbers; the app generates them from the delivery week.
 - Emit ONE lineItems[] entry PER delivery row: repeat the article description + itemNumber on every line, quantity + unit exactly as printed (e.g. 38,000.000 KG), deliveryDate = that row's date (ISO), deliveryTime = that row's time as 24h HH:MM. Never merge delivery rows, even when their quantities are identical.
 - The "TOTAL QTY" on a call-off is the whole bulk order (not this schedule) — do not use it for line quantities and leave totalAmount empty.
@@ -615,7 +616,13 @@ export function expandCallOffDoc(doc: any): any[] {
   const lines = Array.isArray(doc.lineItems) ? doc.lineItems.filter((l: any) => l && typeof l === 'object') : [];
   const dated = lines.filter((l: any) => typeof l.deliveryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.deliveryDate));
   const base = String(doc.poNumber || '').trim().replace(/[-_/\s]+$/, '');
-  if (!base || dated.length < 2) return [doc]; // nothing to split
+  // Only split a GENUINE multi-delivery schedule: it must have ≥2 DISTINCT delivery
+  // DATES. A normal single-delivery PO — even one the model mis-flags as isCallOff,
+  // or where it hallucinates duplicate rows for the same date — has one distinct
+  // date, so it is returned unchanged (its real PO number is kept, never suffixed
+  // with a "-{week}{seq}" that isn't on the document).
+  const distinctDates = new Set(dated.map((l: any) => l.deliveryDate));
+  if (!base || distinctDates.size < 2) return [doc]; // not a multi-date schedule
   const timeOf = (l: any) => String(l.deliveryTime || '').trim();
   const sorted = [...dated].sort((a: any, b: any) =>
     `${a.deliveryDate} ${timeOf(a)}`.localeCompare(`${b.deliveryDate} ${timeOf(b)}`));
