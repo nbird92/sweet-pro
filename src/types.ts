@@ -409,6 +409,31 @@ export interface Invoice {
   lotCode?: string;         // Lot code(s) from the matching shipment (by BOL), captured at Complete & Bill
 }
 
+// A demurrage / wait-time / accessorial invoice issued BY a freight carrier TO Sucro
+// (e.g. Tandet, Denali) for detention, layover, cancellation or delay charges on a
+// shipment — NOT a sugar purchase order. Matched to the underlying order/customer by
+// the customer PO number or the Sucro BOL number printed on the carrier's invoice.
+export interface DemurrageInvoice {
+  id: string;
+  carrier: string;          // The logistics provider that issued the invoice (Tandet, Denali, …)
+  invoiceNumber: string;    // The carrier's invoice number (e.g. 532476B)
+  po: string;               // Customer PO referenced on the invoice
+  bolNumber: string;        // Sucro BOL referenced on the invoice
+  customer?: string;        // Resolved from the order/invoice matching the PO or BOL
+  shipmentDate?: string;    // The "Shipped" date on the invoice (ISO)
+  amount: number;           // Total due (incl. tax) in the invoice currency
+  netAmount?: number;       // Net (pre-tax) amount
+  currency?: string;        // CAD / USD
+  description?: string;     // Charge description (Demurrage, Layover, Cancellation, …)
+  location?: string;        // Origin location (from the shipper), e.g. Hamilton
+  status?: string;          // Operator workflow status (New / Approved / Disputed / Paid)
+  invoiceDate?: string;     // The invoice date (ISO)
+  notes?: string;
+  sourceEmailId?: string;   // Gmail message id it was imported from
+  sourceFile?: string;      // Attachment filename
+  createdAt?: string;
+}
+
 export interface OrderLineItem {
   id: string;
   productName: string;

@@ -50,6 +50,9 @@ export const COLLECTIONS = {
   emailLog: 'emailLog',
   emailSettings: 'emailSettings',
   returnOrders: 'returnOrders',
+  // Carrier demurrage / wait-time / accessorial invoices (managed on the Supply
+  // Chain page). Kept out of the sugar-order flow entirely.
+  demurrageInvoices: 'demurrageInvoices',
   // Persistent dashboard log of POs imported from the Gmail inbox scan.
   poImportLog: 'poImportLog',
   // Review queue of emailed order amendments/cancellations awaiting approval.

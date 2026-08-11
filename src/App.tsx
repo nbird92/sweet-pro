@@ -79,7 +79,7 @@ const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
 const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
 const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
 const PeoplePage = lazy(() => import('./components/PeoplePage'));
 const QualityAssurancePage = lazy(() => import('./components/QualityAssurancePage'));
@@ -440,6 +440,9 @@ export default function App() {
   const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
   const [packagingFormats, setPackagingFormats] = useState<PackagingFormat[]>(INITIAL_PACKAGING_FORMATS);
   const [namingFormulas, setNamingFormulas] = useState<NamingFormula[]>(INITIAL_NAMING_FORMULAS);
+  const [demurrageInvoices, setDemurrageInvoices] = useState<DemurrageInvoice[]>([]);
+  const [demurrageDraft, setDemurrageDraft] = useState<DemurrageInvoice | null>(null); // add/edit modal
+  const [demurrageLocFilter, setDemurrageLocFilter] = useState<string>('all');
   const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
@@ -2053,6 +2056,7 @@ export default function App() {
       const amendments: PoAmendment[] = [];
       const pendingImports: PoPendingImport[] = [];
       const built: Order[] = [];        // auto-approved orders (opt-in)
+      const newDemurrage: DemurrageInvoice[] = []; // carrier demurrage invoices → Supply Chain
       const batchBols: string[] = [];   // BOLs reserved this batch for unique numbering
       // Auto-enrichment patches applied (no approval) to EXISTING records when an
       // email references their PO: carrier from a carrier email, and a split /
@@ -2104,12 +2108,65 @@ export default function App() {
             logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
             continue;
           }
+          // Carrier DEMURRAGE / wait-time / accessorial invoices are NOT sugar POs —
+          // route them to the Supply Chain demurrage table, inheriting the customer
+          // and location from the order (or invoice) referenced by the invoice's PO
+          // or Sucro BOL. Never create a sugar order from one.
+          if (po.documentType === 'demurrage') {
+            const invNo = (po.carrierInvoiceNumber || '').trim();
+            const refPo = (po.poNumber || '').trim();
+            const refBol = (po.bolNumber || '').trim().toUpperCase();
+            const findMatch = (arr: Array<{ po?: string; bolNumber?: string; customer?: string; location?: string; shipmentDate?: string }>) =>
+              (refPo ? arr.find(x => samePoNumber(x.po, refPo)) : undefined)
+              || (refBol ? arr.find(x => (x.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
+            const matched = findMatch(orders as any) || findMatch(invoices as any);
+            const carrierRec = resolveCarrierRecord(po.carrier, po.carrierDomain);
+            const dem: DemurrageInvoice = {
+              id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              carrier: carrierRec?.name || (po.carrier || '').trim() || '—',
+              invoiceNumber: invNo,
+              po: refPo,
+              bolNumber: (po.bolNumber || '').trim(),
+              customer: (matched?.customer || '').trim() || undefined,
+              shipmentDate: po.shipmentDate || (matched as any)?.shipmentDate || undefined,
+              amount: typeof po.totalAmount === 'number' ? po.totalAmount : 0,
+              currency: po.currency || undefined,
+              description: (po.notes || '').trim() || undefined,
+              location: (matched?.location || '').trim() || undefined,
+              status: 'New',
+              invoiceDate: po.orderDate || undefined,
+              sourceEmailId: item?.sourceEmailId,
+              sourceFile: item?.sourceFile,
+              createdAt: nowIso,
+            };
+            const invKey = invNo.toLowerCase();
+            // Primary dedup: the carrier invoice number. Fallback (when the scan
+            // couldn't read a number — e.g. a cover-note body extraction, an
+            // unreadable scanned PDF, or a notice with no formal invoice #): the
+            // source email id. The Gmail scanner queues BOTH a body pass and each
+            // attachment pass for the SAME email as separate incomingPoOrders docs
+            // (all carrying the same sourceEmailId), and a force re-import re-queues
+            // already-seen emails — without this fallback a numberless demurrage doc
+            // would insert a duplicate blank row every time.
+            const srcId = (item?.sourceEmailId || '').trim();
+            const isDup = (!!invKey && (demurrageInvoices.some(d => (d.invoiceNumber || '').toLowerCase() === invKey)
+              || newDemurrage.some(d => (d.invoiceNumber || '').toLowerCase() === invKey)))
+              || (!invKey && !!srcId && (demurrageInvoices.some(d => (d.sourceEmailId || '') === srcId)
+              || newDemurrage.some(d => (d.sourceEmailId || '') === srcId)));
+            if (isDup) {
+              logs.push({ ...logBase(item, po), poNumber: refPo, result: 'duplicate', note: `Demurrage invoice ${invNo} already recorded` });
+            } else {
+              newDemurrage.push(dem);
+              logs.push({ ...logBase(item, po), poNumber: refPo, customer: dem.customer, result: 'created', note: `Demurrage invoice ${invNo || '(no #)'} from ${dem.carrier} — ${dem.currency || '$'}${dem.amount.toFixed(2)}` });
+            }
+            continue;
+          }
           // Safety net (mirrors the server guard): an email from a Sucro EMPLOYEE
           // (internal domain, not the order-desk forwarder), a LOGISTICS carrier,
           // or a "Stock Request" subject is never a NEW order — downgrade to an
           // amendment so it updates an existing PO (carrier / split / qty) instead
           // of becoming a new PO. A customer PO forwarded via the Order Desk group
-          // is preserved.
+          // is preserved. (Demurrage docs are handled above and never reach here.)
           if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other'
               && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail) || isLogisticsSenderEmail(item?.fromEmail))) {
             po.documentType = 'amendment';
@@ -2280,6 +2337,7 @@ export default function App() {
         setOrders(prev => prev.map(o => orderPatch.has(o.id) ? { ...o, ...orderPatch.get(o.id)! } : o));
       }
       if (built.length) addOrdersUnique(built);
+      if (newDemurrage.length) setDemurrageInvoices(prev => [...prev, ...newDemurrage]);
       if (invoicePatch.size) setInvoices(prev => prev.map(i => invoicePatch.has(i.id) ? { ...i, ...invoicePatch.get(i.id)! } : i));
       if (custPatch.size) setCustomers(prev => prev.map(c => custPatch.has(c.id) ? { ...c, ...custPatch.get(c.id)! } : c));
       // File carrier-confirmed appointments into the schedule (Hamilton/Vancouver).
@@ -2296,13 +2354,14 @@ export default function App() {
       if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
       const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
       const autoUpdated = orderPatch.size;
-      if (built.length || pendingImports.length || pendingAmend || autoUpdated) {
+      if (built.length || pendingImports.length || pendingAmend || autoUpdated || newDemurrage.length) {
         setPoIngestNotice(
           [
             built.length ? `${built.length} order${built.length === 1 ? '' : 's'} auto-created` : '',
             autoUpdated ? `${autoUpdated} existing PO${autoUpdated === 1 ? '' : 's'} auto-updated` : '',
             pendingImports.length ? `${pendingImports.length} PO${pendingImports.length === 1 ? '' : 's'} to review` : '',
             pendingAmend ? `${pendingAmend} amendment${pendingAmend === 1 ? '' : 's'} to review` : '',
+            newDemurrage.length ? `${newDemurrage.length} demurrage invoice${newDemurrage.length === 1 ? '' : 's'}` : '',
           ].filter(Boolean).join(' · ') + ' from emailed POs.',
         );
       }
@@ -5048,6 +5107,7 @@ export default function App() {
     qaproducts: JSON.stringify([]),
     fuelsurcharges: JSON.stringify([]),
     vendors: JSON.stringify([]),
+    demurrageInvoices: JSON.stringify([]),
     cheppalletmovements: JSON.stringify([]),
     salesleads: JSON.stringify([]),
     qatemplates: JSON.stringify([]),
@@ -5335,6 +5395,10 @@ export default function App() {
         setVendors(data.vendors);
         lastSyncedData.current.vendors = JSON.stringify(data.vendors);
       }
+      if (data.demurrageInvoices?.length) {
+        setDemurrageInvoices(data.demurrageInvoices);
+        lastSyncedData.current.demurrageInvoices = JSON.stringify(data.demurrageInvoices);
+      }
       if (data.chepPalletMovements?.length) {
         setChepPalletMovements(data.chepPalletMovements);
         lastSyncedData.current.cheppalletmovements = JSON.stringify(data.chepPalletMovements);
@@ -5491,6 +5555,7 @@ export default function App() {
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
         { collection: COLLECTIONS.tollingFees, key: 'tollingfees', data: tollingFees },
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
+        { collection: COLLECTIONS.demurrageInvoices, key: 'demurrageInvoices', data: demurrageInvoices },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
         { collection: COLLECTIONS.salesLeads, key: 'salesleads', data: salesLeads },
         { collection: COLLECTIONS.sampleRequests, key: 'samplerequests', data: sampleRequests },
@@ -5582,7 +5647,7 @@ export default function App() {
     // fiscalYears + customerForecasts are in syncTasks, so they MUST be deps —
     // without them an edit touching only those collections never armed the timer
     // and silently stayed unsynced for the whole session.
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
 
   // Warn before leaving with unsynced edits. The autosave is debounced 15s, so a
   // quick tab-close/refresh can otherwise drop the last edits with no cue (the
@@ -12533,6 +12598,128 @@ export default function App() {
             exportFileName="Supply_Chain"
           />
           <div className="p-6 space-y-8">
+
+          {/* ── Demurrage / wait-time invoices from carriers ─────────────────
+              Carrier invoices (Tandet, Denali, …) for demurrage / detention /
+              layover / cancellation charges. Auto-populated from the PO inbox
+              (documentType 'demurrage'), matched to the customer + location by
+              the referenced PO or Sucro BOL. Also add/edit manually. */}
+          {(() => {
+            const demLocations = Array.from(new Set(demurrageInvoices.map(d => (d.location || '').trim()).filter(Boolean)));
+            const locOptions = Array.from(new Set([...locations.map(l => l.name), ...demLocations])).filter(Boolean).sort();
+            const filteredDem = demurrageLocFilter === 'all'
+              ? demurrageInvoices
+              : demurrageInvoices.filter(d => (d.location || '').trim().toLowerCase() === demurrageLocFilter.toLowerCase());
+            const fmtAmt = (d: DemurrageInvoice) => d.amount
+              ? `${d.currency ? d.currency + ' ' : '$'}${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : '—';
+            return (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Location</label>
+                  <select
+                    value={demurrageLocFilter}
+                    onChange={(e) => setDemurrageLocFilter(e.target.value)}
+                    className="bg-white text-[#141414] border border-[#141414] px-3 py-1.5 text-xs font-bold focus:outline-none"
+                  >
+                    <option value="all">All Locations</option>
+                    {locOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <DataTable<DemurrageInvoice>
+                  title="Demurrage"
+                  icon={<Clock size={14} />}
+                  storageKey="demurrage"
+                  columns={[
+                    { key: 'carrier', label: 'Carrier', bold: true, render: (d) => d.carrier || '—' },
+                    { key: 'invoiceNumber', label: 'Invoice #', mono: true, render: (d) => d.invoiceNumber || '—' },
+                    { key: 'po', label: 'PO #', mono: true, render: (d) => d.po || '—' },
+                    { key: 'bolNumber', label: 'BOL #', mono: true, render: (d) => d.bolNumber || '—' },
+                    { key: 'customer', label: 'Customer', render: (d) => d.customer || '—' },
+                    { key: 'shipmentDate', label: 'Shipment Date', render: (d) => d.shipmentDate || '—' },
+                    { key: 'amount', label: 'Amount', align: 'right', mono: true, sortValue: (d) => d.amount || 0, render: (d) => fmtAmt(d) },
+                    { key: 'description', label: 'Description', render: (d) => <span className="truncate block max-w-[220px]" title={d.description || ''}>{d.description || '—'}</span> },
+                    { key: 'location', label: 'Location', render: (d) => d.location || '—' },
+                    { key: 'status', label: 'Status', render: (d) => d.status || 'New' },
+                  ]}
+                  rows={filteredDem}
+                  getRowKey={(d) => d.id}
+                  onRowClick={(d) => setDemurrageDraft({ ...d })}
+                  onAdd={() => setDemurrageDraft({ id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, carrier: '', invoiceNumber: '', po: '', bolNumber: '', amount: 0, status: 'New', createdAt: new Date().toISOString() })}
+                  addLabel="Add Demurrage"
+                  emptyMessage="No demurrage invoices yet. Carrier demurrage/wait-time invoices from the PO inbox appear here automatically."
+                  defaultSortKey="shipmentDate"
+                  defaultSortDir="desc"
+                />
+              </div>
+            );
+          })()}
+
+          {/* Demurrage add / edit modal */}
+          {demurrageDraft && (() => {
+            const d = demurrageDraft;
+            const exists = demurrageInvoices.some(x => x.id === d.id);
+            const set = (patch: Partial<DemurrageInvoice>) => setDemurrageDraft({ ...d, ...patch });
+            const fieldCls = "w-full bg-white border border-[#141414]/20 p-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#141414]";
+            const labelCls = "text-[9px] uppercase font-bold tracking-widest opacity-50 block mb-1";
+            return (
+              <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setDemurrageDraft(null)}>
+                <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] w-full max-w-2xl my-8" onClick={e => e.stopPropagation()}>
+                  <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                    <h3 className="text-xs font-bold uppercase tracking-widest">{exists ? 'Edit' : 'Add'} Demurrage Invoice</h3>
+                    <button onClick={() => setDemurrageDraft(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                  </div>
+                  <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label className={labelCls}>Carrier</label><input className={fieldCls} value={d.carrier} onChange={e => set({ carrier: e.target.value })} /></div>
+                    <div><label className={labelCls}>Invoice #</label><input className={fieldCls} value={d.invoiceNumber} onChange={e => set({ invoiceNumber: e.target.value })} /></div>
+                    <div><label className={labelCls}>PO #</label><input className={fieldCls} value={d.po} onChange={e => set({ po: e.target.value })} /></div>
+                    <div><label className={labelCls}>BOL #</label><input className={fieldCls} value={d.bolNumber} onChange={e => set({ bolNumber: e.target.value })} /></div>
+                    <div><label className={labelCls}>Customer</label><input className={fieldCls} value={d.customer || ''} onChange={e => set({ customer: e.target.value })} /></div>
+                    <div><label className={labelCls}>Location</label>
+                      <select className={fieldCls} value={d.location || ''} onChange={e => set({ location: e.target.value })}>
+                        <option value="">—</option>
+                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                        {/* Keep a stored location that isn't a current Location record
+                            (matched from an order/invoice with a case/whitespace variant,
+                            an inactive/renamed location, or a terminal name) selectable so
+                            it renders instead of collapsing to "—" and getting cleared. */}
+                        {d.location && !locations.some(l => l.name === d.location) && (
+                          <option value={d.location}>{d.location}</option>
+                        )}
+                      </select>
+                    </div>
+                    <div><label className={labelCls}>Shipment Date</label><input type="date" className={fieldCls} value={d.shipmentDate || ''} onChange={e => set({ shipmentDate: e.target.value })} /></div>
+                    <div><label className={labelCls}>Invoice Date</label><input type="date" className={fieldCls} value={d.invoiceDate || ''} onChange={e => set({ invoiceDate: e.target.value })} /></div>
+                    <div><label className={labelCls}>Amount</label><input type="number" step="0.01" className={fieldCls} value={d.amount || ''} onChange={e => set({ amount: parseFloat(e.target.value) || 0 })} /></div>
+                    <div><label className={labelCls}>Currency</label>
+                      <select className={fieldCls} value={d.currency || 'CAD'} onChange={e => set({ currency: e.target.value })}>
+                        <option value="CAD">CAD</option><option value="USD">USD</option>
+                      </select>
+                    </div>
+                    <div><label className={labelCls}>Status</label>
+                      <select className={fieldCls} value={d.status || 'New'} onChange={e => set({ status: e.target.value })}>
+                        <option>New</option><option>Approved</option><option>Disputed</option><option>Paid</option>
+                      </select>
+                    </div>
+                    <div className="md:col-span-2"><label className={labelCls}>Description</label><textarea className={fieldCls} rows={2} value={d.description || ''} onChange={e => set({ description: e.target.value })} /></div>
+                  </div>
+                  <div className="flex justify-between items-center px-5 py-3 border-t border-gray-200 bg-gray-50">
+                    {exists ? (
+                      <button onClick={() => { setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); setDemurrageDraft(null); }}
+                        className="px-3 py-2 border border-red-400 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-all">
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    ) : <span />}
+                    <div className="flex gap-2">
+                      <button onClick={() => setDemurrageDraft(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-gray-100 transition-colors">Cancel</button>
+                      <button onClick={() => { setDemurrageInvoices(prev => exists ? prev.map(x => x.id === d.id ? d : x) : [...prev, d]); setDemurrageDraft(null); }}
+                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors flex items-center gap-1"><Save size={12} /> Save</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Locations — standardized DataTable. Core fields are read-only
               (locations are managed on the QA page). Row click opens a detail

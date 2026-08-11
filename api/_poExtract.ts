@@ -303,9 +303,10 @@ const PO_SCHEMA = {
     documentType: {
       type: Type.STRING,
       format: 'enum',
-      enum: ['new_order', 'amendment', 'cancellation', 'other'],
-      description: "Classify the input: 'new_order' (a new purchase order), 'amendment' (changes an existing order's ship date or quantity), 'cancellation' (cancels an existing order), or 'other' (unrelated mail).",
+      enum: ['new_order', 'amendment', 'cancellation', 'demurrage', 'other'],
+      description: "Classify the input: 'new_order' (a new purchase order), 'amendment' (changes an existing order's ship date or quantity), 'cancellation' (cancels an existing order), 'demurrage' (a freight carrier's invoice to Sucro for demurrage / detention / layover / wait-time / cancellation / accessorial charges — NOT a product order), or 'other' (unrelated mail).",
     },
+    carrierInvoiceNumber: { type: Type.STRING, description: "For a 'demurrage' carrier invoice: the carrier's INVOICE number (e.g. 532476B), taken from the 'Invoice #' field." },
     amendsPoNumber: { type: Type.STRING, description: 'For amendment/cancellation: the PO number of the EXISTING order being changed.' },
     amendment: {
       type: Type.OBJECT,
@@ -367,6 +368,7 @@ Document classification (set documentType):
 - 'new_order' — a new purchase order (usually an attached PO document).
 - 'amendment' — a request to CHANGE an existing order, e.g. "change the ship date on PO 12345 to Jun 25", "increase PO 12345 to 40 MT", "move delivery to next week". Set amendsPoNumber to the referenced existing PO number and fill the amendment object with only the fields that change. lineItems may be empty.
 - 'cancellation' — a request to cancel an existing order, e.g. "please cancel PO 12345". Set amendsPoNumber and amendment.cancel = true.
+- 'demurrage' — an INVOICE issued BY a freight carrier / logistics provider (e.g. Tandet, Denali Logistics) TO Sucro Can Sourcing for DEMURRAGE, DETENTION, LAYOVER, WAIT-TIME, STORAGE, CANCELLATION or other ACCESSORIAL charges on a shipment — NOT a product/sugar order. Recognize it by: a carrier company name at the TOP as the issuer, an "Invoice #" and "Invoice Date", "Bill To: Sucro Can Sourcing", charge lines like "Demurrage", "Layover Charge", "Detention", "Wait Time", "Cancellation Charge", "DELAY", and a "Total Due". These carry a customer PO # and/or a Sucro BOL # as reference numbers. For a demurrage invoice, extract: carrier = the issuing carrier company; carrierInvoiceNumber = the "Invoice #"; poNumber = the referenced customer "PO #"; bolNumber = the referenced "Bill of Lading #"; shipmentDate = the "Shipped" date (ISO); orderDate = the invoice date (ISO); totalAmount = the "Total Due" (incl. tax); currency; and put a short charge description (e.g. "Demurrage 10hr + Layover") in notes. Do NOT emit lineItems for a demurrage invoice; leave the order fields empty.
 - 'other' — anything unrelated (newsletters, replies with no order content, signatures). Leave the order fields empty.
 
 INTERNAL emails are NOT new orders:
