@@ -12001,6 +12001,7 @@ export default function App() {
           sugarTypes={sugarTypes}
           productGroups={productGroups}
           namingFormulas={namingFormulas}
+          demurrageInvoices={demurrageInvoices}
         />
       );
     }
