@@ -11462,6 +11462,7 @@ export default function App() {
           productGroups={productGroups}
           customers={customers}
           carriers={carriers}
+          skus={skus}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           transfers={transfers}
           resolveLot={(lc) => {

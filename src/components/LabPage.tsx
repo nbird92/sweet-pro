@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer, Customer, Carrier } from '../types';
+import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer, Customer, Carrier, SKU } from '../types';
 import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
@@ -13,6 +13,7 @@ interface LabPageProps {
   productGroups: ProductGroup[];
   customers: Customer[];
   carriers: Carrier[];
+  skus: SKU[];
   shipments: Shipment[];
   transfers: Transfer[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
@@ -177,7 +178,7 @@ function weekKeyOf(raw?: string): string {
   return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, skus, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -202,10 +203,32 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
   const customerNames = Array.from(new Set(customers.map(c => (c.name || '').trim()).filter(Boolean))).sort();
   const carrierNames = Array.from(new Set(carriers.map(c => (c.name || '').trim()).filter(Boolean))).sort();
   // Map a lot-number product-group code to an actual product group name.
-  const productGroupFromCode = (code?: string): string => {
-    if (!code || code === '00') return '';
-    if (code === '10') return productGroups.find(g => /tote/i.test(g.name))?.name || '';
-    if (code === '50') return productGroups.find(g => /pack|bag/i.test(g.name))?.name || '';
+  // Product group for a lot code, taken from the PRODUCT on its corresponding
+  // shipment. The shipment is matched by lot number, then BOL, then PO; its
+  // product name is resolved to a catalog SKU whose productGroup is returned.
+  // Returns '' when no shipment is linked (or its product can't be resolved).
+  const productGroupFromShipment = (lc: LotCode): string => {
+    const lotU = (lc.lotNumber || '').trim().toUpperCase();
+    const bolU = (lc.bolNumber || '').trim().toUpperCase();
+    const po = (lc.customerPo || '').trim();
+    const match = shipments.find(s => {
+      const lots = (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers : (s.lotNumber ? [s.lotNumber] : []))
+        .map(l => (l || '').trim().toUpperCase());
+      if (lotU && lots.includes(lotU)) return true;
+      if (bolU && (s.bol || '').trim().toUpperCase() === bolU) return true;
+      if (po && samePoNumber(s.po, po)) return true;
+      return false;
+    });
+    if (!match) return '';
+    const prod = (match.product || '').trim();
+    if (!prod) return '';
+    // A shipment product may be a comma-joined list — try the whole string, then
+    // each part — and resolve it to a catalog SKU to read its product group.
+    const candidates = [prod, ...prod.split(',').map(p => p.trim())].filter(Boolean);
+    for (const c of candidates) {
+      const sku = skus.find(s => (s.name || '').trim().toLowerCase() === c.toLowerCase());
+      if (sku?.productGroup) return sku.productGroup;
+    }
     return '';
   };
 
@@ -450,7 +473,10 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     setFormData({
       lotNumber: lc.lotNumber, tankNumber: lc.tankNumber,
       date: lc.date || '', julianDate: lc.julianDate || '',
-      category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromCode(parsed.pgCode) || '',
+      // Product Group auto-fills from the PRODUCT on the corresponding shipment
+      // (blank when no shipment is linked); Conv./Organic, Silo and Load # come
+      // from the lot number when the record's own fields are blank.
+      category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromShipment(lc) || '',
       silo: lc.silo || parsed.silo || '', loadNumber: lc.loadNumber || parsed.loadNumber || '',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
