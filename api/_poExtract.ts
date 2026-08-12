@@ -378,6 +378,7 @@ INTERNAL emails are NOT new orders:
 CALL-OFF / delivery-schedule releases (e.g. Ferrero "CALL OFF" PDFs):
 - A call-off is ONE bulk order number with a TABLE of MULTIPLE scheduled deliveries on DIFFERENT dates — several rows, each a distinct delivery date/time + quantity. Recognize these by a "CALL OFF" title or a multi-row delivery-schedule table under a single order number.
 - Set isCallOff = true ONLY for that case. A normal purchase order with a SINGLE delivery (one line item / one due date), even when it has "Pickup Date" / "Delivery Time" columns or the word "Delivery" in the filename, is NOT a call-off — set isCallOff = false, classify it 'new_order', keep its PO number exactly as printed, and capture its Unit Price / Line Total and Shipping Term like any other PO. Never emit more delivery rows than are actually printed.
+- A document that PRICES its line(s) — a Unit Price, a Line Total, or an order Total/Subtotal (e.g. an FGF/SAP PO showing "Unit Price 0.98308 … Line Total 29,492.40 … Total 29,492.40") — is a PRICED purchase order, NOT a call-off. Set isCallOff = false and keep the printed PO number. A real call-off delivery schedule carries NO prices and no order total.
 - Return the WHOLE document as ONE 'new_order' entry with isCallOff = true. poNumber = the bulk order number only (e.g. "UP Order nr.: 9330104660" -> "9330104660") — do NOT invent per-delivery PO numbers; the app generates them from the delivery week.
 - Emit ONE lineItems[] entry PER delivery row: repeat the article description + itemNumber on every line, quantity + unit exactly as printed (e.g. 38,000.000 KG), deliveryDate = that row's date (ISO), deliveryTime = that row's time as 24h HH:MM. Never merge delivery rows, even when their quantities are identical.
 - The "TOTAL QTY" on a call-off is the whole bulk order (not this schedule) — do not use it for line quantities and leave totalAmount empty.
@@ -618,6 +619,20 @@ export function expandCallOffDoc(doc: any): any[] {
   const lines = Array.isArray(doc.lineItems) ? doc.lineItems.filter((l: any) => l && typeof l === 'object') : [];
   const dated = lines.filter((l: any) => typeof l.deliveryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.deliveryDate));
   const base = String(doc.poNumber || '').trim().replace(/[-_/\s]+$/, '');
+  // A genuine call-off is a pure DELIVERY SCHEDULE: one bulk order number with a
+  // table of dated deliveries and NO pricing — quantities + dates only, order
+  // total left empty (see the call-off extraction rules / prompt). A document
+  // that carries an order total OR any per-line price/amount is a normal PRICED
+  // purchase order (e.g. an FGF SAP PO with a Unit Price + Line Total), so even
+  // when the model mis-flags isCallOff or hallucinates extra dated rows, keep the
+  // PO number exactly as printed and never split it into "-{week}{seq}" suffixes
+  // that don't exist on the document.
+  const isPriced = (typeof doc.totalAmount === 'number' && doc.totalAmount > 0)
+    || lines.some((l: any) =>
+      (typeof l.unitPrice === 'number' && l.unitPrice > 0)
+      || (typeof l.pricePerMt === 'number' && l.pricePerMt > 0)
+      || (typeof l.amount === 'number' && l.amount > 0));
+  if (isPriced) return [doc]; // priced PO, not a call-off delivery schedule
   // Only split a GENUINE multi-delivery schedule: it must have ≥2 DISTINCT delivery
   // DATES. A normal single-delivery PO — even one the model mis-flags as isCallOff,
   // or where it hallucinates duplicate rows for the same date — has one distinct
