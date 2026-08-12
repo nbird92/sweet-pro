@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer } from '../types';
+import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer, Customer, Carrier } from '../types';
 import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
@@ -11,6 +11,8 @@ interface LabPageProps {
   sugarTypes: SugarType[];
   people: Person[];
   productGroups: ProductGroup[];
+  customers: Customer[];
+  carriers: Carrier[];
   shipments: Shipment[];
   transfers: Transfer[];
   onUpdateLotCodes: (lotCodes: LotCode[]) => void;
@@ -39,6 +41,12 @@ const EMPTY_FORM = {
   colorConfirmedCoa: '', moistureConfirmedCoa: '', sucrose: '',
   foreignMaterial: '', sievingResults: '', sugarLumpsGrams: '', initials: '',
 };
+
+// Initials from a person's name, e.g. "Jane A. Smith" → "JAS" (used for the
+// lot-code Initials picker, since Person has no initials field).
+function initialsOf(name: string): string {
+  return (name || '').trim().split(/\s+/).filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 4);
+}
 
 // Get Julian day of the year (1-366) from a date string YYYY-MM-DD
 function getJulianDay(dateStr: string): string {
@@ -73,6 +81,34 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   const siloCode = form.silo === 'East' ? 'E' : form.silo === 'West' ? 'W' : form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
   const load = (form.loadNumber || '').trim();
   return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}-${siloCode}${load}`;
+}
+
+// Inverse of generateLotCode: decode sugar type, product-group code, category,
+// silo and load number from a HS-{sugar}{pg2}{cat}{yy}{jjj}-{silo}{load} lot
+// number. Returns {} when the string doesn't match the canonical format. The
+// sugar char (pos 0) and category char (pos 3) are read positionally, so a
+// 'B' is unambiguous (Brown sugar vs. organic category). productGroup is
+// returned as the raw pgCode ('00'/'10'/'50') for the caller to map to an
+// actual group name, since 00 (bulk) has no single reverse mapping.
+function parseLotCode(lot: string): {
+  sugarType?: string;
+  pgCode?: string;
+  category?: 'Conventional' | 'Organic' | '';
+  silo?: 'East' | 'West' | 'North' | 'South' | '';
+  loadNumber?: string;
+} {
+  const s = (lot || '').trim().toUpperCase();
+  const m = s.match(/^HS-([RLMIBY])(\d{2})([BC])(\d{2})(\d{3})-([EWNS]?)(\d*)$/);
+  if (!m) return {};
+  const sugarMap: Record<string, string> = { R: 'Granulated', L: 'Liquid', M: 'Molasses', I: 'Icing', B: 'Brown', Y: 'Yellow' };
+  const siloMap: Record<string, 'East' | 'West' | 'North' | 'South'> = { E: 'East', W: 'West', N: 'North', S: 'South' };
+  return {
+    sugarType: sugarMap[m[1]],
+    pgCode: m[2],
+    category: m[3] === 'B' ? 'Organic' : m[3] === 'C' ? 'Conventional' : '',
+    silo: siloMap[m[6]] || '',
+    loadNumber: m[7] || undefined,
+  };
 }
 
 // ISO-8601 week number (Monday-based) from a YYYY-MM-DD date — mirrors the
@@ -141,7 +177,7 @@ function weekKeyOf(raw?: string): string {
   return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -157,6 +193,21 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   const csvInputRef = useRef<HTMLInputElement>(null);
 
   const qaPeople = people.filter(p => p.department === 'QA');
+  // Operations + QA staff — the pool for the Loader Name / Initials pickers.
+  const opsQaPeople = people.filter(p => p.department === 'operations' || p.department === 'QA');
+  // Distinct initials from that pool (keep a person's name for the tooltip).
+  const initialsOptions = Array.from(new Map(
+    opsQaPeople.map(p => [initialsOf(p.name), p.name] as [string, string]).filter(([i]) => i),
+  ).entries());
+  const customerNames = Array.from(new Set(customers.map(c => (c.name || '').trim()).filter(Boolean))).sort();
+  const carrierNames = Array.from(new Set(carriers.map(c => (c.name || '').trim()).filter(Boolean))).sort();
+  // Map a lot-number product-group code to an actual product group name.
+  const productGroupFromCode = (code?: string): string => {
+    if (!code || code === '00') return '';
+    if (code === '10') return productGroups.find(g => /tote/i.test(g.name))?.name || '';
+    if (code === '50') return productGroups.find(g => /pack|bag/i.test(g.name))?.name || '';
+    return '';
+  };
 
   const bySugar = filterSugarType
     ? lotCodes.filter(lc => lc.sugarType === filterSugarType)
@@ -392,11 +443,15 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
   };
 
   const openEdit = (lc: LotCode) => {
+    // Auto-fill Conv./Organic, Product Group, Silo and Load # from the lot NUMBER
+    // when the record's own fields are blank — imported lots carry the info only
+    // in the encoded lot number (HS-{sugar}{pg}{cat}{yy}{jjj}-{silo}{load}).
+    const parsed = parseLotCode(lc.lotNumber);
     setFormData({
       lotNumber: lc.lotNumber, tankNumber: lc.tankNumber,
       date: lc.date || '', julianDate: lc.julianDate || '',
-      category: lc.category || '', productGroup: lc.productGroup || '',
-      silo: lc.silo || '', loadNumber: lc.loadNumber || '',
+      category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromCode(parsed.pgCode) || '',
+      silo: lc.silo || parsed.silo || '', loadNumber: lc.loadNumber || parsed.loadNumber || '',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
@@ -974,17 +1029,59 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, s
                     <div className="border border-[#141414]/20 p-3 space-y-3">
                       <div className="text-[10px] uppercase font-bold opacity-60">{isGranulated ? 'Granulated' : 'Liquid'} Loading Log</div>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {fields.map(([key, label]) => (
-                          <div key={key} className="space-y-1">
-                            <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
-                            <input
-                              type="text"
-                              value={(formData as any)[key]}
-                              onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
-                              className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none"
-                            />
-                          </div>
-                        ))}
+                        {fields.map(([key, label]) => {
+                          const val = ((formData as any)[key] || '') as string;
+                          const set = (v: string) => setFormData({ ...formData, [key]: v });
+                          const cls = "w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none";
+                          // Keep a stored value that isn't in the current option list
+                          // selectable (imported names/carriers no longer on record).
+                          const fallback = (list: string[]) => val && !list.includes(val) ? <option value={val}>{val}</option> : null;
+                          let control: React.ReactNode;
+                          if (key === 'customerName') {
+                            control = (
+                              <select value={val} onChange={(e) => set(e.target.value)} className={cls}>
+                                <option value="">— Select Customer —</option>
+                                {customerNames.map(n => <option key={n} value={n}>{n}</option>)}
+                                {fallback(customerNames)}
+                              </select>
+                            );
+                          } else if (key === 'carrierName') {
+                            control = (
+                              <select value={val} onChange={(e) => set(e.target.value)} className={cls}>
+                                <option value="">— Select Carrier —</option>
+                                {carrierNames.map(n => <option key={n} value={n}>{n}</option>)}
+                                {fallback(carrierNames)}
+                              </select>
+                            );
+                          } else if (key === 'arrivalTime' || key === 'exitTime') {
+                            control = <input type="time" value={val} onChange={(e) => set(e.target.value)} className={cls} />;
+                          } else if (key === 'loaderName') {
+                            const names = opsQaPeople.map(p => p.name);
+                            control = (
+                              <select value={val} onChange={(e) => set(e.target.value)} className={cls}>
+                                <option value="">— Select Loader —</option>
+                                {names.map(n => <option key={n} value={n}>{n}</option>)}
+                                {fallback(names)}
+                              </select>
+                            );
+                          } else if (key === 'initials') {
+                            control = (
+                              <select value={val} onChange={(e) => set(e.target.value)} className={cls}>
+                                <option value="">— Select —</option>
+                                {initialsOptions.map(([ini, name]) => <option key={ini} value={ini}>{ini} — {name}</option>)}
+                                {val && !initialsOptions.some(([ini]) => ini === val) ? <option value={val}>{val}</option> : null}
+                              </select>
+                            );
+                          } else {
+                            control = <input type="text" value={val} onChange={(e) => set(e.target.value)} className={cls} />;
+                          }
+                          return (
+                            <div key={key} className="space-y-1">
+                              <label className="text-[10px] uppercase font-bold opacity-50">{label}</label>
+                              {control}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   );

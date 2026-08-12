@@ -105,6 +105,7 @@ import {
   DEFAULT_SHIPMENT_SCHEDULE_CONFIG,
   syncTransfersFromConfig,
   syncLotCodesFromConfig,
+  collapseLotCodeDuplicates,
   fetchTabPreview,
   extractSheetId,
   autoDetectColumns,
@@ -7181,8 +7182,18 @@ export default function App() {
       if (k) seen.add(k);
       freshNew.push(lc);
     }
-    const merged = [...afterUpdates, ...freshNew];
+    // Collapse any duplicate lot codes — pre-existing ones the importer only
+    // FILLED (first-wins) plus anything that slipped in — into one merged record
+    // per lot, filling missing fields. Same "no duplicate PO/BOL, fill missing"
+    // intent as the orders/invoices sync.
+    const { merged, removedIds } = collapseLotCodeDuplicates([...afterUpdates, ...freshNew]);
     setLotCodes(merged);
+    // Delete the collapsed-away duplicates DIRECTLY by id (mirrors the invoice /
+    // order dedup drop). The debounced autosave's mass-delete guard would SKIP a
+    // large removal — exactly this feature's target population of accumulated
+    // duplicates — leaving them in Firestore to reappear on reload, so a targeted
+    // delete is required instead of relying on the state-diff sync.
+    if (removedIds.length) deleteDocs(COLLECTIONS.lotCodes, removedIds).catch(() => {});
     return merged;
   };
 
@@ -11449,6 +11460,8 @@ export default function App() {
           sugarTypes={sugarTypes}
           people={people}
           productGroups={productGroups}
+          customers={customers}
+          carriers={carriers}
           shipments={[...hamiltonShipments, ...vancouverShipments]}
           transfers={transfers}
           resolveLot={(lc) => {

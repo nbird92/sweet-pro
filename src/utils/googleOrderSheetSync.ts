@@ -2898,6 +2898,65 @@ export function parsedRowsToLotCodesConfigured(
   return result;
 }
 
+/** Collapse duplicate lot-code records into ONE per lot, merging their data
+ *  (fill blanks only — the canonical/first record's non-empty values are kept)
+ *  and dropping the extras. This is the QA analog of the orders/invoices
+ *  "no duplicate PO/BOL, fill missing info" merge, run on every lot-code sync so
+ *  pre-existing duplicates are cleaned up, not just prevented.
+ *
+ *  Two records are the SAME lot when they share a non-blank lot number, OR — when
+ *  that wouldn't fuse two clearly-different lots — the same non-blank BOL|date|tank
+ *  (so a load first imported number-less by BOL and later WITH a lot number
+ *  collapses into one). A composite match is rejected when both records carry a
+ *  DIFFERENT non-blank lot number, so two genuine lots on one BOL stay separate.
+ *
+ *  Returns the deduped list (canonical order preserved) plus the ids removed. */
+export function collapseLotCodeDuplicates(lotCodes: LotCode[]): { merged: LotCode[]; removedIds: string[] } {
+  const normLot = (s?: string) => (s || '').trim().toUpperCase();
+  const compOf = (lc: LotCode) => {
+    const bol = (lc.bolNumber || '').trim().toUpperCase();
+    if (!bol) return '';
+    return `${bol}|${(lc.date || '').trim()}|${(lc.tankNumber || '').trim().toUpperCase()}`;
+  };
+  const isEmpty = (v: any) => v === undefined || v === null || v === '';
+  const fillInto = (target: LotCode, src: LotCode) => {
+    for (const k of Object.keys(src) as (keyof LotCode)[]) {
+      if (k === 'id' || k === 'createdAt') continue;
+      if (isEmpty((target as any)[k]) && !isEmpty((src as any)[k])) (target as any)[k] = (src as any)[k];
+    }
+  };
+  const canon: LotCode[] = [];
+  const byLot = new Map<string, number>();   // lot number → index in canon
+  const byComp = new Map<string, number>();  // BOL|date|tank → index in canon
+  const removedIds: string[] = [];
+  for (const lc of lotCodes) {
+    const lotU = normLot(lc.lotNumber);
+    const comp = compOf(lc);
+    let idx = lotU && byLot.has(lotU) ? byLot.get(lotU)! : -1;
+    if (idx < 0 && comp && byComp.has(comp)) {
+      const cand = byComp.get(comp)!;
+      const candLot = normLot(canon[cand].lotNumber);
+      // Only fuse via BOL when the lots don't conflict (one is blank or they match).
+      if (!candLot || !lotU || candLot === lotU) idx = cand;
+    }
+    if (idx >= 0) {
+      fillInto(canon[idx], lc);
+      // Register any keys the merge just learned so later rows still link here.
+      const mLot = normLot(canon[idx].lotNumber);
+      if (mLot && !byLot.has(mLot)) byLot.set(mLot, idx);
+      const mComp = compOf(canon[idx]);
+      if (mComp && !byComp.has(mComp)) byComp.set(mComp, idx);
+      removedIds.push(lc.id);
+    } else {
+      const copy = { ...lc };
+      const i = canon.push(copy) - 1;
+      if (lotU) byLot.set(lotU, i);
+      if (comp) byComp.set(comp, i);
+    }
+  }
+  return { merged: canon, removedIds };
+}
+
 /** Run a lot-code sync against any sheet/config. Same fetch + parse path as the
  *  other entities; only the row-to-record build differs. */
 export async function syncLotCodesFromConfig(

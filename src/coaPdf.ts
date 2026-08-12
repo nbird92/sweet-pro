@@ -192,11 +192,16 @@ function generateCoaPage(
   ly = drawFieldRow(doc, 'Country of Origin', origins, leftCol, ly, halfWidth);
 
   const shipperName = shipFromLocation?.bolName || shipFromLocation?.name || order?.location || 'Hamilton Sherman Plant';
+  // Trailer #: pull from the matched lot-code loading-log records (dedup + join
+  // when several lots ride one shipment); fall back to the shipment's own trailer.
+  const trailers = [...new Set(shipmentLotCodes.map(lc => (lc.trailerNumber || '').trim()).filter(Boolean))].join(', ')
+    || (shipment.trailerNo || '').trim();
   let ry = y;
   ry = drawFieldRow(doc, 'Customer', customer?.name || shipment.customer || '', rightCol, ry, rightHalf);
   ry = drawFieldRow(doc, 'Lot Code(s)', lotNums, rightCol, ry, rightHalf);
   ry = drawFieldRow(doc, 'Ship From', shipperName, rightCol, ry, rightHalf);
   ry = drawFieldRow(doc, 'Quantity', shipment.qty ? `${shipment.qty} MT` : '', rightCol, ry, rightHalf);
+  if (trailers) ry = drawFieldRow(doc, 'Trailer #', trailers, rightCol, ry, rightHalf);
 
   y = Math.max(ly, ry) + 3;
 
