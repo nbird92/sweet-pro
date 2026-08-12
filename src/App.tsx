@@ -443,6 +443,13 @@ export default function App() {
   const [demurrageInvoices, setDemurrageInvoices] = useState<DemurrageInvoice[]>([]);
   const [demurrageDraft, setDemurrageDraft] = useState<DemurrageInvoice | null>(null); // add/edit modal
   const [demurrageLocFilter, setDemurrageLocFilter] = useState<string>('all');
+  // "Scan Demurrage" — AI extraction of uploaded demurrage-invoice file(s).
+  const [demurrageScanning, setDemurrageScanning] = useState(false);
+  const [demurrageScanError, setDemurrageScanError] = useState<string | null>(null);
+  // Extra scanned drafts awaiting review (the modal shows one at a time; on close
+  // the next queued draft opens).
+  const [demurrageScanQueue, setDemurrageScanQueue] = useState<DemurrageInvoice[]>([]);
+  const demurrageFileInputRef = useRef<HTMLInputElement>(null);
   const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
   const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
@@ -981,6 +988,100 @@ export default function App() {
       setPoScanError(e instanceof Error ? e.message : String(e));
     } finally {
       setPoScanLoading(false);
+    }
+  };
+
+  // Map an AI extraction to a DemurrageInvoice draft — mirrors the inbox demurrage
+  // ingestion: resolve the carrier, and inherit customer + location from the order
+  // (or invoice) referenced by the invoice's PO or Sucro BOL. Re-scanning an
+  // invoice whose number already exists edits that row in place (same id) rather
+  // than creating a duplicate.
+  const buildDemurrageFromExtraction = (po: ExtractedPO): DemurrageInvoice => {
+    const invNo = (po.carrierInvoiceNumber || '').trim();
+    const refPo = (po.poNumber || '').trim();
+    const refBol = (po.bolNumber || '').trim().toUpperCase();
+    const findMatch = (arr: Array<{ po?: string; bolNumber?: string; customer?: string; location?: string; shipmentDate?: string }>) =>
+      (refPo ? arr.find(x => samePoNumber(x.po, refPo)) : undefined)
+      || (refBol ? arr.find(x => (x.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
+    const matched = findMatch(orders as any) || findMatch(invoices as any);
+    const carrierRec = resolveCarrierRecord(po.carrier, po.carrierDomain);
+    const carrierName = carrierRec?.name || (po.carrier || '').trim() || '—';
+    // Re-scan edits in place ONLY when the SAME carrier's invoice number matches.
+    // Carriers assign invoice numbers independently, so a bare invoice-number match
+    // could let one carrier's re-used number (e.g. "1001") silently overwrite a
+    // DIFFERENT carrier's demurrage record — a financial row. Qualify by carrier.
+    const existing = invNo
+      ? demurrageInvoices.find(d => (d.invoiceNumber || '').trim().toLowerCase() === invNo.toLowerCase()
+          && (d.carrier || '').trim().toLowerCase() === carrierName.toLowerCase())
+      : undefined;
+    return {
+      id: existing?.id || `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      carrier: carrierName,
+      invoiceNumber: invNo,
+      po: refPo,
+      bolNumber: (po.bolNumber || '').trim(),
+      customer: (matched?.customer || '').trim() || existing?.customer || undefined,
+      shipmentDate: po.shipmentDate || (matched as any)?.shipmentDate || existing?.shipmentDate || undefined,
+      amount: typeof po.totalAmount === 'number' ? po.totalAmount : (existing?.amount || 0),
+      currency: po.currency || existing?.currency || undefined,
+      description: (po.notes || '').trim() || existing?.description || undefined,
+      location: (matched?.location || '').trim() || existing?.location || undefined,
+      status: existing?.status || 'New',
+      invoiceDate: po.orderDate || existing?.invoiceDate || undefined,
+      sourceFile: po.sourceFile || existing?.sourceFile,
+      createdAt: existing?.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // "Scan Demurrage": read uploaded demurrage-invoice file(s) with AI, then open
+  // each extracted invoice in the edit modal for review (queued one at a time).
+  // Every extraction is treated as a demurrage invoice — the operator picked the
+  // demurrage scanner, so classification isn't gated on documentType.
+  const runDemurrageScan = async (files: File[]) => {
+    if (!files.length) return;
+    setDemurrageScanning(true);
+    setDemurrageScanError(null);
+    try {
+      const uploads = await Promise.all(files.map(fileToUpload));
+      const resp = await extractPOs(uploads, buildScanHints());
+      const seen = new Set<string>();
+      const drafts: DemurrageInvoice[] = [];
+      for (const ex of resp.extractions || []) {
+        const d = buildDemurrageFromExtraction(ex);
+        // Collapse duplicates within this batch by CARRIER + invoice # (falling back
+        // to id when there's no number) so two passes of one file don't queue the
+        // same invoice twice — while two carriers' identically-numbered invoices stay
+        // distinct.
+        const invLc = (d.invoiceNumber || '').trim().toLowerCase();
+        const key = invLc ? `${(d.carrier || '').trim().toLowerCase()}|${invLc}` : d.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        drafts.push(d);
+      }
+      const errs = resp.errors || [];
+      if (!drafts.length) {
+        setDemurrageScanError(errs.length ? errs.map(e => `${e.file}: ${e.message}`).join(' • ') : 'No demurrage invoice could be read from the uploaded file(s).');
+        return;
+      }
+      if (errs.length) setDemurrageScanError(errs.map(e => `${e.file}: ${e.message}`).join(' • '));
+      setDemurrageDraft(drafts[0]);
+      setDemurrageScanQueue(drafts.slice(1));
+    } catch (e) {
+      setDemurrageScanError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDemurrageScanning(false);
+    }
+  };
+
+  // Close the demurrage modal — advancing to the next queued scan draft if any,
+  // otherwise closing. Used by every close path (Save / Delete / Cancel / X) so
+  // reviewing a batch of scanned invoices flows one to the next.
+  const closeDemurrageDraft = () => {
+    if (demurrageScanQueue.length) {
+      setDemurrageDraft(demurrageScanQueue[0]);
+      setDemurrageScanQueue(q => q.slice(1));
+    } else {
+      setDemurrageDraft(null);
     }
   };
 
@@ -12646,16 +12747,37 @@ export default function App() {
               : '—';
             return (
               <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Location</label>
-                  <select
-                    value={demurrageLocFilter}
-                    onChange={(e) => setDemurrageLocFilter(e.target.value)}
-                    className="bg-white text-[#141414] border border-[#141414] px-3 py-1.5 text-xs font-bold focus:outline-none"
-                  >
-                    <option value="all">All Locations</option>
-                    {locOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Location</label>
+                    <select
+                      value={demurrageLocFilter}
+                      onChange={(e) => setDemurrageLocFilter(e.target.value)}
+                      className="bg-white text-[#141414] border border-[#141414] px-3 py-1.5 text-xs font-bold focus:outline-none"
+                    >
+                      <option value="all">All Locations</option>
+                      {locOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {demurrageScanError && <span className="text-[10px] text-red-600 font-bold max-w-[320px] truncate" title={demurrageScanError}>{demurrageScanError}</span>}
+                    <input
+                      ref={demurrageFileInputRef}
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => { const fs = Array.from(e.target.files || []) as File[]; e.target.value = ''; if (fs.length) runDemurrageScan(fs); }}
+                    />
+                    <button
+                      onClick={() => { setDemurrageScanError(null); demurrageFileInputRef.current?.click(); }}
+                      disabled={demurrageScanning}
+                      title="Read demurrage invoice file(s) with AI and open each for review"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors disabled:opacity-50"
+                    >
+                      <ScanLine size={12} className={demurrageScanning ? 'animate-pulse' : ''} /> {demurrageScanning ? 'Reading…' : 'Scan Demurrage'}
+                    </button>
+                  </div>
                 </div>
                 <DataTable<DemurrageInvoice>
                   title="Demurrage"
@@ -12733,11 +12855,15 @@ export default function App() {
               set(patch);
             };
             return (
-              <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => setDemurrageDraft(null)}>
+              <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto" onClick={() => closeDemurrageDraft()}>
                 <div className="bg-white border border-[#141414] shadow-[8px_8px_0px_0px_rgba(20,20,20,1)] w-full max-w-2xl my-8" onClick={e => e.stopPropagation()}>
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                    <h3 className="text-xs font-bold uppercase tracking-widest">{exists ? 'Edit' : 'Add'} Demurrage Invoice</h3>
-                    <button onClick={() => setDemurrageDraft(null)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                    <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
+                      {d.sourceFile ? <ScanLine size={13} /> : null}
+                      {exists ? 'Edit' : (d.sourceFile ? 'Review Scanned' : 'Add')} Demurrage Invoice
+                      {demurrageScanQueue.length > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-white/20 tracking-widest">{demurrageScanQueue.length} more to review</span>}
+                    </h3>
+                    <button onClick={() => closeDemurrageDraft()} className="p-1 hover:bg-white/20 transition-all" title={demurrageScanQueue.length ? 'Skip to next scanned invoice' : 'Close'}><X size={16} /></button>
                   </div>
                   <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className={labelCls}>Carrier</label><input className={fieldCls} value={d.carrier} onChange={e => set({ carrier: e.target.value })} /></div>
@@ -12784,14 +12910,14 @@ export default function App() {
                   </div>
                   <div className="flex justify-between items-center px-5 py-3 border-t border-gray-200 bg-gray-50">
                     {exists ? (
-                      <button onClick={() => { setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); setDemurrageDraft(null); }}
+                      <button onClick={() => { setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); closeDemurrageDraft(); }}
                         className="px-3 py-2 border border-red-400 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-all">
                         <Trash2 size={12} /> Delete
                       </button>
                     ) : <span />}
                     <div className="flex gap-2">
-                      <button onClick={() => setDemurrageDraft(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-gray-100 transition-colors">Cancel</button>
-                      <button onClick={() => { setDemurrageInvoices(prev => exists ? prev.map(x => x.id === d.id ? d : x) : [...prev, d]); setDemurrageDraft(null); }}
+                      <button onClick={() => closeDemurrageDraft()} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-gray-100 transition-colors">{demurrageScanQueue.length ? 'Skip' : 'Cancel'}</button>
+                      <button onClick={() => { setDemurrageInvoices(prev => exists ? prev.map(x => x.id === d.id ? d : x) : [...prev, d]); closeDemurrageDraft(); }}
                         className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors flex items-center gap-1"><Save size={12} /> Save</button>
                     </div>
                   </div>
