@@ -5718,10 +5718,16 @@ export default function App() {
   // Writes are PER-DOCUMENT (only the docs this session changed + the ids it
   // deleted), so a stale tab can no longer overwrite another session's edits or
   // resurrect its deletions by re-pushing the whole collection.
-  const pushDirtyCollections = async () => {
+  // Returns the number of collections that actually changed (and were pushed), so
+  // callers can skip the "synced at" bump on a no-op run — otherwise the autosave
+  // effect (lastSynced is one of its deps) would re-arm its timer every cycle and
+  // spin a perpetual idle heartbeat that re-serializes every collection.
+  const pushDirtyCollections = async (): Promise<number> => {
+    let changed = 0;
     for (const task of buildSyncTasks()) {
       const dataStr = JSON.stringify(task.data);
       if (dataStr === lastSyncedData.current[task.key]) continue; // collection unchanged
+      changed++;
       setSyncStatus('syncing');
       const baseline = getDocBaseline(task.key);
       const upserts: any[] = [];
@@ -5740,6 +5746,7 @@ export default function App() {
       // its per-doc map from this on next read).
       lastSyncedData.current[task.key] = dataStr;
     }
+    return changed;
   };
 
   // Sync data to Firestore with debounce
@@ -5758,9 +5765,11 @@ export default function App() {
       isSyncing.current = true;
 
       try {
-        await pushDirtyCollections();
-        setSyncStatus('synced');
-        setLastSynced(new Date());
+        const wrote = await pushDirtyCollections();
+        // Only bump "synced at" when something was actually written. Bumping it on
+        // a clean run would re-run this effect (lastSynced is a dep) and re-arm the
+        // timer forever — a needless idle heartbeat re-serializing every collection.
+        if (wrote > 0) { setSyncStatus('synced'); setLastSynced(new Date()); }
         setSyncError(null);
       } catch (e) {
         setSyncStatus('error');
@@ -5774,28 +5783,60 @@ export default function App() {
       }
     };
 
-    let timeout = setTimeout(syncAll, 15000);
+    // 5s debounce (was 15s): shrinks the window where a close/refresh could drop
+    // the last edits. The visibilitychange/pagehide flush above catches the rest.
+    let timeout = setTimeout(syncAll, 5000);
     return () => clearTimeout(timeout);
     // fiscalYears + customerForecasts are in syncTasks, so they MUST be deps —
     // without them an edit touching only those collections never armed the timer
     // and silently stayed unsynced for the whole session.
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
 
-  // Warn before leaving with unsynced edits. The autosave is debounced 15s, so a
-  // quick tab-close/refresh can otherwise drop the last edits with no cue (the
-  // header still reads the previous "Synced"). dirtyCheckRef is refreshed every
-  // render, so the once-registered listener always sees current state.
+  // Save-on-leave: the autosave is debounced (5s), so a close/refresh right after
+  // an edit is the one gap it can miss. dirtyCheckRef reports whether anything is
+  // unsynced; it's refreshed every render so the once-registered listeners always
+  // see current state.
   const dirtyCheckRef = useRef<() => boolean>(() => false);
   dirtyCheckRef.current = () => {
     if (!user || !lastSynced) return false;
     return buildSyncTasks().some(t => JSON.stringify(t.data) !== lastSyncedData.current[t.key]);
   };
+  // Immediate flush of unsynced edits — used when the tab is about to be hidden or
+  // closed, which is the ONE moment the debounced autosave can't be relied on.
+  // Recreated every render so it always closes over current state + a live
+  // pushDirtyCollections; called through a ref so the once-registered listeners
+  // never see a stale copy. Fire-and-forget: the Firestore write is queued (and
+  // persisted to its IndexedDB cache) even when the page is on its way out.
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => {
+    if (!user || !lastSynced || isSyncing.current) return;
+    if (!dirtyCheckRef.current()) return;
+    isSyncing.current = true;
+    setSyncStatus('syncing');
+    pushDirtyCollections()
+      .then((wrote) => { if (wrote > 0) { setSyncStatus('synced'); setLastSynced(new Date()); } setSyncError(null); })
+      .catch((e) => { setSyncStatus('error'); setSyncError((e as Error).message); })
+      .finally(() => { isSyncing.current = false; });
+  };
   useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (dirtyCheckRef.current()) { e.preventDefault(); e.returnValue = ''; }
+    // beforeunload: a dismissible warning is the last cue; also KICK a flush so a
+    // dismiss-and-stay still saves.
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirtyCheckRef.current()) { flushRef.current(); e.preventDefault(); e.returnValue = ''; }
     };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
+    // visibilitychange→hidden fires reliably when a tab is backgrounded, switched
+    // away from, or closed (before the page is frozen) — the best save-on-close
+    // signal. pagehide covers bfcache/navigation. Flush unsynced edits on both.
+    const onHidden = () => { if (document.visibilityState === 'hidden') flushRef.current(); };
+    const onPageHide = () => flushRef.current();
+    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', onPageHide);
+    };
   }, []);
 
   // Manual "Sync Now": PUSH local changes first, THEN pull. Pulling first would

@@ -3,16 +3,34 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   setDoc,
   writeBatch,
   deleteDoc,
   runTransaction,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  getFirestore,
+  type Firestore,
 } from 'firebase/firestore';
-import { getFirestore } from 'firebase/firestore';
 import { app } from './firebaseConfig';
 
-// Use the "sweetpro" database instead of the default
-const db = getFirestore(app, 'sweetpro');
+// Use the "sweetpro" database with OFFLINE PERSISTENCE (IndexedDB) enabled: a
+// write is committed to the local cache immediately and synced to the server in
+// the background, RETRYING across a tab close / refresh — so an edit can no
+// longer be lost in the gap between "user made the change" and "server
+// acknowledged it". The multi-tab manager lets several open tabs share one
+// cache. Falls back to the plain (memory-only) instance if IndexedDB isn't
+// available (e.g. private-browsing / unsupported browser) so the app still runs.
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  }, 'sweetpro');
+} catch {
+  db = getFirestore(app, 'sweetpro');
+}
 
 // Collection names matching the old Google Sheets tab names
 export const COLLECTIONS = {
@@ -119,11 +137,19 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
   await setDoc(doc(db, 'userPreferences', uid), stripUndefinedDeep({ ...prefs, id: uid, updatedAt: new Date().toISOString() }));
 }
 
-// Fetch all data from all collections (one-time bulk read)
+// Fetch all data from all collections (one-time bulk read). Reads FROM THE SERVER
+// (getDocsFromServer), not the local cache: with offline persistence enabled a
+// plain getDocs would silently resolve from stale IndexedDB when the server is
+// unreachable, and the caller treats a resolved load as the authoritative
+// baseline that arms the autosave — editing against stale data could then clobber
+// newer server records. Forcing a server read means an offline load REJECTS (the
+// caller then leaves autosave disabled and keeps showing the last good state)
+// instead of quietly baselining on stale data. Pending un-synced local writes are
+// unaffected — the persistence queue still delivers them to the server.
 export async function fetchAllData() {
   const results = await Promise.all(
     Object.values(COLLECTIONS).map(async (name) => {
-      const snapshot = await getDocs(collection(db, name));
+      const snapshot = await getDocsFromServer(collection(db, name));
       return [name, snapshot.docs.map(d => d.data())] as const;
     })
   );
