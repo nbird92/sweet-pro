@@ -3980,6 +3980,93 @@ export default function App() {
     if (changed) setLotCodes(next);
   }, [lotCodes, invoices, orders]);
 
+  // Backfill delivery dates and trailer numbers across orders → shipments/invoices.
+  //   • Shipment.deliveryDate  ← matching Order.deliveryDate (fallback: matching Invoice.deliveryDate)
+  //   • Shipment.trailerNo     ← matching Invoice.trailerNo (imported by the invoice sheet sync)
+  //   • Invoice.deliveryDate   ← matching Order.deliveryDate
+  // Matched by BOL (exact, case-insensitive) first, then by numeric PO (poKey).
+  // Non-destructive (only fills a BLANK target) and self-converging: a filled field
+  // is skipped next pass, and Orders — the only delivery-date source — are never
+  // mutated here, so it can't loop. Runs whenever orders/invoices/shipments change
+  // (e.g. after a sheet sync brings in new trailer numbers).
+  useEffect(() => {
+    const haveShipments = hamiltonShipments.length > 0 || vancouverShipments.length > 0;
+    if (!orders.length && !invoices.length) return;
+    if (!haveShipments && !invoices.length) return;
+
+    // Order-sourced delivery dates (the authoritative source for the request).
+    const oDelivBol = new Map<string, string>();
+    const oDelivPo = new Map<string, string>();
+    for (const o of orders) {
+      const d = (o.deliveryDate || '').trim();
+      if (!d) continue;
+      const bol = (o.bolNumber || '').trim().toUpperCase();
+      if (bol && !oDelivBol.has(bol)) oDelivBol.set(bol, d);
+      const po = poKey(o.po);
+      if (po && !oDelivPo.has(po)) oDelivPo.set(po, d);
+    }
+    // Invoice-sourced values: delivery date (shipment fallback) + trailer number.
+    const iDelivBol = new Map<string, string>();
+    const iDelivPo = new Map<string, string>();
+    const iTrailerBol = new Map<string, string>();
+    const iTrailerPo = new Map<string, string>();
+    for (const inv of invoices) {
+      const bol = (inv.bolNumber || '').trim().toUpperCase();
+      const po = poKey(inv.po);
+      const d = (inv.deliveryDate || '').trim();
+      if (d) {
+        if (bol && !iDelivBol.has(bol)) iDelivBol.set(bol, d);
+        if (po && !iDelivPo.has(po)) iDelivPo.set(po, d);
+      }
+      const tr = (inv.trailerNo || '').trim();
+      if (tr) {
+        if (bol && !iTrailerBol.has(bol)) iTrailerBol.set(bol, tr);
+        if (po && !iTrailerPo.has(po)) iTrailerPo.set(po, tr);
+      }
+    }
+
+    const fillShipments = (shipments: Shipment[]): { updated: Shipment[]; count: number } => {
+      let count = 0;
+      const updated = shipments.map(s => {
+        const bol = (s.bol || '').trim().toUpperCase();
+        const po = poKey(s.po);
+        const patch: Partial<Shipment> = {};
+        if (!(s.deliveryDate || '').trim()) {
+          const d = (bol && oDelivBol.get(bol)) || (po && oDelivPo.get(po))
+            || (bol && iDelivBol.get(bol)) || (po && iDelivPo.get(po));
+          if (d) patch.deliveryDate = d;
+        }
+        if (!(s.trailerNo || '').trim()) {
+          const tr = (bol && iTrailerBol.get(bol)) || (po && iTrailerPo.get(po));
+          if (tr) patch.trailerNo = tr;
+        }
+        if (Object.keys(patch).length === 0) return s;
+        count++;
+        return { ...s, ...patch };
+      });
+      return { updated, count };
+    };
+
+    const ham = fillShipments(hamiltonShipments);
+    const van = fillShipments(vancouverShipments);
+    if (ham.count > 0) setHamiltonShipments(ham.updated);
+    if (van.count > 0) setVancouverShipments(van.updated);
+
+    // Invoice.deliveryDate ← matching Order.deliveryDate (only when blank).
+    if (oDelivBol.size || oDelivPo.size) {
+      let invChanged = false;
+      const nextInv = invoices.map(inv => {
+        if ((inv.deliveryDate || '').trim()) return inv;
+        const bol = (inv.bolNumber || '').trim().toUpperCase();
+        const po = poKey(inv.po);
+        const d = (bol && oDelivBol.get(bol)) || (po && oDelivPo.get(po));
+        if (d) { invChanged = true; return { ...inv, deliveryDate: d }; }
+        return inv;
+      });
+      if (invChanged) setInvoices(nextInv);
+    }
+  }, [orders, invoices, hamiltonShipments, vancouverShipments]);
+
   // Canonicalise customer names on existing orders/invoices to match the customer
   // catalog (which is ALL-CAPS, e.g. "CHAPMANS"). Imports sometimes stored a
   // variant like "Chapmans", which then failed to match the real customer in
@@ -15256,6 +15343,8 @@ export default function App() {
                     <input type="date" value={editingInvoiceCard.date || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, date: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
                     <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Delivery Date</label>
+                    <input type="date" value={editingInvoiceCard.deliveryDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, deliveryDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
                     <input type="text" value={editingInvoiceCard.carrier || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, carrier: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
@@ -24883,6 +24972,7 @@ export default function App() {
                                 notes: '',
                                 color: '',
                                 location: shipmentCreationData.location,
+                                ...(order.deliveryDate ? { deliveryDate: order.deliveryDate } : {}),
                               }));
 
                               const saveToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');

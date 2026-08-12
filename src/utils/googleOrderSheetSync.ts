@@ -1965,6 +1965,7 @@ export function parsedRowsToInvoicesConfigured(
         if (blank(existingInv.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
         if (blank(existingInv.reversals) && r.reversals) patch.reversals = r.reversals;
         if (blank(existingInv.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
+        if (blank(existingInv.trailerNo) && r.trailerNo) patch.trailerNo = r.trailerNo;
         // Pricing backfill — price and amount filled independently, each only
         // when the existing invoice is missing it (never overwrites a value).
         if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
@@ -2017,6 +2018,7 @@ export function parsedRowsToInvoicesConfigured(
         ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
         ...(r.reversals ? { reversals: r.reversals } : {}),
         ...(r.lotCode ? { lotCode: r.lotCode } : {}),
+        ...(r.trailerNo ? { trailerNo: r.trailerNo } : {}),
       };
 
       result.newInvoices.push(stripUndefined(newInvoice));
