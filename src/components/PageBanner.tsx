@@ -45,15 +45,15 @@ export default function PageBanner({
   };
 
   return (
-    <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
-      <div className="flex items-center gap-4">
+    <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex flex-wrap justify-between items-center gap-x-4 gap-y-3">
+      <div className="flex items-center gap-4 min-w-0">
         {icon}
         <h2 className="text-sm font-bold uppercase tracking-widest">{title}</h2>
         {typeof count === 'number' && (
           <span className="text-[10px] opacity-50 font-mono">{count} records</span>
         )}
       </div>
-      <div className="flex items-stretch divide-x divide-[#E4E3E0]/20">
+      <div className="flex flex-wrap items-stretch justify-end divide-x divide-[#E4E3E0]/20">
         {children}
         {exportSheets && (
           <button

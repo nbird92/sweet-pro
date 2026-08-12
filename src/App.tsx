@@ -549,6 +549,46 @@ export default function App() {
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
   const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
   const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
+  // Add-order inline shipment scheduler (mirrors the PO-review importer scheduler):
+  // when enabled, a shipment appointment is booked for the new order at save time.
+  // Pick-up date = orderShipmentDate; location = orderLocation; carrier = orderCarrier.
+  const [orderScheduleAppt, setOrderScheduleAppt] = useState(false);
+  const [orderApptTime, setOrderApptTime] = useState('');
+  const [orderApptBay, setOrderApptBay] = useState('');
+
+  // Books a shipment appointment for a freshly-created order using the add-order
+  // inline scheduler fields — mirrors createOrderFromReview's appointment block.
+  // No-op unless scheduling is enabled and a pick-up date (orderShipmentDate) is set.
+  // Called AFTER the order is committed via addOrdersUnique.
+  const bookApptForNewOrder = (newOrder: Order) => {
+    if (!orderScheduleAppt || !(orderShipmentDate || '').trim()) return;
+    const apptDate = orderShipmentDate.trim();
+    const apptLoc = orderLocation || newOrder.location || '';
+    const apptShipments: Shipment[] = newOrder.lineItems.map(item => ({
+      id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      week: `Week ${getWeekNumber(apptDate)}`,
+      date: apptDate,
+      day: safeWeekday(apptDate),
+      time: orderApptTime || '',
+      bay: orderApptBay || '',
+      customer: newOrder.customer,
+      product: item.productName,
+      contractNumber: item.contractNumber,
+      po: newOrder.po,
+      bol: newOrder.bolNumber,
+      qty: item.totalWeight,
+      carrier: newOrder.carrier || orderCarrier || '',
+      arrive: '', start: '', out: '',
+      status: 'Confirmed',
+      notes: '', color: '',
+      location: apptLoc,
+      ...(newOrder.deliveryDate ? { deliveryDate: newOrder.deliveryDate } : {}),
+    }));
+    const toHamilton = apptLoc.toLowerCase().includes('hamilton');
+    if (toHamilton) setHamiltonShipments(prev => [...prev, ...apptShipments]);
+    else setVancouverShipments(prev => [...prev, ...apptShipments]);
+    setScheduleLocation(toHamilton ? 'Hamilton' : 'Vancouver');
+  };
 
   /* ---- Scan Purchase Order (AI document extraction → new order) ---- */
   // One editable review card per extracted PO. Mappings (customer/product/
@@ -10778,6 +10818,9 @@ export default function App() {
                 setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                 setEditingLineItemIdx(null);
                 setOrderCurrency('');
+                setOrderScheduleAppt(false);
+                setOrderApptTime('');
+                setOrderApptBay('');
                 setEditingOrder(null);
                 setIsAddingOrder(true);
               }}
@@ -19053,7 +19096,20 @@ export default function App() {
                   const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                   const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                  const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber && s.status !== 'Cancelled'));
+                  // Hide an order only when a non-cancelled shipment matches it by a NON-BLANK
+                  // BOL or PO — blank keys never collide (fixes '' === '' hiding all BOL-less
+                  // Confirmed orders).
+                  const nrm = (v?: string) => (v || '').trim().toUpperCase();
+                  const unscheduledOrders = confirmedOrders.filter(o => {
+                    const oBol = nrm(o.bolNumber);
+                    const oPo = poKey(o.po);
+                    return !allShipments.some(s => {
+                      if (s.status === 'Cancelled') return false;
+                      if (oBol && nrm(s.bol) === oBol) return true;
+                      if (oPo && poKey(s.po) === oPo) return true;
+                      return false;
+                    });
+                  });
                   return (
                     <div className="border border-[#141414] overflow-hidden">
                       <div className="bg-[#141414] text-[#E4E3E0] p-3">
@@ -19144,7 +19200,21 @@ export default function App() {
                       const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
                       const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
                       const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                      const unscheduledOrders = confirmedOrders.filter(o => !allShipments.some(s => s.bol === o.bolNumber && s.status !== 'Cancelled'));
+                      // An order is "already scheduled" (and hidden) only when a non-cancelled
+                      // shipment matches it by a NON-BLANK BOL or PO. Blank keys never match, so a
+                      // Confirmed order with no BOL yet is no longer wrongly hidden by a blank
+                      // shipment BOL ('' === ''). Normalized (trim/upper) BOL compare too.
+                      const nrm = (v?: string) => (v || '').trim().toUpperCase();
+                      const unscheduledOrders = confirmedOrders.filter(o => {
+                        const oBol = nrm(o.bolNumber);
+                        const oPo = poKey(o.po);
+                        return !allShipments.some(s => {
+                          if (s.status === 'Cancelled') return false;
+                          if (oBol && nrm(s.bol) === oBol) return true;
+                          if (oPo && poKey(s.po) === oPo) return true;
+                          return false;
+                        });
+                      });
 
                       const filteredBOLOrders = unscheduledOrders.filter(o => {
                         const matchesCustomer = !shipmentSearchCustomer || o.customer === shipmentSearchCustomer;
@@ -23079,6 +23149,125 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Schedule Shipment (optional, new orders only) — books an
+                    appointment for this order on save. Mirrors the PO-review
+                    importer scheduler: bay dropdown by location + clickable time
+                    tiles. Pick-up date = Shipment Date; location = Location (Origin). */}
+                {!editingOrder && (
+                  <div className="border border-[#141414]/15 bg-[#F9F9F9]">
+                    <label className="flex items-center gap-2 text-[11px] font-bold uppercase cursor-pointer p-3">
+                      <input
+                        type="checkbox"
+                        checked={orderScheduleAppt}
+                        onChange={(e) => setOrderScheduleAppt(e.target.checked)}
+                      />
+                      Schedule shipment appointment
+                    </label>
+                    {orderScheduleAppt && (() => {
+                      const apptLoc = orderLocation || '';
+                      const locationData = locations.find(l => l.name.toLowerCase().includes(apptLoc.toLowerCase()));
+                      const validBays: string[] = apptLoc && locationData ? locationData.bays : [];
+                      const isHamiltonLocation = apptLoc.toLowerCase().includes('hamilton');
+                      const allLocationShipments = isHamiltonLocation ? hamiltonShipments : vancouverShipments;
+                      const appointmentsForDay = orderShipmentDate
+                        ? allLocationShipments.filter(s => s.date === orderShipmentDate)
+                        : [];
+                      const bookedSlots = new Set(appointmentsForDay.map(s => `${s.time}|${s.bay}`));
+                      const getAvailableBaysForSlot = (slot: string) => validBays.filter(bay => !bookedSlots.has(`${slot}|${bay}`));
+                      const isSlotAvailable = (slot: string) => {
+                        if (orderApptBay) return !bookedSlots.has(`${slot}|${orderApptBay}`);
+                        return getAvailableBaysForSlot(slot).length > 0;
+                      };
+                      const allTimeSlots = apptLoc ? getLocationAllTimeSlots(apptLoc) : [];
+                      return (
+                        <div className="p-3 pt-0 space-y-3">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="space-y-0.5">
+                              <label className="text-[10px] uppercase font-bold opacity-60">Location</label>
+                              <select
+                                value={orderLocation}
+                                onChange={(e) => { setOrderLocation(e.target.value); setOrderApptBay(''); setOrderApptTime(''); }}
+                                className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                              >
+                                <option value="">Select Location</option>
+                                {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                              </select>
+                            </div>
+                            <div className="space-y-0.5">
+                              <label className="text-[10px] uppercase font-bold opacity-60">Pick Up Date</label>
+                              <input
+                                type="date"
+                                value={orderShipmentDate}
+                                onChange={(e) => { setOrderShipmentDate(e.target.value); setOrderApptTime(''); }}
+                                className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                              />
+                            </div>
+                            <div className="space-y-0.5">
+                              <label className="text-[10px] uppercase font-bold opacity-60">Bay</label>
+                              <select
+                                value={orderApptBay}
+                                onChange={(e) => setOrderApptBay(e.target.value)}
+                                className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                              >
+                                <option value="">Select Bay</option>
+                                {validBays.map(bay => <option key={bay} value={bay}>{bay}</option>)}
+                              </select>
+                            </div>
+                            <div className="space-y-0.5">
+                              <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                              <select
+                                value={orderCarrier}
+                                onChange={(e) => setOrderCarrier(e.target.value)}
+                                className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                              >
+                                <option value="">Select Carrier</option>
+                                {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          {(!apptLoc || !orderShipmentDate) ? (
+                            <div className="text-[11px] opacity-60">Select a location and pick-up date to choose a time slot.</div>
+                          ) : (
+                            <div>
+                              <div className="text-[10px] uppercase font-bold opacity-50 mb-2">
+                                {orderApptBay ? `Available times for ${orderApptBay}` : 'Click an available time slot (bay shown for each)'} — {safeApptLabel(orderShipmentDate)}
+                              </div>
+                              <div className="grid grid-cols-4 md:grid-cols-8 gap-1.5">
+                                {allTimeSlots.map(slot => {
+                                  const available = isSlotAvailable(slot);
+                                  const isSelected = orderApptTime === slot;
+                                  const availBays = getAvailableBaysForSlot(slot);
+                                  const bayLabel = !orderApptBay && availBays.length > 0 && availBays.length < validBays.length
+                                    ? availBays.map(b => b.replace(/BAY\s*/i, 'B').split(' ')[0]).join(',')
+                                    : '';
+                                  return (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      onClick={() => { if (available) setOrderApptTime(slot); }}
+                                      disabled={!available}
+                                      className={`py-1.5 px-2 text-[11px] font-mono border transition-all flex flex-col items-center ${
+                                        isSelected
+                                          ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold'
+                                          : !available
+                                            ? 'bg-red-50 text-red-300 border-red-200 cursor-not-allowed line-through'
+                                            : 'bg-white text-[#141414] border-[#141414]/20 hover:border-[#141414] hover:bg-[#141414]/5 cursor-pointer'
+                                      }`}
+                                    >
+                                      <span>{slot}</span>
+                                      {bayLabel && <span className="text-[8px] opacity-50 leading-none">{bayLabel}</span>}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
                 {/* Create/Save Order Button */}
                 <div className="flex gap-4">
                   <button
@@ -23192,6 +23381,7 @@ export default function App() {
                           }
                         }
                         addOrdersUnique([newOrder]);
+                        bookApptForNewOrder(newOrder);
                       }
                       setIsAddingOrder(false);
                       setEditingOrder(null);
@@ -23209,6 +23399,9 @@ export default function App() {
                       setOrderPapsNo('');
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
+                      setOrderScheduleAppt(false);
+                      setOrderApptTime('');
+                      setOrderApptBay('');
                     }}
                     className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
                   >
@@ -23261,6 +23454,7 @@ export default function App() {
                           }
                         }
                         addOrdersUnique([newOrder]);
+                        bookApptForNewOrder(newOrder);
                         setIsAddingOrder(false);
                         setEditingOrder(null);
                         setOrderLineItems([]);
@@ -23273,6 +23467,9 @@ export default function App() {
                         setOrderShippingTerms('');
                         setOrderLocation('');
                         setOrderCurrency('');
+                        setOrderScheduleAppt(false);
+                        setOrderApptTime('');
+                        setOrderApptBay('');
                       }}
                       className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
                     >
@@ -23297,6 +23494,9 @@ export default function App() {
                       setOrderPapsNo('');
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
+                      setOrderScheduleAppt(false);
+                      setOrderApptTime('');
+                      setOrderApptBay('');
                     }}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
                   >
