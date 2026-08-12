@@ -131,9 +131,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       if (found === 0) {
         // The inbox query matched no messages — almost always a query/scope or
         // address issue, not a genuine "no POs" situation.
-        text = 'No emails matched the inbox query in the last 3 days. If you expected POs, check the inbox address and PO_INBOX_QUERY — group mail is matched by "to:" (e.g. to:orderdesk@sucro.ca), not "deliveredto:".';
+        text = 'No emails matched the inbox query. If you expected POs, check the inbox address and PO_INBOX_QUERY — group mail is matched by "to:" (e.g. to:orderdesk@sucro.ca), not "deliveredto:".';
       } else if (scanned === 0) {
-        text = `Found ${found} email${found === 1 ? '' : 's'} in the last 3 days, all already processed. Use "Re-import last 3 days" to pull them in again.`;
+        text = `Found ${found} email${found === 1 ? '' : 's'}, all already processed. Use "Re-import last 14 days" to pull them in again.`;
       } else {
         text = `Scanned ${scanned} of ${found} email${found === 1 ? '' : 's'} · ${queued} queued · ${skipped} already processed${errs}. New orders/amendments appear below.`;
       }
@@ -226,10 +226,10 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           <button
             onClick={() => handleScanInbox({ force: true })}
             disabled={scanning}
-            title="Re-import POs from the last 3 days, including emails already processed. Existing orders are never duplicated."
+            title="Re-import POs and carrier demurrage invoices from the last 14 days, including emails already processed. Existing orders are never duplicated."
             className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
           >
-            <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> Re-import last 3 days
+            <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> Re-import last 14 days
           </button>
         )}
         <button

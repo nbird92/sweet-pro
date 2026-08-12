@@ -2416,11 +2416,12 @@ export default function App() {
     try {
       const token = await user.getIdToken();
       // force=1 re-reads emails already recorded in processedPoEmails (used by the
-      // "Re-import last 3 days" action). The client still skips POs whose order
+      // "Re-import last 14 days" action). The client still skips POs whose order
       // already exists, so a forced re-scan never creates duplicate orders. The
-      // scheduled cron uses a 1-day window; the manual re-import widens back to
-      // 3 days so the operator can pull anything the tighter window missed.
-      const qs = opts?.force ? '?force=1&q=newer_than:3d' : '';
+      // scheduled cron uses a 1-day window; the manual re-import widens to 14 days
+      // so the operator can backfill anything the tighter window missed — e.g.
+      // demurrage invoices that predate the demurrage classifier going live.
+      const qs = opts?.force ? '?force=1&q=newer_than:14d' : '';
       const res = await fetch(`/api/scan-po-inbox${qs}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, error: body?.error || `HTTP ${res.status}` };
@@ -12677,7 +12678,9 @@ export default function App() {
                   onRowClick={(d) => setDemurrageDraft({ ...d })}
                   onAdd={() => setDemurrageDraft({ id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, carrier: '', invoiceNumber: '', po: '', bolNumber: '', amount: 0, status: 'New', createdAt: new Date().toISOString() })}
                   addLabel="Add Demurrage"
-                  emptyMessage="No demurrage invoices yet. Carrier demurrage/wait-time invoices from the PO inbox appear here automatically."
+                  emptyMessage={demurrageInvoices.length > 0 && demurrageLocFilter !== 'all'
+                    ? `No demurrage invoices at "${demurrageLocFilter}". ${demurrageInvoices.length} exist at other locations — choose "All Locations" above to see them.`
+                    : 'No demurrage invoices yet. Add one with "Add Demurrage", or carrier demurrage/wait-time invoices from the PO inbox appear here automatically.'}
                   defaultSortKey="shipmentDate"
                   defaultSortDir="desc"
                 />
