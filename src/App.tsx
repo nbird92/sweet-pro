@@ -1137,6 +1137,19 @@ export default function App() {
   // stored qty when there's no per-unit weight (true bulk/liquid, where the
   // quantity is expressed in MT by convention). For correctly-entered orders
   // totalWeight == qty × netWeight, so this returns the stored qty unchanged.
+  // Per-unit net weight (kg) from a line's stored netWeightPerUnit, which is
+  // INCONSISTENT across data sources: UI-created lines store MT/unit (e.g. 0.025),
+  // order-sheet imports store KG/unit (e.g. 1000 for a tote). Disambiguate by
+  // magnitude — a value <= 2 is MT (×1000 → kg), anything larger is already kg —
+  // and cap at 2000 kg/unit (a single package never weighs more; a bigger number
+  // is an inflated/corrupt value that must not be reused). 0 = genuine bulk/liquid.
+  const perUnitKg = (nwpu?: number): number => {
+    const v = nwpu || 0;
+    if (v <= 0) return 0;
+    const kg = v <= 2 ? v * 1000 : v;
+    return kg > 0 && kg <= 2000 ? kg : 0;
+  };
+
   const lineItemUnits = (item: OrderLineItem): number => {
     const qaProd = item.productKey
       ? qaProducts.find(q => q.id === item.productKey)
@@ -1144,7 +1157,12 @@ export default function App() {
     const skuProd = item.productKey
       ? skus.find(s => s.id === item.productKey)
       : skus.find(s => s.name === item.productName);
-    const netKg = qaProd?.netWeightKg || skuProd?.netWeightKg || skuProd?.netWeight || 0;
+    // Prefer the catalog per-unit weight; fall back to the line's OWN stored
+    // per-unit weight so a cased line still reports its true unit count instead of
+    // dropping to the raw qty (which for a synced line holds an MT figure). Must
+    // match submitOrderLineItem's resolver so display and save never disagree.
+    const netKg = (qaProd?.netWeightKg || skuProd?.netWeightKg || skuProd?.netWeight || 0)
+      || perUnitKg(item.netWeightPerUnit);
     if (netKg > 0 && item.totalWeight > 0) {
       return Math.round((item.totalWeight * 1000) / netKg);
     }
@@ -4278,15 +4296,19 @@ export default function App() {
     let totalUnits = 0, totalNet = 0, totalGross = 0;
     const lineItems = (order.lineItems || []).map(li => {
       const qa = qaProducts.find(p => p.skuName === li.productName);
-      const netKg = qa?.netWeightKg || li.netWeightPerUnit || 0;
+      // per-unit net weight in kg (catalog first, else the line's own — via the
+      // MT/kg-aware perUnitKg); units via lineItemUnits so a synced line whose qty
+      // still holds an MT figure prints its true unit count, not the MT number.
+      const netKg = (qa?.netWeightKg || 0) || perUnitKg(li.netWeightPerUnit);
       const grossKg = qa?.grossWeightKg || 0;
-      const net = netKg * li.qty;
-      const gross = grossKg * li.qty;
-      totalUnits += li.qty; totalNet += net; totalGross += gross;
+      const units = lineItemUnits(li);
+      const net = netKg * units;
+      const gross = grossKg * units;
+      totalUnits += units; totalNet += net; totalGross += gross;
       return {
         description: li.productDisplayName || productNameToDisplay(li.productName) || li.productName || '',
         contract: (li.contractNumber || '').trim() || (order.contractNumber || '').trim(),
-        units: li.qty != null ? fmtUnits(li.qty) : '',
+        units: fmtUnits(units),
         net: net ? fmtKg(net) : '',
         gross: gross ? fmtKg(gross) : '',
       };
@@ -8241,18 +8263,17 @@ export default function App() {
     const catalogNetKg = product.netWeightKg || product.netWeight || 0;
     const existingLine = editingLineItemIdx !== null ? orderLineItems[editingLineItemIdx] : undefined;
     // Resolve the effective per-unit weight (kg). Prefer the catalog; when it has
-    // none (bulk/liquid, or a product whose catalog entry moved/renamed) recover
-    // it from the line being edited so re-saving never zeroes a bulk line's
-    // weight/amount. totalWeight is MT and qty is units, so totalWeight*1000/qty
-    // is kg/unit. Capped at 2000 kg/unit: a single package never weighs more, so
-    // a larger value means the stored line is already inflated (~x1000) and must
-    // NOT be perpetuated — fall back to treating qty as MT directly.
+    // none (bulk/liquid, or a product whose catalog entry moved/renamed) reuse the
+    // line's OWN stored per-unit weight (netWeightPerUnit, MT/unit) — the
+    // authoritative signal that this line is UNIT-based. This keeps a QTY edit a
+    // unit count and never lets a cased line collapse onto the bulk path (which
+    // would store the entered units as an MT weight). Mirrors lineItemUnits so the
+    // field's displayed unit count and the saved value always agree. Capped at
+    // 2000 kg/unit — a single package never weighs more; a larger value means the
+    // stored per-unit weight is already inflated (~x1000) and must not be reused.
     let effNetKg = catalogNetKg;
-    if (!effNetKg && existingLine && existingLine.qty > 0 && existingLine.totalWeight > 0
-        && (existingLine.netWeightPerUnit || 0) > 0
-        && existingLine.productName === newLineItem.productName) {
-      const recovered = (existingLine.totalWeight * 1000) / existingLine.qty;
-      if (recovered > 0 && recovered <= 2000) effNetKg = recovered;
+    if (!effNetKg && existingLine && existingLine.productName === newLineItem.productName) {
+      effNetKg = perUnitKg(existingLine.netWeightPerUnit);
     }
     const hasUnitWeight = effNetKg > 0;
     // Cased goods: qty is a unit count -> MT via per-unit weight. Bulk/liquid:
