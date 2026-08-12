@@ -1805,6 +1805,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'pricePerMt', label: 'Price / MT (invoices)' },
   { key: 'reversals', label: 'Reversals (invoices)' },
   { key: 'bay', label: 'Bay / Dock (shipments)' },
+  { key: 'trailerNo', label: 'Trailer # (shipments)' },
   { key: 'appointmentTime', label: 'Appointment Time (shipments)' },
   { key: 'invoiceNumber', label: 'Invoice Number' },
   { key: 'papsNo', label: 'PAPS No.' },
@@ -2175,6 +2176,7 @@ export function parsedRowsToShipmentsConfigured(
         out: '',
         status: 'Scheduled',
         ...(r.contractNumber ? { contractNumber: r.contractNumber } : {}),
+        ...(r.trailerNo ? { trailerNo: r.trailerNo } : {}),
         ...(explicit?.defaultLocation ? { location: explicit.defaultLocation } : {}),
       } as Shipment;
 

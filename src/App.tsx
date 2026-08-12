@@ -19295,10 +19295,21 @@ export default function App() {
                           onChange={(e) => setEditingShipment({...editingShipment, bay: e.target.value})}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                         >
-                          {locations
-                            .find(l => l.name.toLowerCase().includes(scheduleLocation.toLowerCase()))
-                            ?.bays.map(b => <option key={b} value={b}>{b}</option>)
-                          }
+                          {(() => {
+                            // Bays for THIS shipment's own location (same resolution as
+                            // the Appointment Time dropdown above) — not the page's
+                            // current schedule-location filter, which mismatched the
+                            // bay list when the two differed.
+                            const shipLoc = editingShipment.location || (scheduleLocation.toLowerCase().includes('hamilton') ? 'Hamilton' : 'Vancouver');
+                            const bays = locations.find(l => l.name.toLowerCase().includes(shipLoc.toLowerCase()))?.bays || [];
+                            const opts = [<option key="" value="">— Select Bay —</option>, ...bays.map(b => <option key={b} value={b}>{b}</option>)];
+                            // Keep the current bay selectable even if it's not in the
+                            // resolved location's list (imported value / bays changed).
+                            if (editingShipment.bay && !bays.includes(editingShipment.bay)) {
+                              opts.push(<option key={editingShipment.bay} value={editingShipment.bay}>{editingShipment.bay}</option>);
+                            }
+                            return opts;
+                          })()}
                         </select>
                       </div>
                       <div className="space-y-1">
