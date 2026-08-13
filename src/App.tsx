@@ -9445,34 +9445,6 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
-            <button
-              onClick={() => {
-                // Open the same configurator modal in shipments mode.
-                const preset = shipmentSyncPresets[0] || DEFAULT_SHIPMENT_IMPORT_CONFIG;
-                setOrderSyncConfig(preset);
-                setOrderSyncUrl(preset.sheetId ? `https://docs.google.com/spreadsheets/d/${preset.sheetId}/` : '');
-                setOrderSyncEditingTabIdx(null);
-                setOrderSyncTabHeaders(null);
-                setOrderSyncTabSample([]);
-                setSyncMode('shipments');
-              }}
-              disabled={isSyncingSheet}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
-              title="Configure a Google Sheet source + column mapping, then pull new shipments for review."
-            >
-              <FileText size={12} /> {isSyncingSheet ? 'Syncing…' : 'Sync Shipments'}
-            </button>
-            <button
-              onClick={() => {
-                setScheduleSyncUrl('');
-                setScheduleSyncConfig({ ...DEFAULT_SHIPMENT_SCHEDULE_CONFIG, year: new Date().getFullYear(), tabs: [{ tabName: '', location: '' }] });
-              }}
-              disabled={isSyncingSchedule}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
-              title="Import a wide multi-bay SCHEDULE sheet (bays in row 1, fields in row 2, each tab a location) into the shipment schedule."
-            >
-              <Calendar size={12} /> {isSyncingSchedule ? 'Syncing…' : 'Sync Schedule'}
-            </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
               <Plus size={12} /> Batch
@@ -19090,30 +19062,29 @@ export default function App() {
                 </button>
               </div>
               <div className="p-6 space-y-4">
-                <p className="text-sm opacity-60">Select confirmed orders to schedule as shipments. Use the "Add Shipment" button for individual order scheduling.</p>
+                <p className="text-sm opacity-60">Select orders to schedule as shipments (any Open or Confirmed order not yet scheduled). Use the "Add Shipment" button for individual order scheduling.</p>
                 {(() => {
                   const isHamilton = scheduleLocation.toLowerCase().includes('hamilton');
                   const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
-                  const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
+                  // Any ACTIVE order (Open or Confirmed) is schedulable — operators often
+                  // book a pick-up before formally confirming, so limiting this to
+                  // 'Confirmed' hid most orders. Cancelled/Completed are excluded.
+                  const schedulableOrders = orders.filter(o => o.status === 'Open' || o.status === 'Confirmed');
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                  // Hide an order only when a non-cancelled shipment matches it by a NON-BLANK
-                  // BOL or PO — blank keys never collide (fixes '' === '' hiding all BOL-less
-                  // Confirmed orders).
+                  // Hide an order only when a non-cancelled shipment already carries its
+                  // NON-BLANK BOL (normalized). Blank BOLs never match ('' === '' bug), and we
+                  // intentionally do NOT dedupe by PO — synced/imported shipments reuse POs and
+                  // were wrongly hiding unscheduled orders.
                   const nrm = (v?: string) => (v || '').trim().toUpperCase();
-                  const unscheduledOrders = confirmedOrders.filter(o => {
+                  const unscheduledOrders = schedulableOrders.filter(o => {
                     const oBol = nrm(o.bolNumber);
-                    const oPo = poKey(o.po);
-                    return !allShipments.some(s => {
-                      if (s.status === 'Cancelled') return false;
-                      if (oBol && nrm(s.bol) === oBol) return true;
-                      if (oPo && poKey(s.po) === oPo) return true;
-                      return false;
-                    });
+                    if (!oBol) return true;
+                    return !allShipments.some(s => s.status !== 'Cancelled' && nrm(s.bol) === oBol);
                   });
                   return (
                     <div className="border border-[#141414] overflow-hidden">
                       <div className="bg-[#141414] text-[#E4E3E0] p-3">
-                        <h4 className="text-xs font-bold uppercase">Confirmed Orders — {unscheduledOrders.length} ready to schedule</h4>
+                        <h4 className="text-xs font-bold uppercase">Orders — {unscheduledOrders.length} ready to schedule</h4>
                       </div>
                       <div className="max-h-[400px] overflow-y-auto">
                         <table className="w-full text-xs">
@@ -19129,7 +19100,7 @@ export default function App() {
                           </thead>
                           <tbody className="divide-y divide-[#141414]/5">
                             {unscheduledOrders.length === 0 && (
-                              <tr><td colSpan={6} className="p-4 text-center text-xs opacity-40 italic">No confirmed unscheduled orders found</td></tr>
+                              <tr><td colSpan={6} className="p-4 text-center text-xs opacity-40 italic">No unscheduled orders found</td></tr>
                             )}
                             {unscheduledOrders.map(o => (
                               <tr key={o.id} className="hover:bg-[#F9F9F9] transition-colors">
@@ -19198,22 +19169,20 @@ export default function App() {
                     {(() => {
                       const isHamilton = scheduleLocation.toLowerCase().includes('hamilton');
                       const locationName = isHamilton ? 'Hamilton' : 'Vancouver';
-                      const confirmedOrders = orders.filter(o => o.status === 'Confirmed');
+                      // Any ACTIVE order (Open or Confirmed) is schedulable — operators often
+                      // book a pick-up before formally confirming, so limiting this to
+                      // 'Confirmed' hid most orders. Cancelled/Completed are excluded.
+                      const schedulableOrders = orders.filter(o => o.status === 'Open' || o.status === 'Confirmed');
                       const allShipments = [...hamiltonShipments, ...vancouverShipments];
-                      // An order is "already scheduled" (and hidden) only when a non-cancelled
-                      // shipment matches it by a NON-BLANK BOL or PO. Blank keys never match, so a
-                      // Confirmed order with no BOL yet is no longer wrongly hidden by a blank
-                      // shipment BOL ('' === ''). Normalized (trim/upper) BOL compare too.
+                      // Hide an order only when a non-cancelled shipment already carries its
+                      // NON-BLANK BOL (normalized). Blank BOLs never match ('' === '' bug), and we
+                      // intentionally do NOT dedupe by PO — synced/imported shipments reuse POs and
+                      // were wrongly hiding unscheduled orders.
                       const nrm = (v?: string) => (v || '').trim().toUpperCase();
-                      const unscheduledOrders = confirmedOrders.filter(o => {
+                      const unscheduledOrders = schedulableOrders.filter(o => {
                         const oBol = nrm(o.bolNumber);
-                        const oPo = poKey(o.po);
-                        return !allShipments.some(s => {
-                          if (s.status === 'Cancelled') return false;
-                          if (oBol && nrm(s.bol) === oBol) return true;
-                          if (oPo && poKey(s.po) === oPo) return true;
-                          return false;
-                        });
+                        if (!oBol) return true;
+                        return !allShipments.some(s => s.status !== 'Cancelled' && nrm(s.bol) === oBol);
                       });
 
                       const filteredBOLOrders = unscheduledOrders.filter(o => {
@@ -19237,7 +19206,7 @@ export default function App() {
                       return (
                         <div className="space-y-4">
                           <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                            <h4 className="text-xs font-bold uppercase tracking-widest">Find Confirmed Order</h4>
+                            <h4 className="text-xs font-bold uppercase tracking-widest">Find Order</h4>
                             <div className="grid grid-cols-3 gap-3">
                               <div className="space-y-0.5">
                                 <label className="text-[10px] uppercase font-bold opacity-60">Customer Number</label>
@@ -19292,7 +19261,7 @@ export default function App() {
                           {/* Matching Orders */}
                           <div className="border border-[#141414] overflow-hidden">
                             <div className="bg-[#141414] text-[#E4E3E0] p-3">
-                              <h4 className="text-xs font-bold uppercase">Confirmed Orders — {filteredBOLOrders.length} available</h4>
+                              <h4 className="text-xs font-bold uppercase">Orders — {filteredBOLOrders.length} available</h4>
                             </div>
                             <div className="max-h-[250px] overflow-y-auto">
                               <table className="w-full text-xs">
@@ -19308,7 +19277,7 @@ export default function App() {
                                 </thead>
                                 <tbody className="divide-y divide-[#141414]/5">
                                   {filteredBOLOrders.length === 0 && (
-                                    <tr><td colSpan={6} className="p-4 text-center text-xs opacity-40 italic">No confirmed unscheduled orders found</td></tr>
+                                    <tr><td colSpan={6} className="p-4 text-center text-xs opacity-40 italic">No unscheduled orders found</td></tr>
                                   )}
                                   {filteredBOLOrders.map(o => (
                                     <tr key={o.id} className="hover:bg-[#F9F9F9] transition-colors">
