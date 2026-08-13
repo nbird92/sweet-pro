@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Location, LotCode, QAProduct } from './types';
+import { sameLotCode } from './utils/lotCode';
 
 interface GenerateCoaParams {
   shipment: Shipment;
@@ -80,7 +81,7 @@ export function resolveCoaSugarType(params: {
   const { shipment, order, lotCodes, qaProducts } = params;
   const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
   const shipmentLotCodes = assignedLotNums
-    .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
+    .map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln)))
     .filter((lc): lc is LotCode => !!lc);
   if (shipmentLotCodes.length > 0 && shipmentLotCodes[0].sugarType) return shipmentLotCodes[0].sugarType;
   const displayProductName = order?.product || shipment.product || '';
@@ -349,7 +350,7 @@ export function renderCoaInto(doc: jsPDF, {
   // Resolve the lot codes assigned to this shipment
   const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
   const shipmentLotCodes = assignedLotNums
-    .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
+    .map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln)))
     .filter((lc): lc is LotCode => !!lc);
 
   // Determine sugar type from lot codes or QA product. Use the bare

@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation, LotCode } from './types';
 import { resolveLineWeights } from './pdfDocHelpers';
+import { sameLotCode } from './utils/lotCode';
 
 interface GenerateBolParams {
   shipment: Shipment;
@@ -307,7 +308,7 @@ export function renderBolInto(doc: jsPDF, {
   // the BOL and the COA can't disagree about the colour of the same load.
   const lotColour = [...new Set(
     assignedLotNums
-      .map(ln => (lotCodes || []).find(lc => lc.lotNumber === ln))
+      .map(ln => (lotCodes || []).find(lc => sameLotCode(lc.lotNumber, ln)))
       .filter((lc): lc is LotCode => !!lc)
       .map(lc => (lc.color || '').trim())
       .filter(Boolean),

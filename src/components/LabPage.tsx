@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import type { SheetSpec } from '../utils/exportExcel';
 import { samePoNumber } from '../utils/poNumber';
+import { cleanLotCode, sameLotCode } from '../utils/lotCode';
 
 interface LabPageProps {
   lotCodes: LotCode[];
@@ -80,8 +81,8 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   if (form.date) { yy = form.date.slice(2, 4); }
   const jjj = form.julianDate || '???';
   const siloCode = form.silo === 'East' ? 'E' : form.silo === 'West' ? 'W' : form.silo === 'North' ? 'N' : form.silo === 'South' ? 'S' : '';
-  const load = (form.loadNumber || '').trim();
-  return `${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}-${siloCode}${load}`;
+  const load = (form.loadNumber || '').replace(/\s+/g, '');
+  return cleanLotCode(`${plant}-${sugarCode}${pgCode}${catCode}${yy}${jjj}-${siloCode}${load}`);
 }
 
 // Inverse of generateLotCode: decode sugar type, product-group code, category,
@@ -98,8 +99,11 @@ function parseLotCode(lot: string): {
   silo?: 'East' | 'West' | 'North' | 'South' | '';
   loadNumber?: string;
 } {
-  const s = (lot || '').trim().toUpperCase();
-  const m = s.match(/^HS-([RLMIBY])(\d{2})([BC])(\d{2})(\d{3})-([EWNS]?)(\d*)$/);
+  // Strip ALL whitespace first so a stray internal space ("HS-L00C26222- S3")
+  // still parses, and make the pre-silo dash optional to accept the legacy
+  // no-dash form ("HS-L00C26222S").
+  const s = (lot || '').replace(/\s+/g, '').toUpperCase();
+  const m = s.match(/^HS-([RLMIBY])(\d{2})([BC])(\d{2})(\d{3})-?([EWNS]?)(\d*)$/);
   if (!m) return {};
   const sugarMap: Record<string, string> = { R: 'Granulated', L: 'Liquid', M: 'Molasses', I: 'Icing', B: 'Brown', Y: 'Yellow' };
   const siloMap: Record<string, 'East' | 'West' | 'North' | 'South'> = { E: 'East', W: 'West', N: 'North', S: 'South' };
@@ -208,12 +212,12 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
   // product name is resolved to a catalog SKU whose productGroup is returned.
   // Returns '' when no shipment is linked (or its product can't be resolved).
   const productGroupFromShipment = (lc: LotCode): string => {
-    const lotU = (lc.lotNumber || '').trim().toUpperCase();
+    const lotU = (lc.lotNumber || '').replace(/\s+/g, '').toUpperCase();
     const bolU = (lc.bolNumber || '').trim().toUpperCase();
     const po = (lc.customerPo || '').trim();
     const match = shipments.find(s => {
       const lots = (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers : (s.lotNumber ? [s.lotNumber] : []))
-        .map(l => (l || '').trim().toUpperCase());
+        .map(l => (l || '').replace(/\s+/g, '').toUpperCase());
       if (lotU && lots.includes(lotU)) return true;
       if (bolU && (s.bol || '').trim().toUpperCase() === bolU) return true;
       if (po && samePoNumber(s.po, po)) return true;
@@ -230,6 +234,19 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
       if (sku?.productGroup) return sku.productGroup;
     }
     return '';
+  };
+
+  // Map a lot-code product-group code (00/10/50) to an actual configured product
+  // group NAME (the <select> is keyed on names). 00 is bulk vs liquid, decided by
+  // the sugar type encoded in the same lot code. Falls back to sensible defaults
+  // when no matching group is configured.
+  const productGroupFromLotCode = (pgCode?: string, sugarType?: string): string => {
+    if (!pgCode) return '';
+    const byKw = (kw: string) => productGroups.find(g => (g.name || '').toLowerCase().includes(kw))?.name || '';
+    if (pgCode === '10') return byKw('tote') || 'Tote';
+    if (pgCode === '50') return byKw('bag') || byKw('pack') || 'Bagged';
+    if ((sugarType || '').toLowerCase() === 'liquid') return byKw('liquid') || 'Liquid';
+    return byKw('bulk') || 'Bulk';
   };
 
   const bySugar = filterSugarType
@@ -377,7 +394,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
         const row: Record<string, string> = {};
         currentHeaders.forEach((h, idx) => { row[h] = vals[idx] || ''; });
 
-        const lotNumber = row['lotnumber'] || row['lotcode'] || row['lot'] || row['lotno'] || row['lotnum'] || '';
+        const lotNumber = cleanLotCode(row['lotnumber'] || row['lotcode'] || row['lot'] || row['lotno'] || row['lotnum'] || '');
         const date      = row['date'] || '';
         if (!lotNumber && !date) { skipped++; continue; } // blank/filler row
 
@@ -471,12 +488,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     // in the encoded lot number (HS-{sugar}{pg}{cat}{yy}{jjj}-{silo}{load}).
     const parsed = parseLotCode(lc.lotNumber);
     setFormData({
-      lotNumber: lc.lotNumber, tankNumber: lc.tankNumber,
+      lotNumber: cleanLotCode(lc.lotNumber), tankNumber: lc.tankNumber,
       date: lc.date || '', julianDate: lc.julianDate || '',
-      // Product Group auto-fills from the PRODUCT on the corresponding shipment
-      // (blank when no shipment is linked); Conv./Organic, Silo and Load # come
-      // from the lot number when the record's own fields are blank.
-      category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromShipment(lc) || '',
+      // Conv./Organic, Silo, Load # and Product Group are auto-derived from the
+      // encoded lot number when the record's own fields are blank. Product Group
+      // prefers the corresponding shipment's product (most specific), then the
+      // lot-code group segment (00=bulk/liquid, 10=tote, 50=bag).
+      category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromShipment(lc) || productGroupFromLotCode(parsed.pgCode, parsed.sugarType) || '',
       silo: lc.silo || parsed.silo || '', loadNumber: lc.loadNumber || parsed.loadNumber || '',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
@@ -505,7 +523,9 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     );
     if (match) {
       const currentLotNums = match.lotNumbers || (match.lotNumber ? [match.lotNumber] : []);
-      if (!currentLotNums.includes(lotNum)) {
+      // Whitespace-insensitive membership — a cleaned lot must not be appended a
+      // second time alongside a legacy spaced copy of the same lot.
+      if (!currentLotNums.some(l => sameLotCode(l, lotNum))) {
         const updatedLotNums = [...currentLotNums, lotNum];
         // Also update origin of goods from lot code country of origin
         const existingOrigins = match.originOfGoods ? match.originOfGoods.split(', ').filter(Boolean) : [];

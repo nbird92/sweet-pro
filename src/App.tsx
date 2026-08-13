@@ -91,6 +91,7 @@ import {
   invoiceMatchesContract,
 } from './utils/contractMatch';
 import { poKey, samePoNumber } from './utils/poNumber';
+import { sameLotCode, cleanLotCode, cleanLotCodeList, dedupeLotCodes, lotKey } from './utils/lotCode';
 const SalesForecastPage = lazy(() => import('./components/SalesForecastPage'));
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
 import PageBanner from './components/PageBanner';
@@ -3964,7 +3965,7 @@ export default function App() {
     if (!invoices.length || !lotCodes.length) return;
     const bolByLot = new Map<string, string>();
     for (const lc of lotCodes) {
-      const lot = (lc.lotNumber || '').trim().toUpperCase();
+      const lot = lotKey(lc.lotNumber);
       const bol = (lc.bolNumber || '').trim();
       if (lot && bol && !bolByLot.has(lot)) bolByLot.set(lot, bol);
     }
@@ -3974,13 +3975,74 @@ export default function App() {
       if ((inv.bolNumber || '').trim()) return inv; // already has a BOL
       const lots = (inv.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
       for (const l of lots) {
-        const bol = bolByLot.get(l.toUpperCase());
+        const bol = bolByLot.get(lotKey(l));
         if (bol) { changed = true; return { ...inv, bolNumber: bol }; }
       }
       return inv;
     });
     if (changed) setInvoices(next);
   }, [invoices, lotCodes]);
+
+  // Strip stray internal whitespace from structured (HS-…) lot codes. Imported
+  // sheet cells sometimes carried a space (e.g. "HS-L00C26222- S3"); the canonical
+  // form has none.
+  //
+  // This cleans EVERY collection that stores a lot string — lot codes, invoices,
+  // orders, both shipment buckets and transfers — because the same lot is copied
+  // across them and any half-cleaned pair would silently break the exact-string
+  // lookups, Map keys and dedup checks that link them (a COA would lose its lab
+  // results, a lot would lose its BOL backfill, a picker would double-add).
+  // Non-destructive (only rewrites HS- codes that actually contain whitespace) and
+  // self-converging (a cleaned code has none next pass).
+  useEffect(() => {
+    // A value needs rewriting when a structured code carries stray whitespace, or
+    // when cleaning would leave two identical entries in the same list.
+    const dirty = (s?: string) => {
+      const t = (s || '').trim();
+      return /^HS-/i.test(t) && /\s/.test(t) && cleanLotCode(t) !== t;
+    };
+    const dirtyList = (s?: string) => {
+      const parts = (s || '').split(/[,;]+/).map(p => p.trim()).filter(Boolean);
+      if (parts.some(p => dirty(p))) return true;
+      return dedupeLotCodes(parts.map(p => cleanLotCode(p))).length !== parts.length;
+    };
+
+    if (lotCodes.some(lc => dirty(lc.lotNumber))) {
+      setLotCodes(lotCodes.map(lc => (dirty(lc.lotNumber) ? { ...lc, lotNumber: cleanLotCode(lc.lotNumber) } : lc)));
+    }
+    if (invoices.some(inv => dirtyList(inv.lotCode))) {
+      setInvoices(invoices.map(inv => (dirtyList(inv.lotCode) ? { ...inv, lotCode: cleanLotCodeList(inv.lotCode) } : inv)));
+    }
+    if (orders.some(o => dirtyList(o.lotCode))) {
+      setOrders(orders.map(o => (dirtyList(o.lotCode) ? { ...o, lotCode: cleanLotCodeList(o.lotCode) } : o)));
+    }
+    if (transfers.some(t => dirtyList(t.lotCode))) {
+      setTransfers(transfers.map(t => (dirtyList(t.lotCode) ? { ...t, lotCode: cleanLotCodeList(t.lotCode) } : t)));
+    }
+    // Cleaning can make two entries in lotNumbers identical (a legacy spaced copy
+    // beside its clean twin — the pre-fix pickers double-added exactly that), so
+    // dedupe after cleaning or the COA/BOL would print the same lot twice.
+    const shipDirty = (s: Shipment) => {
+      if (dirty(s.lotNumber) || (s.lotNumbers || []).some(l => dirty(l))) return true;
+      const lots = s.lotNumbers || [];
+      return dedupeLotCodes(lots.map(l => cleanLotCode(l))).length !== lots.length;
+    };
+    const cleanShipments = (list: Shipment[]): Shipment[] | null => {
+      if (!list.some(shipDirty)) return null;
+      return list.map(s => {
+        if (!shipDirty(s)) return s;
+        return {
+          ...s,
+          ...(s.lotNumber ? { lotNumber: cleanLotCode(s.lotNumber) } : {}),
+          ...(s.lotNumbers ? { lotNumbers: dedupeLotCodes(s.lotNumbers.map(l => cleanLotCode(l))) } : {}),
+        };
+      });
+    };
+    const ham = cleanShipments(hamiltonShipments);
+    if (ham) setHamiltonShipments(ham);
+    const van = cleanShipments(vancouverShipments);
+    if (van) setVancouverShipments(van);
+  }, [lotCodes, invoices, orders, transfers, hamiltonShipments, vancouverShipments]);
 
   // Backfill Lot Code BOL numbers from the Invoices AND Orders tables (the reverse
   // direction of the effect above). A lot code with a blank BOL gets its BOL from an
@@ -3998,7 +4060,7 @@ export default function App() {
       const bol = (bolRaw || '').trim();
       if (!bol) return;
       for (const l of (lotRaw || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean)) {
-        const k = l.toUpperCase();
+        const k = lotKey(l);
         if (!bolByLot.has(k)) bolByLot.set(k, bol);
       }
       const po = poKey(poRaw);
@@ -4011,7 +4073,7 @@ export default function App() {
     let changed = false;
     const next = lotCodes.map(lc => {
       if ((lc.bolNumber || '').trim()) return lc; // already has a BOL
-      const lot = (lc.lotNumber || '').trim().toUpperCase();
+      const lot = lotKey(lc.lotNumber);
       const po = poKey(lc.customerPo);
       const bol = (lot && bolByLot.get(lot)) || (po && bolByPo.get(po));
       if (bol) { changed = true; return { ...lc, bolNumber: bol }; }
@@ -4260,7 +4322,7 @@ export default function App() {
       const bol = (inv.bolNumber || '').trim().toUpperCase();
       const po = poKey(inv.po);
       const lots = (bol && lotsByBol.get(bol)) || (po && lotsByPo.get(po));
-      if (lots && lots.length) { changed = true; return { ...inv, lotCode: [...new Set(lots)].join(', ') }; }
+      if (lots && lots.length) { changed = true; return { ...inv, lotCode: dedupeLotCodes(lots).join(', ') }; }
       return inv;
     });
     if (changed) setInvoices(next);
@@ -7363,7 +7425,7 @@ export default function App() {
     // new lot whose number already exists now (or was added earlier in this same
     // apply). Blank lot numbers (numberless loads) are exempt — the importer
     // dedups those on BOL|date|tank instead.
-    const norm = (s?: string) => (s || '').trim().toUpperCase();
+    const norm = (s?: string) => lotKey(s);
     const seen = new Set(afterUpdates.map(lc => norm(lc.lotNumber)).filter(Boolean));
     const freshNew: LotCode[] = [];
     for (const lc of preview.newLotCodes) {
@@ -7920,7 +7982,7 @@ export default function App() {
           const to = get(entry, 'to', 'destination');
           if (!product && !from && !to) continue;
           const lotCode = get(entry, 'lotcode', 'lot');
-          const lc = lotCodes.find(l => l.lotNumber === lotCode);
+          const lc = lotCodes.find(l => sameLotCode(l.lotNumber, lotCode));
           const num = get(entry, 'transferno', 'transfernumber', 'transfer');
           const candidate: Transfer = {
             id: `TRF-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -19539,7 +19601,7 @@ export default function App() {
                           {(() => {
                             const nums = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
                             const origins = nums.map(ln => {
-                              const lc = lotCodes.find(l => l.lotNumber === ln);
+                              const lc = lotCodes.find(l => sameLotCode(l.lotNumber, ln));
                               return lc?.countryOfOrigin || '';
                             }).filter(Boolean);
                             const unique = [...new Set(origins)];
@@ -19551,7 +19613,7 @@ export default function App() {
                         <label className="text-[10px] uppercase font-bold opacity-60">Lot Codes</label>
                         <div className="flex flex-wrap gap-2 mb-2">
                           {(editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : [])).map((ln, idx) => {
-                            const matchedLot = lotCodes.find(l => l.lotNumber === ln);
+                            const matchedLot = lotCodes.find(l => sameLotCode(l.lotNumber, ln));
                             return (
                             <div key={idx} className="flex items-center gap-1 bg-[#E4E3E0] px-2 py-1 text-sm border border-[#141414]/20">
                               <span className="font-mono">{ln}</span>
@@ -19562,7 +19624,7 @@ export default function App() {
                                   const updated = [...current];
                                   updated.splice(idx, 1);
                                   const nums = updated;
-                                  const origins = nums.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
+                                  const origins = nums.map(l => lotCodes.find(lc => sameLotCode(lc.lotNumber, l))?.countryOfOrigin || '').filter(Boolean);
                                   const uniqueOrigins = [...new Set(origins)].join(', ');
                                   setEditingShipment({...editingShipment, lotNumbers: updated, lotNumber: updated[0] || '', originOfGoods: uniqueOrigins});
                                 }}
@@ -19578,10 +19640,10 @@ export default function App() {
                           const current = editingShipment.lotNumbers || (editingShipment.lotNumber ? [editingShipment.lotNumber] : []);
                           const addLot = (val: string) => {
                             const updated = [...current, val];
-                            const origins = updated.map(l => lotCodes.find(lc => lc.lotNumber === l)?.countryOfOrigin || '').filter(Boolean);
+                            const origins = updated.map(l => lotCodes.find(lc => sameLotCode(lc.lotNumber, l))?.countryOfOrigin || '').filter(Boolean);
                             const uniqueOrigins = [...new Set(origins)].join(', ');
                             // Auto-populate colour from the first lot code that has a color value
-                            const firstColorLot = updated.map(ln => lotCodes.find(lc => lc.lotNumber === ln)).find(lc => lc?.color);
+                            const firstColorLot = updated.map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln))).find(lc => lc?.color);
                             setEditingShipment({
                               ...editingShipment,
                               lotNumbers: updated,
@@ -19597,7 +19659,7 @@ export default function App() {
                           const matches = lotCodes
                             // A lot code with no lot number isn't addable and would
                             // crash the search (undefined.toLowerCase) — skip it.
-                            .filter(lc => lc.lotNumber && !current.includes(lc.lotNumber))
+                            .filter(lc => lc.lotNumber && !current.some(c => sameLotCode(c, lc.lotNumber)))
                             .filter(lc => !term
                               || (lc.lotNumber || '').toLowerCase().includes(term)
                               || (lc.sugarType || '').toLowerCase().includes(term)
@@ -25381,7 +25443,7 @@ export default function App() {
                   const totalLegAmount = newTransferLegs.reduce((s, l) => s + l.amount, 0);
                   const g = (k: string) => ((data.get(k) as string) || '').trim();
                   const lotCode = g('lotCode');
-                  const lc = lotCodes.find(l => l.lotNumber === lotCode);
+                  const lc = lotCodes.find(l => sameLotCode(l.lotNumber, lotCode));
                   const t: Transfer = {
                     id: `TRF-${Date.now()}`,
                     transferNumber: `TRF-${new Date().getFullYear()}-${String(transfers.length + 1).padStart(3, '0')}`,
@@ -25653,11 +25715,15 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
                     <select value={editingTransfer.lotCode || ''} onChange={(e) => {
                       const ln = e.target.value;
-                      const lc = lotCodes.find(l => l.lotNumber === ln);
+                      const lc = lotCodes.find(l => sameLotCode(l.lotNumber, ln));
                       setEditingTransfer({ ...editingTransfer, lotCode: ln, ...(lc ? { countryOfOrigin: lc.countryOfOrigin || editingTransfer.countryOfOrigin, silo: lc.silo || editingTransfer.silo, brix: lc.brix || editingTransfer.brix } : {}) });
                     }} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                       <option value="">Select Lot Code</option>
                       {lotCodes.map(l => <option key={l.id} value={l.lotNumber}>{l.lotNumber}</option>)}
+                      {/* EXACT compare on purpose: a <select> only shows its value when an
+                          <option> carries that byte-identical string, so a stored lot that
+                          differs from the catalog spelling (e.g. a legacy spaced copy not yet
+                          cleaned) still needs this fallback option to render. */}
                       {editingTransfer.lotCode && !lotCodes.some(l => l.lotNumber === editingTransfer.lotCode) && <option value={editingTransfer.lotCode}>{editingTransfer.lotCode}</option>}
                     </select>
                   </div>

@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, LotCode, QAProduct } from './types';
 import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter } from './pdfDocHelpers';
+import { sameLotCode } from './utils/lotCode';
 
 export interface GenerateBagIdReportParams {
   shipment: Shipment;
@@ -31,7 +32,7 @@ export function renderBagIdReportInto(doc: jsPDF, {
   // Resolve the lot codes assigned to this shipment (same rule as the COA).
   const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
   const shipmentLotCodes = assignedLotNums
-    .map(ln => lotCodes.find(lc => lc.lotNumber === ln))
+    .map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln)))
     .filter((lc): lc is LotCode => !!lc);
 
   const productName = order?.product || shipment.product || '';

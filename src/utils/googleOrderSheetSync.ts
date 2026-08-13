@@ -21,6 +21,7 @@
 import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer, LotCode } from '../types';
 import { parseCSV } from './googleSheetsSync';
 import { poKey } from './poNumber';
+import { cleanLotCode, lotKey } from './lotCode';
 
 // Workbook containing the order tabs to import.
 export const ORDER_SHEET_ID = '1prdn1bw4roP-JamzaAhIVtZ7irw9ABWkjm2y0bm_NtM';
@@ -2766,7 +2767,7 @@ export function parsedRowsToLotCodesConfigured(
 
   const existingByLot = new Map<string, LotCode>();
   for (const lc of existingLotCodes) {
-    const k = (lc.lotNumber || '').trim().toUpperCase();
+    const k = lotKey(lc.lotNumber);
     if (k && !existingByLot.has(k)) existingByLot.set(k, lc);
   }
   const existingLots = new Set(existingByLot.keys());
@@ -2789,7 +2790,10 @@ export function parsedRowsToLotCodesConfigured(
         result.skipped.push({ tab: r.tab, lotNumber: r.lotCode || '', reason: 'Row marked cancelled' });
         continue;
       }
-      const lotNumber = norm(r.lotCode);
+      // Structured HS- lot codes never contain internal spaces; strip any a sheet
+      // cell carried in (e.g. "HS-L00C26222- S3"). Dedup below keys on BOL|date|tank,
+      // so this doesn't affect matching.
+      const lotNumber = cleanLotCode(norm(r.lotCode));
       const date = norm(r.shipmentDate);
       const bol = norm(r.bolNumber);
       const tank = norm(r.tankNumber);
@@ -2843,7 +2847,7 @@ export function parsedRowsToLotCodesConfigured(
       };
       const isEmpty = (v: any) => v === undefined || v === null || v === '';
 
-      const lotU = lotNumber.toUpperCase();
+      const lotU = lotKey(lotNumber); // must match how existingByLot/newByLot are keyed
       // A lot number created earlier in THIS import: fill the pending new record's
       // empty fields in place (it's already in newLotCodes, keeping its id/createdAt).
       const pendingNew = lotU ? newByLot.get(lotU) : undefined;
@@ -2916,7 +2920,7 @@ export function parsedRowsToLotCodesConfigured(
  *
  *  Returns the deduped list (canonical order preserved) plus the ids removed. */
 export function collapseLotCodeDuplicates(lotCodes: LotCode[]): { merged: LotCode[]; removedIds: string[] } {
-  const normLot = (s?: string) => (s || '').trim().toUpperCase();
+  const normLot = (s?: string) => lotKey(s);
   const compOf = (lc: LotCode) => {
     const bol = (lc.bolNumber || '').trim().toUpperCase();
     if (!bol) return '';
