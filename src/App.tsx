@@ -178,6 +178,34 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
 }
 
 // ============================
+// SYNC WATCHDOG
+// ============================
+/** Marks a write whose SERVER acknowledgement didn't arrive in time. The write
+ *  itself is already durable in the local IndexedDB cache and Firestore replays
+ *  it when the connection returns — this is "not confirmed yet", NOT "lost". */
+class SyncTimeoutError extends Error {
+  constructor(public collection: string) {
+    super(`${collection}: still waiting for the server (saved locally, will finish when the connection returns)`);
+    this.name = 'SyncTimeoutError';
+  }
+}
+
+/** Firestore's batch.commit() only settles on SERVER ack when offline persistence
+ *  is enabled — offline it stays pending forever rather than rejecting. Racing it
+ *  against a timer keeps one unreachable write from wedging the entire sync loop
+ *  (which previously left `isSyncing` stuck true, so nothing synced again). */
+const SYNC_ACK_TIMEOUT_MS = 15000;
+function withSyncTimeout<T>(p: Promise<T>, collection: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SyncTimeoutError(collection)), SYNC_ACK_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+// ============================
 // RAW SUGAR PRICE — display unit
 // ============================
 /** Metric tonnes → hundredweight (100 lb). Same constant the pricing calculator
@@ -6010,6 +6038,7 @@ export default function App() {
   const pushDirtyCollections = async (): Promise<number> => {
     let changed = 0;
     const failed: string[] = [];
+    const pending: string[] = []; // written locally, server ack outstanding
     for (const task of buildSyncTasks()) {
       const dataStr = JSON.stringify(task.data);
       if (dataStr === lastSyncedData.current[task.key]) continue; // collection unchanged
@@ -6043,7 +6072,21 @@ export default function App() {
       // next cycle, and the healthy collections still get written.
       try {
         if (upserts.length || deleteIds.length) {
-          await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
+          // BOUNDED WAIT. With offline persistence on, batch.commit() resolves only
+          // when the SERVER acknowledges — on a dropped/flaky connection it never
+          // resolves and never rejects. An unbounded await here wedged the whole
+          // pipeline: pushDirtyCollections never returned, so `isSyncing` stayed
+          // true forever, every later autosave bailed on the lock, and the UI sat
+          // on "Syncing" indefinitely while nothing more was written.
+          //
+          // Timing out does NOT lose the write: it is already committed to the
+          // local IndexedDB cache and Firestore replays it (across reloads) when
+          // the connection returns. We just stop BLOCKING on the acknowledgement,
+          // and leave the baseline un-advanced so the collection is re-checked.
+          await withSyncTimeout(
+            syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete }),
+            task.collection,
+          );
         }
         // Advance the baseline to the just-pushed snapshot (getDocBaseline rebuilds
         // its per-doc map from this on next read). ONLY on success — leaving it
@@ -6052,8 +6095,15 @@ export default function App() {
         // The snapshot now subsumes every write-through doc for this collection.
         delete writeThroughDocs.current[task.collection];
       } catch (e) {
-        failed.push(`${task.collection}: ${e instanceof Error ? e.message : String(e)}`);
-        console.error(`[sync] Failed to push "${task.collection}" — will retry next cycle.`, e);
+        if (e instanceof SyncTimeoutError) {
+          // Saved locally, server ack outstanding. Not an error to alarm the user
+          // with — but we must NOT advance the baseline, so it re-confirms later.
+          pending.push(task.collection);
+          console.warn(`[sync] "${task.collection}" saved locally; awaiting server ack.`, e);
+        } else {
+          failed.push(`${task.collection}: ${e instanceof Error ? e.message : String(e)}`);
+          console.error(`[sync] Failed to push "${task.collection}" — will retry next cycle.`, e);
+        }
       }
     }
     if (failed.length) {
@@ -6061,6 +6111,9 @@ export default function App() {
       // message names the collections so a persistent failure is diagnosable
       // instead of showing a stale "synced at" time forever.
       throw new Error(`Could not save: ${failed.join(' | ')}`);
+    }
+    if (pending.length) {
+      throw new SyncTimeoutError(pending.join(', '));
     }
     return changed;
   };
@@ -6088,8 +6141,15 @@ export default function App() {
         if (wrote > 0) { setSyncStatus('synced'); setLastSynced(new Date()); }
         setSyncError(null);
       } catch (e) {
-        setSyncStatus('error');
-        setSyncError((e as Error).message);
+        if (e instanceof SyncTimeoutError) {
+          // Edits ARE saved (local cache) — just not server-confirmed yet. Show
+          // the offline state rather than a scary error, and keep re-checking.
+          setSyncStatus('offline');
+          setSyncError(`Saved on this device — waiting for the connection to confirm (${e.collection}).`);
+        } else {
+          setSyncStatus('error');
+          setSyncError((e as Error).message);
+        }
         // Retry a transient failure on its own — otherwise the failed edits sit
         // unsynced until some unrelated state change happens to re-arm the timer
         // (and are lost if the user closes the tab first).
@@ -15383,7 +15443,9 @@ export default function App() {
               {syncStatus === 'error' && <CloudOff size={12} className="text-red-500" />}
               {syncStatus === 'offline' && <CloudOff size={12} className="text-amber-500" />}
               <span className="capitalize">
-                {syncStatus === 'offline' ? 'Not signed in' : syncStatus}
+                {/* 'offline' covers BOTH not-signed-in and signed-in-but-unreachable;
+                    only the former should read "Not signed in". */}
+                {syncStatus === 'offline' ? (user ? 'Offline — saved locally' : 'Not signed in') : syncStatus}
               </span>
             </div>
             {syncError && (
