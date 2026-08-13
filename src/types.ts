@@ -21,7 +21,8 @@ export interface CommodityConfig {
   isPalletCharge: boolean;
   palletCostCadMt: number;
   palletType?: 'CHEP' | 'One Way' | '';
-  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  /** Free-form: options come from the Shipping Terms table (ShippingTerm.name). */
+  shippingTerms?: string;
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   customerDifferentialCadMt: number; // Customer-specific differential (CAD/MT)
 }
@@ -465,7 +466,8 @@ export interface Order {
   lineItems: OrderLineItem[];
   amount: number;
   carrier?: string;
-  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  /** Free-form: options come from the Shipping Terms table (ShippingTerm.name). */
+  shippingTerms?: string;
   location?: string;       // shipping origin from contract
   splitNumber?: string;    // user-entered split number
   currency?: string;       // currency from CSV or contract (e.g. "CAD", "USD")
@@ -613,7 +615,8 @@ export interface ReturnOrder {
   /** Credit amount (positive number; sign-flip happens at invoice creation). */
   amount: number;
   carrier?: string;
-  shippingTerms?: 'FOB' | 'DAP' | 'DDP' | 'FCA' | '';
+  /** Free-form: options come from the Shipping Terms table (ShippingTerm.name). */
+  shippingTerms?: string;
   location?: string;
   splitNumber?: string;
   currency?: string;

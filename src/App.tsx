@@ -178,6 +178,29 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
 }
 
 // ============================
+// RAW SUGAR PRICE — display unit
+// ============================
+/** Metric tonnes → hundredweight (100 lb). Same constant the pricing calculator
+ *  uses to turn the #11 raw price (USD/cwt) into USD/MT. */
+const MT_TO_CWT = 22.0462;
+
+/** The raw sugar price for display, ALWAYS in USD/cwt — the unit raws are quoted
+ *  and traded in (#11). `Contract.rawPriceUsdMt` holds USD per metric tonne (the
+ *  pricing calculator writes `rawPriceUsdCwt * 22.0462` into it), so the stored
+ *  value is divided back out here.
+ *
+ *  Legacy rows sometimes hold a value that is ALREADY per-cwt (imported straight
+ *  from a #11 quote). Raw sugar has never traded near $50/cwt — the all-time #11
+ *  high is ~$0.66/lb ≈ $66/cwt but sustained levels are $10–30 — while USD/MT
+ *  values are ~$200+. So a value under the cutoff is treated as already-cwt and
+ *  passed through rather than being divided into nonsense. */
+function rawPriceUsdCwt(rawPriceUsdMt?: number): number | null {
+  const v = typeof rawPriceUsdMt === 'number' ? rawPriceUsdMt : NaN;
+  if (!isFinite(v) || v <= 0) return null;
+  return v < 100 ? v : v / MT_TO_CWT;
+}
+
+// ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
 // ============================
 function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp }: {
@@ -544,7 +567,7 @@ export default function App() {
   const [orderShipmentDate, setOrderShipmentDate] = useState('');
   const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
   const [orderCarrier, setOrderCarrier] = useState('Customer Pick Up');
-  const [orderShippingTerms, setOrderShippingTerms] = useState<'FOB' | 'DAP' | 'DDP' | 'FCA' | ''>('');
+  const [orderShippingTerms, setOrderShippingTerms] = useState<string>('');
   const [orderLocation, setOrderLocation] = useState('');
   const [orderCurrency, setOrderCurrency] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
@@ -618,7 +641,7 @@ export default function App() {
     deliveryDate: string;
     carrier: string;
     currency: string;
-    shippingTerms: '' | 'FOB' | 'DAP' | 'DDP' | 'FCA';
+    shippingTerms: string;
     contractNumber: string;
     contractRaw: string;
     papsNo: string;
@@ -644,8 +667,19 @@ export default function App() {
   const [poIngestNotice, setPoIngestNotice] = useState<string | null>(null);
   const poScanInputRef = useRef<HTMLInputElement>(null);
 
-  const normShipTerms = (s?: string): '' | 'FOB' | 'DAP' | 'DDP' | 'FCA' => {
+  // Normalize free-text incoterms (from a scanned PO) to a configured term. Matches
+  // the Shipping Terms table first — so a custom term added there is recognised —
+  // then falls back to the classic four. Returns '' when nothing matches.
+  const normShipTerms = (s?: string): string => {
     const u = (s || '').toUpperCase();
+    if (!u) return '';
+    const fromTable = shippingTermsList
+      .map(t => (t.name || '').trim())
+      .filter(Boolean)
+      // Longest first so "DDP" wins over a hypothetical "DD" prefix term.
+      .sort((a, b) => b.length - a.length)
+      .find(name => u.includes(name.toUpperCase()));
+    if (fromTable) return fromTable;
     if (u.includes('FOB')) return 'FOB';
     if (u.includes('DDP')) return 'DDP';
     if (u.includes('DAP')) return 'DAP';
@@ -3473,7 +3507,13 @@ export default function App() {
           const notes = entry.notes || '';
           const shippingTerms = entry.shippingterms || '';
           const fxRate = parseFloat(entry.fxrate || entry.fx || '0') || 0;
-          const rawPriceUsdMt = parseFloat(entry.rawpriceusdmt || entry.rawprice || '0') || 0;
+          // Raws are stored per MT. A "Raws (USD/cwt)" column (what the Excel export
+          // now emits) is converted back to USD/MT so an export → import round-trip
+          // preserves the value; a per-MT column is taken as-is.
+          const rawCwtCell = parseFloat(entry['rawsusdcwt'] || entry['rawusdcwt'] || '0') || 0;
+          const rawPriceUsdMt = rawCwtCell > 0
+            ? Math.round(rawCwtCell * MT_TO_CWT * 100) / 100
+            : (parseFloat(entry.rawpriceusdmt || entry.rawprice || '0') || 0);
           const deliveredFreight = parseFloat(entry.deliveredfreight || entry.freight || '0') || 0;
           const exportDuty = parseFloat(entry.exportduty || entry.duty || '0') || 0;
           const palletCharge = parseFloat(entry.palletcharge || '0') || 0;
@@ -13458,7 +13498,9 @@ export default function App() {
           />
 
           {/* Shipping Terms — standardized table (DataTable + DetailModal pattern).
-              Populates the Customer Quote shipping-terms dropdown. */}
+              SINGLE SOURCE OF TRUTH: every shipping-terms dropdown in the app reads
+              from this table (customer quote, add/edit order, edit invoice, edit
+              contract). Add a term here and it appears everywhere. */}
           <DataTable<ShippingTerm>
             title="Shipping Terms"
             columns={[
@@ -13470,7 +13512,7 @@ export default function App() {
             onRowClick={(t) => { setShippingTermDraft({ ...t }); setShippingTermMode('view'); }}
             onAdd={() => { setShippingTermDraft({ id: `ST-${Date.now()}`, name: '', description: '' }); setShippingTermMode('add'); }}
             addLabel="Add Term"
-            emptyMessage='No shipping terms defined. Click "Add Term" — it will appear in the Customer Quote dropdown.'
+            emptyMessage='No shipping terms defined. Click "Add Term" — it will appear in every shipping-terms dropdown (orders, invoices, contracts, quotes).'
             defaultSortKey="name"
           />
 
@@ -13566,12 +13608,13 @@ export default function App() {
           { header: 'Price/MT', key: 'finalPrice', format: 'currency' },
           { header: 'Currency', key: 'currency' },
           { header: 'FX Rate', key: 'fxRate', format: 'number' },
-          { header: 'Raws', key: 'rawPriceUsdMt', format: 'number' },
+          { header: 'Raws (USD/cwt)', key: 'rawsUsdCwt', format: 'number' },
           { header: 'Margin (CAD/MT)', key: 'margin', format: 'number' },
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Payment Terms', key: 'paymentTerms' },
         ],
-        rows: contracts as any[],
+        // Raws exported in USD/cwt to match the on-screen column.
+        rows: contracts.map(c => ({ ...c, rawsUsdCwt: rawPriceUsdCwt(c.rawPriceUsdMt) ?? '' })) as any[],
       }];
       return (
         <div className="space-y-0">
@@ -13850,7 +13893,7 @@ export default function App() {
                   <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
                   <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
                   <SortableHeader label="Price/MT" sortKey="finalPrice" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Raws" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
+                  <SortableHeader label="Raws (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
@@ -13874,8 +13917,12 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>
-                      {/* Raws — raw stored value, no MT↔cwt conversion. */}
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.rawPriceUsdMt ? c.rawPriceUsdMt : '—'}</td>
+                      {/* Raws — ALWAYS USD/cwt (the #11 quoting unit), converted from
+                          the stored USD/MT. Never CAD and never per-MT. */}
+                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{(() => {
+                        const cwt = rawPriceUsdCwt(c.rawPriceUsdMt);
+                        return cwt === null ? '—' : `USD $${cwt.toFixed(2)}`;
+                      })()}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       {(() => {
@@ -15481,12 +15528,16 @@ export default function App() {
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
                       <input type="text" value={editingInvoiceCard.contractNumber || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, contractNumber: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
-                      <select value={editingInvoiceCard.shippingTerms || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, shippingTerms: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]">
+                      <select value={editingInvoiceCard.shippingTerms || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, shippingTerms: e.target.value })} title={shippingTermsList.find(t => t.name === editingInvoiceCard.shippingTerms)?.description || ''} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]">
                         <option value="">—</option>
-                        <option value="FOB">FOB</option>
-                        <option value="DAP">DAP</option>
-                        <option value="DDP">DDP</option>
-                        <option value="FCA">FCA</option>
+                        {/* Options come from the Shipping Terms table (Supply Chain page).
+                            A saved value that isn't in the list is kept as a fallback option. */}
+                        {shippingTermsList.filter(t => t.name).map(t => (
+                          <option key={t.id} value={t.name}>{t.name}</option>
+                        ))}
+                        {editingInvoiceCard.shippingTerms && !shippingTermsList.some(t => t.name === editingInvoiceCard.shippingTerms) && (
+                          <option value={editingInvoiceCard.shippingTerms}>{editingInvoiceCard.shippingTerms}</option>
+                        )}
                       </select></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location (Origin)</label>
                       <input type="text" value={editingInvoiceCard.location || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, location: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
@@ -19961,9 +20012,9 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-4xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
             >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Contract: {editingContract.contractNumber || '(no number)'}</h3>
                 <button onClick={() => setEditingContract(null)} className="hover:rotate-90 transition-transform">
                   <X size={20} />
@@ -20000,39 +20051,80 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT) <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Customer No.</label>
                     <input
                       type="text"
-                      value={editingContract.contractVolume || ""}
-                      disabled
-                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
+                      value={editingContract.customerNumber || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, customerNumber: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Final Price <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">ITAS Name</label>
                     <input
                       type="text"
-                      value={editingContract.finalPrice || ""}
-                      disabled
-                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
+                      value={editingContract.itasName || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, itasName: e.target.value || undefined })}
+                      placeholder={customers.find(cu => cu.id === editingContract.customerNumber || cu.name === editingContract.customerName)?.itasCustomerName || '—'}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT)</label>
                     <input
-                      type="date"
-                      value={editingContract.startDate}
-                      disabled
-                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
+                      type="text" inputMode="decimal"
+                      value={editingContract.contractVolume || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, contractVolume: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">End Date <span className="text-[8px] opacity-40">(locked)</span></label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Final Price (per MT)</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.finalPrice || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, finalPrice: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Contract Date</label>
                     <input
                       type="date"
-                      value={editingContract.endDate}
-                      disabled
-                      className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-3 text-sm text-[#141414]/60 cursor-not-allowed outline-none"
+                      value={editingContract.contractDate || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, contractDate: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Status</label>
+                    <select
+                      value={editingContract.active === false ? 'inactive' : 'active'}
+                      onChange={(e) => setEditingContract({ ...editingContract, active: e.target.value === 'active' })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Start Date</label>
+                    <input
+                      type="date"
+                      value={editingContract.startDate || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, startDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">End Date</label>
+                    <input
+                      type="date"
+                      value={editingContract.endDate || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, endDate: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
@@ -20051,13 +20143,18 @@ export default function App() {
                     <select
                       value={editingContract.shippingTerms || ''}
                       onChange={(e) => setEditingContract({ ...editingContract, shippingTerms: e.target.value })}
+                      title={shippingTermsList.find(t => t.name === editingContract.shippingTerms)?.description || ''}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Terms</option>
-                      <option value="FOB">FOB</option>
-                      <option value="DAP">DAP</option>
-                      <option value="DDP">DDP</option>
-                      <option value="FCA">FCA</option>
+                      {/* Options come from the Shipping Terms table (Supply Chain page).
+                          A saved value that isn't in the list is kept as a fallback option. */}
+                      {shippingTermsList.filter(t => t.name).map(t => (
+                        <option key={t.id} value={t.name}>{t.name}{t.description ? ` — ${t.description}` : ''}</option>
+                      ))}
+                      {editingContract.shippingTerms && !shippingTermsList.some(t => t.name === editingContract.shippingTerms) && (
+                        <option value={editingContract.shippingTerms}>{editingContract.shippingTerms}</option>
+                      )}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -20097,6 +20194,118 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">SKU / Product</label>
+                    <select
+                      value={editingContract.skuName || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, skuName: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select Product</option>
+                      {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                      {editingContract.skuName && !selectableSkus.some(s => s.name === editingContract.skuName) && (
+                        <option value={editingContract.skuName}>{editingContract.skuName}</option>
+                      )}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
+                    <input
+                      type="text"
+                      value={editingContract.destination || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, destination: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Currency</label>
+                    <select
+                      value={editingContract.currency || ''}
+                      onChange={(e) => setEditingContract({ ...editingContract, currency: e.target.value })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select</option>
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">FX Rate</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.fxRate ?? ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, fxRate: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Raws (USD/cwt)</label>
+                    {/* Entered and shown in USD/cwt (the #11 quoting unit); stored as USD/MT. */}
+                    <input
+                      type="text" inputMode="decimal"
+                      value={(() => { const v = rawPriceUsdCwt(editingContract.rawPriceUsdMt); return v === null ? '' : String(Math.round(v * 100) / 100); })()}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => {
+                        const cwt = parseFloat(e.target.value);
+                        setEditingContract({
+                          ...editingContract,
+                          rawPriceUsdMt: e.target.value === '' || !isFinite(cwt) ? undefined : Math.round(cwt * MT_TO_CWT * 100) / 100,
+                        });
+                      }}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.deliveredFreight ?? ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, deliveredFreight: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Export Duty</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.exportDuty ?? ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, exportDuty: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Pallet Charge</label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.palletCharge ?? ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, palletCharge: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Volume Taken (MT) <span className="text-[8px] opacity-40">(table shows invoiced total)</span></label>
+                    <input
+                      type="text" inputMode="decimal"
+                      value={editingContract.volumeTaken || ''}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => setEditingContract({ ...editingContract, volumeTaken: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
+                  <textarea
+                    value={editingContract.notes || ''}
+                    onChange={(e) => setEditingContract({ ...editingContract, notes: e.target.value || undefined })}
+                    rows={2}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none resize-y"
+                  />
                 </div>
 
                 {/* Allowed to Draw — extra customers authorized to use this contract */}
@@ -20368,8 +20577,11 @@ export default function App() {
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
-                        <td className="px-4 py-2 opacity-70">Raws</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.rawPriceUsdMt ? selectedContractDetail.rawPriceUsdMt : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Raws (USD/cwt)</td>
+                        <td className="px-4 py-2 text-right font-bold">{(() => {
+                          const cwt = rawPriceUsdCwt(selectedContractDetail.rawPriceUsdMt);
+                          return cwt === null ? '—' : `USD $${cwt.toFixed(2)}`;
+                        })()}</td>
                         <td className="px-4 py-2 opacity-70">Export Duty</td>
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</td>
                       </tr>
@@ -23071,14 +23283,19 @@ export default function App() {
                           <td className="p-2">
                             <select
                               value={orderShippingTerms}
-                              onChange={(e) => setOrderShippingTerms(e.target.value as any)}
+                              onChange={(e) => setOrderShippingTerms(e.target.value)}
+                              title={shippingTermsList.find(t => t.name === orderShippingTerms)?.description || ''}
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             >
                               <option value="">Select</option>
-                              <option value="FOB">FOB</option>
-                              <option value="DAP">DAP</option>
-                              <option value="DDP">DDP</option>
-                              <option value="FCA">FCA</option>
+                              {/* Options come from the Shipping Terms table (Supply Chain page).
+                                  A saved value that isn't in the list is kept as a fallback option. */}
+                              {shippingTermsList.filter(t => t.name).map(t => (
+                                <option key={t.id} value={t.name}>{t.name}</option>
+                              ))}
+                              {orderShippingTerms && !shippingTermsList.some(t => t.name === orderShippingTerms) && (
+                                <option value={orderShippingTerms}>{orderShippingTerms}</option>
+                              )}
                             </select>
                           </td>
                           <td className="p-2">
