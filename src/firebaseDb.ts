@@ -103,6 +103,32 @@ export async function fetchCollection<T>(collectionName: string): Promise<T[]> {
   return snapshot.docs.map(doc => ({ ...doc.data() } as T));
 }
 
+/** Write documents to Firestore RIGHT NOW — never waits for the debounced
+ *  autosave. Use at every explicit user save (create/edit a contract, customer,
+ *  order…) so a record the user committed is durable the moment they save it,
+ *  independent of the diff/baseline machinery, the 5s debounce, or the page
+ *  living long enough for either to run.
+ *
+ *  Upsert-only: it never deletes, so it cannot be the cause of data loss. The
+ *  debounced autosave still runs and reconciles everything else (including
+ *  deletions). Failures propagate — callers MUST surface them to the user rather
+ *  than reporting a save that did not happen. */
+export async function saveDocsNow<T extends { id: string }>(
+  collectionName: string,
+  docs: T[],
+): Promise<void> {
+  const valid = docs.filter(d => d && d.id !== undefined && d.id !== null);
+  if (valid.length === 0) return;
+  const batchSize = 450;
+  for (let i = 0; i < valid.length; i += batchSize) {
+    const batch = writeBatch(db);
+    for (const item of valid.slice(i, i + batchSize)) {
+      batch.set(doc(db, collectionName, item.id), stripUndefinedDeep(item));
+    }
+    await batch.commit();
+  }
+}
+
 // Delete specific documents from a collection by id (used to drain the
 // incomingPoOrders queue after the app ingests them into orders).
 export async function deleteDocs(collectionName: string, ids: string[]): Promise<void> {

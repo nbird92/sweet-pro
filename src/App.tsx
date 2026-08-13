@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -5973,14 +5973,57 @@ export default function App() {
   // callers can skip the "synced at" bump on a no-op run — otherwise the autosave
   // effect (lastSynced is one of its deps) would re-arm its timer every cycle and
   // spin a perpetual idle heartbeat that re-serializes every collection.
+  // WRITE-THROUGH: persist records the user just saved to Firestore immediately,
+  // instead of waiting for the debounced autosave to notice them. The autosave is
+  // still the reconciler (it handles deletions and anything missed), but an
+  // explicit save must never depend on it — a debounce that never fires, a page
+  // closed too soon, or an unrelated collection erroring is otherwise enough to
+  // lose the record. Fire-and-forget by design so the UI stays responsive; a
+  // failure surfaces in the sync indicator and the autosave retries it.
+  // Docs written by saveNow that the diff-baseline doesn't know about yet, keyed by
+  // COLLECTION name. Without this a create-then-delete would strand the doc on the
+  // server forever: the write-through put it in Firestore, but the baseline never
+  // contained it, so the next diff neither upserts it (gone from state) nor deletes
+  // it (absent from the baseline) — and it would reappear on the next load.
+  const writeThroughDocs = useRef<Record<string, Map<string, string>>>({});
+
+  const saveNow = <T extends { id: string }>(collection: string, docs: T[]) => {
+    // SAME PRECONDITION AS EVERY OTHER WRITER: `lastSynced` is only set once the
+    // authoritative load succeeded, so until then the arrays still hold the
+    // INITIAL_ demo seeds. Writing in that window would push demo-derived docs
+    // over real records (saveDocsNow uses batch.set — a full overwrite). The app
+    // is interactive while the load is in flight, so this gate is load-bearing.
+    if (!user || !lastSynced) return;
+    saveDocsNow(collection, docs)
+      .then(() => {
+        const m = writeThroughDocs.current[collection] || new Map<string, string>();
+        for (const d of docs) if (d && d.id) m.set(d.id, JSON.stringify(d));
+        writeThroughDocs.current[collection] = m;
+      })
+      .catch((e) => {
+        setSyncStatus('error');
+        setSyncError(`Could not save to ${collection}: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`[saveNow] ${collection} write failed`, e);
+      });
+  };
+
   const pushDirtyCollections = async (): Promise<number> => {
     let changed = 0;
+    const failed: string[] = [];
     for (const task of buildSyncTasks()) {
       const dataStr = JSON.stringify(task.data);
       if (dataStr === lastSyncedData.current[task.key]) continue; // collection unchanged
       changed++;
       setSyncStatus('syncing');
-      const baseline = getDocBaseline(task.key);
+      // Baseline = last synced snapshot PLUS anything saveNow already wrote
+      // straight to Firestore. Merging those in is what lets a doc that was
+      // write-through-saved and then deleted actually get deleted here, instead
+      // of being stranded on the server and reappearing on the next load.
+      const storedBaseline = getDocBaseline(task.key);
+      const writtenThrough = writeThroughDocs.current[task.collection];
+      const baseline = writtenThrough && writtenThrough.size
+        ? new Map<string, string>([...storedBaseline, ...writtenThrough])
+        : storedBaseline;
       const upserts: any[] = [];
       const currentIds = new Set<string>();
       for (const d of task.data) {
@@ -5990,12 +6033,34 @@ export default function App() {
       }
       const deleteIds: string[] = [];
       for (const id of baseline.keys()) if (!currentIds.has(id)) deleteIds.push(id);
-      if (upserts.length || deleteIds.length) {
-        await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
+      // ISOLATE EACH COLLECTION. This used to be an unguarded await: one failing
+      // write (a rejected doc, a permissions blip, a transient network error) threw
+      // out of the whole loop, so EVERY collection after it in the list never
+      // synced — for the rest of the session, failing at the same point on every
+      // retry. That silently lost a new contract because an unrelated `customers`
+      // write ahead of it in the list was failing. A failure here now costs only
+      // its own collection: its baseline is NOT advanced, so it is retried on the
+      // next cycle, and the healthy collections still get written.
+      try {
+        if (upserts.length || deleteIds.length) {
+          await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
+        }
+        // Advance the baseline to the just-pushed snapshot (getDocBaseline rebuilds
+        // its per-doc map from this on next read). ONLY on success — leaving it
+        // behind on failure is what makes the retry pick the collection up again.
+        lastSyncedData.current[task.key] = dataStr;
+        // The snapshot now subsumes every write-through doc for this collection.
+        delete writeThroughDocs.current[task.collection];
+      } catch (e) {
+        failed.push(`${task.collection}: ${e instanceof Error ? e.message : String(e)}`);
+        console.error(`[sync] Failed to push "${task.collection}" — will retry next cycle.`, e);
       }
-      // Advance the baseline to the just-pushed snapshot (getDocBaseline rebuilds
-      // its per-doc map from this on next read).
-      lastSyncedData.current[task.key] = dataStr;
+    }
+    if (failed.length) {
+      // Surfaced to the operator AND rethrown so syncAll schedules a retry. The
+      // message names the collections so a persistent failure is diagnosable
+      // instead of showing a stale "synced at" time forever.
+      throw new Error(`Could not save: ${failed.join(' | ')}`);
     }
     return changed;
   };
@@ -8830,9 +8895,70 @@ export default function App() {
     };
 
     setContracts([...contracts, newContract]);
+    saveNow(COLLECTIONS.contracts, [newContract]); // durable immediately, not on the 5s debounce
     setShowContractConfirm(false);
     setActivePage('Contracts');
   };
+
+  // Per-contract volume roll-ups, computed ONCE per data change instead of inside
+  // the table's row loop. The Contracts table used to rebuild a Set over EVERY
+  // invoice and re-scan all invoices + orders + customers for EVERY row, so it
+  // cost O(rows x (invoices + orders)) on every single render — which is what made
+  // the page lag after each click. Same lookup-map treatment the Orders and
+  // Invoices tables already use.
+  const contractVolumeStats = useMemo(() => {
+    // Contract-independent, so build it once rather than per row (this Set alone
+    // was the worst offender — one full invoice scan per contract row).
+    const invoicedBols = new Set(
+      invoices
+        .filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber)
+        .map(inv => (inv.bolNumber || '').trim().toUpperCase()),
+    );
+    const activeInvoices = invoices.filter(inv => inv.status !== 'Cancelled');
+    const liveOrders = orders.filter(o => o.status !== 'Cancelled');
+
+    const stats = new Map<string, { taken: number; onOrder: number; outstanding: number }>();
+    for (const c of contracts) {
+      const cn = c.contractNumber;
+      const taken = activeInvoices
+        .filter(inv => invoiceMatchesContract(inv, cn))
+        .reduce((sum, inv) => sum + (inv.qty || 0), 0);
+
+      const ordersOnContract = liveOrders.filter(o => {
+        if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, cn)) return true;
+        if ((o.lineItems || []).some(li => li.contractNumber === cn)) return true;
+        return false;
+      });
+      // Prefer summing only the line items naming this contract; fall back to all
+      // line items when the order's own number / split is what matched.
+      const sumOrderWeight = (o: Order) => {
+        const matchingLines = (o.lineItems || []).filter(li => li.contractNumber === cn);
+        const lines = matchingLines.length > 0 ? matchingLines : (o.lineItems || []);
+        return lines.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      };
+      const onOrder = ordersOnContract
+        .filter(o => !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
+        .reduce((sum, o) => sum + sumOrderWeight(o), 0);
+
+      // Outstanding is always Contract Volume − computed Volume Taken; the stored
+      // volumeOutstanding drifts when invoices change without touching the contract.
+      stats.set(c.id, { taken, onOrder, outstanding: (c.contractVolume || 0) - taken });
+    }
+    return stats;
+  }, [contracts, invoices, orders]);
+
+  // ITAS display name per contract-identifying key, so the table doesn't run a
+  // customers.find() for every row.
+  const itasNameByCustomerKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const cu of customers) {
+      const itas = (cu.itasCustomerName || '').trim();
+      if (!itas) continue;
+      if (cu.id) m.set(`id:${cu.id}`, itas);
+      if (cu.name) m.set(`name:${cu.name}`, itas);
+    }
+    return m;
+  }, [customers]);
 
   const calculations = useMemo(() => {
     const mtToCwt = 22.0462;
@@ -13915,7 +14041,7 @@ export default function App() {
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName || '—'}</td>
+                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || itasNameByCustomerKey.get(`id:${c.customerNumber}`) || itasNameByCustomerKey.get(`name:${c.customerName}`) || '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>
                       {/* Raws — ALWAYS USD/cwt (the #11 quoting unit), converted from
                           the stored USD/MT. Never CAD and never per-MT. */}
@@ -13926,53 +14052,15 @@ export default function App() {
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
                       {(() => {
-                        // Volume Taken is computed from INVOICES directly so a
-                        // billed split that doesn't carry an explicit contractNumber
-                        // (only a splitNo like "S03399.B29") still counts against
-                        // its parent contract "S03399.B".
-                        //   Match an invoice to this contract via:
-                        //     - inv.contractNumber === c.contractNumber, OR
-                        //     - inv.splitNo prefix (digits stripped) === c.contractNumber
-                        //   Sum invoice.qty (MT) per match.
-                        const invoicesOnContract = invoices.filter(inv =>
-                          inv.status !== 'Cancelled' && invoiceMatchesContract(inv, c.contractNumber)
-                        );
-                        const volumeTakenComputed = invoicesOnContract
-                          .reduce((sum, inv) => sum + (inv.qty || 0), 0);
-
-                        // Volume on Order = orders matching this contract that
-                        // haven't been invoiced yet. Match orders by their own
-                        // contractNumber, any line item's contractNumber, OR
-                        // splitNumber prefix → contract number.
-                        // Only ACTIVE invoices count as "taken" — a Cancelled/Credit
-                        // invoice leaves the order's volume outstanding.
-                        const invoicedBols = new Set(invoices.filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber).map(inv => (inv.bolNumber || '').trim().toUpperCase()));
-                        const ordersOnContract = orders.filter(o => {
-                          if (o.status === 'Cancelled') return false;
-                          if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, c.contractNumber)) return true;
-                          if ((o.lineItems || []).some(li => li.contractNumber === c.contractNumber)) return true;
-                          return false;
-                        });
-                        const sumOrderWeight = (o: Order) => {
-                          // Prefer summing only the line items that name this
-                          // contract; fall back to summing all line items when
-                          // the order's own contractNumber / split is the match.
-                          const matchingLines = (o.lineItems || []).filter(li => li.contractNumber === c.contractNumber);
-                          if (matchingLines.length > 0) {
-                            return matchingLines.reduce((s, li) => s + (li.totalWeight || 0), 0);
-                          }
-                          return (o.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0);
-                        };
-                        const volumeOnOrderComputed = ordersOnContract
-                          .filter(o => !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
-                          .reduce((sum, o) => sum + sumOrderWeight(o), 0);
-                        // Volume Outstanding is always Contract Volume − Volume Taken.
-                        // (Source of truth: the computed Volume Taken from
-                        // invoices; the persisted c.volumeOutstanding is ignored
-                        // because it can drift when invoices are added/removed
-                        // without touching the contract row.)
-                        const contractVolumeNum = c.contractVolume || 0;
-                        const volumeOutstandingComputed = contractVolumeNum - volumeTakenComputed;
+                        // Volume Taken / on Order / Outstanding come from the
+                        // contractVolumeStats memo — computed once per data change
+                        // rather than re-scanning every invoice and order per row.
+                        // See that memo for the matching rules (split-number prefixes,
+                        // line-item contract numbers, Cancelled/Credit handling).
+                        const st = contractVolumeStats.get(c.id) || { taken: 0, onOrder: 0, outstanding: c.contractVolume || 0 };
+                        const volumeTakenComputed = st.taken;
+                        const volumeOnOrderComputed = st.onOrder;
+                        const volumeOutstandingComputed = st.outstanding;
                         return (
                           <>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
@@ -20430,6 +20518,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       setContracts(contracts.map(c => c.id === editingContract.id ? editingContract : c));
+                      saveNow(COLLECTIONS.contracts, [editingContract]); // durable immediately
                       setEditingContract(null);
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
@@ -21023,6 +21112,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       setCustomers([...customers, newCustomer]);
+                      saveNow(COLLECTIONS.customers, [newCustomer]); // durable immediately
                       setIsAddingCustomer(false);
                       toggleRow(newCustomer.id);
                     }}
@@ -21991,6 +22081,8 @@ export default function App() {
                   <button
                     onClick={() => {
                       setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
+                      // Durable immediately — includes any ship-to locations just added.
+                      saveNow(COLLECTIONS.customers, [editingCustomer]);
                       setEditingCustomer(null);
                       setShowShipToForm(false);
                       setEditingShipTo(null);
