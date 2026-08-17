@@ -315,11 +315,25 @@ export async function syncCollectionDiff<T extends { id: string }>(
   baselineCount: number,
   opts?: { allowMassDelete?: boolean },
 ): Promise<void> {
-  const massDelete = !opts?.allowMassDelete && deleteIds.length > Math.max(20, baselineCount * 0.5);
+  // WIPE-OUT GUARD. Two signatures, both meaning "the in-memory state is not
+  // trustworthy" rather than "the user deleted these":
+  //
+  //  1. EVERYTHING GONE (deleteIds covers the whole baseline and nothing is left
+  //     to upsert). The old threshold — max(20, baseline*0.5) — let this through
+  //     for ANY collection with fewer than ~40 docs, so a failed/partial load
+  //     could silently wipe smaller collections (locations, carriers, sugar
+  //     types, shipping terms…). An autosave must never be the thing that empties
+  //     a collection; deliberate clears go through deleteDocs(), which bypasses
+  //     this function entirely.
+  //  2. BULK DELETE beyond the proportional threshold, as before.
+  const wipingAll = baselineCount > 0 && deleteIds.length >= baselineCount && upserts.length === 0;
+  const massDelete = !opts?.allowMassDelete &&
+    (wipingAll || deleteIds.length > Math.max(20, baselineCount * 0.5));
   if (massDelete && deleteIds.length > 0) {
     console.warn(
       `[syncCollectionDiff] Refusing to delete ${deleteIds.length} docs in "${collectionName}" ` +
-      `(baseline ${baselineCount}) — looks like a bulk wipe; preserving them. Use an explicit clear.`,
+      `(baseline ${baselineCount}, upserts ${upserts.length})${wipingAll ? ' — would EMPTY the collection' : ''}` +
+      ` — looks like an unloaded/bad in-memory state; preserving them. Use an explicit clear.`,
     );
   }
   const batchSize = 450;
