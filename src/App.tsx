@@ -1886,12 +1886,16 @@ export default function App() {
     if (!user) return;
     try {
       const feed = await fetchCollection<InboxFeedItem>(COLLECTIONS.inboxFeed);
-      setInboxFeed(feed);
+      // Keep the previous array identity when the content is unchanged — this
+      // poll fires every 5 minutes, and an unconditional set re-rendered the
+      // whole app (and invalidated downstream memos) even with nothing new.
+      setInboxFeed(prev => JSON.stringify(prev) === JSON.stringify(feed) ? prev : feed);
     } catch (e) { console.warn('inbox feed load failed:', e); }
     // Importer heartbeat — same cadence as the feed poll.
     try {
       const st = await fetchCollection<any>('appStatus');
-      setPoScanStatus(st.find((s: any) => s.id === 'poInboxScan') || null);
+      const next = st.find((s: any) => s.id === 'poInboxScan') || null;
+      setPoScanStatus(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
     } catch (e) { console.warn('scan status load failed:', e); }
   };
   // Operator triage state (client-owned, synced). Absence of an entry = "open".
@@ -5544,6 +5548,9 @@ export default function App() {
   // whenever that string changes (a reload, Sync Now, or a direct import all set
   // a fresh lastSyncedData), so the baseline is never stale.
   const lastSyncedDocs = useRef<Record<string, { fromRaw: string; map: Map<string, string> }>>({});
+  // True when the last load came from the local cache because the server was
+  // unreachable — the session is READ-ONLY (see loadDataFromFirestore).
+  const loadedFromCacheRef = useRef(false);
   const getDocBaseline = (key: string): Map<string, string> => {
     const raw = lastSyncedData.current[key] || '';
     const cached = lastSyncedDocs.current[key];
@@ -5564,7 +5571,8 @@ export default function App() {
     try {
       setSyncStatus('syncing');
       setSyncError(null);
-      const data = await fetchAllData();
+      const { data, fromCache } = await fetchAllData();
+      loadedFromCacheRef.current = fromCache;
 
       // Authoritative: reflect Firestore even when a collection comes back EMPTY,
       // so the built-in demo customers/products can never linger in state and then
@@ -5930,8 +5938,20 @@ export default function App() {
         }
       }
 
-      setSyncStatus('synced');
-      setLastSynced(new Date());
+      if (fromCache) {
+        // READ-ONLY SESSION. The server was unreachable, so this data is the
+        // local cache and may be stale. Deliberately do NOT set `lastSynced`:
+        // it is the gate every writer checks (autosave, saveNow write-through,
+        // the leave-flush), so leaving it unset keeps the app readable while
+        // making it impossible to write stale data back over newer server
+        // records. A later "Sync Now" / reload that reaches the server upgrades
+        // the session to read-write.
+        setSyncStatus('offline');
+        setSyncError('Showing locally cached data — could not reach the server. Editing is disabled until the connection is restored; use Sync Now to retry.');
+      } else {
+        setSyncStatus('synced');
+        setLastSynced(new Date());
+      }
     } catch (e) {
       console.error("Failed to fetch data:", e);
       setSyncStatus('error');
@@ -5945,16 +5965,38 @@ export default function App() {
     }
   }, [user]);
 
+  // Retry the authoritative load while the session is stuck read-only (server
+  // unreachable at startup) so the app upgrades itself the moment the network
+  // recovers, instead of requiring the operator to notice and hit Sync Now.
+  useEffect(() => {
+    if (!user || lastSynced) return;
+    const id = setInterval(() => {
+      if (!lastSyncedRef.current) loadDataFromFirestore();
+    }, 60 * 1000);
+    const onOnline = () => { if (!lastSyncedRef.current) loadDataFromFirestore(); };
+    window.addEventListener('online', onOnline);
+    return () => { clearInterval(id); window.removeEventListener('online', onOnline); };
+  }, [user, lastSynced]);
+
   // One collection-to-state map for BOTH the debounced autosave and the manual
   // "Sync Now" push. Re-created each render so it always reads current state.
-  const buildSyncTasks = (): { collection: string; key: string; data: any[]; allowMassDelete?: boolean }[] => [
+  //
+  // `sources` (only needed where `data` is DERIVED from state) lists the raw state
+  // arrays feeding the entry; for plain entries the state array IS `data`. The
+  // dirty check compares source IDENTITIES first — React state arrays only get a
+  // new identity via their setter (the autosave effect's dep array already relies
+  // on exactly this) — and only falls back to JSON.stringify when an identity
+  // changed. That turns the old serialize-everything pass (~all 40 collections,
+  // multi-MB, a 100ms+ main-thread block on every cycle, tab-switch and close)
+  // into ~40 pointer compares.
+  const buildSyncTasks = (): { collection: string; key: string; data: any[]; sources?: unknown[]; allowMassDelete?: boolean }[] => [
         { collection: COLLECTIONS.customers, key: 'customers', data: customers },
         { collection: COLLECTIONS.products, key: 'products', data: skus },
         { collection: COLLECTIONS.logistics, key: 'logistics', data: supplyChain },
         { collection: COLLECTIONS.freightRates, key: 'freightrates', data: freightRates },
         { collection: COLLECTIONS.contracts, key: 'contracts', data: contracts },
         { collection: COLLECTIONS.carriers, key: 'carriers', data: carriers },
-        { collection: COLLECTIONS.shipments, key: 'shipments', data: [...hamiltonShipments, ...vancouverShipments] },
+        { collection: COLLECTIONS.shipments, key: 'shipments', data: [...hamiltonShipments, ...vancouverShipments], sources: [hamiltonShipments, vancouverShipments] },
         { collection: COLLECTIONS.locations, key: 'locations', data: locations },
         { collection: COLLECTIONS.transfers, key: 'transfers', data: transfers },
         { collection: COLLECTIONS.invoices, key: 'invoices', data: invoices },
@@ -5983,13 +6025,13 @@ export default function App() {
         // action, so they bypass the mass-deletion guard (a dismissed / approved
         // PO or amendment must stay gone after a refresh).
         { collection: COLLECTIONS.emailLog,      key: 'emaillog',      data: emailLog, allowMassDelete: true },
-        { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings] },
+        { collection: COLLECTIONS.emailSettings, key: 'emailsettings', data: [emailSettings], sources: [emailSettings] },
         { collection: COLLECTIONS.returnOrders,  key: 'returnorders',  data: returnOrders },
         { collection: COLLECTIONS.poImportLog,   key: 'poimportlog',   data: poImportLog, allowMassDelete: true },
         { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports, allowMassDelete: true },
         { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage, allowMassDelete: true },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments, allowMassDelete: true },
-        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), allowMassDelete: true },
+        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), sources: [poLearned], allowMassDelete: true },
   ];
 
   // Push every collection whose current state differs from what was last synced.
@@ -6035,15 +6077,34 @@ export default function App() {
       });
   };
 
+  // Source-array identities as of the last time each collection was confirmed
+  // clean (or successfully pushed). React state arrays only change identity via
+  // their setter, so `same identity` == `same content` here — the autosave
+  // effect's dep array already banks on that. Lets the dirty check be ~40
+  // pointer compares instead of JSON-serializing every collection every cycle.
+  const lastSyncedSources = useRef<Record<string, unknown[]>>({});
+  const sourcesClean = (task: { key: string; data: any[]; sources?: unknown[] }): boolean => {
+    const srcs = task.sources ?? [task.data];
+    const prev = lastSyncedSources.current[task.key];
+    return !!prev && prev.length === srcs.length && srcs.every((s, i) => s === prev[i]);
+  };
+  const recordSources = (task: { key: string; data: any[]; sources?: unknown[] }) => {
+    lastSyncedSources.current[task.key] = task.sources ?? [task.data];
+  };
+
   const pushDirtyCollections = async (): Promise<number> => {
     let changed = 0;
     const failed: string[] = [];
     const pending: string[] = []; // written locally, server ack outstanding
+    let statusFlipped = false;
     for (const task of buildSyncTasks()) {
+      if (sourcesClean(task)) continue; // identity unchanged since last clean pass — no serialize
       const dataStr = JSON.stringify(task.data);
-      if (dataStr === lastSyncedData.current[task.key]) continue; // collection unchanged
+      if (dataStr === lastSyncedData.current[task.key]) { recordSources(task); continue; } // collection unchanged
       changed++;
-      setSyncStatus('syncing');
+      // Flip the badge ONCE per run, not once per dirty collection — each set was
+      // another full-app render during the loop.
+      if (!statusFlipped) { statusFlipped = true; setSyncStatus('syncing'); }
       // Baseline = last synced snapshot PLUS anything saveNow already wrote
       // straight to Firestore. Merging those in is what lets a doc that was
       // write-through-saved and then deleted actually get deleted here, instead
@@ -6055,10 +6116,16 @@ export default function App() {
         : storedBaseline;
       const upserts: any[] = [];
       const currentIds = new Set<string>();
+      // Collect each doc's serialized form as we diff so the post-push baseline
+      // can be primed directly — getDocBaseline used to JSON.parse the whole
+      // snapshot and re-stringify every doc again on the next cycle.
+      const nextDocMap = new Map<string, string>();
       for (const d of task.data) {
         if (!d || d.id === undefined || d.id === null) continue;
         currentIds.add(d.id);
-        if (baseline.get(d.id) !== JSON.stringify(d)) upserts.push(d);
+        const dStr = JSON.stringify(d);
+        nextDocMap.set(d.id, dStr);
+        if (baseline.get(d.id) !== dStr) upserts.push(d);
       }
       const deleteIds: string[] = [];
       for (const id of baseline.keys()) if (!currentIds.has(id)) deleteIds.push(id);
@@ -6088,10 +6155,13 @@ export default function App() {
             task.collection,
           );
         }
-        // Advance the baseline to the just-pushed snapshot (getDocBaseline rebuilds
-        // its per-doc map from this on next read). ONLY on success — leaving it
-        // behind on failure is what makes the retry pick the collection up again.
+        // Advance the baseline to the just-pushed snapshot. ONLY on success —
+        // leaving it behind on failure is what makes the retry pick the
+        // collection up again. Prime the per-doc cache with the strings computed
+        // during the diff so getDocBaseline doesn't round-trip the snapshot.
         lastSyncedData.current[task.key] = dataStr;
+        lastSyncedDocs.current[task.key] = { fromRaw: dataStr, map: nextDocMap };
+        recordSources(task);
         // The snapshot now subsumes every write-through doc for this collection.
         delete writeThroughDocs.current[task.collection];
       } catch (e) {
@@ -6120,9 +6190,21 @@ export default function App() {
 
   // Sync data to Firestore with debounce
   const isSyncing = useRef(false);
+  // Read auth/load gates through refs so the retry timers (which reuse an old
+  // closure) always see current values — and so `lastSynced`/`user` can stay OUT
+  // of the effect's dep array. With lastSynced as a dep, every successful write
+  // (setLastSynced) re-ran the effect and scheduled a guaranteed-redundant full
+  // dirty-check pass 5s later.
+  const lastSyncedRef = useRef(lastSynced);
+  lastSyncedRef.current = lastSynced;
+  const userRef = useRef(user);
+  userRef.current = user;
+  // Consecutive failed sync attempts — drives exponential backoff so a dead
+  // connection costs one attempt per 15s→30s→…→5min instead of every 15s forever.
+  const syncRetryAttempts = useRef(0);
   useEffect(() => {
     const syncAll = async () => {
-      if (!lastSynced || !user) return;
+      if (!lastSyncedRef.current || !userRef.current) return;
       if (isSyncing.current) {
         // A previous run is still writing. This timer was the ONLY trigger for
         // the edits made in this debounce window — dropping it would leave them
@@ -6135,11 +6217,10 @@ export default function App() {
 
       try {
         const wrote = await pushDirtyCollections();
-        // Only bump "synced at" when something was actually written. Bumping it on
-        // a clean run would re-run this effect (lastSynced is a dep) and re-arm the
-        // timer forever — a needless idle heartbeat re-serializing every collection.
+        // Only bump "synced at" when something was actually written.
         if (wrote > 0) { setSyncStatus('synced'); setLastSynced(new Date()); }
         setSyncError(null);
+        syncRetryAttempts.current = 0;
       } catch (e) {
         if (e instanceof SyncTimeoutError) {
           // Edits ARE saved (local cache) — just not server-confirmed yet. Show
@@ -6150,10 +6231,12 @@ export default function App() {
           setSyncStatus('error');
           setSyncError((e as Error).message);
         }
-        // Retry a transient failure on its own — otherwise the failed edits sit
-        // unsynced until some unrelated state change happens to re-arm the timer
-        // (and are lost if the user closes the tab first).
-        timeout = setTimeout(syncAll, 15000);
+        // Retry on our own — otherwise the failed edits sit unsynced until some
+        // unrelated state change happens to re-arm the timer. Exponential backoff:
+        // a persistent outage shouldn't burn a serialize + render storm every 15s.
+        const delay = Math.min(5 * 60 * 1000, 15000 * 2 ** syncRetryAttempts.current);
+        syncRetryAttempts.current++;
+        timeout = setTimeout(syncAll, delay);
       } finally {
         isSyncing.current = false;
       }
@@ -6165,8 +6248,9 @@ export default function App() {
     return () => clearTimeout(timeout);
     // fiscalYears + customerForecasts are in syncTasks, so they MUST be deps —
     // without them an edit touching only those collections never armed the timer
-    // and silently stayed unsynced for the whole session.
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, lastSynced, user]);
+    // and silently stayed unsynced for the whole session. (lastSynced/user are
+    // deliberately NOT deps — see the refs above.)
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned]);
 
   // Save-on-leave: the autosave is debounced (5s), so a close/refresh right after
   // an edit is the one gap it can miss. dirtyCheckRef reports whether anything is
@@ -6175,7 +6259,13 @@ export default function App() {
   const dirtyCheckRef = useRef<() => boolean>(() => false);
   dirtyCheckRef.current = () => {
     if (!user || !lastSynced) return false;
-    return buildSyncTasks().some(t => JSON.stringify(t.data) !== lastSyncedData.current[t.key]);
+    // Identity-gated: collections whose source arrays haven't changed identity
+    // since the last clean pass are skipped without serializing. This runs
+    // synchronously inside visibilitychange/pagehide/beforeunload — it used to
+    // stringify every collection (multi-MB) on every tab switch.
+    return buildSyncTasks().some(t =>
+      !sourcesClean(t) && JSON.stringify(t.data) !== lastSyncedData.current[t.key]
+    );
   };
   // Immediate flush of unsynced edits — used when the tab is about to be hidden or
   // closed, which is the ONE moment the debounced autosave can't be relied on.
@@ -7731,6 +7821,8 @@ export default function App() {
   const [invoiceVisibleCount, setInvoiceVisibleCount] = useState(INVOICE_PAGE_SIZE);
   const ORDER_PAGE_SIZE = 200;
   const [orderVisibleCount, setOrderVisibleCount] = useState(ORDER_PAGE_SIZE);
+  const CONTRACT_PAGE_SIZE = 200;
+  const [contractVisibleCount, setContractVisibleCount] = useState(CONTRACT_PAGE_SIZE);
   const [newCustomer, setNewCustomer] = useState<Customer>({
     id: '',
     name: '',
@@ -8322,6 +8414,17 @@ export default function App() {
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
   };
 
+  // Cache: line-item identity -> rendered shortform. The legacy branch below
+  // rebuilds the ENTIRE product-options catalog (buildOrderProductOptions) just
+  // to resolve one display name — and this function is called per line-item CELL
+  // in the orders/invoices tables, so uncached it was catalog-size x rows work
+  // on every render. The map is recreated (= invalidated) only when a catalog
+  // input actually changes; between changes each unique item resolves once.
+  const shortformCache = useMemo(
+    () => new Map<string, string>(),
+    [qaProducts, skus, namingFormulas, sugarTypes, productGroups],
+  );
+
   // Resolve a line item to its rendered shortform.
   // Prefers the stored productKey (QA id) so multi-QA SKU collisions don't
   // surface as the wrong variant — e.g. picking LC170 stays LC170 in the
@@ -8329,6 +8432,14 @@ export default function App() {
   // Falls back to productDisplayName matching, then to productToShortform
   // for legacy items without a productKey or display name.
   const lineItemToShortform = (item: { productKey?: string; productDisplayName?: string; productName: string }): string => {
+    const cacheKey = `${item.productKey || ''}|${item.productDisplayName || ''}|${item.productName || ''}`;
+    const cached = shortformCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const result = resolveLineItemShortform(item);
+    shortformCache.set(cacheKey, result);
+    return result;
+  };
+  const resolveLineItemShortform = (item: { productKey?: string; productDisplayName?: string; productName: string }): string => {
     // Helper: render shortform from a SKU+QA pair
     const shortformFromPair = (sku: SKU | null, qa: QAProduct | null): string => {
       const product = buildProductAttrs(sku, qa);
@@ -10473,9 +10584,11 @@ export default function App() {
       // Progressive rendering: paint only the first invoiceVisibleCount rows.
       // The browser's content-visibility hint (applied to each <tr> below) also
       // skips render work for off-screen rows that ARE in the DOM.
-      // When the user is actively searching we render the full filtered result
-      // so a search hit beyond the slice limit isn't hidden.
-      const effectiveLimit = searchTerm ? filteredInvoices.length : invoiceVisibleCount;
+      // The cap holds WHILE SEARCHING too — a broad term ("2") can match
+      // thousands of rows, and uncapping meant every keystroke mounted them all
+      // in one commit. The "Showing X of Y" footer + Show all still cover the
+      // needle-beyond-the-slice case.
+      const effectiveLimit = invoiceVisibleCount;
       const visibleInvoices = filteredInvoices.slice(0, effectiveLimit);
       const invoicesRemaining = filteredInvoices.length - visibleInvoices.length;
 
@@ -10932,10 +11045,11 @@ export default function App() {
         return 0;
       });
 
-      // Progressive rendering: paint only the first orderVisibleCount rows unless
-      // the user is searching (then show the full filtered result so a hit isn't
-      // hidden). content-visibility on each row (below) skips off-screen layout.
-      const orderEffectiveLimit = searchTerm ? filteredOrders.length : orderVisibleCount;
+      // Progressive rendering: paint only the first orderVisibleCount rows. The
+      // cap holds WHILE SEARCHING too — uncapping on search meant a broad term
+      // mounted every match in one commit on each keystroke. The "Showing X of Y"
+      // footer + Show all still cover hits beyond the slice.
+      const orderEffectiveLimit = orderVisibleCount;
       const visibleOrders = filteredOrders.slice(0, orderEffectiveLimit);
       const ordersRemaining = filteredOrders.length - visibleOrders.length;
 
@@ -13773,6 +13887,11 @@ export default function App() {
     if (activePage === 'Contracts') {
       const activeOnlyContracts = showInactiveContracts ? contracts : contracts.filter(c => c.active !== false);
       const filteredContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
+      // Progressive rendering — same pattern as Orders/Invoices. 18 columns per
+      // row makes an uncapped contracts table one of the heaviest DOM commits in
+      // the app; the footer's Show more/Show all covers the tail.
+      const visibleContracts = filteredContracts.slice(0, contractVisibleCount);
+      const contractsRemaining = filteredContracts.length - visibleContracts.length;
       const inactiveCount = contracts.filter(c => c.active === false).length;
 
       const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
@@ -14095,9 +14214,9 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]">
-                {filteredContracts.map(c => (
+                {visibleContracts.map(c => (
                   <React.Fragment key={c.id}>
-                    <tr className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
+                    <tr style={{ contentVisibility: 'auto', containIntrinsicSize: '0 48px' } as React.CSSProperties} className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
                       <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
@@ -14226,6 +14345,27 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+            {contractsRemaining > 0 && (
+              <div className="p-4 flex items-center justify-between text-xs border-t border-[#141414]/10 bg-[#F9F9F9]">
+                <div className="opacity-60">
+                  Showing <span className="font-bold">{visibleContracts.length}</span> of <span className="font-bold">{filteredContracts.length}</span> contracts
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setContractVisibleCount(c => c + CONTRACT_PAGE_SIZE)}
+                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold uppercase tracking-widest hover:bg-[#333] transition-colors"
+                  >
+                    Show {Math.min(CONTRACT_PAGE_SIZE, contractsRemaining)} more
+                  </button>
+                  <button
+                    onClick={() => setContractVisibleCount(filteredContracts.length)}
+                    className="px-4 py-2 border border-[#141414] font-bold uppercase tracking-widest hover:bg-[#F5F5F5] transition-colors"
+                  >
+                    Show all ({contractsRemaining})
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           </div>
         </div>
@@ -15348,8 +15488,11 @@ export default function App() {
         className="sr-only"
       />
 
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-[#141414] bg-white/50 backdrop-blur-sm flex flex-col sticky top-0 h-screen z-50 print:hidden">
+      {/* Sidebar. Opaque on purpose: bg-white/50 + backdrop-blur-sm made the
+          browser re-run a backdrop filter over the full-height sticky panel on
+          every repaint — hovering the nav was visibly laggy. Nothing meaningful
+          ever scrolls behind a full-height sidebar, so the blur bought nothing. */}
+      <aside className="w-64 border-r border-[#141414] bg-white flex flex-col sticky top-0 h-screen z-50 print:hidden">
         <div className="p-6 border-b border-[#141414] flex items-center gap-3">
           <div className="bg-[#141414] text-[#E4E3E0] p-1.5">
             <TrendingUp size={20} />
@@ -15380,7 +15523,7 @@ export default function App() {
                   )}
                   <button
                     onClick={() => !isEditingSidebar && setActivePage(item.name)}
-                    className={`flex-1 flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase transition-all border ${
+                    className={`flex-1 flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase transition-colors border ${
                       isEditingSidebar && isHidden
                         ? 'bg-transparent text-[#141414]/30 border-transparent'
                         : activePage === item.name
@@ -15414,7 +15557,7 @@ export default function App() {
         <div className="px-4 py-2 border-t border-[#141414]/10">
           <button
             onClick={() => setIsEditingSidebar(!isEditingSidebar)}
-            className={`w-full flex items-center gap-3 px-4 py-2 text-[10px] font-bold uppercase transition-all border ${
+            className={`w-full flex items-center gap-3 px-4 py-2 text-[10px] font-bold uppercase transition-colors border ${
               isEditingSidebar
                 ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]'
                 : 'bg-transparent text-[#141414]/50 border-transparent hover:border-[#141414]/20 hover:text-[#141414]'
@@ -15463,7 +15606,9 @@ export default function App() {
           <div>
             <div className="text-[10px] uppercase opacity-50 font-bold mb-2">System Status</div>
             <div className="flex items-center gap-2 text-[10px] font-bold">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              {/* Static dot — animate-pulse ran a perpetual opacity animation in the
+                  always-visible sidebar, forcing continuous compositing work. */}
+              <div className="w-2 h-2 bg-emerald-500 rounded-full" />
               Live Market Data
             </div>
           </div>
@@ -15493,7 +15638,9 @@ export default function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top Bar */}
-        <header className="border-b border-[#141414] p-4 flex items-center justify-between bg-white/50 backdrop-blur-sm sticky top-0 z-40 print:hidden">
+        {/* Opaque header — backdrop-blur on an always-visible sticky bar re-filters
+            the page behind it on every scroll/repaint (see sidebar note). */}
+        <header className="border-b border-[#141414] p-4 flex items-center justify-between bg-white sticky top-0 z-40 print:hidden">
           <div className="flex items-center gap-4">
             <h2 className="text-xs font-bold uppercase tracking-widest opacity-50">{activePage}</h2>
           </div>
@@ -15521,6 +15668,29 @@ export default function App() {
             )}
           </div>
         </header>
+
+        {/* READ-ONLY BANNER. Signed in with data on screen, but the load fell back
+            to the local cache because the server was unreachable — so every writer
+            is disabled (they all gate on lastSynced). Unmissable by design: an
+            operator must not spend ten minutes entering an order that cannot save. */}
+        {user && !lastSynced && (
+          <div className="bg-amber-100 border-b-2 border-amber-500 px-6 py-3 flex items-center justify-between gap-4 print:hidden">
+            <div className="flex items-center gap-3 min-w-0">
+              <CloudOff size={16} className="text-amber-700 shrink-0" />
+              <div className="text-xs text-amber-900 leading-tight">
+                <span className="font-bold uppercase tracking-wide">Read-only — showing cached data.</span>{' '}
+                Could not reach the server, so this may be out of date and{' '}
+                <span className="font-bold">changes will not be saved</span>. Reconnecting automatically.
+              </div>
+            </div>
+            <button
+              onClick={handleSyncNow}
+              className="shrink-0 px-4 py-2 bg-amber-700 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-amber-800 transition-colors"
+            >
+              Retry now
+            </button>
+          </div>
+        )}
 
         <ColumnOrderContext.Provider value={columnOrderStore}>
           <ColumnVisibilityContext.Provider value={columnVisibilityStore}>

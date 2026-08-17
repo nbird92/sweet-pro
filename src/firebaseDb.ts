@@ -172,14 +172,39 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
 // caller then leaves autosave disabled and keeps showing the last good state)
 // instead of quietly baselining on stale data. Pending un-synced local writes are
 // unaffected — the persistence queue still delivers them to the server.
-export async function fetchAllData() {
-  const results = await Promise.all(
-    Object.values(COLLECTIONS).map(async (name) => {
-      const snapshot = await getDocsFromServer(collection(db, name));
-      return [name, snapshot.docs.map(d => d.data())] as const;
-    })
-  );
-  return Object.fromEntries(results) as Record<string, any[]>;
+// Returns the data PLUS whether it came from the server. A server read is the
+// only AUTHORITATIVE load — the caller must arm the autosave only for that case.
+//
+// When the server is unreachable we fall back to the local IndexedDB cache so the
+// app is still USABLE (blank tables are useless to an operator), and report
+// fromCache: true. The caller then leaves `lastSynced` unset, which disables
+// EVERY writer (autosave, saveNow write-through, the leave-flush all gate on it)
+// — so cached data can be read but can never be written back over newer server
+// records. That keeps the anti-clobber invariant while degrading to read-only
+// instead of degrading to nothing.
+export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fromCache: boolean }> {
+  const names = Object.values(COLLECTIONS);
+  try {
+    const results = await Promise.all(
+      names.map(async (name) => {
+        const snapshot = await getDocsFromServer(collection(db, name));
+        return [name, snapshot.docs.map(d => d.data())] as const;
+      })
+    );
+    return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: false };
+  } catch (serverErr) {
+    console.warn('[fetchAllData] Server read failed — falling back to the local cache (READ-ONLY).', serverErr);
+    // getDocs prefers the cache when the server is unreachable. If even this
+    // throws (no cache yet — e.g. a first visit while offline) let it propagate:
+    // there is genuinely nothing to show.
+    const results = await Promise.all(
+      names.map(async (name) => {
+        const snapshot = await getDocs(collection(db, name));
+        return [name, snapshot.docs.map(d => d.data())] as const;
+      })
+    );
+    return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: true };
+  }
 }
 
 // Firestore rejects `undefined` ANYWHERE in a document — not just at the top
