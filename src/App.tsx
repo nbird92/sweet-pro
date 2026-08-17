@@ -9110,42 +9110,79 @@ export default function App() {
   // the page lag after each click. Same lookup-map treatment the Orders and
   // Invoices tables already use.
   const contractVolumeStats = useMemo(() => {
-    // Contract-independent, so build it once rather than per row (this Set alone
-    // was the worst offender — one full invoice scan per contract row).
+    // INVERTED INDEX — O(invoices + orders + contracts), not O(contracts x each).
+    //
+    // This previously looped contracts and re-scanned EVERY invoice and order per
+    // contract. Profiling a real dataset put that single filter+reduce at 5,098 ms
+    // and the orders pass at 497 ms — ~5.6 s of blocked main thread. Worse, this
+    // memo lives at component top level, so it ran on EVERY page, not just
+    // Contracts, and recomputed on every orders/invoices/contracts change. That
+    // was the app-wide sluggishness (INP ~4.7 s).
+    //
+    // Now each invoice/order is visited ONCE and adds itself to the contract
+    // numbers it names. Matching rules are unchanged — see contractMatch.ts:
+    //   invoices: contractNumber (comma-list) | splitNo's parent | line items' (comma-list)
+    //   orders:   contractNumber (exact)      | splitNumber's parent | line items' (exact)
+    const parts = (s?: string) => (s || '').split(',').map(x => x.trim()).filter(Boolean);
+
+    const takenByCn = new Map<string, number>();
+    const onOrderByCn = new Map<string, number>();
+    const add = (m: Map<string, number>, cn: string, v: number) => {
+      if (cn) m.set(cn, (m.get(cn) || 0) + v);
+    };
+
+    for (const inv of invoices) {
+      if (inv.status === 'Cancelled') continue;
+      // DISTINCT contract numbers — an invoice naming the same contract twice
+      // (e.g. on both the header and a line item) must count once, exactly as the
+      // old per-contract `invoiceMatchesContract` boolean did.
+      const cns = new Set<string>(parts(inv.contractNumber));
+      if (inv.splitNo) { const p = contractNumberFromSplit(inv.splitNo); if (p) cns.add(p); }
+      for (const li of inv.lineItems || []) for (const p of parts(li.contractNumber)) cns.add(p);
+      for (const cn of cns) add(takenByCn, cn, inv.qty || 0);
+    }
+
+    // Contract-independent, so built once.
     const invoicedBols = new Set(
       invoices
         .filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber)
         .map(inv => (inv.bolNumber || '').trim().toUpperCase()),
     );
-    const activeInvoices = invoices.filter(inv => inv.status !== 'Cancelled');
-    const liveOrders = orders.filter(o => o.status !== 'Cancelled');
+
+    for (const o of orders) {
+      if (o.status === 'Cancelled') continue;
+      if (invoicedBols.has((o.bolNumber || '').trim().toUpperCase())) continue; // already invoiced
+      const lineItems = o.lineItems || [];
+      // Orders match on EXACT contractNumber (not comma-split) — preserved from
+      // matchesContractByNumberOrSplit.
+      const cns = new Set<string>();
+      if (o.contractNumber) cns.add(o.contractNumber);
+      if (o.splitNumber) { const p = contractNumberFromSplit(o.splitNumber); if (p) cns.add(p); }
+      for (const li of lineItems) if (li.contractNumber) cns.add(li.contractNumber);
+      const allLinesWeight = lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      for (const cn of cns) {
+        // Prefer the line items naming THIS contract; fall back to the whole order
+        // when the match came from the order's own number / split.
+        let w = 0;
+        let matched = false;
+        for (const li of lineItems) {
+          if (li.contractNumber === cn) { w += li.totalWeight || 0; matched = true; }
+        }
+        add(onOrderByCn, cn, matched ? w : allLinesWeight);
+      }
+    }
 
     const stats = new Map<string, { taken: number; onOrder: number; outstanding: number }>();
     for (const c of contracts) {
       const cn = c.contractNumber;
-      const taken = activeInvoices
-        .filter(inv => invoiceMatchesContract(inv, cn))
-        .reduce((sum, inv) => sum + (inv.qty || 0), 0);
-
-      const ordersOnContract = liveOrders.filter(o => {
-        if (matchesContractByNumberOrSplit(o.contractNumber, o.splitNumber, cn)) return true;
-        if ((o.lineItems || []).some(li => li.contractNumber === cn)) return true;
-        return false;
-      });
-      // Prefer summing only the line items naming this contract; fall back to all
-      // line items when the order's own number / split is what matched.
-      const sumOrderWeight = (o: Order) => {
-        const matchingLines = (o.lineItems || []).filter(li => li.contractNumber === cn);
-        const lines = matchingLines.length > 0 ? matchingLines : (o.lineItems || []);
-        return lines.reduce((s, li) => s + (li.totalWeight || 0), 0);
-      };
-      const onOrder = ordersOnContract
-        .filter(o => !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
-        .reduce((sum, o) => sum + sumOrderWeight(o), 0);
-
+      const taken = (cn && takenByCn.get(cn)) || 0;
       // Outstanding is always Contract Volume − computed Volume Taken; the stored
       // volumeOutstanding drifts when invoices change without touching the contract.
-      stats.set(c.id, { taken, onOrder, outstanding: (c.contractVolume || 0) - taken });
+      stats.set(c.id, {
+        taken,
+        onOrder: (cn && onOrderByCn.get(cn)) || 0,
+        outstanding: (c.contractVolume || 0) - taken,
+      });
     }
     return stats;
   }, [contracts, invoices, orders]);
