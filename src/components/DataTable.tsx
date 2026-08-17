@@ -305,7 +305,7 @@ export default function DataTable<T>({
             <button
               onClick={() => setPickerOpen(o => !o)}
               title="Show / hide columns"
-              className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <SlidersHorizontal size={12} /> Columns
               {hidden.length > 0 && (
@@ -338,7 +338,7 @@ export default function DataTable<T>({
           {onAdd && (
             <button
               onClick={onAdd}
-              className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> {addLabel}
             </button>
@@ -430,13 +430,13 @@ export default function DataTable<T>({
           </span>
           <button
             onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-            className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all"
+            className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors"
           >
             Show {Math.min(PAGE_SIZE, remaining)} more
           </button>
           <button
             onClick={() => setVisibleCount(sorted.length)}
-            className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all"
+            className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-colors"
           >
             Show all ({remaining})
           </button>

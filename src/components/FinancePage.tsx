@@ -195,7 +195,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
       >
         <button
           onClick={handleAdd}
-          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-colors flex items-center gap-2"
         >
           <Plus size={12} /> Add Fiscal Year
         </button>
@@ -240,7 +240,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                 </h3>
                 <button
                   onClick={() => setShowModal(false)}
-                  className="p-1 hover:bg-white hover:text-[#141414] transition-all"
+                  className="p-1 hover:bg-white hover:text-[#141414] transition-colors"
                 >
                   <X size={16} />
                 </button>
@@ -307,7 +307,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                     </h4>
                     <button
                       onClick={addQuarter}
-                      className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] font-bold text-[10px] uppercase hover:bg-opacity-80 transition-all flex items-center gap-1"
+                      className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] font-bold text-[10px] uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"
                     >
                       <Plus size={12} /> Add Quarter
                     </button>
@@ -364,7 +364,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                               <td className="p-2 text-center">
                                 <button
                                   onClick={() => deleteQuarter(qi)}
-                                  className="p-1 hover:bg-red-500 hover:text-white transition-all"
+                                  className="p-1 hover:bg-red-500 hover:text-white transition-colors"
                                   title="Remove quarter"
                                 >
                                   <Trash2 size={12} />
@@ -386,7 +386,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                     </h4>
                     <button
                       onClick={addPeriod}
-                      className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] font-bold text-[10px] uppercase hover:bg-opacity-80 transition-all flex items-center gap-1"
+                      className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] font-bold text-[10px] uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"
                     >
                       <Plus size={12} /> Add Period
                     </button>
@@ -445,7 +445,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                               <td className="p-2 text-center">
                                 <button
                                   onClick={() => deletePeriod(pi)}
-                                  className="p-1 hover:bg-red-500 hover:text-white transition-all"
+                                  className="p-1 hover:bg-red-500 hover:text-white transition-colors"
                                   title="Remove period"
                                 >
                                   <Trash2 size={12} />
@@ -472,7 +472,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                         onUpdateFiscalYears(updated);
                         setShowModal(false);
                       }}
-                      className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                      className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                     >
                       <Trash2 size={14} /> Delete
                     </button>
@@ -480,13 +480,13 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
                   <div className="flex gap-2 justify-end ml-auto">
                     <button
                       onClick={() => setShowModal(false)}
-                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSave}
-                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-2"
                     >
                       <Save size={14} /> Save
                     </button>

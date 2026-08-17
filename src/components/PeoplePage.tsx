@@ -89,7 +89,7 @@ export default function PeoplePage({
       >
         <button
           onClick={() => { setPersonDraft(emptyPerson()); setPersonMode('add'); }}
-          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-colors flex items-center gap-2"
         >
           <Plus size={12} /> Add Person
         </button>

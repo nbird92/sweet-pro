@@ -1614,7 +1614,7 @@ export default function ReportsPage({
             >
               <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Send Customer Report</h3>
-                <button onClick={() => setSendReportOpen(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                <button onClick={() => setSendReportOpen(false)} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
               </div>
               <div className="p-6 space-y-4">
                 <div className="text-xs">
@@ -1657,14 +1657,14 @@ export default function ReportsPage({
               <div className="px-4 py-3 border-t border-[#141414]/10 bg-[#F5F5F5] flex justify-end gap-2">
                 <button
                   onClick={() => setSendReportOpen(false)}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-colors"
                 >
                   Close
                 </button>
                 <button
                   onClick={() => handleSendCustomerReport(selectedCustomerRow)}
                   disabled={sendReportSending || !sendReportTo.trim()}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-40"
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-40"
                 >
                   <Mail size={14} /> {sendReportSending ? 'Sending…' : 'Send'}
                 </button>

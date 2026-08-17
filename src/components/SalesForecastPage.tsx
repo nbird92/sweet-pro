@@ -1750,7 +1750,7 @@ export default function SalesForecastPage({
                   {modalLines.length > 0 && (
                     <button
                       onClick={handleClearForecast}
-                      className="px-3 py-1 border border-amber-400 text-amber-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-amber-500 hover:text-white transition-all"
+                      className="px-3 py-1 border border-amber-400 text-amber-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-amber-500 hover:text-white transition-colors"
                       title={`Clear all ${typeLabel.toLowerCase()} rows for this customer`}
                     >
                       <Eraser size={12} /> Clear Forecast
@@ -1764,7 +1764,7 @@ export default function SalesForecastPage({
                         setCustomerModalOpen(false);
                         setEditingCustomerId(null);
                       }}
-                      className="px-3 py-1 border border-red-400 text-red-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-all"
+                      className="px-3 py-1 border border-red-400 text-red-300 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-colors"
                       title={`Delete ${typeLabel}`}
                     >
                       <Trash2 size={12} /> Delete
@@ -1775,7 +1775,7 @@ export default function SalesForecastPage({
                       setCustomerModalOpen(false);
                       setEditingCustomerId(null);
                     }}
-                    className="p-1 hover:bg-white/20 transition-all"
+                    className="p-1 hover:bg-white/20 transition-colors"
                   >
                     <X size={16} />
                   </button>
@@ -2006,7 +2006,7 @@ export default function SalesForecastPage({
                               <td className="px-2 py-1.5 text-center border border-gray-200">
                                 <button
                                   onClick={() => handleRemoveProductLine(line.id)}
-                                  className="p-0.5 hover:bg-red-100 text-red-500 transition-all"
+                                  className="p-0.5 hover:bg-red-100 text-red-500 transition-colors"
                                   title="Remove product"
                                 >
                                   <Trash2 size={12} />
@@ -2101,7 +2101,7 @@ export default function SalesForecastPage({
                     setProductViewModalOpen(false);
                     setViewingProduct(null);
                   }}
-                  className="p-1 hover:bg-white/20 transition-all"
+                  className="p-1 hover:bg-white/20 transition-colors"
                 >
                   <X size={16} />
                 </button>

@@ -449,13 +449,13 @@ export default function ConferencesPage({
             </div>
             <div className="flex gap-2">
               <button onClick={() => { resetMeetingForm(); setShowAddMeetingModal(true); }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center gap-2">
+                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center gap-2">
                 <Plus size={16} /> Add Meeting
               </button>
               <button onClick={() => { setEditingConference({ ...selectedConference }); setShowEditConferenceModal(true); }}
-                className="p-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><Edit2 size={16} /></button>
+                className="p-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><Edit2 size={16} /></button>
               <button onClick={() => handleDeleteConference(selectedConference.id)}
-                className="p-2 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16} /></button>
+                className="p-2 hover:bg-red-500 hover:text-white transition-colors"><Trash2 size={16} /></button>
             </div>
           </div>
         </div>
@@ -542,13 +542,13 @@ export default function ConferencesPage({
                           <td className="p-3 text-xs">
                             <div className="flex items-center gap-1">
                               <button onClick={() => setExpandedMeeting(isExpanded ? null : meeting.id)}
-                                className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title={isExpanded ? 'Collapse' : 'Expand'}>
+                                className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title={isExpanded ? 'Collapse' : 'Expand'}>
                                 {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                               </button>
                               <button onClick={() => { setEditingMeeting({ ...meeting, customerAttendeeDetails: meeting.customerAttendeeDetails || [], followUps: meeting.followUps || [] }); setShowEditMeetingModal(true); }}
-                                className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
+                                className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
                               <button onClick={() => handleDeleteMeeting(meeting.id)}
-                                className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
+                                className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                             </div>
                           </td>
                         </tr>
@@ -576,7 +576,7 @@ export default function ConferencesPage({
                                               {fu.completed ? <CheckSquare size={16} className="text-emerald-600" /> : <Square size={16} className="text-gray-400" />}
                                             </button>
                                             <span className={`text-sm flex-1 ${fu.completed ? 'line-through text-gray-400' : ''}`}>{fu.text}</span>
-                                            <button onClick={() => deleteFollowUp(meeting.id, fu.id)} className="p-0.5 hover:text-red-500 transition-all flex-shrink-0"><X size={12} /></button>
+                                            <button onClick={() => deleteFollowUp(meeting.id, fu.id)} className="p-0.5 hover:text-red-500 transition-colors flex-shrink-0"><X size={12} /></button>
                                           </div>
                                         ))}
                                       </div>
@@ -586,7 +586,7 @@ export default function ConferencesPage({
                                         onKeyDown={(e) => { if (e.key === 'Enter' && newFollowUp.trim()) { addFollowUp(meeting.id, newFollowUp); setNewFollowUp(''); } }}
                                         placeholder="Add a follow-up item..." className="flex-1 px-3 py-2 border border-[#141414]/20 bg-white text-sm focus:outline-none focus:border-[#141414]" />
                                       <button onClick={() => { if (newFollowUp.trim()) { addFollowUp(meeting.id, newFollowUp); setNewFollowUp(''); } }}
-                                        className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Add</button>
+                                        className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">Add</button>
                                     </div>
                                   </div>
                                   {/* Customer Attendees - Inline Add/Remove */}
@@ -602,7 +602,7 @@ export default function ConferencesPage({
                                               {ca.phone && <span className="text-gray-500">{ca.phone}</span>}
                                             </div>
                                             <button onClick={() => removeCustomerAttendeeFromMeeting(meeting.id, ca.id)}
-                                              className="p-1 hover:bg-red-500 hover:text-white transition-all flex-shrink-0"><X size={12} /></button>
+                                              className="p-1 hover:bg-red-500 hover:text-white transition-colors flex-shrink-0"><X size={12} /></button>
                                           </div>
                                         ))}
                                       </div>
@@ -626,7 +626,7 @@ export default function ConferencesPage({
                                           addCustomerAttendeeToMeeting(meeting.id, newInlineCustAttendee);
                                           setNewInlineCustAttendee({ name: '', email: '', phone: '' });
                                         }}
-                                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all whitespace-nowrap">
+                                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors whitespace-nowrap">
                                         Add Attendee
                                       </button>
                                     </div>
@@ -700,9 +700,9 @@ export default function ConferencesPage({
                         <td className="p-3 text-xs">
                           <div className="flex items-center gap-1">
                             <button onClick={() => { setEditingFollowUp({ meetingId: item.meetingId, followUp: item.followUp }); setEditingFollowUpText(item.followUp.text); }}
-                              className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={12} /></button>
+                              className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={12} /></button>
                             <button onClick={() => deleteFollowUp(item.meetingId, item.followUp.id)}
-                              className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={12} /></button>
+                              className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={12} /></button>
                           </div>
                         </td>
                       </tr>
@@ -777,7 +777,7 @@ export default function ConferencesPage({
         exportFileName="Conferences"
       >
         <button onClick={() => { resetConferenceForm(); setShowAddConferenceModal(true); }}
-          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-all flex items-center gap-2">
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-white/20 transition-colors flex items-center gap-2">
           <Plus size={12} /> Add Conference
         </button>
       </PageBanner>
@@ -864,7 +864,7 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden">
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
           <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white hover:text-[#141414] transition-all"><X size={16} /></button>
+          <button onClick={onClose} className="p-1 hover:bg-white hover:text-[#141414] transition-colors"><X size={16} /></button>
         </div>
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
@@ -911,7 +911,7 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
                 {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name} {p.salespersonNumber ? `(${p.salespersonNumber})` : ''} — {p.email}</option>)}
               </select>
               <button onClick={() => { if (selectedSalesPersonId) { onAddSalesAttendee(selectedSalesPersonId); setSelectedSalesPersonId(''); } }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Add</button>
+                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">Add</button>
             </div>
             {conference.attendees && conference.attendees.length > 0 && (
               <div className="space-y-2">
@@ -919,7 +919,7 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
                 {conference.attendees.map(att => (
                   <div key={att.id} className="flex items-center justify-between bg-gray-50 p-2 border border-gray-200">
                     <div className="text-xs"><div className="font-bold">{att.name}</div><div className="text-gray-600">{att.email}{att.phone ? ` | ${att.phone}` : ''}</div></div>
-                    <button onClick={() => onRemoveAttendee(att.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all"><X size={14} /></button>
+                    <button onClick={() => onRemoveAttendee(att.id)} className="p-1 hover:bg-red-500 hover:text-white transition-colors"><X size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -927,8 +927,8 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
           </div>
 
           <div className="flex gap-2 justify-end pt-4 border-t">
-            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">{submitLabel}</button>
+            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">{submitLabel}</button>
           </div>
         </div>
       </motion.div>
@@ -981,7 +981,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden">
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex items-center justify-between">
           <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white hover:text-[#141414] transition-all"><X size={16} /></button>
+          <button onClick={onClose} className="p-1 hover:bg-white hover:text-[#141414] transition-colors"><X size={16} /></button>
         </div>
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
@@ -1046,7 +1046,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
               <div className="flex gap-2">
                 <input type="tel" value={custInput.phone} onChange={(e) => setCustInput({ ...custInput, phone: e.target.value })}
                   placeholder="Phone" className="flex-1 px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
-                <button onClick={addCustomerAttendee} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all whitespace-nowrap">Add</button>
+                <button onClick={addCustomerAttendee} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors whitespace-nowrap">Add</button>
               </div>
             </div>
             {localCustAttendees.length > 0 && (
@@ -1061,8 +1061,8 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
                           className="flex-1 px-2 py-1 border border-green-300 bg-white text-xs focus:outline-none" placeholder="Email" />
                         <input type="tel" value={ca.phone || ''} onChange={(e) => updateCustomerAttendee(ca.id, 'phone', e.target.value)}
                           className="flex-1 px-2 py-1 border border-green-300 bg-white text-xs focus:outline-none" placeholder="Phone" />
-                        <button onClick={() => setEditingAttendeeId(null)} className="p-1 hover:bg-green-600 hover:text-white transition-all" title="Done"><CheckSquare size={12} /></button>
-                        <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Remove"><X size={12} /></button>
+                        <button onClick={() => setEditingAttendeeId(null)} className="p-1 hover:bg-green-600 hover:text-white transition-colors" title="Done"><CheckSquare size={12} /></button>
+                        <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Remove"><X size={12} /></button>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between">
@@ -1072,8 +1072,8 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
                           {ca.phone && <span className="text-gray-600 ml-2">{ca.phone}</span>}
                         </div>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => setEditingAttendeeId(ca.id)} className="p-1 hover:bg-green-600 hover:text-white transition-all" title="Edit"><Edit2 size={12} /></button>
-                          <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Remove"><X size={12} /></button>
+                          <button onClick={() => setEditingAttendeeId(ca.id)} className="p-1 hover:bg-green-600 hover:text-white transition-colors" title="Edit"><Edit2 size={12} /></button>
+                          <button onClick={() => removeCustomerAttendee(ca.id)} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Remove"><X size={12} /></button>
                         </div>
                       </div>
                     )}
@@ -1088,8 +1088,8 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
               placeholder="Additional notes..." rows={3} className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
 
           <div className="flex gap-2 justify-end pt-4 border-t">
-            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-            <button onClick={handleSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">{submitLabel}</button>
+            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+            <button onClick={handleSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">{submitLabel}</button>
           </div>
         </div>
       </motion.div>

@@ -217,7 +217,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             onClick={handleScanInbox}
             disabled={scanning}
             title="Scan the PO inbox now instead of waiting for the 15-minute schedule."
-            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
           >
             <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> {scanning ? 'Scanning…' : 'Scan Inbox Now'}
           </button>
@@ -227,14 +227,14 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             onClick={() => handleScanInbox({ force: true })}
             disabled={scanning}
             title="Re-import POs and carrier demurrage invoices from the last 14 days, including emails already processed. Existing orders are never duplicated."
-            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
           >
             <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} /> Re-import last 14 days
           </button>
         )}
         <button
           onClick={() => setShowSettings(true)}
-          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
         >
           <Settings size={12} /> Settings
         </button>
@@ -462,7 +462,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             {onClearImportHistory && poImports.length > 0 && (
               <button
                 onClick={() => { if (window.confirm(`Delete all ${poImports.length} import history entries? This does not affect any orders already created.`)) onClearImportHistory(); }}
-                className="px-2 py-1 border border-[#141414] text-[9px] font-bold uppercase flex items-center gap-1 hover:bg-red-50 hover:border-red-500 hover:text-red-700 transition-all"
+                className="px-2 py-1 border border-[#141414] text-[9px] font-bold uppercase flex items-center gap-1 hover:bg-red-50 hover:border-red-500 hover:text-red-700 transition-colors"
               >
                 <Trash2 size={11} /> Clear
               </button>
@@ -632,8 +632,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           {logsRemaining > 0 && (
             <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
               <span className="opacity-50 normal-case font-mono">Showing {visibleLogs.length} of {filtered.length}</span>
-              <button onClick={() => setLogVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">Show 200 more</button>
-              <button onClick={() => setLogVisibleCount(filtered.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">Show all ({logsRemaining})</button>
+              <button onClick={() => setLogVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors">Show 200 more</button>
+              <button onClick={() => setLogVisibleCount(filtered.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-colors">Show all ({logsRemaining})</button>
             </div>
           )}
         </div>
@@ -843,9 +843,9 @@ function ToggleRow({ label, description, checked, onChange, compact, disabled }:
       <button
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={`mt-0.5 w-10 h-5 rounded-full transition-all relative ${checked ? 'bg-emerald-600' : 'bg-[#141414]/20'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+        className={`mt-0.5 w-10 h-5 rounded-full transition-colors relative ${checked ? 'bg-emerald-600' : 'bg-[#141414]/20'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
       >
-        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${checked ? 'left-5' : 'left-0.5'}`} />
+        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-colors ${checked ? 'left-5' : 'left-0.5'}`} />
       </button>
       <div className="flex-1">
         <div className="text-sm font-bold">{label}</div>

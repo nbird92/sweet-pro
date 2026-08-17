@@ -726,33 +726,33 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
         </div>
         <button
           onClick={handleDownloadTemplate}
-          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
         >
           <Download size={12} /> Template
         </button>
         <button
           onClick={() => csvInputRef.current?.click()}
-          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
         >
           <Upload size={12} /> Import CSV
         </button>
         {onSyncLotCodes && (
           <button
             onClick={onSyncLotCodes}
-            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
           >
             <FileText size={12} /> Sync Lot Codes
           </button>
         )}
         <button
           onClick={openAdd}
-          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
         >
           <Plus size={12} /> + Add Lot Code
         </button>
         <button
           onClick={() => setClearAllConfirm(true)}
-          className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap"
+          className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-colors whitespace-nowrap"
         >
           <ShieldAlert size={12} /> Clear All
         </button>
@@ -773,7 +773,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
             <div key={key} className={`bg-white border-2 overflow-hidden ${isCurrent ? 'border-emerald-500 shadow-[2px_2px_0px_0px_rgba(16,185,129,0.6)]' : 'border-[#141414] shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]'}`}>
               <button
                 onClick={() => toggleWeek(key)}
-                className={`w-full px-3 py-2 flex justify-between items-center transition-all ${isCurrent ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-[#141414] text-[#E4E3E0] hover:bg-opacity-90'}`}
+                className={`w-full px-3 py-2 flex justify-between items-center transition-colors ${isCurrent ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-[#141414] text-[#E4E3E0] hover:bg-opacity-90'}`}
               >
                 <span className="text-[10px] font-bold uppercase tracking-widest">
                   {weekLabel(key)}{isCurrent ? ' (Current Week)' : ''}
@@ -848,7 +848,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                     <span className="text-[10px] uppercase font-bold text-blue-800">Shipment Link</span>
                     <button
                       onClick={() => { setShowShipmentPicker(true); setShipmentSearch(''); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-colors"
                     >
                       <Search size={11} /> Search Shipments / Transfers
                     </button>
@@ -1147,17 +1147,17 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                           setEditingLot(null);
                         }
                       }}
-                      className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                      className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
                     >
                       <Trash2 size={14} /> Delete
                     </button>
                   )}
                   <button onClick={handleSave} disabled={!formData.lotNumber || formData.lotNumber.includes('?')}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50">
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50">
                     {editingLot ? 'Save Changes' : 'Add Lot Code'}
                   </button>
                   <button onClick={() => { setIsAdding(false); setEditingLot(null); }}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                     Cancel
                   </button>
                 </div>
@@ -1185,11 +1185,11 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
               <div className="flex border-b border-[#141414]/10 shrink-0">
                 <button
                   onClick={() => setPickerTab('shipments')}
-                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'shipments' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
+                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-colors ${pickerTab === 'shipments' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
                 >Shipments ({filteredShipments.length})</button>
                 <button
                   onClick={() => setPickerTab('transfers')}
-                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${pickerTab === 'transfers' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
+                  className={`flex-1 px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-colors ${pickerTab === 'transfers' ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-[#F5F5F5] text-[#141414] hover:bg-[#E4E3E0]'}`}
                 >Transfers ({filteredTransfers.length})</button>
               </div>
               <div className="p-4 border-b border-[#141414]/10 shrink-0">
@@ -1245,7 +1245,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                         <td className="p-3 text-xs">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleSelectShipment(s); }}
-                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-colors"
                           >Select</button>
                         </td>
                       </tr>
@@ -1287,7 +1287,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                         <td className="p-3 text-xs">
                           <button
                             onClick={(e) => { e.stopPropagation(); handleSelectTransfer(t); }}
-                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-all"
+                            className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-bold uppercase hover:bg-blue-700 transition-colors"
                           >Select</button>
                         </td>
                       </tr>
@@ -1320,13 +1320,13 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                 <div className="flex gap-4">
                   <button
                     onClick={() => { onUpdateLotCodes([]); setClearAllConfirm(false); }}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
                   >
                     Yes, Delete All
                   </button>
                   <button
                     onClick={() => setClearAllConfirm(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>

@@ -919,27 +919,27 @@ export default function QualityAssurancePage({
         <button
           onClick={downloadQATemplate}
           title="Download a blank CSV template with the QA product columns"
-          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-colors"
         >
           <Download size={12} /> Template
         </button>
         <button
           onClick={() => csvImportRef.current?.click()}
           title="Import QA products from a CSV (matches existing by Product No. / name)"
-          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-colors"
         >
           <Upload size={12} /> Import CSV
         </button>
         <button
           onClick={exportQACsv}
           title="Export the QA products table to CSV"
-          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-all"
+          className="px-3 py-1.5 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/10 transition-colors"
         >
           <Download size={12} /> Export CSV
         </button>
         <button
           onClick={openAddModal}
-          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-all"
+          className="px-3 py-1.5 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-white/20 transition-colors"
         >
           <Plus size={12} /> Add Product
         </button>
@@ -1033,8 +1033,8 @@ export default function QualityAssurancePage({
           {qaRemaining > 0 && (
             <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
               <span className="opacity-50 normal-case font-mono">Showing {visibleSorted.length} of {sorted.length}</span>
-              <button onClick={() => setQaVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">Show 200 more</button>
-              <button onClick={() => setQaVisibleCount(sorted.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">Show all ({qaRemaining})</button>
+              <button onClick={() => setQaVisibleCount(c => c + 200)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors">Show 200 more</button>
+              <button onClick={() => setQaVisibleCount(sorted.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-colors">Show all ({qaRemaining})</button>
             </div>
           )}
         </div>
@@ -1052,7 +1052,7 @@ export default function QualityAssurancePage({
               openLocationDetail(newLoc);
               setIsEditingLocation(true);
             }}
-            className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+            className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors"
           >
             <Plus size={12} /> Add New Location
           </button>
@@ -1487,7 +1487,7 @@ export default function QualityAssurancePage({
                           setLiteralText('');
                         }
                       }}
-                      className="bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1"
+                      className="bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"
                     >
                       <Plus size={12} /> Add
                     </button>
@@ -1520,7 +1520,7 @@ export default function QualityAssurancePage({
                             setDraggedTokenIdx(null);
                           }}
                           onDragEnd={() => setDraggedTokenIdx(null)}
-                          className={`flex items-center gap-2 px-2 py-1 border border-[#141414] cursor-move transition-all ${
+                          className={`flex items-center gap-2 px-2 py-1 border border-[#141414] cursor-move transition-colors ${
                             draggedTokenIdx === idx ? 'opacity-30' : 'opacity-100'
                           } ${
                             token.type === 'literal' ? 'bg-amber-50' :
@@ -1817,7 +1817,7 @@ export default function QualityAssurancePage({
               setTemplateForm({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
               setShowTemplateModal(true);
             }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-colors"
           >
             <Plus size={12} /> Add Template
           </button>
@@ -1898,7 +1898,7 @@ export default function QualityAssurancePage({
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">{editingTemplate ? 'Templates Detail' : 'New Template'}</h3>
-                <button onClick={() => setShowTemplateModal(false)} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                <button onClick={() => setShowTemplateModal(false)} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
               </div>
               <div className="p-6 space-y-4">
                 <div className="space-y-1">
@@ -1957,7 +1957,7 @@ export default function QualityAssurancePage({
                           setShowTemplateModal(false);
                           setDeleteTemplateConfirmId(editingTemplate.id);
                         }}
-                        className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                        className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
                       </button>
@@ -1966,7 +1966,7 @@ export default function QualityAssurancePage({
                   <div className="flex gap-2">
                   <button
                     onClick={() => setShowTemplateModal(false)}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -1999,7 +1999,7 @@ export default function QualityAssurancePage({
                       setShowTemplateModal(false);
                       setEditingTemplate(null);
                     }}
-                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors"
                   >
                     {editingTemplate ? 'Save Changes' : 'Add Template'}
                   </button>
@@ -2026,11 +2026,11 @@ export default function QualityAssurancePage({
               <p className="text-sm opacity-70">Are you sure you want to delete this template? This action cannot be undone.</p>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setDeleteTemplateConfirmId(null)}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                 <button onClick={() => {
                   onUpdateTemplates(qaTemplates.filter(t => t.id !== deleteTemplateConfirmId));
                   setDeleteTemplateConfirmId(null);
-                }} className="px-4 py-2 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all">Delete</button>
+                }} className="px-4 py-2 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors">Delete</button>
               </div>
             </motion.div>
           </div>
@@ -2167,15 +2167,15 @@ export default function QualityAssurancePage({
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a href={data.gfsiAuditReport.url} download={data.gfsiAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                              <a href={data.gfsiAuditReport.url} download={data.gfsiAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
                             </div>
                           </div>
                         ) : (
                           <div className="text-xs opacity-40 italic">No report uploaded</div>
                         )}
                         {isEditingLocation && !data.gfsiAuditReport && (
-                          <button onClick={() => gfsiReportRef.current?.click()} disabled={isUploadingGfsiReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                          <button onClick={() => gfsiReportRef.current?.click()} disabled={isUploadingGfsiReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
                             {isUploadingGfsiReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiReport ? 'Uploading...' : 'Upload Report'}
                           </button>
                         )}
@@ -2193,15 +2193,15 @@ export default function QualityAssurancePage({
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a href={data.gfsiAuditCertificate.url} download={data.gfsiAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                              <a href={data.gfsiAuditCertificate.url} download={data.gfsiAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
                             </div>
                           </div>
                         ) : (
                           <div className="text-xs opacity-40 italic">No certificate uploaded</div>
                         )}
                         {isEditingLocation && !data.gfsiAuditCertificate && (
-                          <button onClick={() => gfsiCertRef.current?.click()} disabled={isUploadingGfsiCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                          <button onClick={() => gfsiCertRef.current?.click()} disabled={isUploadingGfsiCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
                             {isUploadingGfsiCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiCert ? 'Uploading...' : 'Upload Certificate'}
                           </button>
                         )}
@@ -2251,15 +2251,15 @@ export default function QualityAssurancePage({
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a href={data.organicAuditReport.url} download={data.organicAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                              <a href={data.organicAuditReport.url} download={data.organicAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
                             </div>
                           </div>
                         ) : (
                           <div className="text-xs opacity-40 italic">No report uploaded</div>
                         )}
                         {isEditingLocation && !data.organicAuditReport && (
-                          <button onClick={() => organicReportRef.current?.click()} disabled={isUploadingOrganicReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                          <button onClick={() => organicReportRef.current?.click()} disabled={isUploadingOrganicReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
                             {isUploadingOrganicReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicReport ? 'Uploading...' : 'Upload Report'}
                           </button>
                         )}
@@ -2277,15 +2277,15 @@ export default function QualityAssurancePage({
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <a href={data.organicAuditCertificate.url} download={data.organicAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>}
+                              <a href={data.organicAuditCertificate.url} download={data.organicAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
                             </div>
                           </div>
                         ) : (
                           <div className="text-xs opacity-40 italic">No certificate uploaded</div>
                         )}
                         {isEditingLocation && !data.organicAuditCertificate && (
-                          <button onClick={() => organicCertRef.current?.click()} disabled={isUploadingOrganicCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50">
+                          <button onClick={() => organicCertRef.current?.click()} disabled={isUploadingOrganicCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
                             {isUploadingOrganicCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicCert ? 'Uploading...' : 'Upload Certificate'}
                           </button>
                         )}
@@ -2298,15 +2298,15 @@ export default function QualityAssurancePage({
                 <div className="flex gap-4 pt-2">
                   {isEditingLocation ? (
                     <>
-                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all">
+                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors">
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
-                      <button onClick={() => { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Cancel</button>
+                      <button onClick={() => { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
                     </>
                   ) : (
                     <>
-                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all">Edit Location</button>
-                      <button onClick={closeLocationDetail} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all">Close</button>
+                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors">Edit Location</button>
+                      <button onClick={closeLocationDetail} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Close</button>
                     </>
                   )}
                 </div>
@@ -2615,13 +2615,13 @@ export default function QualityAssurancePage({
                   <button
                     onClick={handleAddProduct}
                     disabled={!newProductData.productFormat?.trim()}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-30"
                   >
                     <CheckCircle2 size={16} /> Add Product
                   </button>
                   <button
                     onClick={() => setShowAddModal(false)}
-                    className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -2641,7 +2641,7 @@ export default function QualityAssurancePage({
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${productModalMaximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-3xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-colors ${productModalMaximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-3xl w-full max-h-[90vh]'}`}
             >
               {/* Header */}
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
@@ -2659,9 +2659,9 @@ export default function QualityAssurancePage({
                   })()}
                 </h3>
                 <div className="flex items-center gap-1">
-                  <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
-                  <button onClick={(e) => { e.stopPropagation(); setProductModalMaximized(!productModalMaximized); }} className="p-1 hover:bg-white/20 transition-all" title={productModalMaximized ? 'Restore' : 'Maximize'}>{productModalMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={closeDetail} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setProductModalMaximized(!productModalMaximized); }} className="p-1 hover:bg-white/20 transition-colors" title={productModalMaximized ? 'Restore' : 'Maximize'}>{productModalMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={closeDetail} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
 
@@ -3070,7 +3070,7 @@ export default function QualityAssurancePage({
                     <button
                       onClick={() => packagingFileRef.current?.click()}
                       disabled={isUploadingPackaging}
-                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50"
                     >
                       {isUploadingPackaging ? <RefreshSpinner /> : <Upload size={14} />}
                       {isUploadingPackaging ? 'Uploading...' : 'Upload Image'}
@@ -3099,7 +3099,7 @@ export default function QualityAssurancePage({
                       <button
                         onClick={() => artworkFileRef.current?.click()}
                         disabled={isUploadingArtwork}
-                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50"
                       >
                         {isUploadingArtwork ? <RefreshSpinner /> : <Upload size={14} />}
                         {isUploadingArtwork ? 'Uploading...' : 'Upload Artwork'}
@@ -3107,7 +3107,7 @@ export default function QualityAssurancePage({
                       {displayData.artworkUrl && (
                         <button
                           onClick={() => setShowApprovalModal(true)}
-                          className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F9F9F9] transition-all"
+                          className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 hover:bg-[#F9F9F9] transition-colors"
                         >
                           <Send size={14} /> Send for Approval
                         </button>
@@ -3191,7 +3191,7 @@ export default function QualityAssurancePage({
                     <button
                       onClick={() => upcFileRef.current?.click()}
                       disabled={isUploadingUpc}
-                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50"
                     >
                       {isUploadingUpc ? <RefreshSpinner /> : <Upload size={14} />}
                       {isUploadingUpc ? 'Uploading...' : 'Upload UPC Image'}
@@ -3272,14 +3272,14 @@ export default function QualityAssurancePage({
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
                               <Download size={14} />
                             </button>
-                            <button onClick={() => handleEmailDocument(doc, 'Spec Sheet')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Email">
+                            <button onClick={() => handleEmailDocument(doc, 'Spec Sheet')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Email">
                               <Mail size={14} />
                             </button>
                             {isEditing && (
-                              <button onClick={() => handleDeleteSpecSheet(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete">
+                              <button onClick={() => handleDeleteSpecSheet(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete">
                                 <Trash2 size={14} />
                               </button>
                             )}
@@ -3294,7 +3294,7 @@ export default function QualityAssurancePage({
                     <button
                       onClick={() => specSheetFileRef.current?.click()}
                       disabled={isUploadingSpecSheet}
-                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50"
                     >
                       {isUploadingSpecSheet ? <RefreshSpinner /> : <Upload size={14} />}
                       {isUploadingSpecSheet ? 'Uploading...' : 'Upload Spec Sheet'}
@@ -3317,14 +3317,14 @@ export default function QualityAssurancePage({
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                            <button onClick={() => handleDownloadDocument(doc)} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
                               <Download size={14} />
                             </button>
-                            <button onClick={() => handleEmailDocument(doc, 'Certificate')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Email">
+                            <button onClick={() => handleEmailDocument(doc, 'Certificate')} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Email">
                               <Mail size={14} />
                             </button>
                             {isEditing && (
-                              <button onClick={() => handleDeleteCertificate(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-all" title="Delete">
+                              <button onClick={() => handleDeleteCertificate(doc.id)} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete">
                                 <Trash2 size={14} />
                               </button>
                             )}
@@ -3339,7 +3339,7 @@ export default function QualityAssurancePage({
                     <button
                       onClick={() => certificateFileRef.current?.click()}
                       disabled={isUploadingCertificate}
-                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-50"
+                      className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50"
                     >
                       {isUploadingCertificate ? <RefreshSpinner /> : <Upload size={14} />}
                       {isUploadingCertificate ? 'Uploading...' : 'Upload Certificate'}
@@ -3354,7 +3354,7 @@ export default function QualityAssurancePage({
                     {isEditing && (
                       <button
                         onClick={() => { setEditingBomItem({ ...emptyBomItem, id: `BOM-${Date.now()}` }); setShowBomForm(true); }}
-                        className="flex items-center gap-1 px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
+                        className="flex items-center gap-1 px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors"
                       >
                         <Plus size={12} /> Add Material
                       </button>
@@ -3402,11 +3402,11 @@ export default function QualityAssurancePage({
                               {isEditing && (
                                 <td className="p-2 text-xs">
                                   <div className="flex gap-1">
-                                    <button onClick={() => { setEditingBomItem({ ...item }); setShowBomForm(true); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><Pencil size={12} /></button>
+                                    <button onClick={() => { setEditingBomItem({ ...item }); setShowBomForm(true); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><Pencil size={12} /></button>
                                     <button onClick={() => {
                                       const updated = (editData?.billOfMaterials || []).filter(b => b.id !== item.id);
                                       setEditData(prev => prev ? { ...prev, billOfMaterials: updated } : prev);
-                                    }} className="p-1 hover:bg-red-500 hover:text-white transition-all"><Trash2 size={12} /></button>
+                                    }} className="p-1 hover:bg-red-500 hover:text-white transition-colors"><Trash2 size={12} /></button>
                                   </div>
                                 </td>
                               )}
@@ -3510,13 +3510,13 @@ export default function QualityAssurancePage({
                             setShowBomForm(false);
                             setEditingBomItem(null);
                           }}
-                          className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                          className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors"
                         >
                           {editingBomItem.materialName && (editData?.billOfMaterials || []).some(b => b.id === editingBomItem.id) ? 'Update' : 'Add'} Material
                         </button>
                         <button
                           onClick={() => { setShowBomForm(false); setEditingBomItem(null); }}
-                          className="px-6 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                          className="px-6 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                         >
                           Cancel
                         </button>
@@ -3531,13 +3531,13 @@ export default function QualityAssurancePage({
                     <>
                       <button
                         onClick={saveChanges}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
                       >
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
                       <button
                         onClick={() => { setIsEditing(false); setEditData(selectedProduct ? { ...selectedProduct, specifications: { ...selectedProduct.specifications }, packagingPictureUrls: [...selectedProduct.packagingPictureUrls], packagingPictureFilenames: [...selectedProduct.packagingPictureFilenames], artworkApprovals: [...selectedProduct.artworkApprovals] } : null); }}
-                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                       >
                         Cancel
                       </button>
@@ -3553,19 +3553,19 @@ export default function QualityAssurancePage({
                             closeDetail();
                           }
                         }}
-                        className="px-6 py-4 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-all flex items-center-safe justify-center gap-2"
+                        className="px-6 py-4 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center-safe justify-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
                       </button>
                       <button
                         onClick={() => setIsEditing(true)}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
                       >
                         Edit Product
                       </button>
                       <button
                         onClick={closeDetail}
-                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                       >
                         Close
                       </button>
@@ -3581,7 +3581,7 @@ export default function QualityAssurancePage({
           <div className="fixed bottom-4 left-4 z-[100]">
             <button
               onClick={() => setProductModalMinimized(false)}
-              className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]"
+              className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-colors border border-[#141414]"
             >
               <Maximize2 size={12} /> Product QA: {(() => {
                 const resolved = resolveProductName(namingFormulas, selectedProduct, { sugarTypes, productGroups });
@@ -3629,13 +3629,13 @@ export default function QualityAssurancePage({
                   <button
                     onClick={handleSendApproval}
                     disabled={!approvalRecipientId}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-all disabled:opacity-30"
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-30"
                   >
                     <Send size={14} /> Send
                   </button>
                   <button
                     onClick={() => setShowApprovalModal(false)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -3667,13 +3667,13 @@ export default function QualityAssurancePage({
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={() => { onDeleteQAProduct(deleteConfirmId); setDeleteConfirmId(null); }}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
                   >
                     Delete
                   </button>
                   <button
                     onClick={() => setDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>

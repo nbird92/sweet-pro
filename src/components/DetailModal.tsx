@@ -103,7 +103,7 @@ export default function DetailModal({
             {!isAdd && onDelete && (
               <button
                 onClick={handleDelete}
-                className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                className="px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
               >
                 <Trash2 size={14} /> Delete
               </button>
@@ -114,14 +114,14 @@ export default function DetailModal({
               <>
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-white transition-all"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={onSave}
                   disabled={saveDisabled}
-                  className="px-4 py-2 bg-emerald-700 text-white text-xs font-bold uppercase hover:bg-emerald-800 transition-all flex items-center gap-2 disabled:opacity-40"
+                  className="px-4 py-2 bg-emerald-700 text-white text-xs font-bold uppercase hover:bg-emerald-800 transition-colors flex items-center gap-2 disabled:opacity-40"
                 >
                   <CheckCircle2 size={14} /> {isAdd ? 'Create' : 'Save Changes'}
                 </button>
@@ -131,14 +131,14 @@ export default function DetailModal({
                 {onEdit && (
                   <button
                     onClick={onEdit}
-                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                    className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-2"
                   >
                     <Edit2 size={14} /> Edit
                   </button>
                 )}
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-white transition-all"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-white transition-colors"
                 >
                   Close
                 </button>

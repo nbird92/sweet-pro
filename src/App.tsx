@@ -169,7 +169,7 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
       return (
         <div className="p-12 text-center">
           <div className="text-xs uppercase tracking-widest opacity-60 mb-3">This page failed to load — a new version may have just been published.</div>
-          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-all">Reload</button>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors">Reload</button>
         </div>
       );
     }
@@ -269,7 +269,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
         className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
           <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+          <button onClick={onClose} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
         </div>
         <div className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -370,8 +370,8 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
           </div>
 
           <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
-            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
-            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">
+            <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+            <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">
               {title.includes('Edit') ? 'Save Changes' : 'Create Lead'}</button>
           </div>
         </div>
@@ -382,6 +382,10 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
 
 export default function App() {
   const [activePage, setActivePage] = useState('Dashboard');
+  // Read by the long-task perf observer, which registers once and must not
+  // re-subscribe on every page change.
+  const activePageRef = useRef(activePage);
+  activePageRef.current = activePage;
   const [hiddenPages, setHiddenPages] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('sweetpro-hidden-pages');
@@ -1521,6 +1525,28 @@ export default function App() {
   const invoicesRef = useRef(invoices);
   useEffect(() => { ordersRef.current = orders; }, [orders]);
   useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
+
+  // PERF DIAGNOSTIC — logs any task that blocks the main thread long enough to
+  // be felt (>100ms). UI jank (laggy hover, stuttery typing) is almost always a
+  // long task starving the browser's event loop, and this names the culprit in
+  // the console instead of requiring a Performance recording. Passive: one
+  // observer, no state, no rendering. Safe to leave on; remove once the render
+  // work is properly split up.
+  useEffect(() => {
+    if (typeof PerformanceObserver === 'undefined') return;
+    let obs: PerformanceObserver;
+    try {
+      obs = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.duration > 100) {
+            console.warn(`[perf] main thread blocked ${Math.round(entry.duration)}ms — page: ${activePageRef.current}`);
+          }
+        }
+      });
+      obs.observe({ entryTypes: ['longtask'] });
+    } catch { return; } // longtask unsupported (Safari/Firefox) — no-op
+    return () => obs.disconnect();
+  }, []);
 
   // Is this PO (by numeric value) or BOL already taken by a live order or invoice?
   // Returns 'po' | 'bol' | null. excludeOrderId lets an EDIT skip its own row.
@@ -9524,7 +9550,7 @@ export default function App() {
               onClick={handleSyncAll}
               disabled={isSyncingAll}
               title="Run the Orders, Invoices, Transfers and Hamilton Lab sheet imports using each importer's saved preset, accepting all changes automatically."
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
             >
               <RefreshCw size={12} className={isSyncingAll ? 'animate-spin' : ''} />
               {isSyncingAll ? 'Syncing…' : 'Sync All'}
@@ -9562,8 +9588,8 @@ export default function App() {
                             <div>Tolling: CAD ${Math.round(weeklyTotals[week].tolling).toLocaleString()}</div>
                           </div>
                           <div className="flex gap-0.5 items-end w-full justify-center" style={{ height: 'calc(100% - 20px)' }}>
-                            <div className="bg-[#141414] rounded-t-sm transition-all hover:bg-[#333] min-h-[2px]" style={{ height: `${Math.max(volPct, 1)}%`, width: '40%' }} title={`${Math.round(weeklyTotals[week].volume)} MT`}></div>
-                            <div className="bg-emerald-500 rounded-t-sm transition-all hover:bg-emerald-400 min-h-[2px]" style={{ height: `${Math.max(tolPct, 1)}%`, width: '40%' }} title={`CAD $${Math.round(weeklyTotals[week].tolling)}`}></div>
+                            <div className="bg-[#141414] rounded-t-sm transition-colors hover:bg-[#333] min-h-[2px]" style={{ height: `${Math.max(volPct, 1)}%`, width: '40%' }} title={`${Math.round(weeklyTotals[week].volume)} MT`}></div>
+                            <div className="bg-emerald-500 rounded-t-sm transition-colors hover:bg-emerald-400 min-h-[2px]" style={{ height: `${Math.max(tolPct, 1)}%`, width: '40%' }} title={`CAD $${Math.round(weeklyTotals[week].tolling)}`}></div>
                           </div>
                           <span className="text-[8px] font-bold opacity-50 truncate w-full text-center">{week.replace('Week ', 'W')}</span>
                         </div>
@@ -9833,7 +9859,7 @@ export default function App() {
               )}
             </div>
             <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
             </button>
             <button onClick={() => {
@@ -9843,19 +9869,19 @@ export default function App() {
                 link.setAttribute("download", "shipment_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => fileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Plus size={12} /> Batch
             </button>
             <button onClick={() => { setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer(''); setIsAddingShipment(true); }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap">
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap">
               <Plus size={12} /> Add Shipment
             </button>
           </PageBanner>
@@ -9884,7 +9910,7 @@ export default function App() {
                       }
                       setExpandedRows(next);
                     }}
-                    className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-all ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
+                    className={`w-full px-3 py-2 flex justify-between items-center hover:bg-opacity-90 transition-colors ${isCurrentWk ? 'bg-emerald-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'}`}
                   >
                     <span className="text-[10px] font-bold uppercase tracking-widest">{week} {isCurrentWk ? '(CURRENT WEEK)' : ''}</span>
                     {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -9910,7 +9936,7 @@ export default function App() {
                                     if (next.has(bayKey)) next.delete(bayKey); else next.add(bayKey);
                                     setExpandedBays(next);
                                   }}
-                                  className="w-full px-2 py-1.5 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-all border-b border-[#141414]"
+                                  className="w-full px-2 py-1.5 bg-[#F5F5F5] flex justify-between items-center hover:bg-[#E4E3E0] transition-colors border-b border-[#141414]"
                                 >
                                   <span className="text-[10px] font-black uppercase tracking-widest">{bay}</span>
                                   {isBayExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -9945,7 +9971,7 @@ export default function App() {
                                               if (next.has(dayKey)) next.delete(dayKey); else next.add(dayKey);
                                               setExpandedDays(next);
                                             }}
-                                            className={`w-full px-2 py-1 flex justify-between items-center transition-all ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
+                                            className={`w-full px-2 py-1 flex justify-between items-center transition-colors ${isToday ? 'bg-emerald-100 hover:bg-emerald-200' : 'bg-[#F9F9F9] hover:bg-[#F0F0F0]'}`}
                                           >
                                             <div className="flex items-center gap-3">
                                               <span className={`text-[10px] font-black uppercase tracking-wider ${isToday ? 'text-emerald-800' : ''}`}>{day}</span>
@@ -10001,7 +10027,7 @@ export default function App() {
                                                                 setShipmentSearchCustomer(''); setShipmentSearchBOL(''); setShipmentSearchTransfer('');
                                                                 setIsAddingShipment(true);
                                                               }}
-                                                              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Add Shipment">
+                                                              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Add Shipment">
                                                               <Plus size={10} />
                                                             </button>
                                                           </td>
@@ -10045,9 +10071,9 @@ export default function App() {
                                                           {/* No "Add Shipment" here — the slot is taken; adding is only
                                                               offered on rows whose appointment time is still available. */}
                                                           <div className="flex gap-0.5">
-                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-all" title="Preview BOL"><FileText size={10} /></button>
-                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={10} /></button>
-                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={10} /></button>
+                                                            <button onClick={() => handleGenerateBol(s)} className="p-0.5 hover:bg-blue-600 hover:text-white transition-colors" title="Preview BOL"><FileText size={10} /></button>
+                                                            <button onClick={() => setEditingShipment(s)} className="p-0.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={10} /></button>
+                                                            <button onClick={() => setShipmentDeleteConfirmId(s.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={10} /></button>
                                                           </div>
                                                         </td>
                                                       </tr>
@@ -10147,25 +10173,25 @@ export default function App() {
                 link.setAttribute("download", "customer_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => customerFileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
             <button onClick={() => exportCSV(customerCsvHeaders, customers, 'customers_export.csv')}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button onClick={rebuildCustomersFromHistory}
               title="Recover customers from orders, invoices, contracts, shipments and return orders (adds only missing names; existing customers untouched)"
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <RefreshCw size={12} /> Rebuild from Orders
             </button>
             <button
               onClick={addCustomer}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> Add Customer
             </button>
@@ -10251,7 +10277,7 @@ export default function App() {
                     setCustomers(updated);
                   }
                 }}
-                className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all whitespace-nowrap"
+                className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors whitespace-nowrap"
                 title="Auto-assign ungrouped customers to groups by matching customer name to group name"
               >
                 <Zap size={12} /> Auto-Assign All
@@ -10375,21 +10401,21 @@ export default function App() {
                 setSyncMode('transfers');
               }}
               disabled={isSyncingTransferSheet}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
               title="Configure a Google Sheet source and column mapping, then pull new transfers for review."
             >
               <FileText size={12} /> {isSyncingTransferSheet ? 'Syncing…' : 'Sync Transfers'}
             </button>
             <button
               onClick={downloadTransferTemplate}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
               title="Download a CSV template with the expected columns."
             >
               <Download size={12} /> Template
             </button>
             <button
               onClick={() => transferFileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
               title="Import transfers from a CSV file matching the template."
             >
               <Upload size={12} /> Import CSV
@@ -10420,7 +10446,7 @@ export default function App() {
                 }
               }}
               disabled={transfers.length === 0}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title="Remove duplicate transfers (same from/to/product/date/PO/amount), keeping one of each."
             >
               <Trash2 size={12} /> Remove Duplicates
@@ -10435,7 +10461,7 @@ export default function App() {
                 }
               }}
               disabled={transfers.length === 0}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/30 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/30 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title="Delete every transfer from the table."
             >
               <Trash2 size={12} /> Clear All
@@ -10446,7 +10472,7 @@ export default function App() {
                 setNewTransferLegs([]);
                 setIsAddingTransfer(true);
               }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> New Transfer
             </button>
@@ -10561,7 +10587,7 @@ export default function App() {
                         setIsCreatingTransferShipment(true);
                         setIsCreatingShipments(true);
                       }}
-                      className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-all cursor-pointer whitespace-nowrap"
+                      className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors cursor-pointer whitespace-nowrap"
                     >
                       Create Pick Up Appointment
                     </button>
@@ -10677,11 +10703,11 @@ export default function App() {
                 link.setAttribute("download", "invoice_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => invoiceFileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
             <button
@@ -10696,28 +10722,28 @@ export default function App() {
                 setSyncMode('invoices');
               }}
               disabled={isSyncingInvoiceSheet}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
               title="Pull invoiced rows from a Google Sheet and stage them for review."
             >
               <FileText size={12} /> {isSyncingInvoiceSheet ? 'Syncing…' : 'Sync Invoices'}
             </button>
             <button onClick={() => invoiceReplaceFileInputRef.current?.click()}
-              className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-all">
+              className="px-3 py-1.5 border border-red-400/50 text-red-300 text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-red-500/20 transition-colors">
               <Upload size={12} /> Import &amp; Replace
             </button>
             <button
               onClick={mergeDuplicateInvoices}
               disabled={invoices.length === 0}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title="Merge duplicate invoices that share an invoice number, keeping the most complete record (blank fields filled from the duplicates)."
             >
               <Trash2 size={12} /> Merge Duplicates
             </button>
-            <button className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+            <button className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Printer size={12} /> Batch Print
             </button>
             <button onClick={() => exportCSV(invoiceCsvHeaders, invoices, 'invoices_export.csv')}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
           </PageBanner>
@@ -10930,14 +10956,14 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleGenerateDocumentPackageForInvoice(i)}
-                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                             title="View Document Package"
                           >
                             <Files size={14} />
                           </button>
                           <button
                             onClick={() => handleGenerateBolForInvoice(i)}
-                            className="p-1 hover:bg-blue-600 hover:text-white transition-all"
+                            className="p-1 hover:bg-blue-600 hover:text-white transition-colors"
                             title="Preview BOL"
                           >
                             <Truck size={14} />
@@ -10948,7 +10974,7 @@ export default function App() {
                                 setInvoices(prev => prev.filter(inv => inv.id !== i.id));
                               }
                             }}
-                            className="p-1 text-red-500 hover:bg-red-500 hover:text-white transition-all"
+                            className="p-1 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
                             title="Delete invoice"
                           >
                             <Trash2 size={14} />
@@ -11128,7 +11154,7 @@ export default function App() {
             <button
               onClick={() => setShowCompletedOrders(v => !v)}
               disabled={!!searchTerm}
-              className={`px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 transition-all whitespace-nowrap ${searchTerm ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'}`}
+              className={`px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 transition-colors whitespace-nowrap ${searchTerm ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'}`}
               title={searchTerm
                 ? 'Completed orders are shown while searching'
                 : (showCompletedOrders ? 'Hide completed orders from the table' : 'Completed orders are hidden by default — show them')}
@@ -11145,24 +11171,24 @@ export default function App() {
                 link.setAttribute("download", "order_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => orderFileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <FileText size={12} /> Import CSV
             </button>
             <button
               onClick={removeDuplicateOrders}
               disabled={orders.length === 0}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title="Remove duplicate orders that share a PO or BOL number, keeping the most-progressed record of each."
             >
               <Trash2 size={12} /> Remove Duplicates
             </button>
             <button
               onClick={() => { setPoScanFiles([]); setPoReviews([]); setPoScanError(null); setIsScanningPO(true); }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
               title="Upload a customer PO (PDF/Excel/image) and let AI extract it into a new order."
             >
               <ScanLine size={12} /> Scan PO
@@ -11179,14 +11205,14 @@ export default function App() {
                 setSyncMode('orders');
               }}
               disabled={isSyncingOrdersSheet}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap disabled:opacity-50"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
               title="Configure a Google Sheet source and column mapping, then pull new orders for review."
             >
               <FileText size={12} /> {isSyncingOrdersSheet ? 'Syncing…' : 'Sync Orders'}
             </button>
             <button
               onClick={() => setIsAddingBatchOrder(true)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> Batch Orders
             </button>
@@ -11204,14 +11230,14 @@ export default function App() {
                 setEditingOrder(null);
                 setIsAddingOrder(true);
               }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> Add Order
             </button>
             <button
               onClick={() => { if (window.confirm('Re-number any orders whose BOL prefix does not match their product group (e.g. Bulk/Liquid orders that imported as "P")? Linked shipments, invoices and return orders are updated to match. Completed orders are left as-is.')) fixBolPrefixes(); }}
               title="Fix BOL prefixes to match each order's product group (BOL Code)"
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
             >
               <FileText size={12} /> Fix BOLs
             </button>
@@ -11239,7 +11265,7 @@ export default function App() {
                   alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Orders may reappear on reload.`);
                 }
               }}
-              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-all whitespace-nowrap border border-red-300/40"
+              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-colors whitespace-nowrap border border-red-300/40"
               title="TEMPORARY: deletes every order from the table and Firestore. Remove this button after use."
             >
               <X size={12} /> Clear All
@@ -11404,7 +11430,7 @@ export default function App() {
                                 // card's own button.
                                 setViewingOrderCard({ ...ord });
                               }}
-                              className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all cursor-pointer whitespace-nowrap"
+                              className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px] bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors cursor-pointer whitespace-nowrap"
                               title="Open order details to review before completing & billing"
                             >
                               Complete & Bill
@@ -11419,7 +11445,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleGenerateOrderConfirmation(ord)}
-                            className={`p-1 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === ord.id ? 'animate-pulse bg-emerald-100' : ''}`}
+                            className={`p-1 hover:bg-emerald-600 hover:text-white transition-colors ${generatingOrderConfirmation === ord.id ? 'animate-pulse bg-emerald-100' : ''}`}
                             title="Preview Order Confirmation"
                             disabled={generatingOrderConfirmation === ord.id}
                           >
@@ -11453,24 +11479,24 @@ export default function App() {
                               setEditingOrder(ord);
                               setIsAddingOrder(false);
                             }}
-                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                            className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                             title={ord.status !== 'Open' ? 'Only Open orders can be edited' : 'Edit order'}
                           >
                             <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => handleGenerateBol(shipmentForOrder(ord))}
-                            className="p-1 hover:bg-blue-600 hover:text-white transition-all"
+                            className="p-1 hover:bg-blue-600 hover:text-white transition-colors"
                             title="Preview BOL"
                           >
                             <Truck size={14} />
                           </button>
                           {ord.status === 'Confirmed' || ord.status === 'Cancelled' ? (
-                            <button onClick={() => ord.hidden ? setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)) : setOrderHideConfirmId(ord.id)} className="p-1 hover:bg-amber-500 hover:text-white transition-all" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
+                            <button onClick={() => ord.hidden ? setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)) : setOrderHideConfirmId(ord.id)} className="p-1 hover:bg-amber-500 hover:text-white transition-colors" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
                               {ord.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
                             </button>
                           ) : (
-                            <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete order">
+                            <button onClick={() => setOrderDeleteConfirmId(ord.id)} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete order">
                               <Trash2 size={14} />
                             </button>
                           )}
@@ -11486,10 +11512,10 @@ export default function App() {
           {ordersRemaining > 0 && (
             <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
               <span className="opacity-50 normal-case font-mono">Showing {visibleOrders.length} of {filteredOrders.length}</span>
-              <button onClick={() => setOrderVisibleCount(c => c + ORDER_PAGE_SIZE)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-all">
+              <button onClick={() => setOrderVisibleCount(c => c + ORDER_PAGE_SIZE)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors">
                 Show {Math.min(ORDER_PAGE_SIZE, ordersRemaining)} more
               </button>
-              <button onClick={() => setOrderVisibleCount(filteredOrders.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-all">
+              <button onClick={() => setOrderVisibleCount(filteredOrders.length)} className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-colors">
                 Show all ({ordersRemaining})
               </button>
             </div>
@@ -11742,7 +11768,7 @@ export default function App() {
                                   <span className="text-xs font-bold truncate">{doc.filename}</span>
                                 </div>
                                 <div className="flex items-center gap-1 flex-shrink-0">
-                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
                                     <Download size={12} />
                                   </a>
                                 </div>
@@ -11766,7 +11792,7 @@ export default function App() {
                                   <span className="text-xs font-bold truncate">{doc.filename}</span>
                                 </div>
                                 <div className="flex items-center gap-1 flex-shrink-0">
-                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Download">
+                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
                                     <Download size={12} />
                                   </a>
                                 </div>
@@ -12131,13 +12157,13 @@ export default function App() {
                   setVendors(prev => [...prev, ...newVendors]);
                 }
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
             >
               <Truck size={12} /> Sync Carriers as Vendors
             </button>
             <button
               onClick={() => { setVendorDraft({ id: `VEND-${Date.now()}`, vendorNumber: '', name: '', category: 'operations' }); setVendorMode('add'); }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> Add Vendor
             </button>
@@ -12322,7 +12348,7 @@ export default function App() {
               setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
               setShowAddLeadModal(true);
             }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap">
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap">
               <Plus size={12} /> Add Lead
             </button>
           </PageBanner>
@@ -12369,8 +12395,8 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{lead.followUps.filter(f => !f.completed).length}/{lead.followUps.length}</td>
                         <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => setEditingLeadCard({ ...lead })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
-                            <button onClick={() => setSalesLeads(salesLeads.filter(l => l.id !== lead.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
+                            <button onClick={() => setEditingLeadCard({ ...lead })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
+                            <button onClick={() => setSalesLeads(salesLeads.filter(l => l.id !== lead.id))} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                           </div>
                         </td>
                       </tr>
@@ -12433,7 +12459,7 @@ export default function App() {
                 setNewSampleData({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
                 setShowAddSampleModal(true);
               }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all">
+                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors">
                 <Plus size={14} /> Add Sample Request
               </button>
             </div>
@@ -12473,8 +12499,8 @@ export default function App() {
                           <td className="p-3 text-xs border-r border-[#141414]/10">{sr.followUps.filter(f => !f.completed).length}/{sr.followUps.length}</td>
                           <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
-                              <button onClick={() => setEditingSampleRequest({ ...sr })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit"><Edit2 size={14} /></button>
-                              <button onClick={() => setSampleRequests(sampleRequests.filter(s => s.id !== sr.id))} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete"><Trash2 size={14} /></button>
+                              <button onClick={() => setEditingSampleRequest({ ...sr })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
+                              <button onClick={() => setSampleRequests(sampleRequests.filter(s => s.id !== sr.id))} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                             </div>
                           </td>
                         </tr>
@@ -12574,8 +12600,8 @@ export default function App() {
                       if (!newSampleData.customer) { alert('Please select a customer'); return; }
                       setSampleRequests(prev => [...prev, { ...newSampleData, id: `SR-${Date.now()}`, createdAt: new Date().toISOString() }]);
                       setShowAddSampleModal(false);
-                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all">Save</button>
-                    <button onClick={() => setShowAddSampleModal(false)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Save</button>
+                    <button onClick={() => setShowAddSampleModal(false)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
                 </motion.div>
               </motion.div>
@@ -12690,8 +12716,8 @@ export default function App() {
                     <button onClick={() => {
                       setSampleRequests(sampleRequests.map(s => s.id === editingSampleRequest.id ? editingSampleRequest : s));
                       setEditingSampleRequest(null);
-                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all">Save</button>
-                    <button onClick={() => setEditingSampleRequest(null)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Save</button>
+                    <button onClick={() => setEditingSampleRequest(null)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
                 </motion.div>
               </motion.div>
@@ -12971,7 +12997,7 @@ export default function App() {
           <PageBanner icon={<DollarSign size={18} />} title="Tolling Fees" count={tollingFees.length} exportSheets={tollingSummaryExportSheets} exportFileName="Tolling_Fees_Summary">
             <button
               onClick={() => { setTollingFeeDraft({ id: `TF-${Date.now()}`, productGroup: '', location: '', amountPerMt: 0, currency: 'CAD', startDate: '', endDate: '' }); setTollingFeeMode('add'); }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
             >
               <Plus size={12} /> Add Tolling Fee
             </button>
@@ -13449,7 +13475,7 @@ export default function App() {
                       {exists ? 'Edit' : (d.sourceFile ? 'Review Scanned' : 'Add')} Demurrage Invoice
                       {demurrageScanQueue.length > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 bg-white/20 tracking-widest">{demurrageScanQueue.length} more to review</span>}
                     </h3>
-                    <button onClick={() => closeDemurrageDraft()} className="p-1 hover:bg-white/20 transition-all" title={demurrageScanQueue.length ? 'Skip to next scanned invoice' : 'Close'}><X size={16} /></button>
+                    <button onClick={() => closeDemurrageDraft()} className="p-1 hover:bg-white/20 transition-colors" title={demurrageScanQueue.length ? 'Skip to next scanned invoice' : 'Close'}><X size={16} /></button>
                   </div>
                   <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div><label className={labelCls}>Carrier</label><input className={fieldCls} value={d.carrier} onChange={e => set({ carrier: e.target.value })} /></div>
@@ -13497,7 +13523,7 @@ export default function App() {
                   <div className="flex justify-between items-center px-5 py-3 border-t border-gray-200 bg-gray-50">
                     {exists ? (
                       <button onClick={() => { setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); closeDemurrageDraft(); }}
-                        className="px-3 py-2 border border-red-400 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-all">
+                        className="px-3 py-2 border border-red-400 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-colors">
                         <Trash2 size={12} /> Delete
                       </button>
                     ) : <span />}
@@ -13561,7 +13587,7 @@ export default function App() {
                   <div className="pt-1">
                     <button
                       onClick={() => setEditingAppointmentSchedule({ ...liveLoc })}
-                      className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                      className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                     >
                       <Clock size={12} /> Appointment Schedule
                     </button>
@@ -13571,7 +13597,7 @@ export default function App() {
                       <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
                       <button
                         onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: [...l.bays, ''] } : l))}
-                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
+                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-colors"
                       >
                         <Plus size={10} /> Add Bay
                       </button>
@@ -13588,7 +13614,7 @@ export default function App() {
                           />
                           <button
                             onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
-                            className="p-2 hover:bg-red-500 hover:text-white transition-all"
+                            className="p-2 hover:bg-red-500 hover:text-white transition-colors"
                           >
                             <Trash2 size={12} />
                           </button>
@@ -13606,7 +13632,7 @@ export default function App() {
                       <h4 className="text-[10px] uppercase font-bold opacity-50">Terminal Names</h4>
                       <button
                         onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: [...(l.terminalNames || []), { terminal: '', terminalName: '' }] } : l))}
-                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-all"
+                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-colors"
                       >
                         <Plus size={10} /> Add Terminal Name
                       </button>
@@ -13651,7 +13677,7 @@ export default function App() {
                           </select>
                           <button
                             onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).filter((_, i) => i !== idx) } : l))}
-                            className="w-8 p-2 hover:bg-red-500 hover:text-white transition-all"
+                            className="w-8 p-2 hover:bg-red-500 hover:text-white transition-colors"
                           >
                             <Trash2 size={12} />
                           </button>
@@ -13938,7 +13964,7 @@ export default function App() {
           >
             <button
               onClick={() => setShowInactiveContracts(v => !v)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
               title={showInactiveContracts ? 'Hide inactive contracts' : 'Show inactive contracts'}
             >
               {showInactiveContracts ? <EyeOff size={12} /> : <Eye size={12} />}
@@ -13952,7 +13978,7 @@ export default function App() {
                 link.setAttribute("download", "contract_template.csv");
                 document.body.appendChild(link); link.click(); document.body.removeChild(link);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
             <button onClick={() => {
@@ -13975,11 +14001,11 @@ export default function App() {
                 });
                 exportCSV(contractCsvHeaders, rows, 'contracts_export.csv');
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
             <button onClick={() => contractFileInputRef.current?.click()}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
             <button onClick={() => {
@@ -14154,7 +14180,7 @@ export default function App() {
                 if (priceUpdatedById.size) parts.push(`set Price/MT on ${priceUpdatedById.size} existing contract${priceUpdatedById.size === 1 ? '' : 's'} from invoices`);
                 setErrorBox(`Backfill complete — ${parts.join(' and ')}.`);
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap">
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Plus size={12} /> Backfill from Orders/Invoices
             </button>
             {/* TEMPORARY — wipes every contract from the table and Firestore so
@@ -14179,7 +14205,7 @@ export default function App() {
                   alert(`Local state cleared, but Firestore sync failed: ${err instanceof Error ? err.message : String(err)}. Contracts may reappear on reload.`);
                 }
               }}
-              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-all whitespace-nowrap border border-red-300/40"
+              className="px-4 py-2 bg-red-600/80 text-white text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-600 transition-colors whitespace-nowrap border border-red-300/40"
               title="TEMPORARY: deletes every contract from the table and Firestore. Remove this button after use."
             >
               <X size={12} /> Clear All
@@ -14283,13 +14309,13 @@ export default function App() {
                         </span>
                       </td>
                       <td className="p-3 text-xs flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); setEditingContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                        <button onClick={(e) => { e.stopPropagation(); setEditingContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-all ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
+                        <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-colors ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
                           <Power size={14} />
                         </button>
                       </td>
@@ -14459,7 +14485,7 @@ export default function App() {
             <button
               onClick={fetchMarketData}
               disabled={isFetchingMarket}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap disabled:opacity-50"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap disabled:opacity-50"
             >
               <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
               Refresh Data
@@ -14782,7 +14808,7 @@ export default function App() {
             <button
               onClick={openStockEmail}
               disabled={selectedStockRows.size === 0}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Preview and email the selected rows'}
             >
               <Mail size={12} /> Email Selected ({selectedStockRows.size})
@@ -14790,7 +14816,7 @@ export default function App() {
             <button
               onClick={() => setStockDeleteConfirm(true)}
               disabled={selectedStockRows.size === 0}
-              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title={selectedStockRows.size === 0 ? 'Select one or more rows first' : 'Remove the selected rows from the list'}
             >
               <Trash2 size={12} /> Delete Selected ({selectedStockRows.size})
@@ -14798,7 +14824,7 @@ export default function App() {
             {stockHiddenCount > 0 && (
               <button
                 onClick={restoreStock}
-                className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-all whitespace-nowrap"
+                className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
                 title="Un-hide rows cleared earlier"
               >
                 <RotateCcw size={12} /> Restore ({stockHiddenCount})
@@ -14807,7 +14833,7 @@ export default function App() {
             <button
               onClick={() => setStockClearConfirm(true)}
               disabled={stockRows.length === 0}
-              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-all whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               title="Hide all rows from the list (orders are not deleted)"
             >
               <Trash2 size={12} /> Clear All
@@ -14928,7 +14954,7 @@ export default function App() {
                           return (
                             <span
                               key={addr}
-                              className={`inline-flex items-center gap-1 border text-[10px] font-mono pl-2 pr-1 py-1 transition-all ${active ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]' : 'border-[#141414]/30 hover:bg-[#F5F5F5]'}`}
+                              className={`inline-flex items-center gap-1 border text-[10px] font-mono pl-2 pr-1 py-1 transition-colors ${active ? 'bg-[#141414] text-[#E4E3E0] border-[#141414]' : 'border-[#141414]/30 hover:bg-[#F5F5F5]'}`}
                             >
                               <button onClick={() => toggleRecipient(addr)} title={active ? 'Remove from this email' : 'Add to this email'}>
                                 {addr}
@@ -15043,7 +15069,7 @@ export default function App() {
             <p className="text-sm opacity-50 italic mb-8">This module is currently under development.</p>
             <button 
               onClick={() => setActivePage('Customer Quote')}
-              className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+              className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
             >
               Return to Quote Builder
             </button>
@@ -15200,7 +15226,7 @@ export default function App() {
                     onClick={() => handleToggleChange('isDelivered')}
                     className={`w-10 h-5 rounded-full relative transition-colors ${config.isDelivered ? 'bg-[#141414]' : 'bg-slate-300'}`}
                   >
-                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${config.isDelivered ? 'left-6' : 'left-1'}`} />
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-colors ${config.isDelivered ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
 
@@ -15210,7 +15236,7 @@ export default function App() {
                     onClick={() => handleToggleChange('isExport')}
                     className={`w-10 h-5 rounded-full relative transition-colors ${config.isExport ? 'bg-[#141414]' : 'bg-slate-300'}`}
                   >
-                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${config.isExport ? 'left-6' : 'left-1'}`} />
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-colors ${config.isExport ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
 
@@ -15320,7 +15346,7 @@ export default function App() {
                   <div className="flex items-center gap-3">
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input type="checkbox" checked={config.useManualFreight} onChange={() => setConfig(prev => ({ ...prev, useManualFreight: !prev.useManualFreight }))} className="sr-only peer" />
-                      <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                      <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-colors peer-checked:after:translate-x-full"></div>
                     </label>
                     <span className="text-[10px] uppercase font-bold opacity-60">Manual Freight Entry</span>
                   </div>
@@ -15543,7 +15569,7 @@ export default function App() {
                   {isEditingSidebar && (
                     <button
                       onClick={() => togglePageVisibility(item.name)}
-                      className={`p-1.5 transition-all ${isHidden ? 'text-[#141414]/25 hover:text-[#141414]/60' : 'text-[#141414]/60 hover:text-[#141414]'}`}
+                      className={`p-1.5 transition-colors ${isHidden ? 'text-[#141414]/25 hover:text-[#141414]/60' : 'text-[#141414]/60 hover:text-[#141414]'}`}
                       title={isHidden ? `Show ${item.name}` : `Hide ${item.name}`}
                     >
                       {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -15728,7 +15754,7 @@ export default function App() {
                 <p className="text-xs opacity-60">Sign in with your Google Workspace account to continue.</p>
                 <button
                   onClick={handleGoogleSignIn}
-                  className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-3"
+                  className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-3"
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
@@ -15753,7 +15779,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('invoice').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-colors ${getModalState('invoice').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
@@ -15762,9 +15788,9 @@ export default function App() {
                   <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(editingInvoiceCard.status).bg, color: getStatusColor(editingInvoiceCard.status).text }}>{editingInvoiceCard.status}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMinimized('invoice', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
-                  <button onClick={() => setModalMaximized('invoice', !getModalState('invoice').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('invoice').maximized ? 'Restore' : 'Maximize'}>{getModalState('invoice').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  <button onClick={() => setModalMinimized('invoice', true)} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('invoice', !getModalState('invoice').maximized)} className="p-1 hover:bg-white/20 transition-colors" title={getModalState('invoice').maximized ? 'Restore' : 'Maximize'}>{getModalState('invoice').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
               <div className="p-6 space-y-5">
@@ -15917,7 +15943,7 @@ export default function App() {
                                     contractNumber: item.contractNumber,
                                   });
                                 }}
-                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-all" title="Edit line item"
+                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit line item"
                               ><Edit2 size={12} /></button>
                               <button
                                 onClick={() => {
@@ -15937,7 +15963,7 @@ export default function App() {
                                     }
                                   }
                                 }}
-                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-all" title="Delete line item"
+                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-colors" title="Delete line item"
                               ><Trash2 size={12} /></button>
                             </td>
                           </tr>
@@ -15998,9 +16024,9 @@ export default function App() {
                         {/* Not disabled — submitInvoiceLineItem validates and shows an
                             error box, so a click always gives feedback (a disabled
                             button just looked broken). Mirrors the order editor. */}
-                        <button type="button" onClick={submitInvoiceLineItem} className="flex-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center justify-center gap-1"><Plus size={12} /> {editingInvLineIdx !== null ? 'Update' : 'Add'}</button>
+                        <button type="button" onClick={submitInvoiceLineItem} className="flex-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center justify-center gap-1"><Plus size={12} /> {editingInvLineIdx !== null ? 'Update' : 'Add'}</button>
                         {editingInvLineIdx !== null && (
-                          <button type="button" onClick={() => { setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="px-2 py-1.5 border border-[#141414] text-[11px] font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                          <button type="button" onClick={() => { setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="px-2 py-1.5 border border-[#141414] text-[11px] font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                         )}
                       </div>
                     </div>
@@ -16009,7 +16035,7 @@ export default function App() {
 
                 <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
                   <button onClick={() => { setEditingInvoiceCard(null); resetModalState('invoice'); setEditingInvLineIdx(null); setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }}
-                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                    className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   <button onClick={() => {
                     // Flush a pending (un-"Updated") line-item edit first: the QTY /
                     // Product / Contract inputs write only to the invLineItem staging
@@ -16051,7 +16077,7 @@ export default function App() {
                     resetModalState('invoice');
                     setEditingInvLineIdx(null);
                     setInvLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
-                  }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Save Changes</button>
+                  }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">Save Changes</button>
                 </div>
               </div>
             </motion.div>
@@ -16102,7 +16128,7 @@ export default function App() {
             >
               <div className="shrink-0 bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Invoice Details</h3>
-                <button onClick={() => setViewingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                <button onClick={() => setViewingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
                 {/* Invoice-level fields */}
@@ -16215,7 +16241,7 @@ export default function App() {
                 </div>
               </div>
               <div className="shrink-0 border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-end gap-2">
-                <button onClick={() => setViewingInvoiceCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-all">Close</button>
+                <button onClick={() => setViewingInvoiceCard(null)} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-colors">Close</button>
                 <button
                   onClick={() => {
                     let target = invShipment;
@@ -16262,13 +16288,13 @@ export default function App() {
                   title={invShipment
                     ? `Edit shipment ${invShipment.bol || invShipment.id}`
                     : 'No shipment is linked to this invoice — creates one from the invoice and opens it'}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 transition-all hover:bg-[#141414] hover:text-[#E4E3E0]"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase flex items-center gap-2 transition-colors hover:bg-[#141414] hover:text-[#E4E3E0]"
                 >
                   <Truck size={14} /> {invShipment ? 'Edit Shipment' : 'Create Shipment'}
                 </button>
                 <button
                   onClick={() => { openInvoiceForEdit(inv); setViewingInvoiceCard(null); }}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-all"
+                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors"
                 >
                   <Edit2 size={14} /> Edit Invoice
                 </button>
@@ -16287,7 +16313,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden transition-all flex flex-col ${getModalState('order').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden transition-colors flex flex-col ${getModalState('order').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-5xl w-full max-h-[90vh]'}`}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
@@ -16300,8 +16326,8 @@ export default function App() {
                   }`}>{viewingOrderCard.status}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMinimized('order', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
-                  <button onClick={() => setModalMaximized('order', !getModalState('order').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('order').maximized ? 'Restore' : 'Maximize'}>{getModalState('order').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => setModalMinimized('order', true)} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('order', !getModalState('order').maximized)} className="p-1 hover:bg-white/20 transition-colors" title={getModalState('order').maximized ? 'Restore' : 'Maximize'}>{getModalState('order').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
                   {/* Close button removed from the header per user request — it's now
                       anchored to the bottom-right of the modal so it's reachable
                       without scrolling back up in a long order. */}
@@ -16438,7 +16464,7 @@ export default function App() {
                     <button
                       onClick={() => handleGenerateOrderConfirmation(viewingOrderCard)}
                       disabled={generatingOrderConfirmation === viewingOrderCard.id}
-                      className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
+                      className={`px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-colors ${generatingOrderConfirmation === viewingOrderCard.id ? 'opacity-50 animate-pulse' : ''}`}
                     >
                       <FileText size={14} /> {generatingOrderConfirmation === viewingOrderCard.id ? 'Generating...' : 'Preview Order Confirmation'}
                     </button>
@@ -16448,21 +16474,21 @@ export default function App() {
                         on Complete & Bill when the triggers are enabled. */}
                     <button
                       onClick={() => sendOrderConfirmationEmail(viewingOrderCard, { triggeredBy: 'manual' })}
-                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                       title="Email the order confirmation PDF to the customer's Customer Service email"
                     >
                       <Mail size={14} /> Send Confirmation
                     </button>
                     <button
                       onClick={() => sendBolEmail(viewingOrderCard, { triggeredBy: 'manual' })}
-                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                       title="Email the BOL PDF to the customer's Customer Service email"
                     >
                       <Mail size={14} /> Send BOL
                     </button>
                     <button
                       onClick={() => sendCoaEmail(viewingOrderCard, { triggeredBy: 'manual' })}
-                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                       title="Email the Certificate of Analysis PDF (uses QA Contract email when available, otherwise Customer Service)"
                     >
                       <Mail size={14} /> Send COA
@@ -16499,7 +16525,7 @@ export default function App() {
                           } as Shipment);
                         handleGenerateBol(matchingShipment);
                       }}
-                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                     >
                       <FileText size={14} /> Preview BOL
                     </button>
@@ -16533,7 +16559,7 @@ export default function App() {
                           } as Shipment);
                         handleGenerateCoa(matchingShipment);
                       }}
-                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                     >
                       <FileText size={14} /> Preview COA
                     </button>
@@ -16577,14 +16603,14 @@ export default function App() {
                         setEditingShipment(target);
                         setViewingOrderCard(null);
                       }}
-                      className="px-4 py-2 border border-indigo-600 text-indigo-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-all"
+                      className="px-4 py-2 border border-indigo-600 text-indigo-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-indigo-600 hover:text-white transition-colors"
                     >
                       <Edit2 size={14} /> Edit Shipment
                     </button>
                     {viewingOrderCard.status === 'Confirmed' && (
                       <button
                         onClick={() => setCompleteAndBillConfirm(viewingOrderCard)}
-                        className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all"
+                        className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-colors"
                       >
                         <CheckCircle2 size={14} /> Complete &amp; Bill
                       </button>
@@ -16609,13 +16635,13 @@ export default function App() {
                         setEditingOrder(orders.find(o => o.id === viewingOrderCard.id) || viewingOrderCard);
                         setIsAddingOrder(false);
                         setViewingOrderCard(null);
-                      }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all">Edit Order</button>
+                      }} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">Edit Order</button>
                     )}
                     {/* Close — anchored to the rightmost slot of the footer
                         so it's always the bottom-right corner of the modal. */}
                     <button
                       onClick={() => { setViewingOrderCard(null); resetModalState('order'); }}
-                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                      className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                     >
                       Close
                     </button>
@@ -16652,7 +16678,7 @@ export default function App() {
                           href={linkedTemplate.googleSheetUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 px-2.5 py-1 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-all"
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-colors"
                           title={`Open "${linkedTemplate.name}" template in Google Sheets`}
                         >
                           <ExternalLink size={10} /> Template
@@ -16662,11 +16688,11 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={handleDownloadPdf}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-all"
+                        className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
                       >
                         <Download size={12} /> Download PDF
                       </button>
-                      <button onClick={handleClosePdfPreview} className="p-1 hover:bg-white/20 transition-all"><X size={16} /></button>
+                      <button onClick={handleClosePdfPreview} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
                     </div>
                   </div>
                 );
@@ -17238,10 +17264,10 @@ export default function App() {
                 </div>
                 <div className="border-t border-[#141414] bg-[#F5F5F5] p-4 flex justify-between items-center gap-2">
                   <div className="flex gap-2">
-                    <button onClick={() => handlePreviewReturnOrderConfirmation(ro)} className="px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-all">
+                    <button onClick={() => handlePreviewReturnOrderConfirmation(ro)} className="px-4 py-2 border border-emerald-600 text-emerald-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-600 hover:text-white transition-colors">
                       <FileText size={14} /> Preview Return Order Confirmation
                     </button>
-                    <button onClick={() => sendReturnOrderConfirmationEmail(ro, { triggeredBy: 'manual' })} className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-all">
+                    <button onClick={() => sendReturnOrderConfirmationEmail(ro, { triggeredBy: 'manual' })} className="px-4 py-2 border border-blue-600 text-blue-700 text-xs font-bold uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition-colors">
                       <Mail size={14} /> Send Confirmation
                     </button>
                   </div>
@@ -17338,7 +17364,7 @@ export default function App() {
                       }
                       setViewingOrderCard(null);
                     }}
-                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all"
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-colors"
                   >
                     <CheckCircle2 size={14} /> Confirm — Complete &amp; Bill
                   </button>
@@ -17447,7 +17473,7 @@ export default function App() {
                       completeAndBillOrder(order.id, { invoiceQtyMt: scaled!, shipmentId: ship.id });
                       close();
                     }}
-                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase flex items-center gap-2 hover:bg-emerald-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <CheckCircle2 size={14} /> Confirm — Complete &amp; Bill
                   </button>
@@ -17560,7 +17586,7 @@ export default function App() {
                           setEditingCarrier(null);
                         }
                       }}
-                      className="px-5 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                      className="px-5 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                     >
                       <Trash2 size={14} /> Delete
                     </button>
@@ -17581,13 +17607,13 @@ export default function App() {
                       setIsAddingCarrier(false);
                       setEditingCarrier(null);
                     }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2"
                   >
                     <CheckCircle2 size={16} /> {isAddingCarrier ? 'Add Carrier' : 'Save Changes'}
                   </button>
                   <button
                     onClick={() => { setIsAddingCarrier(false); setEditingCarrier(null); }}
-                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -17620,7 +17646,7 @@ export default function App() {
                     <AlertCircle size={18} className="text-amber-400" />
                     <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-70">Confirm Contract Creation</h3>
                   </div>
-                  <button onClick={() => setShowContractConfirm(false)} className="p-1.5 hover:bg-white/20 transition-all" title="Cancel"><X size={16} /></button>
+                  <button onClick={() => setShowContractConfirm(false)} className="p-1.5 hover:bg-white/20 transition-colors" title="Cancel"><X size={16} /></button>
                 </div>
                 <div className="px-6 py-5 grid grid-cols-12 gap-6 items-center">
                   <div className="col-span-5">
@@ -17771,13 +17797,13 @@ export default function App() {
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={createContract}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2"
                   >
                     <CheckCircle2 size={16} /> Confirm &amp; Create
                   </button>
                   <button
                     onClick={() => setShowContractConfirm(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -17853,7 +17879,7 @@ export default function App() {
                 <div className="flex items-center gap-3 pb-3 border-b border-[#141414]/10">
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={emailIncludeMargin} onChange={() => setEmailIncludeMargin(!emailIncludeMargin)} className="sr-only peer" />
-                    <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+                    <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-colors peer-checked:after:translate-x-full"></div>
                   </label>
                   <span className="text-[10px] uppercase font-bold opacity-60">Include Margin</span>
                 </div>
@@ -17878,22 +17904,22 @@ export default function App() {
                     {emailCustomer && (emailCustomer.qaContractEmail || emailCustomer.salesContactEmail || emailCustomer.customerServiceEmail || emailCustomer.contactEmail) && (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {emailCustomer.contactEmail && (
-                          <button onClick={() => setEmailTo(emailCustomer.contactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                          <button onClick={() => setEmailTo(emailCustomer.contactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                             Main: {emailCustomer.contactEmail}
                           </button>
                         )}
                         {emailCustomer.qaContractEmail && (
-                          <button onClick={() => setEmailTo(emailCustomer.qaContractEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                          <button onClick={() => setEmailTo(emailCustomer.qaContractEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                             QA: {emailCustomer.qaContractEmail}
                           </button>
                         )}
                         {emailCustomer.salesContactEmail && (
-                          <button onClick={() => setEmailTo(emailCustomer.salesContactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                          <button onClick={() => setEmailTo(emailCustomer.salesContactEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                             Sales: {emailCustomer.salesContactEmail}
                           </button>
                         )}
                         {emailCustomer.customerServiceEmail && (
-                          <button onClick={() => setEmailTo(emailCustomer.customerServiceEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">
+                          <button onClick={() => setEmailTo(emailCustomer.customerServiceEmail!)} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                             CS: {emailCustomer.customerServiceEmail}
                           </button>
                         )}
@@ -17935,7 +17961,7 @@ export default function App() {
                 <button
                   onClick={openInGmail}
                   disabled={!emailTo}
-                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2 disabled:opacity-50"
                 >
                   <Send size={14} /> Send via Gmail
                 </button>
@@ -17944,13 +17970,13 @@ export default function App() {
                     navigator.clipboard.writeText(buildEmailBody());
                     alert('Email body copied to clipboard!');
                   }}
-                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                 >
                   Copy Body
                 </button>
                 <button
                   onClick={() => setShowEmailQuote(false)}
-                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                 >
                   Cancel
                 </button>
@@ -17977,7 +18003,7 @@ export default function App() {
                 <p className="text-sm whitespace-pre-wrap">{sheetSyncError}</p>
                 <p className="text-[11px] opacity-70">If the error mentions HTTP 403 / 401 or CORS, make sure the source spreadsheet is shared as "Anyone with the link can view" or published to web (File → Share → Publish to web).</p>
                 <div className="flex justify-end">
-                  <button onClick={() => setSheetSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all">Close</button>
+                  <button onClick={() => setSheetSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-colors">Close</button>
                 </div>
               </div>
             </motion.div>
@@ -18144,7 +18170,7 @@ export default function App() {
               <div className="border-t border-[#141414]/10 p-4 flex justify-end gap-3 bg-[#F9F9F9]">
                 <button
                   onClick={() => setSheetSyncPreview(null)}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                 >
                   Cancel
                 </button>
@@ -18168,7 +18194,7 @@ export default function App() {
                     setSheetSyncPreview(null);
                   }}
                   disabled={sheetSyncPreview.newOrders.length === 0 && sheetSyncPreview.newShipments.length === 0}
-                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-colors disabled:opacity-30"
                 >
                   Import {sheetSyncPreview.newOrders.length + sheetSyncPreview.newShipments.length} Records
                 </button>
@@ -18215,7 +18241,7 @@ export default function App() {
               <div className="p-4 border-t border-[#141414]/10 flex justify-end">
                 <button
                   onClick={() => setSyncAllSummary(null)}
-                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all"
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-colors"
                 >
                   Close
                 </button>
@@ -18241,7 +18267,7 @@ export default function App() {
                 <p className="text-sm whitespace-pre-wrap">{orderSyncError}</p>
                 <p className="text-[11px] opacity-70">If the error mentions HTTP 403 / 401 or CORS, make sure the orders spreadsheet is shared as "Anyone with the link can view".</p>
                 <div className="flex justify-end">
-                  <button onClick={() => setOrderSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all">Close</button>
+                  <button onClick={() => setOrderSyncError(null)} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-colors">Close</button>
                 </div>
               </div>
             </motion.div>
@@ -18693,7 +18719,7 @@ export default function App() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase font-bold opacity-50">Tabs → Location</label>
-                    <button onClick={() => setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: [...scheduleSyncConfig.tabs, { tabName: '', location: '' }] })} className="text-[10px] font-bold uppercase flex items-center gap-1 px-2 py-1 border border-[#141414] hover:bg-[#141414] hover:text-white transition-all"><Plus size={11} /> Add Tab</button>
+                    <button onClick={() => setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: [...scheduleSyncConfig.tabs, { tabName: '', location: '' }] })} className="text-[10px] font-bold uppercase flex items-center gap-1 px-2 py-1 border border-[#141414] hover:bg-[#141414] hover:text-white transition-colors"><Plus size={11} /> Add Tab</button>
                   </div>
                   {scheduleSyncConfig.tabs.map((t, idx) => (
                     <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
@@ -18707,7 +18733,7 @@ export default function App() {
                           <option value={t.location}>{t.location} (inactive)</option>
                         )}
                       </select>
-                      <button onClick={() => { const tabs = scheduleSyncConfig.tabs.filter((_, i) => i !== idx); setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: tabs.length ? tabs : [{ tabName: '', location: '' }] }); }} className="p-1.5 text-red-500 hover:bg-red-50 transition-all" title="Remove tab"><Trash2 size={13} /></button>
+                      <button onClick={() => { const tabs = scheduleSyncConfig.tabs.filter((_, i) => i !== idx); setScheduleSyncConfig({ ...scheduleSyncConfig, tabs: tabs.length ? tabs : [{ tabName: '', location: '' }] }); }} className="p-1.5 text-red-500 hover:bg-red-50 transition-colors" title="Remove tab"><Trash2 size={13} /></button>
                     </div>
                   ))}
                   <p className="text-[10px] opacity-50">A location whose name contains “Vancouver” files those shipments under Vancouver; everything else goes to Hamilton.</p>
@@ -19222,7 +19248,7 @@ export default function App() {
               <div className="border-t border-[#141414]/10 p-4 flex justify-end gap-3 bg-[#F9F9F9]">
                 <button
                   onClick={() => setOrderSyncPreview(null)}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                 >
                   Cancel
                 </button>
@@ -19233,7 +19259,7 @@ export default function App() {
                     setOrderSyncPreview(null);
                   }}
                   disabled={orderSyncPreview.newOrders.length === 0 && updatedOrders.length === 0}
-                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-all disabled:opacity-30"
+                  className="px-6 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:opacity-80 transition-colors disabled:opacity-30"
                 >
                   Import {orderSyncPreview.newOrders.length} New{updatedOrders.length > 0 ? ` + ${updatedOrders.length} Updated` : ''}
                 </button>
@@ -19558,7 +19584,7 @@ export default function App() {
                                       setShipmentCreationData({ location: loc, date: o.shipmentDate || '', time: o.pickupTime || '', bay: '', carrier: o.carrier || '', orderId: o.id });
                                       setIsCreatingShipments(true);
                                     }}
-                                    className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
+                                    className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors"
                                   >
                                     Schedule
                                   </button>
@@ -19574,7 +19600,7 @@ export default function App() {
                 <div className="flex justify-end pt-4 border-t border-[#141414]/10">
                   <button
                     onClick={() => setIsAddingBatchShipment(false)}
-                    className="px-8 py-4 border-2 border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="px-8 py-4 border-2 border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Close
                   </button>
@@ -19589,16 +19615,16 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className={`bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden my-8 transition-all ${getModalState('shipment').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-4xl w-full'}`}
+              className={`bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden my-8 transition-colors ${getModalState('shipment').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-4xl w-full'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingShipment ? 'Add Shipment from Order' : 'Edit Shipment'}
                 </h3>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMinimized('shipment', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
-                  <button onClick={() => setModalMaximized('shipment', !getModalState('shipment').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('shipment').maximized ? 'Restore' : 'Maximize'}>{getModalState('shipment').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setIsAddingShipment(false); setEditingShipment(null); resetModalState('shipment'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  <button onClick={() => setModalMinimized('shipment', true)} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('shipment', !getModalState('shipment').maximized)} className="p-1 hover:bg-white/20 transition-colors" title={getModalState('shipment').maximized ? 'Restore' : 'Maximize'}>{getModalState('shipment').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setIsAddingShipment(false); setEditingShipment(null); resetModalState('shipment'); }} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
               <div className="p-6 space-y-4">
@@ -19744,7 +19770,7 @@ export default function App() {
                                             }));
                                             setIsCreatingShipments(true);
                                           }}
-                                          className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all"
+                                          className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors"
                                         >
                                           Schedule
                                         </button>
@@ -19804,7 +19830,7 @@ export default function App() {
                     <div className="flex gap-4">
                       <button
                         onClick={() => { setIsAddingShipment(false); setEditingShipment(null); }}
-                        className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                        className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                       >
                         Close
                       </button>
@@ -20135,7 +20161,7 @@ export default function App() {
                                 input.value = '';
                               }
                             }}
-                            className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs uppercase font-bold hover:bg-opacity-80 transition-all"
+                            className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs uppercase font-bold hover:bg-opacity-80 transition-colors"
                           >Add</button>
                         </div>
                       </div>
@@ -20155,13 +20181,13 @@ export default function App() {
                           setEditingShipment(null);
                           setPendingCompleteOrderId(null);
                         }}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                       >
                         Save Changes
                       </button>
                       <button
                         onClick={() => editingShipment && handleGenerateBol(editingShipment)}
-                        className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-blue-600 hover:text-white transition-all"
+                        className="flex-1 py-4 border border-blue-600 text-blue-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-blue-600 hover:text-white transition-colors"
                       >
                         <FileText size={14} /> Preview BOL
                       </button>
@@ -20182,7 +20208,7 @@ export default function App() {
                               setIsAddingShipment(false);
                               setEditingShipment(null);
                             }}
-                            className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-emerald-700 transition-all"
+                            className="flex-1 py-4 bg-emerald-600 text-white font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-emerald-700 transition-colors"
                           >
                             <CheckCircle2 size={14} /> Complete &amp; Bill
                           </button>
@@ -20190,13 +20216,13 @@ export default function App() {
                       })()}
                       <button
                         onClick={() => editingShipment && handleGenerateCoa(editingShipment)}
-                        className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-purple-600 hover:text-white transition-all"
+                        className="flex-1 py-4 border border-purple-600 text-purple-700 font-bold text-xs uppercase flex items-center-safe justify-center gap-2 hover:bg-purple-600 hover:text-white transition-colors"
                       >
                         <FileText size={14} /> Preview COA
                       </button>
                       <button
                         onClick={() => { setIsAddingShipment(false); setEditingShipment(null); setPendingCompleteOrderId(null); }}
-                        className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                        className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                       >
                         Cancel
                       </button>
@@ -20316,13 +20342,13 @@ export default function App() {
                       setIsAddingFreightRate(false);
                     }}
                     disabled={!newFreightRate.destination}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Save Rate
                   </button>
                   <button 
                     onClick={() => setIsAddingFreightRate(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -20712,7 +20738,7 @@ export default function App() {
                         if (productEl) productEl.value = '';
                         if (diffEl) diffEl.value = '0';
                       }}
-                      className="py-2 px-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all"
+                      className="py-2 px-3 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors"
                     >
                       <Plus size={14} />
                     </button>
@@ -20739,7 +20765,7 @@ export default function App() {
                                 <button onClick={() => setEditingContract({
                                   ...editingContract,
                                   contractLines: (editingContract.contractLines || []).filter(l => l.id !== cl.id)
-                                })} className="p-0.5 hover:bg-red-500 hover:text-white transition-all">
+                                })} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors">
                                   <X size={12} />
                                 </button>
                               </td>
@@ -20759,13 +20785,13 @@ export default function App() {
                       saveNow(COLLECTIONS.contracts, [editingContract]); // durable immediately
                       setEditingContract(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingContract(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -20782,7 +20808,7 @@ export default function App() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('contract').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-6xl w-full max-h-[92vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-colors ${getModalState('contract').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-6xl w-full max-h-[92vh]'}`}
             >
               {/* Banner header */}
               <div className="bg-[#141414] text-[#E4E3E0] sticky top-0 z-10">
@@ -20793,8 +20819,8 @@ export default function App() {
                     <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-70">Contract Detail</h3>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={() => setModalMaximized('contract', !getModalState('contract').maximized)} className="p-1.5 hover:bg-white/20 transition-all" title={getModalState('contract').maximized ? 'Restore' : 'Maximize'}>{getModalState('contract').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                    <button onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }} className="p-1.5 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                    <button onClick={() => setModalMaximized('contract', !getModalState('contract').maximized)} className="p-1.5 hover:bg-white/20 transition-colors" title={getModalState('contract').maximized ? 'Restore' : 'Maximize'}>{getModalState('contract').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                    <button onClick={() => { setSelectedContractDetail(null); resetModalState('contract'); }} className="p-1.5 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                   </div>
                 </div>
 
@@ -20970,13 +20996,13 @@ export default function App() {
                       setEditingContract(selectedContractDetail);
                       setSelectedContractDetail(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2"
                   >
                     <Edit2 size={16} /> Edit Contract
                   </button>
                   <button
                     onClick={() => setSelectedContractDetail(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Close
                   </button>
@@ -21095,7 +21121,7 @@ export default function App() {
                         setEditingFreightRate(null);
                       }
                     }}
-                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -21104,13 +21130,13 @@ export default function App() {
                       setFreightRates(freightRates.map(f => f.id === editingFreightRate.id ? editingFreightRate : f));
                       setEditingFreightRate(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingFreightRate(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21355,13 +21381,13 @@ export default function App() {
                       toggleRow(newCustomer.id);
                     }}
                     disabled={!newCustomer.name}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Save Customer
                   </button>
                   <button 
                     onClick={() => setIsAddingCustomer(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21432,13 +21458,13 @@ export default function App() {
                       setIsAddingProductGroup(false);
                     }}
                     disabled={!newProductGroup.name || !newProductGroup.bolCode}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Add Group
                   </button>
                   <button 
                     onClick={() => setIsAddingProductGroup(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21496,13 +21522,13 @@ export default function App() {
                       setIsAddingSugarType(false);
                     }}
                     disabled={!newSugarTypeName.trim() || !newSugarTypeAbbr.trim() || sugarTypes.some(st => st.name.toLowerCase() === newSugarTypeName.trim().toLowerCase())}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Add Sugar Type
                   </button>
                   <button
                     onClick={() => { setIsAddingSugarType(false); setNewSugarTypeName(''); setNewSugarTypeAbbr(''); }}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21557,13 +21583,13 @@ export default function App() {
                       }
                       setEditingSugarType(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingSugarType(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21632,13 +21658,13 @@ export default function App() {
                       setProductGroups(productGroups.map(pg => pg.id === editingProductGroup.id ? editingProductGroup : pg));
                       setEditingProductGroup(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button 
                     onClick={() => setEditingProductGroup(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21819,13 +21845,13 @@ export default function App() {
                       setSkuToConfirm(newSku);
                     }}
                     disabled={!newSku.name || !newSku.id}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Create Product
                   </button>
                   <button 
                     onClick={() => setIsAddingSku(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -21842,14 +21868,14 @@ export default function App() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-all ${getModalState('customer').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
+              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-colors ${getModalState('customer').maximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-2xl w-full max-h-[90vh]'}`}
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.customerNumber || editingCustomer.id}</h3>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMinimized('customer', true)} className="p-1 hover:bg-white/20 transition-all" title="Minimize"><Minus size={16} /></button>
-                  <button onClick={() => setModalMaximized('customer', !getModalState('customer').maximized)} className="p-1 hover:bg-white/20 transition-all" title={getModalState('customer').maximized ? 'Restore' : 'Maximize'}>{getModalState('customer').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={() => { setEditingCustomer(null); resetModalState('customer'); }} className="p-1 hover:bg-white/20 transition-all" title="Close"><X size={16} /></button>
+                  <button onClick={() => setModalMinimized('customer', true)} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  <button onClick={() => setModalMaximized('customer', !getModalState('customer').maximized)} className="p-1 hover:bg-white/20 transition-colors" title={getModalState('customer').maximized ? 'Restore' : 'Maximize'}>{getModalState('customer').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+                  <button onClick={() => { setEditingCustomer(null); resetModalState('customer'); }} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
               <div className="p-6 space-y-4">
@@ -22105,7 +22131,7 @@ export default function App() {
                         setShipToForm({ locationCode: nextCode, name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', orderConfirmationEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
                         setShowShipToForm(true);
                       }}
-                      className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all"
+                      className="px-3 py-1 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors"
                     >
                       <Plus size={12} /> Add Ship-To
                     </button>
@@ -22197,7 +22223,7 @@ export default function App() {
                     <div className="bg-[#F5F5F5] border-t border-[#141414]/10 p-4 space-y-3">
                       <div className="flex justify-between items-center">
                         <h5 className="text-[10px] font-bold uppercase tracking-widest opacity-70">{editingShipTo ? 'Edit Ship-To' : 'Add Ship-To'}</h5>
-                        <button type="button" onClick={() => { setShowShipToForm(false); setEditingShipTo(null); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"><X size={14} /></button>
+                        <button type="button" onClick={() => { setShowShipToForm(false); setEditingShipTo(null); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><X size={14} /></button>
                       </div>
                       <div className="grid grid-cols-4 gap-3">
                         <div className="space-y-1">
@@ -22275,14 +22301,14 @@ export default function App() {
                             setEditingShipTo(null);
                           }}
                           disabled={!shipToForm.name.trim()}
-                          className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all disabled:opacity-30"
+                          className="flex-1 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors disabled:opacity-30"
                         >
                           {editingShipTo ? 'Save Ship-To' : 'Add Ship-To'}
                         </button>
                         <button
                           type="button"
                           onClick={() => { setShowShipToForm(false); setEditingShipTo(null); }}
-                          className="flex-1 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                          className="flex-1 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                         >
                           Cancel
                         </button>
@@ -22312,7 +22338,7 @@ export default function App() {
                       resetModalState('customer');
                       setCustomerDeleteConfirmId(id);
                     }}
-                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -22326,13 +22352,13 @@ export default function App() {
                       setEditingShipTo(null);
                       resetModalState('customer');
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => { setEditingCustomer(null); setShowShipToForm(false); setEditingShipTo(null); resetModalState('customer'); }}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22435,13 +22461,13 @@ export default function App() {
                       setSkus(skus.map(s => s.id === editingSku.id ? { ...s, premiumCadMt: editingSku.premiumCadMt } : s));
                       setEditingSku(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingSku(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22541,13 +22567,13 @@ export default function App() {
                       setIsAddingFreightRate(false);
                     }}
                     disabled={!newFreightRate.destination || !newFreightRate.provider}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Save Freight Rate
                   </button>
                   <button 
                     onClick={() => setIsAddingFreightRate(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22648,7 +22674,7 @@ export default function App() {
                         setEditingFreightRate(null);
                       }
                     }}
-                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -22657,13 +22683,13 @@ export default function App() {
                       setFreightRates(freightRates.map(f => f.id === editingFreightRate.id ? editingFreightRate : f));
                       setEditingFreightRate(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingFreightRate(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22771,13 +22797,13 @@ export default function App() {
                       setIsAddingSupplyChain(false);
                     }}
                     disabled={!newSupplyChain.component || !newSupplyChain.provider}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all disabled:opacity-50"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors disabled:opacity-50"
                   >
                     Save Component
                   </button>
                   <button 
                     onClick={() => setIsAddingSupplyChain(false)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22897,7 +22923,7 @@ export default function App() {
                         setEditingSupplyChain(null);
                       }
                     }}
-                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center gap-2"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -22906,13 +22932,13 @@ export default function App() {
                       setSupplyChain(supplyChain.map(s => s.id === editingSupplyChain.id ? editingSupplyChain : s));
                       setEditingSupplyChain(null);
                     }}
-                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
                   <button
                     onClick={() => setEditingSupplyChain(null)}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -22967,13 +22993,13 @@ export default function App() {
                     setIsAddingSku(false);
                     toggleRow(finalSku.id);
                   }}
-                  className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all shadow-[8px_8px_0px_0px_rgba(20,20,20,0.2)]"
+                  className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors shadow-[8px_8px_0px_0px_rgba(20,20,20,0.2)]"
                 >
                   Confirm & Save
                 </button>
                 <button 
                   onClick={() => setSkuToConfirm(null)}
-                  className="flex-1 py-4 border-2 border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  className="flex-1 py-4 border-2 border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                 >
                   Back to Edit
                 </button>
@@ -22986,17 +23012,17 @@ export default function App() {
         {(Object.entries(modalStates).some(([, s]) => (s as { minimized: boolean }).minimized)) && (
           <div className="fixed bottom-4 left-4 z-[600] flex gap-2 flex-wrap">
             {getModalState('invoice').minimized && editingInvoiceCard && (
-              <button onClick={() => setModalMinimized('invoice', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+              <button onClick={() => setModalMinimized('invoice', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-colors border border-[#141414]">
                 <Maximize2 size={12} /> Invoice: {editingInvoiceCard.bolNumber}
               </button>
             )}
             {getModalState('order').minimized && viewingOrderCard && (
-              <button onClick={() => setModalMinimized('order', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+              <button onClick={() => setModalMinimized('order', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-colors border border-[#141414]">
                 <Maximize2 size={12} /> Order: {viewingOrderCard.bolNumber}
               </button>
             )}
             {getModalState('shipment').minimized && (isAddingShipment || editingShipment) && (
-              <button onClick={() => setModalMinimized('shipment', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-all border border-[#141414]">
+              <button onClick={() => setModalMinimized('shipment', false)} className="bg-[#141414] text-[#E4E3E0] px-4 py-2 text-xs font-bold uppercase tracking-widest flex items-center gap-2 shadow-lg hover:bg-opacity-80 transition-colors border border-[#141414]">
                 <Maximize2 size={12} /> {isAddingShipment ? 'Add Shipment' : `Edit: ${editingShipment?.bol || ''}`}
               </button>
             )}
@@ -23024,7 +23050,7 @@ export default function App() {
               <button
                 onClick={() => setShowScanStatus(v => !v)}
                 title={healthy ? 'Email importer running normally' : paused ? 'Email importer paused — outside scheduled hours (Mon 4AM ET – Fri 5PM PT)' : 'Email importer needs attention — click for details'}
-                className="flex items-center gap-1.5 bg-white/95 border border-[#141414]/20 shadow px-2.5 py-1 rounded-full hover:border-[#141414] transition-all"
+                className="flex items-center gap-1.5 bg-white/95 border border-[#141414]/20 shadow px-2.5 py-1 rounded-full hover:border-[#141414] transition-colors"
               >
                 <span className={`w-2.5 h-2.5 rounded-full ${dotClass}`} />
                 <span className="text-[9px] font-bold uppercase tracking-widest opacity-70">Importer</span>
@@ -23078,7 +23104,7 @@ export default function App() {
               </div>
               <button 
                 onClick={() => setErrorBox(null)}
-                className="w-full py-4 bg-red-500 text-white font-bold text-xs uppercase hover:bg-red-600 transition-all shadow-[8px_8px_0px_0px_rgba(239,68,68,0.2)]"
+                className="w-full py-4 bg-red-500 text-white font-bold text-xs uppercase hover:bg-red-600 transition-colors shadow-[8px_8px_0px_0px_rgba(239,68,68,0.2)]"
               >
                 Dismiss
               </button>
@@ -23117,7 +23143,7 @@ export default function App() {
                         <span className="text-[10px] font-bold uppercase tracking-widest opacity-70">{titleLabel}</span>
                         <span className="text-sm font-bold font-mono">{popupContract}</span>
                       </div>
-                      <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-all"><X size={16} /></button>
+                      <button onClick={() => setContractOrdersPopup(null)} className="p-1.5 hover:bg-white/20 transition-colors"><X size={16} /></button>
                     </div>
                     {(() => {
                 // Volume Taken link → list the invoices that used this contract
@@ -23525,7 +23551,7 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={submitOrderLineItem}
-                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                        className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-2"
                       >
                         <Plus size={12} /> {editingLineItemIdx !== null ? 'Update Item' : 'Add Item'}
                       </button>
@@ -23535,7 +23561,7 @@ export default function App() {
                             setEditingLineItemIdx(null);
                             setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' });
                           }}
-                          className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                          className="px-4 py-2 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                         >
                           Cancel
                         </button>
@@ -23707,14 +23733,14 @@ export default function App() {
                                     contractNumber: item.contractNumber,
                                   });
                                 }}
-                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-all"
+                                className="text-blue-600 hover:bg-blue-50 p-1 rounded transition-colors"
                                 title="Edit line item"
                               >
                                 <Edit2 size={12} />
                               </button>
                               <button
                                 onClick={() => setOrderLineItems(orderLineItems.filter((_, i) => i !== idx))}
-                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-all"
+                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-colors"
                                 title="Delete line item"
                               >
                                 <Trash2 size={12} />
@@ -23824,7 +23850,7 @@ export default function App() {
                                       type="button"
                                       onClick={() => { if (available) setOrderApptTime(slot); }}
                                       disabled={!available}
-                                      className={`py-1.5 px-2 text-[11px] font-mono border transition-all flex flex-col items-center ${
+                                      className={`py-1.5 px-2 text-[11px] font-mono border transition-colors flex flex-col items-center ${
                                         isSelected
                                           ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold'
                                           : !available
@@ -23981,7 +24007,7 @@ export default function App() {
                       setOrderApptTime('');
                       setOrderApptBay('');
                     }}
-                    className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
+                    className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-colors"
                   >
                     {editingOrder ? 'Save Changes' : 'Create Order'}
                   </button>
@@ -24049,7 +24075,7 @@ export default function App() {
                         setOrderApptTime('');
                         setOrderApptBay('');
                       }}
-                      className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-all"
+                      className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-colors"
                     >
                       Save &amp; Confirm Order
                     </button>
@@ -24076,7 +24102,7 @@ export default function App() {
                       setOrderApptTime('');
                       setOrderApptBay('');
                     }}
-                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                   >
                     Cancel
                   </button>
@@ -24351,7 +24377,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => updateReview(rev.id, { lines: [...rev.lines, { productValue: '', productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: 0, pricePerMt: 0, contractNumber: rev.lines[rev.lines.length - 1]?.contractNumber || rev.contractNumber || '' }] })}
-                            className="w-full p-2 text-[10px] font-bold uppercase text-left border-t border-[#141414]/10 hover:bg-[#F5F5F5] transition-all flex items-center gap-1"
+                            className="w-full p-2 text-[10px] font-bold uppercase text-left border-t border-[#141414]/10 hover:bg-[#F5F5F5] transition-colors flex items-center gap-1"
                           >
                             <Plus size={11} /> Add Product
                           </button>
@@ -24425,7 +24451,7 @@ export default function App() {
                                         return (
                                           <button key={slot} type="button" disabled={rev.created || !available}
                                             onClick={() => { if (available) updateReview(rev.id, { apptTime: slot }); }}
-                                            className={`py-1.5 px-2 text-[11px] font-mono border transition-all flex flex-col items-center ${isSelected ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold' : !available ? 'bg-red-50 text-red-300 border-red-200 cursor-not-allowed line-through' : 'bg-white text-[#141414] border-[#141414]/20 hover:border-[#141414] hover:bg-[#141414]/5 cursor-pointer'}`}>
+                                            className={`py-1.5 px-2 text-[11px] font-mono border transition-colors flex flex-col items-center ${isSelected ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold' : !available ? 'bg-red-50 text-red-300 border-red-200 cursor-not-allowed line-through' : 'bg-white text-[#141414] border-[#141414]/20 hover:border-[#141414] hover:bg-[#141414]/5 cursor-pointer'}`}>
                                             <span>{slot}</span>
                                             {bayLabel && <span className="text-[8px] opacity-50 leading-none">{bayLabel}</span>}
                                           </button>
@@ -24654,7 +24680,7 @@ export default function App() {
                                 entries: [...batchOrder.entries, newEntry]
                               });
                             }}
-                            className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-2"
+                            className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-2"
                           >
                             <Plus size={12} /> Add Entry
                           </button>
@@ -24757,7 +24783,7 @@ export default function App() {
                                           const next = batchOrder.entries.filter((_, i) => i !== idx);
                                           setBatchOrder({...batchOrder, entries: next});
                                         }}
-                                        className="w-7 h-7 rounded-full flex items-center-safe justify-center text-red-500 hover:bg-red-50 transition-all"
+                                        className="w-7 h-7 rounded-full flex items-center-safe justify-center text-red-500 hover:bg-red-50 transition-colors"
                                       >
                                         <Trash2 size={14} />
                                       </button>
@@ -24805,7 +24831,7 @@ export default function App() {
                       <div className="flex justify-end gap-4 pt-4 border-t border-[#141414]/10">
                         <button
                           onClick={() => setIsAddingBatchOrder(false)}
-                          className="px-6 py-3 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                          className="px-6 py-3 border border-[#141414] text-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                         >
                           Cancel
                         </button>
@@ -24896,7 +24922,7 @@ export default function App() {
                               entries: [{ shipmentDate: '', deliveryDate: '', po: '', bol: '', qty: 22, carrier: 'Customer Pick Up', amount: 0 }]
                             });
                           }}
-                          className="px-6 py-3 bg-emerald-700 text-white text-xs font-bold uppercase hover:bg-emerald-800 transition-all shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
+                          className="px-6 py-3 bg-emerald-700 text-white text-xs font-bold uppercase hover:bg-emerald-800 transition-colors shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
                         >
                           Add All Orders
                         </button>
@@ -24930,13 +24956,13 @@ export default function App() {
                       deleteCustomer(customerDeleteConfirmId);
                       setCustomerDeleteConfirmId(null);
                     }}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
                   >
                     Yes, Delete
                   </button>
                   <button
                     onClick={() => setCustomerDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -25105,7 +25131,7 @@ export default function App() {
                               }));
                             }
                           }}
-                          className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-opacity-80 transition-all whitespace-nowrap"
+                          className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-opacity-80 transition-colors whitespace-nowrap"
                           title={`Auto-assign all customers whose name contains "${customerGroupDraft.name}"`}
                         >
                           <Zap size={12} /> Auto-Detect
@@ -25160,13 +25186,13 @@ export default function App() {
                       setOrders(orders.filter(o => o.id !== orderDeleteConfirmId));
                       setOrderDeleteConfirmId(null);
                     }}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
                   >
                     Yes, Delete
                   </button>
                   <button
                     onClick={() => setOrderDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -25197,13 +25223,13 @@ export default function App() {
                       setOrders(orders.map(o => o.id === orderHideConfirmId ? { ...o, hidden: true } : o));
                       setOrderHideConfirmId(null);
                     }}
-                    className="flex-1 py-3 bg-amber-600 text-white text-xs font-bold uppercase hover:bg-amber-700 transition-all"
+                    className="flex-1 py-3 bg-amber-600 text-white text-xs font-bold uppercase hover:bg-amber-700 transition-colors"
                   >
                     Yes, Hide
                   </button>
                   <button
                     onClick={() => setOrderHideConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -25231,13 +25257,13 @@ export default function App() {
                 <div className="flex gap-4">
                   <button
                     onClick={() => deleteShipment(shipmentDeleteConfirmId)}
-                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-all"
+                    className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
                   >
                     Yes, Delete
                   </button>
                   <button
                     onClick={() => setShipmentDeleteConfirmId(null)}
-                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                    className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                   >
                     Cancel
                   </button>
@@ -25303,14 +25329,14 @@ export default function App() {
                     {!(isCurrentlyActive && hasUninvoicedOrders) && (
                       <button
                         onClick={() => toggleContractActive(contractInactivateConfirmId)}
-                        className={`flex-1 py-3 text-white text-xs font-bold uppercase transition-all ${isCurrentlyActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
+                        className={`flex-1 py-3 text-white text-xs font-bold uppercase transition-colors ${isCurrentlyActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
                       >
                         {isCurrentlyActive ? 'Yes, Inactivate' : 'Yes, Reactivate'}
                       </button>
                     )}
                     <button
                       onClick={() => setContractInactivateConfirmId(null)}
-                      className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-all"
+                      className="flex-1 py-3 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                     >
                       {isCurrentlyActive && hasUninvoicedOrders ? 'Close' : 'Cancel'}
                     </button>
@@ -25432,7 +25458,7 @@ export default function App() {
                             setShowOrderConfirmation(false);
                             setPendingStatusChange(null);
                           }}
-                          className={`flex-1 py-4 font-bold text-xs uppercase hover:bg-opacity-80 transition-all flex items-center-safe justify-center gap-2 ${
+                          className={`flex-1 py-4 font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2 ${
                             isCancelling ? 'bg-red-600 text-white' : 'bg-[#141414] text-[#E4E3E0]'
                           }`}
                         >
@@ -25443,7 +25469,7 @@ export default function App() {
                             setShowOrderConfirmation(false);
                             setPendingStatusChange(null);
                           }}
-                          className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                          className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                         >
                           Go Back
                         </button>
@@ -25630,7 +25656,7 @@ export default function App() {
                                       }
                                     }}
                                     disabled={!available}
-                                    className={`py-1.5 px-2 text-[11px] font-mono border transition-all flex flex-col items-center ${
+                                    className={`py-1.5 px-2 text-[11px] font-mono border transition-colors flex flex-col items-center ${
                                       isSelected
                                         ? 'bg-[#141414] text-[#E4E3E0] border-[#141414] font-bold'
                                         : !available
@@ -25801,7 +25827,7 @@ export default function App() {
                             setIsCreatingTransferShipment(false);
                             setShipmentCreationData({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
                           }}
-                          className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                          className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                         >
                           {isCreatingTransferShipment ? 'Schedule Transfer' : 'Create Shipments'}
                         </button>
@@ -25811,7 +25837,7 @@ export default function App() {
                             setIsCreatingTransferShipment(false);
                             setShipmentCreationData({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
                           }}
-                          className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                          className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                         >
                           Cancel
                         </button>
@@ -25933,13 +25959,13 @@ export default function App() {
                     } : l));
                     setEditingAppointmentSchedule(null);
                   }}
-                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                 >
                   Save Schedule
                 </button>
                 <button
                   onClick={() => setEditingAppointmentSchedule(null)}
-                  className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all"
+                  className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
                 >
                   Cancel
                 </button>
@@ -26118,7 +26144,7 @@ export default function App() {
                   <div className="border-t border-[#141414]/10 pt-4 space-y-3">
                     <div className="flex justify-between items-center">
                       <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
-                      <button type="button" onClick={addLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1">
+                      <button type="button" onClick={addLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1">
                         <Plus size={10} /> Add Leg
                       </button>
                     </div>
@@ -26129,7 +26155,7 @@ export default function App() {
                       <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
                         <div className="flex justify-between items-center">
                           <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
-                          <button type="button" onClick={() => removeLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all rounded">
+                          <button type="button" onClick={() => removeLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors rounded">
                             <Trash2 size={12} />
                           </button>
                         </div>
@@ -26169,8 +26195,8 @@ export default function App() {
                     <textarea name="notes" rows={2} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none resize-none" />
                   </div>
                   <div className="flex gap-4 pt-2">
-                    <button type="submit" className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all">Create Transfer</button>
-                    <button type="button" onClick={() => setIsAddingTransfer(false)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                    <button type="submit" className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Create Transfer</button>
+                    <button type="button" onClick={() => setIsAddingTransfer(false)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
                 </form>
               </div>
@@ -26373,7 +26399,7 @@ export default function App() {
                 <div className="border-t border-[#141414]/10 pt-4 space-y-3">
                   <div className="flex justify-between items-center">
                     <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
-                    <button type="button" onClick={addEditLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-all flex items-center gap-1">
+                    <button type="button" onClick={addEditLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1">
                       <Plus size={10} /> Add Leg
                     </button>
                   </div>
@@ -26384,7 +26410,7 @@ export default function App() {
                     <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
-                        <button type="button" onClick={() => removeEditLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-all rounded">
+                        <button type="button" onClick={() => removeEditLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors rounded">
                           <Trash2 size={12} />
                         </button>
                       </div>
@@ -26428,7 +26454,7 @@ export default function App() {
                         setEditingTransfer(null);
                       }
                     }}
-                    className="px-6 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-all"
+                    className="px-6 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -26443,11 +26469,11 @@ export default function App() {
                       setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
                     }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-all"
+                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
-                  <button onClick={() => setEditingTransfer(null)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-all">Cancel</button>
+                  <button onClick={() => setEditingTransfer(null)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                 </div>
               </div>
             </motion.div>
@@ -26480,7 +26506,7 @@ function SearchInput({ value, onChange, placeholder }: { value: string, onChange
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="block w-full pl-10 pr-3 py-2 border border-[#141414] bg-white text-xs font-bold uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-[#141414]/20 transition-all shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]"
+        className="block w-full pl-10 pr-3 py-2 border border-[#141414] bg-white text-xs font-bold uppercase tracking-widest focus:outline-none focus:ring-2 focus:ring-[#141414]/20 transition-colors shadow-[2px_2px_0px_0px_rgba(20,20,20,1)]"
       />
     </div>
   );

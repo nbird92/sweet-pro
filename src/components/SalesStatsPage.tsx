@@ -442,11 +442,11 @@ export default function SalesStatsPage({ invoices, orders, customers, contracts,
         </div>
         <div className="flex gap-2">
           <button onClick={() => setConfigOpen(!configOpen)}
-            className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
+            className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-colors">
             <Settings size={12} /> {configOpen ? 'Hide Config' : 'Show Config'}
           </button>
           <button onClick={exportPivot}
-            className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-all">
+            className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1 hover:bg-[#F5F5F5] transition-colors">
             <Download size={12} /> Export CSV
           </button>
         </div>

@@ -104,7 +104,7 @@ export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete
       >
         <button
           onClick={onAdd}
-          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-all whitespace-nowrap"
+          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
         >
           <Plus size={12} /> Add Return Order
         </button>
@@ -185,21 +185,21 @@ export default function ReturnOrdersPage({ returnOrders, onAdd, onEdit, onDelete
                   </td>
                   <td className="p-3 text-xs" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => onPreview(r)} className="p-1 hover:bg-emerald-600 hover:text-white transition-all" title="Preview Return Order Confirmation">
+                      <button onClick={() => onPreview(r)} className="p-1 hover:bg-emerald-600 hover:text-white transition-colors" title="Preview Return Order Confirmation">
                         <FileText size={14} />
                       </button>
-                      <button onClick={() => onSendEmail(r)} className="p-1 hover:bg-blue-600 hover:text-white transition-all" title="Email return confirmation to customer">
+                      <button onClick={() => onSendEmail(r)} className="p-1 hover:bg-blue-600 hover:text-white transition-colors" title="Email return confirmation to customer">
                         <Mail size={14} />
                       </button>
                       {r.status === 'Confirmed' && (
-                        <button onClick={() => onReturnAndBill(r)} className="p-1 hover:bg-emerald-700 hover:text-white transition-all" title="Return & Bill — creates the R-BOL and the credit invoice">
+                        <button onClick={() => onReturnAndBill(r)} className="p-1 hover:bg-emerald-700 hover:text-white transition-colors" title="Return & Bill — creates the R-BOL and the credit invoice">
                           <CheckCircle2 size={14} />
                         </button>
                       )}
-                      <button onClick={() => onEdit(r)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-all" title="Edit return order">
+                      <button onClick={() => onEdit(r)} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit return order">
                         <Edit2 size={14} />
                       </button>
-                      <button onClick={() => { if (window.confirm(`Delete return order ${r.bolNumber}?`)) onDelete(r.id); }} className="p-1 hover:bg-red-500 hover:text-white transition-all" title="Delete return order">
+                      <button onClick={() => { if (window.confirm(`Delete return order ${r.bolNumber}?`)) onDelete(r.id); }} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete return order">
                         <Trash2 size={14} />
                       </button>
                     </div>
