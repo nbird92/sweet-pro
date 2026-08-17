@@ -6031,7 +6031,13 @@ export default function App() {
         { collection: COLLECTIONS.poPendingImports, key: 'popendingimports', data: poPendingImports, allowMassDelete: true },
         { collection: COLLECTIONS.inboxTriage, key: 'inboxtriage', data: inboxTriage, allowMassDelete: true },
         { collection: COLLECTIONS.poAmendments,  key: 'poamendments',  data: poAmendments, allowMassDelete: true },
-        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), sources: [poLearned], allowMassDelete: true },
+        // NO `sources` on purpose: this entry's data depends on WALL-CLOCK TIME
+        // (pruneExpired drops entries past the TTL), not just on poLearned. An
+        // identity gate keyed on poLearned alone would stay "clean" when a
+        // mapping expires mid-session, so the expiry would never be pushed. The
+        // collection is small, so falling through to the stringify compare every
+        // cycle is cheap and always correct.
+        { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), allowMassDelete: true },
   ];
 
   // Push every collection whose current state differs from what was last synced.
