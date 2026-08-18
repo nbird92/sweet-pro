@@ -4,7 +4,7 @@
  * Use this to recover the Customers and Products tables from the original
  * Google Sheet the app was migrated from, after the live Firestore copies were
  * lost. It is deliberately conservative:
- *   - Targets the "sweetpro" NAMED database the live app actually reads from
+ *   - Targets the "sweetpro2" NAMED database the live app actually reads from
  *     (the old migrate-to-firestore.ts wrote to the DEFAULT database).
  *   - Touches ONLY the `customers` and `products` collections — your intact
  *     orders / invoices / contracts / shipments are never read or written.
@@ -39,7 +39,7 @@ const WRITE = process.argv.includes('--write');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// ---------- Firebase Admin (NAMED "sweetpro" database) ----------
+// ---------- Firebase Admin (NAMED "sweetpro2" database) ----------
 const serviceAccountPath = resolve(__dirname, 'firebase-service-account.json');
 let serviceAccount: any;
 try {
@@ -52,8 +52,9 @@ try {
 }
 
 const fbApp = initializeApp({ credential: cert(serviceAccount) });
-// IMPORTANT: the live app uses the "sweetpro" named database, not the default.
-const db = getFirestore(fbApp, 'sweetpro');
+// IMPORTANT: the live app uses the "sweetpro2" named database, not the default.
+// Must match DATABASE_ID in src/firebaseDb.ts (sweetpro2 = the restored database).
+const db = getFirestore(fbApp, 'sweetpro2');
 
 // ---------- Google Sheets ----------
 const jwt = new JWT({
@@ -106,7 +107,7 @@ async function upsert(collectionName: string, docs: any[]) {
 }
 
 async function run() {
-  console.log(`\n${WRITE ? '*** WRITE MODE — will upsert into the "sweetpro" database ***' : 'DRY RUN — reading only, nothing will be written. Add --write to apply.'}\n`);
+  console.log(`\n${WRITE ? '*** WRITE MODE — will upsert into the "sweetpro2" database ***' : 'DRY RUN — reading only, nothing will be written. Add --write to apply.'}\n`);
   const doc = new GoogleSpreadsheet(SHEET_ID!, jwt);
   await doc.loadInfo();
   console.log(`Spreadsheet: "${doc.title}"\n`);

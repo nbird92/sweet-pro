@@ -16,20 +16,35 @@ import {
 } from 'firebase/firestore';
 import { app } from './firebaseConfig';
 
-// Use the "sweetpro" database with OFFLINE PERSISTENCE (IndexedDB) enabled: a
-// write is committed to the local cache immediately and synced to the server in
-// the background, RETRYING across a tab close / refresh — so an edit can no
-// longer be lost in the gap between "user made the change" and "server
-// acknowledged it". The multi-tab manager lets several open tabs share one
-// cache. Falls back to the plain (memory-only) instance if IndexedDB isn't
-// available (e.g. private-browsing / unsupported browser) so the app still runs.
+/** The NAMED Firestore database the whole system reads and writes.
+ *
+ *  "sweetpro2" is the restored database (2026-08-14). A Firestore restore always
+ *  creates a NEW database — it cannot overwrite in place — so recovery meant
+ *  repointing here rather than importing back into the damaged "sweetpro".
+ *  The old "sweetpro" is intentionally left untouched as a reference copy.
+ *
+ *  This MUST stay in step with api/scan-po-inbox.ts and scripts/restore-from-
+ *  sheets.ts: if the cron writes to one database while the app reads another,
+ *  imported POs silently vanish.
+ *
+ *  Side benefit of the rename: Firestore's offline queue and IndexedDB cache are
+ *  PER-DATABASE, so every browser that still holds the damaged cache — and any
+ *  deletes queued in it — is orphaned rather than replayed against live data. */
+export const DATABASE_ID = 'sweetpro2';
+
+// OFFLINE PERSISTENCE (IndexedDB) is on: a write commits to the local cache
+// immediately and syncs in the background, RETRYING across a tab close /
+// refresh — so an edit isn't lost between "user made the change" and "server
+// acknowledged it". The multi-tab manager lets several tabs share one cache.
+// Falls back to the plain (memory-only) instance if IndexedDB isn't available
+// (private browsing / unsupported browser) so the app still runs.
 let db: Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-  }, 'sweetpro');
+  }, DATABASE_ID);
 } catch {
-  db = getFirestore(app, 'sweetpro');
+  db = getFirestore(app, DATABASE_ID);
 }
 
 // Collection names matching the old Google Sheets tab names

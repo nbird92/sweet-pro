@@ -65,7 +65,10 @@ function getAdminApp() {
 let dbInstance: ReturnType<typeof getFirestore> | null = null;
 function getDb() {
   if (!dbInstance) {
-    const db = getFirestore(getAdminApp(), 'sweetpro');
+    // MUST match DATABASE_ID in src/firebaseDb.ts. "sweetpro2" is the restored
+    // database (2026-08-14); if this cron writes to a different database than the
+    // app reads, imported POs silently disappear.
+    const db = getFirestore(getAdminApp(), 'sweetpro2');
     // Drop undefined fields instead of rejecting the whole write. Extraction
     // payloads are built from model output where any optional/numeric field can
     // legitimately be absent; without this a single undefined fails the entire
