@@ -6286,6 +6286,17 @@ export default function App() {
           // with — but we must NOT advance the baseline, so it re-confirms later.
           pending.push(task.collection);
           console.warn(`[sync] "${task.collection}" saved locally; awaiting server ack.`, e);
+          // THREE consecutive no-acks = the write channel is dead for everyone.
+          // Waiting out the 20s timeout on each of the ~40 remaining collections
+          // would take 10+ minutes per pass — which also kept the Repair Sync
+          // banner (gated on N *completed* failed passes) from ever appearing.
+          // Abort the pass (unpushed collections stay dirty and retry) and
+          // surface the repair immediately.
+          if (pending.length >= 3) {
+            console.warn('[sync] Write channel appears dead (3 collections in a row got no server ack) — aborting this pass and surfacing Repair Sync.');
+            setWriteQueueJammed(true);
+            break;
+          }
         } else {
           failed.push(`${task.collection}: ${e instanceof Error ? e.message : String(e)}`);
           console.error(`[sync] Failed to push "${task.collection}" — will retry next cycle.`, e);
