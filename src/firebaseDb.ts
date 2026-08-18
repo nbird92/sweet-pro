@@ -323,6 +323,38 @@ export async function syncCollection<T extends { id: string }>(
 // guard blocks a delete larger than max(20, 50% of that) unless allowMassDelete.
 // No getDocs here — we never touch docs we didn't change, which is both faster
 // and the whole point.
+/** Marks a write whose SERVER acknowledgement didn't arrive in time. The write
+ *  itself is already durable in the local IndexedDB cache and Firestore replays
+ *  it when the connection returns — this is "not confirmed yet", NOT "lost". */
+export class SyncTimeoutError extends Error {
+  constructor(public collection: string) {
+    super(`${collection}: still waiting for the server (saved locally, will finish when the connection returns)`);
+    this.name = 'SyncTimeoutError';
+  }
+}
+
+/** With offline persistence on, batch.commit() only settles on SERVER ack — when
+ *  the server is unreachable it never resolves AND never rejects, which once
+ *  wedged the whole sync loop. So every commit races a watchdog.
+ *
+ *  PER BATCH, deliberately. This used to wrap the WHOLE multi-batch write with
+ *  one 15s budget, which meant a large-but-perfectly-healthy write (a collection
+ *  with thousands of dirty docs = many sequential 450-doc round trips) tripped
+ *  the timer, never advanced its baseline, and retried the same oversized write
+ *  forever — permanently stuck on "still waiting for the server". A per-batch
+ *  budget still catches a genuinely hung connection within seconds, while
+ *  letting a big write take as long as it legitimately needs. */
+const BATCH_ACK_TIMEOUT_MS = 20000;
+function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SyncTimeoutError(collectionName)), BATCH_ACK_TIMEOUT_MS);
+    }),
+  ]);
+}
+
 export async function syncCollectionDiff<T extends { id: string }>(
   collectionName: string,
   upserts: T[],
@@ -370,6 +402,7 @@ export async function syncCollectionDiff<T extends { id: string }>(
     }
   }
   if (count > 0) batches.push(batch);
-  for (const b of batches) await b.commit();
+  // Each batch gets its own ack budget — see withBatchTimeout.
+  for (const b of batches) await withBatchTimeout(b.commit(), collectionName);
 }
 

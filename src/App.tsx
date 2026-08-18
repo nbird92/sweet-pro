@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -180,31 +180,6 @@ class PageErrorBoundary extends React.Component<{ children: React.ReactNode }, {
 // ============================
 // SYNC WATCHDOG
 // ============================
-/** Marks a write whose SERVER acknowledgement didn't arrive in time. The write
- *  itself is already durable in the local IndexedDB cache and Firestore replays
- *  it when the connection returns — this is "not confirmed yet", NOT "lost". */
-class SyncTimeoutError extends Error {
-  constructor(public collection: string) {
-    super(`${collection}: still waiting for the server (saved locally, will finish when the connection returns)`);
-    this.name = 'SyncTimeoutError';
-  }
-}
-
-/** Firestore's batch.commit() only settles on SERVER ack when offline persistence
- *  is enabled — offline it stays pending forever rather than rejecting. Racing it
- *  against a timer keeps one unreachable write from wedging the entire sync loop
- *  (which previously left `isSyncing` stuck true, so nothing synced again). */
-const SYNC_ACK_TIMEOUT_MS = 15000;
-function withSyncTimeout<T>(p: Promise<T>, collection: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  return Promise.race([
-    p.finally(() => clearTimeout(timer)),
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new SyncTimeoutError(collection)), SYNC_ACK_TIMEOUT_MS);
-    }),
-  ]);
-}
-
 // ============================
 // RAW SUGAR PRICE — display unit
 // ============================
@@ -6182,10 +6157,7 @@ export default function App() {
           // local IndexedDB cache and Firestore replays it (across reloads) when
           // the connection returns. We just stop BLOCKING on the acknowledgement,
           // and leave the baseline un-advanced so the collection is re-checked.
-          await withSyncTimeout(
-            syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete }),
-            task.collection,
-          );
+          await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
         }
         // Advance the baseline to the just-pushed snapshot. ONLY on success —
         // leaving it behind on failure is what makes the retry pick the
