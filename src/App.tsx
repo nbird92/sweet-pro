@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -2722,6 +2722,15 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
+  // JAMMED WRITE QUEUE detector. Reads succeed but consecutive write batches
+  // time out without a server ack — the signature of a queued mutation the
+  // server permanently rejects (e.g. queued before the oversize/undefined
+  // guards shipped). Firestore replays its offline queue IN ORDER on every
+  // reconnect and across reloads, so every later write sits behind the poison
+  // pill until the local queue is cleared. Drives the "Repair Sync" banner.
+  const [writeQueueJammed, setWriteQueueJammed] = useState(false);
+  const writeAckTimeoutStreak = useRef(0);
+  const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
@@ -6278,12 +6287,19 @@ export default function App() {
         if (wrote > 0) { setSyncStatus('synced'); setLastSynced(new Date()); }
         setSyncError(null);
         syncRetryAttempts.current = 0;
+        writeAckTimeoutStreak.current = 0;
+        setWriteQueueJammed(false);
       } catch (e) {
         if (e instanceof SyncTimeoutError) {
           // Edits ARE saved (local cache) — just not server-confirmed yet. Show
           // the offline state rather than a scary error, and keep re-checking.
           setSyncStatus('offline');
           setSyncError(`Saved on this device — waiting for the connection to confirm (${e.collection}).`);
+          // Two consecutive no-ack rounds while READS work = the local write
+          // queue is almost certainly jammed by a server-rejected mutation.
+          // Surface the one-click repair instead of waiting forever.
+          writeAckTimeoutStreak.current++;
+          if (writeAckTimeoutStreak.current >= 2) setWriteQueueJammed(true);
         } else {
           setSyncStatus('error');
           setSyncError((e as Error).message);
@@ -6308,6 +6324,38 @@ export default function App() {
     // and silently stayed unsynced for the whole session. (lastSynced/user are
     // deliberately NOT deps — see the refs above.)
   }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned]);
+
+  // ONE-CLICK RECOVERY for a jammed write queue (see writeQueueJammed). Clears
+  // this browser's local Firestore cache — including the stuck mutation queue —
+  // and reloads fresh from the server. Because the queue may also hold LEGITIMATE
+  // recent edits stuck behind the rejected one, a full JSON snapshot of the data
+  // currently in memory is downloaded FIRST so nothing is unrecoverable.
+  const repairSync = async () => {
+    setRepairingSync(true);
+    try {
+      // Best-effort backup — never let it block the repair.
+      try {
+        const snapshot: Record<string, unknown> = { exportedAt: new Date().toISOString() };
+        for (const t of buildSyncTasks()) snapshot[t.key] = t.data;
+        const blob = new Blob([JSON.stringify(snapshot)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `sweetpro-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (backupErr) {
+        console.warn('[repairSync] backup download failed — continuing with repair.', backupErr);
+      }
+      await resetFirestoreCache(); // terminate → clear IndexedDB → reload
+    } catch (e) {
+      // Most common failure: another tab has the shared cache open
+      // (failed-precondition). The client is terminated at this point, so a
+      // reload is required regardless — tell the user exactly what to do.
+      setRepairingSync(false);
+      setSyncStatus('error');
+      setSyncError(`Repair could not clear the local queue: ${e instanceof Error ? e.message : String(e)}. Close ALL other tabs running Sweet Pro, then reload this page and click Repair Sync again.`);
+    }
+  };
 
   // Save-on-leave: the autosave is debounced (5s), so a close/refresh right after
   // an edit is the one gap it can miss. dirtyCheckRef reports whether anything is
@@ -15794,6 +15842,30 @@ export default function App() {
               className="shrink-0 px-4 py-2 bg-amber-700 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-amber-800 transition-colors"
             >
               Retry now
+            </button>
+          </div>
+        )}
+
+        {/* JAMMED WRITE QUEUE BANNER. Reads work but consecutive write batches got
+            no server ack — a queued mutation the server rejects is blocking every
+            write behind it (Firestore replays its queue in order, across reloads).
+            Repair = download a JSON backup of everything on screen, clear the
+            local cache + queue, reload fresh from the server. */}
+        {user && lastSynced && writeQueueJammed && (
+          <div className="bg-red-100 border-b-2 border-red-600 px-6 py-3 flex items-center justify-between gap-4 print:hidden">
+            <div className="flex items-center gap-3 min-w-0">
+              <CloudOff size={16} className="text-red-700 shrink-0" />
+              <div className="text-xs text-red-900 leading-tight">
+                <span className="font-bold uppercase tracking-wide">Sync is stuck — the server keeps rejecting this browser's queued writes.</span>{' '}
+                Nothing new can save until the queue is cleared. Repair downloads a backup file of the data on screen, clears the local queue, and reloads fresh from the server. Data already on the server is untouched; recent local edits that never reached the server may need re-entering (they're in the backup).
+              </div>
+            </div>
+            <button
+              onClick={repairSync}
+              disabled={repairingSync}
+              className="shrink-0 px-4 py-2 bg-red-700 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-red-800 transition-colors disabled:opacity-50"
+            >
+              {repairingSync ? 'Repairing…' : 'Repair Sync'}
             </button>
           </div>
         )}
