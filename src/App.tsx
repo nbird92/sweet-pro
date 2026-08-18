@@ -6078,6 +6078,19 @@ export default function App() {
         writeThroughDocs.current[collection] = m;
       })
       .catch((e) => {
+        if (e instanceof SyncTimeoutError) {
+          // The write reached the local cache but the SERVER did not acknowledge
+          // in time (typically the connection to firestore.googleapis.com is
+          // blocked/dropped — e.g. an ad blocker on this domain). The record is
+          // NOT lost — it is queued in IndexedDB and replays when the connection
+          // returns — but it is NOT yet durable on the server, and a refresh that
+          // does a server read won't show it until the ack lands. Surface that
+          // honestly instead of leaving the user believing it saved.
+          setSyncStatus('offline');
+          setSyncError(`"${collection}" was saved on this device but the server hasn't confirmed it yet. Keep this tab open until the sync badge clears — if it persists, allow firestore.googleapis.com through any ad/content blocker for this site.`);
+          console.warn(`[saveNow] ${collection} write saved locally; awaiting server ack.`, e);
+          return;
+        }
         setSyncStatus('error');
         setSyncError(`Could not save to ${collection}: ${e instanceof Error ? e.message : String(e)}`);
         console.error(`[saveNow] ${collection} write failed`, e);
@@ -9037,6 +9050,16 @@ export default function App() {
 
 
   const createContract = () => {
+    // DURABILITY GATE. saveNow (and every other writer) no-ops until `lastSynced`
+    // is set, because before the authoritative load lands the arrays still hold
+    // demo seeds and a write would clobber real records. If we let the modal
+    // close here anyway, the contract would live only in memory and vanish on
+    // refresh — exactly the "created a contract, it was lost" report. Refuse
+    // loudly instead of pretending it saved.
+    if (!user || !lastSynced) {
+      setErrorBox("The app hasn't finished syncing with the server yet, so it's read-only right now and this contract could NOT be saved. Wait for the sync status to show a recent sync (reload if it's stuck), then create the contract again so it's stored to Firestore.");
+      return;
+    }
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
     const selectedCustomer = customers.find(c => c.name === customer) || customers[0];
 
@@ -12568,7 +12591,9 @@ export default function App() {
                         <select value={newSampleData.sampleProduct} onChange={e => setNewSampleData({ ...newSampleData, sampleProduct: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select product...</option>
-                          {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                          {buildOrderProductOptions(newSampleData.sampleProduct, { selectableOnly: true }).map(o => (
+                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -12647,12 +12672,12 @@ export default function App() {
                         <select value={editingSampleRequest.sampleProduct} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, sampleProduct: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
                           <option value="">Select product...</option>
-                          {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                          {/* Keep an already-saved product visible even if its site was retired,
-                              otherwise editing an old request silently blanks the field. */}
-                          {editingSampleRequest.sampleProduct && !selectableSkus.some(s => s.name === editingSampleRequest.sampleProduct) && (
-                            <option value={editingSampleRequest.sampleProduct}>{editingSampleRequest.sampleProduct} (inactive)</option>
-                          )}
+                          {/* buildOrderProductOptions renders the naming-formula Product
+                              Name and already emits a ghost option for a saved value no
+                              longer in the catalog, so a retired product stays visible. */}
+                          {buildOrderProductOptions(editingSampleRequest.sampleProduct, { selectableOnly: true }).map(o => (
+                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="space-y-1">
@@ -20563,10 +20588,14 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     >
                       <option value="">Select Product</option>
-                      {selectableSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                      {editingContract.skuName && !selectableSkus.some(s => s.name === editingContract.skuName) && (
-                        <option value={editingContract.skuName}>{editingContract.skuName}</option>
-                      )}
+                      {/* Use the SAME catalog the order line-item picker uses so the
+                          rendered Product Name (naming-formula resolved) shows here,
+                          not the raw SKU `name` code. buildOrderProductOptions also
+                          emits a ghost option for a stored value no longer in the
+                          catalog, so no separate fallback <option> is needed. */}
+                      {buildOrderProductOptions(editingContract.skuName, { selectableOnly: true }).map(o => (
+                        <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
+                      ))}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -20712,9 +20741,15 @@ export default function App() {
                         className="w-full bg-white border border-[#141414] p-2 text-xs focus:outline-none"
                       >
                         <option value="">Select Product</option>
-                        {selectableSkus.filter(s => !(editingContract.contractLines || []).some(cl => cl.productName === s.name)).map(s => (
-                          <option key={s.id} value={s.name}>{s.name.toUpperCase()}</option>
-                        ))}
+                        {/* Same catalog as the order line-item picker: the stored
+                            value (o.value) is what order lines carry, so contract-line
+                            matching (cl.productName === lineItem.productName) stays
+                            aligned, while the label shows the real product name. */}
+                        {buildOrderProductOptions(undefined, { selectableOnly: true })
+                          .filter(o => o.value && !(editingContract.contractLines || []).some(cl => cl.productName === o.value))
+                          .map(o => (
+                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
+                          ))}
                       </select>
                     </div>
                     <div className="space-y-1">
@@ -20767,7 +20802,7 @@ export default function App() {
                         <tbody>
                           {(editingContract.contractLines || []).map(cl => (
                             <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
-                              <td className="p-2 font-bold">{cl.productName}</td>
+                              <td className="p-2 font-bold">{productNameToDisplay(cl.productName) || cl.productName}</td>
                               <td className="p-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
                               <td className="p-2 text-right font-bold">${cl.finalPriceMt.toFixed(2)}</td>
                               <td className="p-2">
@@ -20790,6 +20825,12 @@ export default function App() {
                 <div className="flex gap-4 pt-4">
                   <button
                     onClick={() => {
+                      // Same durability gate as createContract — don't close the
+                      // modal (which reads as "saved") while writes are disabled.
+                      if (!user || !lastSynced) {
+                        setErrorBox("The app hasn't finished syncing with the server yet, so it's read-only right now and these contract changes could NOT be saved. Wait for a recent sync (reload if it's stuck), then save again.");
+                        return;
+                      }
                       setContracts(contracts.map(c => c.id === editingContract.id ? editingContract : c));
                       saveNow(COLLECTIONS.contracts, [editingContract]); // durable immediately
                       setEditingContract(null);
@@ -20902,7 +20943,7 @@ export default function App() {
                     </div>
                     <table className="w-full text-xs">
                       <tbody className="divide-y divide-[#141414]/10">
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">SKU</td><td className="px-4 py-2 font-bold">{selectedContractDetail.skuName || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">SKU</td><td className="px-4 py-2 font-bold">{selectedContractDetail.skuName ? (productNameToDisplay(selectedContractDetail.skuName) || selectedContractDetail.skuName) : '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.origin || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
@@ -20953,8 +20994,26 @@ export default function App() {
                         <td className="px-4 py-2 opacity-70">Pallet Charge</td>
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.palletCharge ? `$${selectedContractDetail.palletCharge.toFixed(2)}/MT` : '—'}</td>
                       </tr>
+                      {/* Product differentials folded into the breakdown: each
+                          contract line adjusts the base Final Price by its own
+                          differential to reach a product-specific price/MT. */}
+                      {selectedContractDetail.contractLines && selectedContractDetail.contractLines.length > 0 && (
+                        <>
+                          <tr className="bg-[#F5F5F5]">
+                            <td className="px-4 py-1.5 uppercase text-[10px] tracking-widest font-bold opacity-50" colSpan={4}>Product Differentials</td>
+                          </tr>
+                          {selectedContractDetail.contractLines.map((cl, idx) => (
+                            <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
+                              <td className="px-4 py-2 opacity-70">{productNameToDisplay(cl.productName) || cl.productName}</td>
+                              <td className="px-4 py-2 text-right font-bold">{cl.differentialCadMt >= 0 ? '+' : '−'}${Math.abs(cl.differentialCadMt).toFixed(2)}/MT</td>
+                              <td className="px-4 py-2 opacity-70">Final Price</td>
+                              <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}/MT</td>
+                            </tr>
+                          ))}
+                        </>
+                      )}
                       <tr className="bg-[#141414] text-[#E4E3E0]">
-                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>Final Price</td>
+                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>{selectedContractDetail.contractLines && selectedContractDetail.contractLines.length > 0 ? 'Base Final Price' : 'Final Price'}</td>
                         <td className="px-4 py-3 text-right font-black text-base">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice || 0).toFixed(2)}/MT</td>
                       </tr>
                     </tbody>
@@ -20978,7 +21037,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {selectedContractDetail.contractLines.map((cl, idx) => (
                           <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
-                            <td className="px-4 py-2 font-bold">{cl.productName}</td>
+                            <td className="px-4 py-2 font-bold">{productNameToDisplay(cl.productName) || cl.productName}</td>
                             <td className="px-4 py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
                             <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
                           </tr>

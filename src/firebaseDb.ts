@@ -145,7 +145,7 @@ export async function saveDocsNow<T extends { id: string }>(
     const clean = stripUndefinedDeep(item);
     const size = JSON.stringify(clean).length;
     if (count > 0 && (count >= MAX_OPS || bytes + size > MAX_BYTES)) {
-      await batch.commit();
+      await withBatchTimeout(batch.commit(), collectionName);
       batch = writeBatch(db);
       count = 0;
       bytes = 0;
@@ -154,7 +154,16 @@ export async function saveDocsNow<T extends { id: string }>(
     count++;
     bytes += size;
   }
-  if (count > 0) await batch.commit();
+  // BOUNDED WAIT — same reasoning as syncCollectionDiff. With offline persistence
+  // on, batch.commit() resolves only on the SERVER's ack; when the server is
+  // unreachable it NEVER resolves and NEVER rejects. Left unbounded, an
+  // immediate write-through save (saveNow) that can't reach the server would
+  // hang forever with no .then and no .catch — so the caller records nothing,
+  // shows nothing, and the user believes their new record saved when it is only
+  // queued locally. Timing out lets saveNow surface an honest "saved locally,
+  // not yet confirmed" state; the write itself is still queued and replays when
+  // the connection returns.
+  if (count > 0) await withBatchTimeout(batch.commit(), collectionName);
 }
 
 // Delete specific documents from a collection by id (used to drain the
