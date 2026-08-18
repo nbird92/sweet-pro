@@ -5794,22 +5794,21 @@ export default function App() {
           amount: parseFloat(o.amount) || 0,
           lineItems: Array.isArray(o.lineItems) ? o.lineItems : (typeof o.lineItems === 'string' ? JSON.parse(o.lineItems) : [])
         }));
-        // An invoiced BOL/PO can no longer be an order — drop any order whose BOL
-        // or PO matches an active (non-Cancelled/Credit) invoice. Runs on every
-        // load, including "Sync Now".
-        const billed = (data.invoices || []).filter((i: any) => i.status !== 'Cancelled' && i.status !== 'Credit');
-        const invBols = new Set(billed.map((i: any) => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-        // PO match by NUMERIC value: an order "PO10115420" is the same order as an
-        // invoice "10115420" and must be dropped once invoiced.
-        const invPos = new Set(billed.map((i: any) => poKey(i.po)).filter(Boolean));
-        const cleaned = mapped.filter((o: any) => {
-          const ob = (o.bolNumber || '').trim().toUpperCase();
-          const op = poKey(o.po);
-          return !((ob && invBols.has(ob)) || (op && invPos.has(op)));
-        });
-        setOrders(cleaned);
-        // Keep lastSynced at what Firestore actually HAS (mapped) so the next
-        // auto-sync pushes the deletion of the invoiced orders we just filtered.
+        // RETAIN every order — including invoiced ones. This used to filter
+        // invoiced orders out here and deliberately leave the baseline at the
+        // FULL set "so the next auto-sync pushes the deletion". With ~786 of
+        // ~925 restored orders invoiced, that engineered exactly the bulk
+        // delete the mass-delete guard exists to refuse — so every autosave
+        // cycle proposed deleting 786 docs, the guard blocked it, the baseline
+        // never reconciled, and the orders collection sat on "still waiting
+        // for the server" forever (console: "Refusing to delete 786 docs").
+        // Invoiced orders are already hidden from the Orders table, pickers,
+        // and schedulers by the independent by-BOL/PO display filters
+        // (isOrderInvoicedOut / invoicedBols) — nothing needs them gone from
+        // the ARRAY, and deleting completed business records was wrong for
+        // data permanency anyway. Memory now matches Firestore ⇒ orders syncs
+        // clean.
+        setOrders(mapped);
         lastSyncedData.current.orders = JSON.stringify(mapped);
       }
       if (data.conferences?.length) {
