@@ -203,6 +203,29 @@ function rawPriceUsdCwt(rawPriceUsdMt?: number): number | null {
   return v < 100 ? v : v / MT_TO_CWT;
 }
 
+const MONTH_ABBR_TO_NUM: Record<string, string> = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+/** Coerce a stored date string into the strict yyyy-MM-dd an <input type="date">
+ *  requires. Sheet-imported dates are often free-form ("Aug 2026", "8/1/2026"),
+ *  and feeding those to a date input both blanks the field AND logs
+ *  "does not conform to the required format" on EVERY render — which the sync
+ *  re-render loop turned into thousands of console lines. Returns '' when the
+ *  value can't be parsed, so the input renders cleanly instead of warning. */
+function toDateInputValue(v?: string): string {
+  if (!v) return '';
+  const s = v.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;               // already ISO
+  const my = /^([A-Za-z]{3,})\s+(\d{4})$/.exec(s);           // "Aug 2026" / "August 2026"
+  if (my) { const mm = MONTH_ABBR_TO_NUM[my[1].slice(0, 3).toLowerCase()]; if (mm) return `${my[2]}-${mm}-01`; }
+  const d = new Date(s);                                     // "8/1/2026", ISO datetime, etc.
+  if (!isNaN(d.getTime())) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  return '';
+}
+
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
 // ============================
@@ -20497,7 +20520,7 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Contract Date</label>
                     <input
                       type="date"
-                      value={editingContract.contractDate || ''}
+                      value={toDateInputValue(editingContract.contractDate)}
                       onChange={(e) => setEditingContract({ ...editingContract, contractDate: e.target.value || undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -20517,7 +20540,7 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">Start Date</label>
                     <input
                       type="date"
-                      value={editingContract.startDate || ''}
+                      value={toDateInputValue(editingContract.startDate)}
                       onChange={(e) => setEditingContract({ ...editingContract, startDate: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -20526,7 +20549,7 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-50">End Date</label>
                     <input
                       type="date"
-                      value={editingContract.endDate || ''}
+                      value={toDateInputValue(editingContract.endDate)}
                       onChange={(e) => setEditingContract({ ...editingContract, endDate: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
