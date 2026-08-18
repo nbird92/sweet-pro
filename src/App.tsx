@@ -4820,20 +4820,36 @@ export default function App() {
   // Once a BOL or PO has been invoiced, it can no longer be an open order — drop
   // any matching orders from the orders table. Driven off the FULL invoice list
   // after an import. Cancelled/Credit invoices don't count as "invoiced".
-  const removeOrdersInvoicedBy = (invoiceList: Invoice[]) => {
-    const billed = invoiceList.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
+  // DELIBERATE NO-OP. This used to physically FILTER invoiced orders out of the
+  // in-memory `orders` array. But that array is the source of truth the per-doc
+  // autosave diffs against Firestore — so dropping N orders from it made the
+  // autosave try to DELETE those N documents. With the restored DB holding all
+  // ~925 historical orders (786 of them invoiced), that became a 786-doc delete
+  // the mass-delete guard (correctly) refuses every cycle, leaving the orders
+  // collection permanently stuck on "still waiting for the server" / re-logging
+  // "Refusing to delete 786 docs". Invoiced orders are ALREADY hidden from the
+  // Orders table and the schedulers by an independent by-BOL/PO filter (see the
+  // `invoicedBols` sets), so pruning the array bought nothing but the wedge.
+  // Retaining every order keeps memory == Firestore, so the collection syncs
+  // clean, and no order is ever deleted — data permanency intact.
+  const removeOrdersInvoicedBy = (_invoiceList: Invoice[]) => {
+    /* intentionally does nothing — see comment above */
+  };
+
+  // Now that invoiced orders are RETAINED in the array (not pruned), any picker
+  // that lists "workable" orders by status alone must exclude the invoiced ones
+  // itself — otherwise a sheet-invoiced order that never had its status advanced
+  // would resurface as schedulable. Same by-BOL/PO rule the Orders table uses.
+  const isOrderInvoicedOut = React.useMemo(() => {
+    const billed = invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit');
     const bols = new Set(billed.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
-    // PO match is by NUMERIC value: an order "PO10115420" is the same order as an
-    // invoice "10115420" (and "069000" == "69000"), so it must be dropped once
-    // that PO is invoiced.
     const pos = new Set(billed.map(i => poKey(i.po)).filter(Boolean));
-    if (!bols.size && !pos.size) return;
-    setOrders(prev => prev.filter(o => {
+    return (o: Order) => {
       const ob = (o.bolNumber || '').trim().toUpperCase();
       const op = poKey(o.po);
-      return !((ob && bols.has(ob)) || (op && pos.has(op)));
-    }));
-  };
+      return !!((ob && bols.has(ob)) || (op && pos.has(op)));
+    };
+  }, [invoices]);
 
   /** Persist shipment edits back to whichever site list holds the record.
    *  UPSERTS: the old inline handlers used prev.map(), which silently dropped a
@@ -19570,7 +19586,7 @@ export default function App() {
                   // Any ACTIVE order (Open or Confirmed) is schedulable — operators often
                   // book a pick-up before formally confirming, so limiting this to
                   // 'Confirmed' hid most orders. Cancelled/Completed are excluded.
-                  const schedulableOrders = orders.filter(o => o.status === 'Open' || o.status === 'Confirmed');
+                  const schedulableOrders = orders.filter(o => (o.status === 'Open' || o.status === 'Confirmed') && !isOrderInvoicedOut(o));
                   const allShipments = [...hamiltonShipments, ...vancouverShipments];
                   // Hide an order only when a non-cancelled shipment already carries its
                   // NON-BLANK BOL (normalized). Blank BOLs never match ('' === '' bug), and we
@@ -19673,7 +19689,7 @@ export default function App() {
                       // Any ACTIVE order (Open or Confirmed) is schedulable — operators often
                       // book a pick-up before formally confirming, so limiting this to
                       // 'Confirmed' hid most orders. Cancelled/Completed are excluded.
-                      const schedulableOrders = orders.filter(o => o.status === 'Open' || o.status === 'Confirmed');
+                      const schedulableOrders = orders.filter(o => (o.status === 'Open' || o.status === 'Confirmed') && !isOrderInvoicedOut(o));
                       const allShipments = [...hamiltonShipments, ...vancouverShipments];
                       // Hide an order only when a non-cancelled shipment already carries its
                       // NON-BLANK BOL (normalized). Blank BOLs never match ('' === '' bug), and we
