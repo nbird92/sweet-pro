@@ -78,9 +78,46 @@ try {
  *    await resetFirestoreCache()
  */
 export async function resetFirestoreCache(): Promise<void> {
-  await terminate(db);
-  await clearIndexedDbPersistence(db);
-  if (typeof window !== 'undefined') window.location.reload();
+  // ALWAYS RELOAD once terminate() has run — success OR failure. terminate()
+  // kills this page's SDK instance for good; if clearIndexedDbPersistence()
+  // then throws (typically failed-precondition: another tab holds the shared
+  // multi-tab cache), an early exception used to skip the reload and strand
+  // the user on a page where EVERY read/write instantly fails with "The
+  // client has already been terminated" — which looked exactly like the
+  // original sync outage and sent the diagnosis in circles.
+  let cleared = false;
+  try {
+    await terminate(db);
+    await clearIndexedDbPersistence(db);
+    cleared = true;
+  } catch (e) {
+    console.error('[resetFirestoreCache] clear failed (client is terminated regardless — reloading):', e);
+  }
+  if (typeof window !== 'undefined') {
+    // Flag so the next load can tell the user whether the queue was actually
+    // cleared, and retry once if it wasn't (other tabs may have closed by then).
+    try { sessionStorage.setItem('sweetpro.cacheReset', cleared ? 'ok' : 'failed'); } catch { /* ignore */ }
+    window.location.reload();
+  }
+}
+// On load: if the previous reset failed to clear (other tab held the cache),
+// try ONCE more now — before the SDK opens the cache — and report the outcome.
+if (typeof window !== 'undefined') {
+  try {
+    const flag = sessionStorage.getItem('sweetpro.cacheReset');
+    if (flag) {
+      sessionStorage.removeItem('sweetpro.cacheReset');
+      if (flag === 'failed') {
+        // db is a fresh, un-started instance here; clearing is only allowed
+        // before first use — this is that window.
+        clearIndexedDbPersistence(db)
+          .then(() => console.log('[resetFirestoreCache] Retry succeeded — local Firestore cache/queue cleared. Reload once more to start clean.'))
+          .catch((e) => console.error('[resetFirestoreCache] Retry ALSO failed — close EVERY other Sweet Pro tab/window, then run resetFirestoreCache() again:', e));
+      } else {
+        console.log('[resetFirestoreCache] Local Firestore cache/queue was cleared on the previous load. Starting fresh from the server.');
+      }
+    }
+  } catch { /* sessionStorage unavailable */ }
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { resetFirestoreCache?: () => Promise<void> }).resetFirestoreCache = resetFirestoreCache;

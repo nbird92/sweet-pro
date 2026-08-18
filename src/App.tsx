@@ -6298,7 +6298,19 @@ export default function App() {
             break;
           }
         } else {
-          failed.push(`${task.collection}: ${e instanceof Error ? e.message : String(e)}`);
+          const msg = e instanceof Error ? e.message : String(e);
+          // A TERMINATED client never recovers within this page — every retry
+          // fails identically forever. Only a reload creates a live client.
+          // (Happens if resetFirestoreCache's terminate() ran but its reload
+          // didn't complete.) Reload now instead of spinning.
+          if (/already been terminated/i.test(msg)) {
+            console.error('[sync] Firestore client is terminated for this page — reloading to get a live client.');
+            setSyncStatus('error');
+            setSyncError('Reconnecting to the database…');
+            setTimeout(() => window.location.reload(), 800);
+            break;
+          }
+          failed.push(`${task.collection}: ${msg}`);
           console.error(`[sync] Failed to push "${task.collection}" — will retry next cycle.`, e);
         }
       }
