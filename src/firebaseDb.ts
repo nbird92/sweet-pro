@@ -44,16 +44,15 @@ let db: Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    // FORCE LONG-POLLING. Diagnosed 2026-08-18: on the operator's network,
-    // Firestore READS worked but the WRITE stream never got a server ack — even
-    // in Incognito (no extensions, fresh empty cache), so it is the network
-    // path, not the app or browser profile. This exact symptom (reads fine,
-    // writes hang, 400s on /Write/channel) is the signature of a middlebox —
-    // antivirus HTTPS inspection, proxy, or router DPI — breaking Firestore's
-    // streaming WebChannel transport. Long-polling uses plain short-lived
-    // HTTPS requests that such middleboxes pass through. Slightly higher
-    // latency; vastly better than writes never landing.
-    experimentalForceLongPolling: true,
+    // AUTO-DETECT LONG-POLLING. 2026-08-18: writes stopped acking on the
+    // operator's machine (reproduced in Incognito, on a phone hotspot, with a
+    // correct clock, with plain HTTPS to firestore.googleapis.com working) —
+    // i.e. the SDK transport itself was failing, not the network path.
+    // experimentalForceLongPolling was tried first and did NOT help; forcing it
+    // is also known to degrade connections that CAN stream. AutoDetect is the
+    // Firebase-recommended setting: it probes and only falls back to long-
+    // polling when the streaming WebChannel is actually being broken.
+    experimentalAutoDetectLongPolling: true,
   }, DATABASE_ID);
 } catch {
   db = getFirestore(app, DATABASE_ID);
@@ -85,6 +84,66 @@ export async function resetFirestoreCache(): Promise<void> {
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { resetFirestoreCache?: () => Promise<void> }).resetFirestoreCache = resetFirestoreCache;
+}
+
+/** CONNECTIVITY PROBE — isolates WHICH layer is failing when the SDK reports
+ *  "Backend didn't respond". Bypasses the Firestore SDK entirely and hits the
+ *  REST API directly with the current user's ID token, so it separates:
+ *    (a) auth token missing/expired      → step 1 fails
+ *    (b) plain REST READ to sweetpro2     → step 2 (needs only network + token)
+ *    (c) plain REST WRITE to sweetpro2    → step 3 (proves writes are allowed
+ *                                            server-side; if this succeeds while
+ *                                            the SDK hangs, the SDK transport is
+ *                                            the problem, not auth/rules/network)
+ *  Run from the console:  await probeFirestore()
+ */
+export async function probeFirestore(): Promise<void> {
+  const log = (m: string) => console.log(`%c[probe] ${m}`, 'color:#0a7');
+  const bad = (m: string) => console.error(`[probe] ${m}`);
+  const { getAuth } = await import('firebase/auth');
+  const authInst = getAuth(app);
+  const u = authInst.currentUser;
+  if (!u) { bad('1. NO signed-in user (auth.currentUser is null). Sign in and rerun.'); return; }
+  let token = '';
+  try {
+    const t0 = performance.now();
+    token = await u.getIdToken(true); // force refresh — surfaces a dead refresh token
+    log(`1. Auth OK — fresh ID token obtained in ${Math.round(performance.now() - t0)}ms (uid ${u.uid}, ${u.email || ''})`);
+  } catch (e) {
+    bad(`1. Auth token refresh FAILED — this is your problem: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  const projectId = (app.options as { projectId?: string }).projectId;
+  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents`;
+  const hdr = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  // 2. REST READ (one page of customers)
+  try {
+    const t0 = performance.now();
+    const r = await fetch(`${base}/customers?pageSize=1`, { headers: hdr });
+    const ms = Math.round(performance.now() - t0);
+    if (r.ok) log(`2. REST READ OK — HTTP ${r.status} in ${ms}ms (network + token + rules all fine for reads)`);
+    else bad(`2. REST READ rejected — HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  } catch (e) {
+    bad(`2. REST READ network failure: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  // 3. REST WRITE (a probe doc in its own collection — harmless, overwritten each run)
+  try {
+    const t0 = performance.now();
+    const r = await fetch(`${base}/_probe/connectivity`, {
+      method: 'PATCH',
+      headers: hdr,
+      body: JSON.stringify({ fields: { at: { stringValue: new Date().toISOString() }, ua: { stringValue: navigator.userAgent.slice(0, 120) } } }),
+    });
+    const ms = Math.round(performance.now() - t0);
+    if (r.ok) log(`3. REST WRITE OK — HTTP ${r.status} in ${ms}ms. ⇒ Server accepts writes from this machine. If the app still shows "waiting for the server", the Firestore SDK's transport/queue is the fault — NOT auth, rules, or network.`);
+    else bad(`3. REST WRITE rejected — HTTP ${r.status}: ${(await r.text()).slice(0, 300)}  ⇒ server-side refusal (rules / App Check / API disabled).`);
+  } catch (e) {
+    bad(`3. REST WRITE network failure: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { probeFirestore?: () => Promise<void> }).probeFirestore = probeFirestore;
 }
 
 // Collection names matching the old Google Sheets tab names
