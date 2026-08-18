@@ -12,6 +12,8 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
   getFirestore,
+  terminate,
+  clearIndexedDbPersistence,
   type Firestore,
 } from 'firebase/firestore';
 import { app } from './firebaseConfig';
@@ -45,6 +47,34 @@ try {
   }, DATABASE_ID);
 } catch {
   db = getFirestore(app, DATABASE_ID);
+}
+
+/** DRAIN THE LOCAL WRITE QUEUE + CACHE for this database, then reload.
+ *
+ *  Firestore's offline mutation queue is FIFO: a write the SERVER permanently
+ *  rejects (a 400 — e.g. a document over the 1 MiB limit, queued before the
+ *  skip-guard shipped) stays at the head and blocks EVERY write behind it, so a
+ *  collection sits on "still waiting for the server" forever. New code can stop
+ *  creating such writes but cannot evict one already persisted in IndexedDB —
+ *  only clearing the cache does.
+ *
+ *  terminate() shuts the client down so clearIndexedDbPersistence() is allowed at
+ *  runtime (its documented precondition). SAFE when the server holds the
+ *  authoritative data (post-restore it does): anything dropped is an unsynced
+ *  local write that — being rejected — could never have reached the server anyway.
+ *  Requires OTHER TABS on this app to be closed (multi-tab shared cache), else it
+ *  throws failed-precondition.
+ *
+ *  Exposed on window so it can be run from the console without shipping UI:
+ *    await resetFirestoreCache()
+ */
+export async function resetFirestoreCache(): Promise<void> {
+  await terminate(db);
+  await clearIndexedDbPersistence(db);
+  if (typeof window !== 'undefined') window.location.reload();
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { resetFirestoreCache?: () => Promise<void> }).resetFirestoreCache = resetFirestoreCache;
 }
 
 // Collection names matching the old Google Sheets tab names
