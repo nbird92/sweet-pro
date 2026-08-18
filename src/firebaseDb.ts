@@ -141,9 +141,15 @@ export async function saveDocsNow<T extends { id: string }>(
   let batch = writeBatch(db);
   let count = 0;
   let bytes = 0;
+  const oversize: { id: string; size: number }[] = [];
   for (const item of valid) {
     const clean = stripUndefinedDeep(item);
     const size = JSON.stringify(clean).length;
+    // See SINGLE_DOC_MAX_BYTES — one oversized doc 400s and wedges the collection.
+    if (size > SINGLE_DOC_MAX_BYTES) {
+      oversize.push({ id: item.id, size });
+      continue;
+    }
     if (count > 0 && (count >= MAX_OPS || bytes + size > MAX_BYTES)) {
       await withBatchTimeout(batch.commit(), collectionName);
       batch = writeBatch(db);
@@ -153,6 +159,12 @@ export async function saveDocsNow<T extends { id: string }>(
     batch.set(doc(db, collectionName, item.id), clean);
     count++;
     bytes += size;
+  }
+  if (oversize.length) {
+    console.error(
+      `[saveDocsNow] "${collectionName}": ${oversize.length} document(s) exceed Firestore's 1 MiB per-document limit and were SKIPPED:\n` +
+      oversize.map(o => `  • ${o.id} — ${Math.round(o.size / 1024)} KB`).join('\n'),
+    );
   }
   // BOUNDED WAIT — same reasoning as syncCollectionDiff. With offline persistence
   // on, batch.commit() resolves only on the SERVER's ack; when the server is
@@ -366,6 +378,13 @@ export class SyncTimeoutError extends Error {
  *  forever — permanently stuck on "still waiting for the server". A per-batch
  *  budget still catches a genuinely hung connection within seconds, while
  *  letting a big write take as long as it legitimately needs. */
+// Firestore's hard per-document limit is 1,048,576 bytes. We measure JSON string
+// length (≈ byte count for ASCII; a touch under for multi-byte UTF-8, so we keep a
+// safety margin). A document over this 400s on write and, under offline
+// persistence, wedges its whole collection — so writers skip + report offenders
+// rather than letting one record poison the queue.
+const SINGLE_DOC_MAX_BYTES = 1_000_000;
+
 const BATCH_ACK_TIMEOUT_MS = 20000;
 function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -421,17 +440,36 @@ export async function syncCollectionDiff<T extends { id: string }>(
   let count = 0;
   let bytes = 0;
   let totalBytes = 0;
+  const oversize: { id: string; size: number }[] = [];
   const flush = () => { if (count > 0) { batches.push(batch); batch = writeBatch(db); count = 0; bytes = 0; } };
 
   for (const item of upserts) {
     const clean = stripUndefinedDeep(item);
     // Rough but cheap size estimate; only needs to be the right order of magnitude.
     const size = JSON.stringify(clean).length;
+    // SINGLE-DOCUMENT CEILING. Firestore rejects any document over 1,048,576
+    // bytes with a 400 — and with offline persistence that rejected write is not
+    // surfaced cleanly: it is accepted into the local cache, retried against the
+    // server forever, and wedges the WHOLE collection on "waiting for the server"
+    // (a batch cap on total bytes can't help — the offender is one doc). Skipping
+    // it here lets every other doc in the collection sync, and names the culprit
+    // so the oversized record (usually a runaway/duplicated array) can be fixed.
+    if (size > SINGLE_DOC_MAX_BYTES) {
+      oversize.push({ id: item.id, size });
+      continue;
+    }
     if (count > 0 && (count >= MAX_OPS || bytes + size > MAX_BYTES)) flush();
     batch.set(doc(db, collectionName, item.id), clean);
     count++;
     bytes += size;
     totalBytes += size;
+  }
+  if (oversize.length) {
+    console.error(
+      `[sync] "${collectionName}": ${oversize.length} document(s) exceed Firestore's 1 MiB per-document limit and were SKIPPED ` +
+      `(they would 400 and wedge the whole collection). Fix these records — likely a runaway/duplicated array:\n` +
+      oversize.map(o => `  • ${o.id} — ${Math.round(o.size / 1024)} KB`).join('\n'),
+    );
   }
   if (!massDelete) {
     for (const id of deleteIds) {
