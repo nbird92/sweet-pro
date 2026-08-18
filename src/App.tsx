@@ -1505,6 +1505,7 @@ export default function App() {
     if (dropIds.length === 0) { setErrorBox('No duplicate invoices found.'); return; }
     if (!window.confirm(`Merge ${dropIds.length} duplicate invoice${dropIds.length === 1 ? '' : 's'} (same invoice number)? The most complete record of each number is kept, with any blank fields filled from its duplicates. This cannot be undone.`)) return;
     const dropSet = new Set(dropIds);
+    recordUserDeletes(COLLECTIONS.invoices, dropIds);
     // Delete the duplicate docs directly — the auto-sync's mass-delete guard would
     // otherwise refuse to remove this many at once.
     deleteDocs(COLLECTIONS.invoices, dropIds).catch(() => {});
@@ -1633,6 +1634,7 @@ export default function App() {
     if (dropIds.length === 0) { setErrorBox('No duplicate orders found (by PO or BOL number).'); return; }
     if (!window.confirm(`Remove ${dropIds.length} duplicate order${dropIds.length === 1 ? '' : 's'} that share a PO or BOL number? The most-progressed record of each is kept. This cannot be undone.`)) return;
     const dropSet = new Set(dropIds);
+    recordUserDeletes(COLLECTIONS.orders, dropIds);
     deleteDocs(COLLECTIONS.orders, dropIds).catch(() => {});
     ordersRef.current = ordersRef.current.filter(o => !dropSet.has(o.id));
     setOrders(prev => prev.filter(o => !dropSet.has(o.id)));
@@ -1929,7 +1931,7 @@ export default function App() {
     setInboxTriage(prev => [...prev.filter(t => t.id !== id), { id, status, updatedAt: new Date().toISOString() }]);
   const dismissInboxEmail = (id: string) => setInboxTriageStatus(id, 'dismissed');
   const markInboxHandled = (id: string) => setInboxTriageStatus(id, 'handled');
-  const reopenInboxEmail = (id: string) => setInboxTriage(prev => prev.filter(t => t.id !== id));
+  const reopenInboxEmail = (id: string) => { recordUserDeletes(COLLECTIONS.inboxTriage, [id]); setInboxTriage(prev => prev.filter(t => t.id !== id)); };
   // Open the pending PO(s) extracted from a feed email in the review modal. One
   // email can carry several POs (multi-PO PDF), so open all that match.
   const reviewFeedPo = (feedId: string, poNumber?: string) => {
@@ -5625,6 +5627,18 @@ export default function App() {
       const { data, fromCache } = await fetchAllData();
       loadedFromCacheRef.current = fromCache;
 
+      // NEVER let a cache-fallback load replace the state of an ALREADY-ARMED
+      // session. The armed session's memory + baselines are a consistent pair;
+      // swapping in cache data mid-flight desynchronizes them and the autosave
+      // then reads the difference as edits/deletes to push. Keep what we have —
+      // it's at least as fresh as the cache — and just report the outage.
+      if (fromCache && lastSyncedRef.current) {
+        console.warn('[load] Server unreachable; session already has authoritative data — keeping current state, ignoring the cache fallback.');
+        setSyncStatus('offline');
+        setSyncError('Could not reach the server — continuing with the data already loaded. Changes save locally and sync when the connection returns.');
+        return;
+      }
+
       // Authoritative: reflect Firestore even when a collection comes back EMPTY,
       // so the built-in demo customers/products can never linger in state and then
       // be persisted over the real records. A failed read throws and aborts the
@@ -6113,6 +6127,24 @@ export default function App() {
   // it (absent from the baseline) — and it would reappear on the next load.
   const writeThroughDocs = useRef<Record<string, Map<string, string>>>({});
 
+  // DELETION LEDGER — the fix for the recurring near-loss incidents. The autosave
+  // used to infer deletions from ABSENCE: any doc in the baseline but not in
+  // memory became a Firestore delete. Every failure mode that makes memory
+  // diverge from the baseline (a cache-fallback load racing an armed session, a
+  // loader that filters rows, demo seeds lingering) therefore turned into real
+  // deletions of real records — the mass-delete guard caught the big ones, but
+  // small batches (5 freight rates, 15 carriers) slid under the threshold and
+  // were queued against the server. Now a (non-allowMassDelete) delete is pushed
+  // ONLY if the user explicitly deleted that id this session, recorded here.
+  // Absent-but-unledgered docs are left on the server and simply reload next
+  // session — a mildly annoying resurrection beats destroyed business data.
+  const userDeletedIds = useRef<Record<string, Set<string>>>({});
+  const recordUserDeletes = (collection: string, ids: string[]) => {
+    const s = userDeletedIds.current[collection] || new Set<string>();
+    for (const id of ids) if (id) s.add(id);
+    userDeletedIds.current[collection] = s;
+  };
+
   const saveNow = <T extends { id: string }>(collection: string, docs: T[]) => {
     // SAME PRECONDITION AS EVERY OTHER WRITER: `lastSynced` is only set once the
     // authoritative load succeeded, so until then the arrays still hold the
@@ -6197,7 +6229,22 @@ export default function App() {
         if (baseline.get(d.id) !== dStr) upserts.push(d);
       }
       const deleteIds: string[] = [];
-      for (const id of baseline.keys()) if (!currentIds.has(id)) deleteIds.push(id);
+      const blockedDeletes: string[] = [];
+      const ledger = userDeletedIds.current[task.collection];
+      for (const id of baseline.keys()) {
+        if (currentIds.has(id)) continue;
+        // Only delete what the user EXPLICITLY deleted (or an explicit
+        // replace-all flow that sets allowMassDelete). See userDeletedIds.
+        if (task.allowMassDelete || (ledger && ledger.has(id))) deleteIds.push(id);
+        else blockedDeletes.push(id);
+      }
+      if (blockedDeletes.length) {
+        console.warn(
+          `[sync] "${task.collection}": ${blockedDeletes.length} doc(s) are absent from memory but were never ` +
+          `explicitly deleted this session — NOT deleting them from Firestore. They remain on the server and ` +
+          `will reload next session. (Prevents load races / cache fallbacks from becoming data loss.)`,
+        );
+      }
       // ISOLATE EACH COLLECTION. This used to be an unguarded await: one failing
       // write (a rejected doc, a permissions blip, a transient network error) threw
       // out of the whole loop, so EVERY collection after it in the list never
@@ -6230,6 +6277,9 @@ export default function App() {
         recordSources(task);
         // The snapshot now subsumes every write-through doc for this collection.
         delete writeThroughDocs.current[task.collection];
+        // Ledgered deletes that reached the server are done — drop them so a
+        // later doc reusing the same id can't be silently deleted.
+        if (ledger) for (const id of deleteIds) ledger.delete(id);
       } catch (e) {
         if (e instanceof SyncTimeoutError) {
           // Saved locally, server ack outstanding. Not an error to alarm the user
@@ -8006,10 +8056,12 @@ export default function App() {
   const [customerGroupMode, setCustomerGroupMode] = useState<'view' | 'edit' | 'add'>('view');
   const [customerGroupSearch, setCustomerGroupSearch] = useState('');
   const deleteCustomer = (id: string) => {
+    recordUserDeletes(COLLECTIONS.customers, [id]);
     setCustomers(customers.filter(c => c.id !== id));
   };
 
   const deleteSku = (id: string) => {
+    recordUserDeletes(COLLECTIONS.products, [id]);
     setSkus(skus.filter(s => s.id !== id));
   };
 
@@ -9121,6 +9173,7 @@ export default function App() {
   };
 
   const deleteShipment = (id: string) => {
+    recordUserDeletes(COLLECTIONS.shipments, [id]);
     // Find the shipment to get its BOL, then update linked order status
     const shipment = hamiltonShipments.find(s => s.id === id) || vancouverShipments.find(s => s.id === id);
     setHamiltonShipments(hamiltonShipments.filter(s => s.id !== id));
@@ -12042,7 +12095,7 @@ export default function App() {
             setIsAddingReturnOrder(true);
           }}
           onEdit={(r) => { setEditingReturnOrder(r); setReturnOrderDraft({ ...r }); }}
-          onDelete={(id) => setReturnOrders(prev => prev.filter(r => r.id !== id))}
+          onDelete={(id) => { recordUserDeletes(COLLECTIONS.returnOrders, [id]); setReturnOrders(prev => prev.filter(r => r.id !== id)); }}
           onPreview={handlePreviewReturnOrderConfirmation}
           onSendEmail={(r) => sendReturnOrderConfirmationEmail(r, { triggeredBy: 'manual' })}
           onReturnAndBill={(r) => setReturnAndBillConfirm(r)}
@@ -12071,7 +12124,7 @@ export default function App() {
           people={people}
           onAddConference={(newConference) => setConferences(prev => [...prev, newConference])}
           onUpdateConference={(updated) => setConferences(prev => prev.map(c => c.id === updated.id ? updated : c))}
-          onDeleteConference={(id) => setConferences(prev => prev.filter(c => c.id !== id))}
+          onDeleteConference={(id) => { recordUserDeletes(COLLECTIONS.conferences, [id]); setConferences(prev => prev.filter(c => c.id !== id)); }}
           onAddMeeting={(conferenceId, newMeeting) => {
             setConferences(prev => prev.map(c =>
               c.id === conferenceId
@@ -12331,6 +12384,7 @@ export default function App() {
             }}
             onDelete={vendorMode === 'add' ? undefined : () => {
               if (!vendorDraft) return;
+              recordUserDeletes(COLLECTIONS.vendors, [vendorDraft.id]);
               setVendors(prev => prev.filter(x => x.id !== vendorDraft.id));
               setVendorDraft(null);
             }}
@@ -12516,7 +12570,7 @@ export default function App() {
                         <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-1">
                             <button onClick={() => setEditingLeadCard({ ...lead })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
-                            <button onClick={() => setSalesLeads(salesLeads.filter(l => l.id !== lead.id))} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
+                            <button onClick={() => { recordUserDeletes(COLLECTIONS.salesLeads, [lead.id]); setSalesLeads(salesLeads.filter(l => l.id !== lead.id)); }} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                           </div>
                         </td>
                       </tr>
@@ -12620,7 +12674,7 @@ export default function App() {
                           <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
                               <button onClick={() => setEditingSampleRequest({ ...sr })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
-                              <button onClick={() => setSampleRequests(sampleRequests.filter(s => s.id !== sr.id))} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
+                              <button onClick={() => { recordUserDeletes(COLLECTIONS.sampleRequests, [sr.id]); setSampleRequests(sampleRequests.filter(s => s.id !== sr.id)); }} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                             </div>
                           </td>
                         </tr>
@@ -13176,6 +13230,7 @@ export default function App() {
               }}
               onDelete={tollingFeeMode === 'add' ? undefined : () => {
                 if (!tollingFeeDraft) return;
+                recordUserDeletes(COLLECTIONS.tollingFees, [tollingFeeDraft.id]);
                 setTollingFees(prev => prev.filter(t => t.id !== tollingFeeDraft.id));
                 setTollingFeeDraft(null);
               }}
@@ -13644,7 +13699,7 @@ export default function App() {
                   </div>
                   <div className="flex justify-between items-center px-5 py-3 border-t border-gray-200 bg-gray-50">
                     {exists ? (
-                      <button onClick={() => { setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); closeDemurrageDraft(); }}
+                      <button onClick={() => { recordUserDeletes(COLLECTIONS.demurrageInvoices, [d.id]); setDemurrageInvoices(prev => prev.filter(x => x.id !== d.id)); closeDemurrageDraft(); }}
                         className="px-3 py-2 border border-red-400 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500 hover:text-white transition-colors">
                         <Trash2 size={12} /> Delete
                       </button>
@@ -17329,6 +17384,7 @@ export default function App() {
           }}
           onDelete={shippingTermMode === 'add' ? undefined : () => {
             if (!shippingTermDraft) return;
+            recordUserDeletes(COLLECTIONS.shippingTerms, [shippingTermDraft.id]);
             setShippingTermsList(prev => prev.filter(t => t.id !== shippingTermDraft.id));
             setShippingTermDraft(null);
           }}
@@ -17727,6 +17783,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         if (window.confirm(`Delete carrier "${editingCarrier.name || editingCarrier.id}"? This cannot be undone.`)) {
+                          recordUserDeletes(COLLECTIONS.carriers, [editingCarrier.id]);
                           setCarriers(prev => prev.filter(c => c.id !== editingCarrier.id));
                           setIsAddingCarrier(false);
                           setEditingCarrier(null);
@@ -25363,6 +25420,7 @@ export default function App() {
                 <div className="flex gap-4">
                   <button
                     onClick={() => {
+                      recordUserDeletes(COLLECTIONS.orders, [orderDeleteConfirmId]);
                       setOrders(orders.filter(o => o.id !== orderDeleteConfirmId));
                       setOrderDeleteConfirmId(null);
                     }}
