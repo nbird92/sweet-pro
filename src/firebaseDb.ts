@@ -134,14 +134,27 @@ export async function saveDocsNow<T extends { id: string }>(
 ): Promise<void> {
   const valid = docs.filter(d => d && d.id !== undefined && d.id !== null);
   if (valid.length === 0) return;
-  const batchSize = 450;
-  for (let i = 0; i < valid.length; i += batchSize) {
-    const batch = writeBatch(db);
-    for (const item of valid.slice(i, i + batchSize)) {
-      batch.set(doc(db, collectionName, item.id), stripUndefinedDeep(item));
+  // Capped by ops AND bytes, same reasoning as syncCollectionDiff: an oversized
+  // commit request never settles cleanly when offline persistence is on.
+  const MAX_OPS = 450;
+  const MAX_BYTES = 4 * 1024 * 1024;
+  let batch = writeBatch(db);
+  let count = 0;
+  let bytes = 0;
+  for (const item of valid) {
+    const clean = stripUndefinedDeep(item);
+    const size = JSON.stringify(clean).length;
+    if (count > 0 && (count >= MAX_OPS || bytes + size > MAX_BYTES)) {
+      await batch.commit();
+      batch = writeBatch(db);
+      count = 0;
+      bytes = 0;
     }
-    await batch.commit();
+    batch.set(doc(db, collectionName, item.id), clean);
+    count++;
+    bytes += size;
   }
+  if (count > 0) await batch.commit();
 }
 
 // Delete specific documents from a collection by id (used to drain the
@@ -383,26 +396,58 @@ export async function syncCollectionDiff<T extends { id: string }>(
       ` — looks like an unloaded/bad in-memory state; preserving them. Use an explicit clear.`,
     );
   }
-  const batchSize = 450;
+  // Batches are capped by BOTH operation count and BYTES. Firestore allows 500
+  // operations per commit, but the request also has a hard ~10 MiB ceiling — and
+  // documents here are not small (orders carry lineItems, shipments carry lot and
+  // seal arrays, poAmendments/poFieldMappings hold extracted PO payloads). 450
+  // fat documents can exceed the size limit, and with offline persistence such a
+  // commit does not fail cleanly: it is accepted locally and retried against the
+  // server indefinitely, so the promise never settles and the collection appears
+  // stuck on "waiting for the server" forever. Keeping each request well under
+  // the ceiling is what actually makes these collections sync.
+  const MAX_OPS = 450;
+  const MAX_BYTES = 4 * 1024 * 1024; // 4 MiB — comfortably under Firestore's ~10 MiB
   const batches: ReturnType<typeof writeBatch>[] = [];
   let batch = writeBatch(db);
   let count = 0;
-  const rotate = () => { if (count >= batchSize) { batches.push(batch); batch = writeBatch(db); count = 0; } };
+  let bytes = 0;
+  let totalBytes = 0;
+  const flush = () => { if (count > 0) { batches.push(batch); batch = writeBatch(db); count = 0; bytes = 0; } };
 
   for (const item of upserts) {
-    batch.set(doc(db, collectionName, item.id), stripUndefinedDeep(item));
+    const clean = stripUndefinedDeep(item);
+    // Rough but cheap size estimate; only needs to be the right order of magnitude.
+    const size = JSON.stringify(clean).length;
+    if (count > 0 && (count >= MAX_OPS || bytes + size > MAX_BYTES)) flush();
+    batch.set(doc(db, collectionName, item.id), clean);
     count++;
-    rotate();
+    bytes += size;
+    totalBytes += size;
   }
   if (!massDelete) {
     for (const id of deleteIds) {
+      if (count >= MAX_OPS) flush();
       batch.delete(doc(db, collectionName, id));
       count++;
-      rotate();
     }
   }
-  if (count > 0) batches.push(batch);
-  // Each batch gets its own ack budget — see withBatchTimeout.
-  for (const b of batches) await withBatchTimeout(b.commit(), collectionName);
+  flush();
+
+  // Each batch gets its own ack budget — see withBatchTimeout. On timeout the
+  // message carries the shape of the write so a stuck collection is diagnosable
+  // from the console instead of guessed at.
+  for (let i = 0; i < batches.length; i++) {
+    try {
+      await withBatchTimeout(batches[i].commit(), collectionName);
+    } catch (e) {
+      if (e instanceof SyncTimeoutError) {
+        console.warn(
+          `[sync] "${collectionName}" batch ${i + 1}/${batches.length} did not get a server ack in time — ` +
+          `${upserts.length} upserts (~${Math.round(totalBytes / 1024)} KB total), ${deleteIds.length} deletes.`,
+        );
+      }
+      throw e;
+    }
+  }
 }
 
