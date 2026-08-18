@@ -44,6 +44,16 @@ let db: Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    // FORCE LONG-POLLING. Diagnosed 2026-08-18: on the operator's network,
+    // Firestore READS worked but the WRITE stream never got a server ack — even
+    // in Incognito (no extensions, fresh empty cache), so it is the network
+    // path, not the app or browser profile. This exact symptom (reads fine,
+    // writes hang, 400s on /Write/channel) is the signature of a middlebox —
+    // antivirus HTTPS inspection, proxy, or router DPI — breaking Firestore's
+    // streaming WebChannel transport. Long-polling uses plain short-lived
+    // HTTPS requests that such middleboxes pass through. Slightly higher
+    // latency; vastly better than writes never landing.
+    experimentalForceLongPolling: true,
   }, DATABASE_ID);
 } catch {
   db = getFirestore(app, DATABASE_ID);
