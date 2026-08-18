@@ -1502,13 +1502,15 @@ export default function App() {
   useEffect(() => { invoicesRef.current = invoices; }, [invoices]);
 
   // PERF DIAGNOSTIC — logs any task that blocks the main thread long enough to
-  // be felt (>100ms). UI jank (laggy hover, stuttery typing) is almost always a
-  // long task starving the browser's event loop, and this names the culprit in
-  // the console instead of requiring a Performance recording. Passive: one
-  // observer, no state, no rendering. Safe to leave on; remove once the render
-  // work is properly split up.
+  // be felt (>100ms), naming the culprit page. OPT-IN ONLY: it stays silent
+  // unless `localStorage.perfLog === '1'`, so it doesn't spam the console in
+  // normal use. To chase jank again: run `localStorage.perfLog = '1'` in the
+  // console and reload; `delete localStorage.perfLog` to turn it back off.
   useEffect(() => {
     if (typeof PerformanceObserver === 'undefined') return;
+    let perfLogOn = false;
+    try { perfLogOn = localStorage.getItem('perfLog') === '1'; } catch { /* storage blocked */ }
+    if (!perfLogOn) return;
     let obs: PerformanceObserver;
     try {
       obs = new PerformanceObserver((list) => {
