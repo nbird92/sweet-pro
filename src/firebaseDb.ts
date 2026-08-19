@@ -577,11 +577,20 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
 // instead of degrading to nothing.
 export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fromCache: boolean }> {
   const names = Object.values(COLLECTIONS);
+  // Every doc is written with doc(collection, item.id) and carries `id` in its
+  // data too, so the Firestore document id IS the record id. Fall back to it when
+  // the `id` FIELD is missing — which self-heals any doc whose id field got
+  // dropped (e.g. an earlier REST diagnostic that replaced docs without it), so a
+  // missing id field can never leave a record unidentifiable in memory.
+  const withId = (d: { id: string; data: () => any }) => {
+    const data = d.data();
+    return data && data.id != null ? data : { ...data, id: d.id };
+  };
   try {
     const results = await Promise.all(
       names.map(async (name) => {
         const snapshot = await getDocsFromServer(collection(db, name));
-        return [name, snapshot.docs.map(d => d.data())] as const;
+        return [name, snapshot.docs.map(withId)] as const;
       })
     );
     return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: false };
@@ -593,7 +602,7 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
     const results = await Promise.all(
       names.map(async (name) => {
         const snapshot = await getDocs(collection(db, name));
-        return [name, snapshot.docs.map(d => d.data())] as const;
+        return [name, snapshot.docs.map(withId)] as const;
       })
     );
     return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: true };
