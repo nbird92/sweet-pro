@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, findRejectedDocs } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -2732,6 +2732,8 @@ export default function App() {
   // pill until the local queue is cleared. Drives the "Repair Sync" banner.
   const [writeQueueJammed, setWriteQueueJammed] = useState(false);
   const writeAckTimeoutStreak = useRef(0);
+  // Collections already run through findRejectedDocs this session (once each).
+  const autoDiagnosed = useRef<Set<string>>(new Set());
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
@@ -6286,6 +6288,14 @@ export default function App() {
           // with — but we must NOT advance the baseline, so it re-confirms later.
           pending.push(task.collection);
           console.warn(`[sync] "${task.collection}" saved locally; awaiting server ack.`, e);
+          // AUTO-DIAGNOSE, once per collection per session: write the SAME docs
+          // individually over REST, which (unlike batch.commit under offline
+          // persistence) returns the server's real rejection — so the poison
+          // document names itself in the console instead of being guessed at.
+          if (!autoDiagnosed.current.has(task.collection) && upserts.length && upserts.length <= 500) {
+            autoDiagnosed.current.add(task.collection);
+            findRejectedDocs(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>).catch(() => {});
+          }
           // THREE consecutive no-acks = the write channel is dead for everyone.
           // Waiting out the 20s timeout on each of the ~40 remaining collections
           // would take 10+ minutes per pass — which also kept the Repair Sync

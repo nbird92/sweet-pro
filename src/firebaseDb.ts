@@ -182,6 +182,70 @@ if (typeof window !== 'undefined') {
   (window as unknown as { probeFirestore?: () => Promise<void> }).probeFirestore = probeFirestore;
 }
 
+/** FIND THE POISON DOC. When a collection's batch never acks, the SDK hides
+ *  WHICH document the server rejected (batch.commit() under offline persistence
+ *  neither resolves nor rejects). This writes each doc INDIVIDUALLY via the
+ *  REST API — which returns the real HTTP status + message — and reports every
+ *  one the server refuses. Read-only in effect: accepted docs are identical to
+ *  what the batch would have written anyway.
+ *  Run from the console:  await findRejectedDocs('poFieldMappings')
+ *  (collection name as stored; the app passes its current in-memory docs). */
+export async function findRejectedDocs(
+  collectionName: string,
+  docs?: Array<{ id: string } & Record<string, unknown>>,
+): Promise<void> {
+  const log = (m: string) => console.log(`%c[find] ${m}`, 'color:#0a7');
+  const bad = (m: string) => console.error(`[find] ${m}`);
+  const { getAuth } = await import('firebase/auth');
+  const u = getAuth(app).currentUser;
+  if (!u) { bad('not signed in'); return; }
+  const token = await u.getIdToken(true);
+  const projectId = (app.options as { projectId?: string }).projectId;
+  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents`;
+  const list = docs ?? (window as unknown as { __sweetproDocs?: Record<string, Array<{ id: string }>> }).__sweetproDocs?.[collectionName];
+  if (!list || !list.length) { bad(`no docs supplied for "${collectionName}" — the app exposes current data as window.__sweetproDocs[collection]`); return; }
+  log(`testing ${list.length} doc(s) in "${collectionName}" individually…`);
+  // JSON → Firestore REST value encoding (enough for the shapes this app stores).
+  const enc = (v: unknown): Record<string, unknown> => {
+    if (v === null || v === undefined) return { nullValue: null };
+    if (typeof v === 'string') return { stringValue: v };
+    if (typeof v === 'boolean') return { booleanValue: v };
+    if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+    if (Array.isArray(v)) return { arrayValue: { values: v.map(enc) } };
+    if (typeof v === 'object') {
+      const fields: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (x !== undefined) fields[k] = enc(x);
+      return { mapValue: { fields } };
+    }
+    return { stringValue: String(v) };
+  };
+  let rejected = 0;
+  for (const d of list) {
+    const { id, ...rest } = d;
+    const fields: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(rest)) if (x !== undefined) fields[k] = enc(x);
+    try {
+      const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      if (!r.ok) {
+        rejected++;
+        bad(`REJECTED id="${id}" → HTTP ${r.status}: ${(await r.text()).slice(0, 400)}\n  doc: ${JSON.stringify(d).slice(0, 300)}`);
+      }
+    } catch (e) {
+      rejected++;
+      bad(`NETWORK FAIL id="${id}": ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (rejected === 0) log(`all ${list.length} doc(s) ACCEPTED by the server via REST. ⇒ The payload is fine; the SDK's local queue/transport is what is stuck. Run resetFirestoreCache().`);
+  else bad(`${rejected} doc(s) rejected — these are what wedge the collection. Fix/remove them.`);
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { findRejectedDocs?: typeof findRejectedDocs }).findRejectedDocs = findRejectedDocs;
+}
+
 // Collection names matching the old Google Sheets tab names
 export const COLLECTIONS = {
   customers: 'customers',
