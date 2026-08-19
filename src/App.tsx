@@ -2732,6 +2732,21 @@ export default function App() {
   // pill until the local queue is cleared. Drives the "Repair Sync" banner.
   const [writeQueueJammed, setWriteQueueJammed] = useState(false);
   const writeAckTimeoutStreak = useRef(0);
+  // REST-FIRST MODE. On some machines the Firestore SDK's streaming write channel
+  // never acks while plain REST writes always succeed (diagnosed 2026-08-19).
+  // Once we've SEEN the REST fallback rescue a write this browser, there's no
+  // point making every later save wait out the 15s SDK timeout first — write via
+  // REST straight away so saves land in ~2s, not ~20s. Persisted per-browser so a
+  // known-bad machine is REST-first from its very first save each session. (REST
+  // works everywhere, so a false positive only costs a negligibly-redundant write
+  // path; clear localStorage 'sweetpro.restFirst' to re-test the SDK.)
+  const restFirstRef = useRef<boolean>((() => { try { return localStorage.getItem('sweetpro.restFirst') === '1'; } catch { return false; } })());
+  const markRestFirst = () => {
+    if (restFirstRef.current) return;
+    restFirstRef.current = true;
+    try { localStorage.setItem('sweetpro.restFirst', '1'); } catch { /* ignore */ }
+    console.log('%c[sync] Switching to REST-first writes for this browser — the SDK write stream is unresponsive here; saves will now persist via REST directly.', 'color:#0a7');
+  };
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
@@ -6160,12 +6175,25 @@ export default function App() {
     // over real records (saveDocsNow uses batch.set — a full overwrite). The app
     // is interactive while the load is in flight, so this gate is load-bearing.
     if (!user || !lastSynced) return;
+    const recordWritten = () => {
+      const m = writeThroughDocs.current[collection] || new Map<string, string>();
+      for (const d of docs) if (d && d.id) m.set(d.id, JSON.stringify(d));
+      writeThroughDocs.current[collection] = m;
+    };
+    // REST-FIRST: on a browser where the SDK write stream is known-dead, skip the
+    // 15s SDK timeout and persist this explicit save straight to the server via
+    // REST (~2s), so a create/edit is durable almost immediately.
+    if (restFirstRef.current) {
+      restSyncCollection(collection, docs as Array<{ id: string } & Record<string, unknown>>, [])
+        .then((res) => {
+          if (res.ok) { recordWritten(); setSyncStatus('synced'); setLastSynced(new Date()); setSyncError(null); }
+          else { setSyncStatus('offline'); setSyncError(`"${collection}" not yet confirmed by the server: ${res.firstError || 'write failed'}. It will retry automatically.`); }
+        })
+        .catch((e) => { setSyncStatus('error'); setSyncError(`Could not save to ${collection}: ${e instanceof Error ? e.message : String(e)}`); });
+      return;
+    }
     saveDocsNow(collection, docs)
-      .then(() => {
-        const m = writeThroughDocs.current[collection] || new Map<string, string>();
-        for (const d of docs) if (d && d.id) m.set(d.id, JSON.stringify(d));
-        writeThroughDocs.current[collection] = m;
-      })
+      .then(recordWritten)
       .catch((e) => {
         if (e instanceof SyncTimeoutError) {
           // The write reached the local cache but the SERVER did not acknowledge
@@ -6279,6 +6307,16 @@ export default function App() {
       // next cycle, and the healthy collections still get written.
       try {
         if (upserts.length || deleteIds.length) {
+          // REST-FIRST short-circuit: on a browser already proven to have a dead
+          // SDK write stream, skip the 15s SDK attempt entirely and persist via
+          // REST straight away. A failure here throws into the catch, which runs
+          // the same REST attempt again (harmless) and then marks it pending.
+          if (restFirstRef.current) {
+            const res = await restSyncCollection(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>, deleteIds);
+            if (!res.ok) throw new SyncTimeoutError(task.collection);
+            advanceBaseline();
+            continue;
+          }
           // BOUNDED WAIT. With offline persistence on, batch.commit() resolves only
           // when the SERVER acknowledges — on a dropped/flaky connection it never
           // resolves and never rejects. An unbounded await here wedged the whole
@@ -6333,6 +6371,7 @@ export default function App() {
             if (res.ok) {
               restSaved = true;
               usedRestFallback = true;
+              markRestFirst(); // SDK stream is dead here — go REST-first from now on
               advanceBaseline();
               console.log(`%c[sync] "${task.collection}" persisted via REST (${res.upserted} upserts, ${res.deleted} deletes) — SDK stream was unresponsive.`, 'color:#0a7');
             } else {
