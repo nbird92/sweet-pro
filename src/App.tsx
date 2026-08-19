@@ -6167,6 +6167,26 @@ export default function App() {
     for (const id of ids) if (id) s.add(id);
     userDeletedIds.current[collection] = s;
   };
+  // Wrap a whole-array state setter so that when a child page replaces the array
+  // with FEWER items (a user delete), the removed ids are recorded in the ledger
+  // and therefore actually get deleted from Firestore. Without this, pages that
+  // delete via `setX(list.filter(...))` (the QA page's templates, sugar types,
+  // product groups, packaging formats, naming formulas, locations, and QA
+  // products) had their deletions blocked by the ledger and resurrected on
+  // reload. Only the value form is tracked — the loader/backfills use the raw
+  // setters (often functional), so they never record spurious deletes here.
+  const withDeleteTracking = <T extends { id: string }>(
+    collection: string,
+    current: T[],
+    setter: React.Dispatch<React.SetStateAction<T[]>>,
+  ): React.Dispatch<React.SetStateAction<T[]>> => (action) => {
+    if (typeof action !== 'function') {
+      const nextIds = new Set(action.map(x => x.id));
+      const removed = current.filter(x => !nextIds.has(x.id)).map(x => x.id);
+      if (removed.length) recordUserDeletes(collection, removed);
+    }
+    setter(action);
+  };
 
   const saveNow = <T extends { id: string }>(collection: string, docs: T[]) => {
     // SAME PRECONDITION AS EVERY OTHER WRITER: `lastSynced` is only set once the
@@ -9267,6 +9287,7 @@ export default function App() {
   };
 
   const deleteFreightRate = (id: string) => {
+    recordUserDeletes(COLLECTIONS.freightRates, [id]);
     setFreightRates(freightRates.filter(f => f.id !== id));
   };
 
@@ -11267,6 +11288,7 @@ export default function App() {
                           <button
                             onClick={() => {
                               if (window.confirm(`Delete invoice ${i.invoiceNumber || i.bolNumber || i.id}? This cannot be undone.`)) {
+                                recordUserDeletes(COLLECTIONS.invoices, [i.id]);
                                 setInvoices(prev => prev.filter(inv => inv.id !== i.id));
                               }
                             }}
@@ -12268,7 +12290,7 @@ export default function App() {
           people={people}
           onAddPerson={(newPerson) => setPeople([...people, newPerson])}
           onUpdatePerson={(updated) => setPeople(people.map(p => p.id === updated.id ? updated : p))}
-          onDeletePerson={(id) => setPeople(people.filter(p => p.id !== id))}
+          onDeletePerson={(id) => { recordUserDeletes(COLLECTIONS.people, [id]); setPeople(people.filter(p => p.id !== id)); }}
         />
       );
     }
@@ -12285,12 +12307,12 @@ export default function App() {
           qaTemplates={qaTemplates}
           sugarTypes={sugarTypes}
           packagingFormats={packagingFormats}
-          onUpdatePackagingFormats={setPackagingFormats}
+          onUpdatePackagingFormats={withDeleteTracking(COLLECTIONS.packagingFormats, packagingFormats, setPackagingFormats)}
           namingFormulas={namingFormulas}
-          onUpdateNamingFormulas={setNamingFormulas}
-          onUpdateProductGroups={setProductGroups}
-          onUpdateSugarTypes={setSugarTypes}
-          onUpdateLocations={setLocations}
+          onUpdateNamingFormulas={withDeleteTracking(COLLECTIONS.namingFormulas, namingFormulas, setNamingFormulas)}
+          onUpdateProductGroups={withDeleteTracking(COLLECTIONS.productGroups, productGroups, setProductGroups)}
+          onUpdateSugarTypes={withDeleteTracking(COLLECTIONS.sugarTypes, sugarTypes, setSugarTypes)}
+          onUpdateLocations={withDeleteTracking(COLLECTIONS.locations, locations, setLocations)}
           onAddQAProduct={(rawProduct) => {
             // Fill a blank Product Group from the format/name so new products carry
             // the right group (and tolling fee) instead of an empty/defaulted one.
@@ -12298,6 +12320,7 @@ export default function App() {
               ? rawProduct
               : { ...rawProduct, productGroup: deriveProductGroup(rawProduct.productFormat, rawProduct.skuName) || (productGroups[0]?.name || '') };
             setQaProducts(prev => [...prev, product]);
+            saveNow(COLLECTIONS.qaProducts, [product]); // durable immediately
             // Also create a corresponding SKU so the Products page mirrors it
             const existingSku = skus.find(s => s.id === product.skuId);
             if (!existingSku) {
@@ -12318,6 +12341,7 @@ export default function App() {
                 productFormat: product.productFormat,
               };
               setSkus(prev => [...prev, newSkuFromQA]);
+              saveNow(COLLECTIONS.products, [newSkuFromQA]); // durable immediately
             }
           }}
           onUpdateQAProduct={(raw) => {
@@ -12326,11 +12350,19 @@ export default function App() {
               ? raw
               : { ...raw, productGroup: deriveProductGroup(raw.productFormat, raw.skuName) || raw.productGroup };
             setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
-            // Mirror QA changes to the corresponding SKU so the Products page stays in sync
-            setSkus(prev => prev.map(s => s.id === updated.skuId ? {
-              ...s,
-              productCode: updated.productCode ?? s.productCode,
-              name: updated.skuName || s.name,
+            // DURABLE IMMEDIATELY — like contracts/customers. QA edits used to rely
+            // solely on the 5s debounced autosave, so a refresh shortly after an
+            // edit (before that cycle completed) lost it. saveNow persists this
+            // record to Firestore right away (REST-first where the SDK stream is
+            // dead), independent of the debounce.
+            saveNow(COLLECTIONS.qaProducts, [updated]);
+            // Mirror QA changes to the corresponding SKU so the Products page stays
+            // in sync — and persist that mirror immediately too.
+            const existingSku = skus.find(s => s.id === updated.skuId);
+            const patchedSku = existingSku ? {
+              ...existingSku,
+              productCode: updated.productCode ?? existingSku.productCode,
+              name: updated.skuName || existingSku.name,
               productGroup: updated.productGroup,
               category: updated.category,
               location: updated.location,
@@ -12339,10 +12371,12 @@ export default function App() {
               maxColor: updated.maxColor,
               sugarType: updated.sugarType,
               productFormat: updated.productFormat,
-            } : s));
+            } : null;
+            setSkus(prev => prev.map(s => s.id === updated.skuId ? (patchedSku || s) : s));
+            if (patchedSku) saveNow(COLLECTIONS.products, [patchedSku]);
           }}
-          onDeleteQAProduct={(id) => setQaProducts(prev => prev.filter(p => p.id !== id))}
-          onUpdateTemplates={setQaTemplates}
+          onDeleteQAProduct={(id) => { recordUserDeletes(COLLECTIONS.qaProducts, [id]); setQaProducts(prev => prev.filter(p => p.id !== id)); }}
+          onUpdateTemplates={withDeleteTracking(COLLECTIONS.qaTemplates, qaTemplates, setQaTemplates)}
         />
       );
     }
@@ -12363,7 +12397,7 @@ export default function App() {
             const r = resolveRecord({ bol: lc.bolNumber, po: lc.customerPo });
             return { bolNumber: r.bolNumber, customerName: r.customer, trailerNumber: r.trailerNo };
           }}
-          onUpdateLotCodes={setLotCodes}
+          onUpdateLotCodes={withDeleteTracking(COLLECTIONS.lotCodes, lotCodes, setLotCodes)}
           onSyncLotCodes={() => {
             const preset = lotCodeSyncPresets[0] || DEFAULT_LOTCODE_IMPORT_CONFIG;
             setOrderSyncConfig(preset);
@@ -12388,7 +12422,7 @@ export default function App() {
       return (
         <FinancePage
           fiscalYears={fiscalYears}
-          onUpdateFiscalYears={setFiscalYears}
+          onUpdateFiscalYears={withDeleteTracking(COLLECTIONS.fiscalYears, fiscalYears, setFiscalYears)}
         />
       );
     }
@@ -12399,7 +12433,7 @@ export default function App() {
           fiscalYears={fiscalYears}
           customers={customers}
           customerForecasts={customerForecasts}
-          onUpdateCustomerForecasts={setCustomerForecasts}
+          onUpdateCustomerForecasts={withDeleteTracking(COLLECTIONS.customerForecasts, customerForecasts, setCustomerForecasts)}
           qaProducts={qaProducts}
           skus={skus}
           locations={locations}
@@ -17344,6 +17378,7 @@ export default function App() {
           }}
           onDelete={chepMode === 'add' ? undefined : () => {
             if (!chepDraft) return;
+            recordUserDeletes(COLLECTIONS.chepPalletMovements, [chepDraft.id]);
             setChepPalletMovements(prev => prev.filter(m => m.id !== chepDraft.id));
             setChepDraft(null);
           }}
@@ -17414,6 +17449,7 @@ export default function App() {
           }}
           onDelete={fuelSurchargeMode === 'add' ? undefined : () => {
             if (!fuelSurchargeDraft) return;
+            recordUserDeletes(COLLECTIONS.fuelSurcharges, [fuelSurchargeDraft.id]);
             setFuelSurcharges(prev => prev.filter(f => f.id !== fuelSurchargeDraft.id));
             setFuelSurchargeDraft(null);
           }}
@@ -23279,6 +23315,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       if (window.confirm(`Delete supply chain component "${editingSupplyChain.component}"? This cannot be undone.`)) {
+                        recordUserDeletes(COLLECTIONS.logistics, [editingSupplyChain.id]);
                         setSupplyChain(supplyChain.filter(sc => sc.id !== editingSupplyChain.id));
                         setEditingSupplyChain(null);
                       }
@@ -25365,6 +25402,7 @@ export default function App() {
           onDelete={customerGroupMode === 'add' ? undefined : () => {
             if (!customerGroupDraft) return;
             setCustomers(customers.map(c => c.customerGroupId === customerGroupDraft.id ? { ...c, customerGroupId: undefined } : c));
+            recordUserDeletes(COLLECTIONS.customerGroups, [customerGroupDraft.id]);
             setCustomerGroups(customerGroups.filter(g => g.id !== customerGroupDraft.id));
             setCustomerGroupDraft(null);
           }}
@@ -26811,6 +26849,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       if (window.confirm(`Delete transfer ${editingTransfer.transferNumber}? This cannot be undone.`)) {
+                        recordUserDeletes(COLLECTIONS.transfers, [editingTransfer.id]);
                         setTransfers(transfers.filter(item => item.id !== editingTransfer.id));
                         setEditingTransfer(null);
                       }
