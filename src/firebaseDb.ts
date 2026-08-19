@@ -682,7 +682,13 @@ function invalidDocIdReason(id: unknown): string | null {
   return null;
 }
 
-const BATCH_ACK_TIMEOUT_MS = 20000;
+// 90s, raised from 20s (2026-08-19). On the operator's machine the write
+// stream's handshake is slow/flaky (400s + retries) and acks routinely arrive
+// after 20s. A timeout shorter than the real ack latency created an infinite
+// loop: report failure → don't advance baseline → re-push identical docs →
+// time out again — while the writes were in fact landing server-side. The
+// late-ack path (onLateAck below) closes the loop even beyond 90s.
+const BATCH_ACK_TIMEOUT_MS = 90000;
 function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
@@ -693,12 +699,14 @@ function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> 
   ]);
 }
 
+// opts.onLateAck: called if the server ack arrives AFTER SyncTimeoutError was
+// already thrown — the write landed; the caller should advance its baseline.
 export async function syncCollectionDiff<T extends { id: string }>(
   collectionName: string,
   upserts: T[],
   deleteIds: string[],
   baselineCount: number,
-  opts?: { allowMassDelete?: boolean },
+  opts?: { allowMassDelete?: boolean; onLateAck?: () => void },
 ): Promise<void> {
   // WIPE-OUT GUARD. Two signatures, both meaning "the in-memory state is not
   // trustworthy" rather than "the user deleted these":
@@ -791,18 +799,29 @@ export async function syncCollectionDiff<T extends { id: string }>(
   }
   flush();
 
-  // Each batch gets its own ack budget — see withBatchTimeout. On timeout the
-  // message carries the shape of the write so a stuck collection is diagnosable
-  // from the console instead of guessed at.
-  for (let i = 0; i < batches.length; i++) {
+  // Commit every batch (they're independent), then race the combined ack
+  // against the budget. On timeout the caller gets SyncTimeoutError as before —
+  // but the underlying commits keep running, and when the LATE ack eventually
+  // lands, opts.onLateAck fires so the caller can advance its baseline instead
+  // of re-pushing identical docs forever. This is what breaks the 2026-08-19
+  // loop where real acks took longer than the watchdog on a slow write stream.
+  if (batches.length) {
+    const allAcked = Promise.all(batches.map(b => b.commit()));
     try {
-      await withBatchTimeout(batches[i].commit(), collectionName);
+      await withBatchTimeout(allAcked, collectionName);
     } catch (e) {
       if (e instanceof SyncTimeoutError) {
         console.warn(
-          `[sync] "${collectionName}" batch ${i + 1}/${batches.length} did not get a server ack in time — ` +
-          `${upserts.length} upserts (~${Math.round(totalBytes / 1024)} KB total), ${deleteIds.length} deletes.`,
+          `[sync] "${collectionName}" (${batches.length} batch(es)) did not get a server ack in time — ` +
+          `${upserts.length} upserts (~${Math.round(totalBytes / 1024)} KB total), ${deleteIds.length} deletes. ` +
+          `Will report if the ack arrives late.`,
         );
+        allAcked
+          .then(() => {
+            console.log(`%c[sync] "${collectionName}" LATE server ack received — the write DID land; baseline advanced.`, 'color:#0a7');
+            opts?.onLateAck?.();
+          })
+          .catch(() => { /* genuine failure — the normal retry cycle handles it */ });
       }
       throw e;
     }

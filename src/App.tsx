@@ -5988,7 +5988,15 @@ export default function App() {
         const merged = pruneExpired(mergeLearned(remoteLearned, loadLearned()));
         setPoLearned(merged);
         saveLearned(merged);
-        if (remoteLearned.length) lastSyncedData.current.pofieldmappings = JSON.stringify(data.poFieldMappings);
+        // Baseline MUST be the same construction the sync task pushes —
+        // `pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l }))` — not
+        // the raw server docs. Storing the raw docs meant the strings NEVER
+        // matched (different field order/shape), so poFieldMappings was dirty on
+        // every autosave cycle forever: it re-pushed all ~180 docs each pass and
+        // permanently showed "still waiting for the server" even when every
+        // write succeeded. (`merged` is what poLearned becomes, so this is
+        // byte-identical to the task's data until a mapping actually changes.)
+        lastSyncedData.current.pofieldmappings = JSON.stringify(merged.map(l => ({ id: learnedId(l), ...l })));
       }
       if (data.MarketData?.length) {
         setMarketData(data.MarketData);
@@ -6270,7 +6278,29 @@ export default function App() {
           // local IndexedDB cache and Firestore replays it (across reloads) when
           // the connection returns. We just stop BLOCKING on the acknowledgement,
           // and leave the baseline un-advanced so the collection is re-checked.
-          await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, { allowMassDelete: task.allowMassDelete });
+          // Capture the baseline as it stands NOW so the late-ack path below can
+          // tell whether a newer push has already advanced it (in which case the
+          // late ack is stale and must not regress the baseline).
+          const baselineAtPush = lastSyncedData.current[task.key];
+          await syncCollectionDiff(task.collection, upserts, deleteIds, baseline.size, {
+            allowMassDelete: task.allowMassDelete,
+            // LATE ACK: the server confirmed this exact write after our timeout
+            // already reported it as pending. The write landed — advance the
+            // baseline so the next cycle doesn't re-push identical docs forever
+            // (the loop that kept collections on "still waiting for the server"
+            // when real ack latency exceeded the watchdog).
+            onLateAck: () => {
+              if (lastSyncedData.current[task.key] !== baselineAtPush) return; // newer push already landed
+              lastSyncedData.current[task.key] = dataStr;
+              lastSyncedDocs.current[task.key] = { fromRaw: dataStr, map: nextDocMap };
+              recordSources(task);
+              delete writeThroughDocs.current[task.collection];
+              if (ledger) for (const id of deleteIds) ledger.delete(id);
+              setSyncStatus('synced');
+              setLastSynced(new Date());
+              setSyncError(null);
+            },
+          });
         }
         // Advance the baseline to the just-pushed snapshot. ONLY on success —
         // leaving it behind on failure is what makes the retry pick the
