@@ -6305,7 +6305,23 @@ export default function App() {
                 // the SDK re-opens its stream and replays the queue.
                 if (res && res.rejected === 0 && !reconnectTried.current) {
                   reconnectTried.current = true;
-                  reconnectFirestore().catch(() => {});
+                  // reconnectFirestore can itself HANG (disableNetwork waits on
+                  // the SDK's internal queue — the very thing that's wedged), so
+                  // race it: if it hasn't reported a drained queue in 45s, the
+                  // SDK instance is unrecoverable in-process → wipe the local
+                  // cache directly (no SDK involved) and reload. Safe: the REST
+                  // probe just proved the server accepts every one of these
+                  // docs, and the in-memory state is re-pushed after reload, so
+                  // nothing in the discarded queue is unrecoverable.
+                  Promise.race([
+                    reconnectFirestore(45000),
+                    new Promise<boolean>(r => setTimeout(() => r(false), 50000)),
+                  ]).then((drained) => {
+                    if (drained) return;
+                    console.error('[sync] SDK write stream is unrecoverable in this page (reconnect hung or queue never drained) — resetting the local Firestore cache and reloading.');
+                    setSyncError('Repairing the local database connection — reloading…');
+                    resetFirestoreCache().catch(() => window.location.reload());
+                  }).catch(() => {});
                 }
               })
               .catch(() => {});

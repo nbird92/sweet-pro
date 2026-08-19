@@ -114,23 +114,54 @@ if (typeof window !== 'undefined') {
  *    await resetFirestoreCache()
  */
 export async function resetFirestoreCache(): Promise<void> {
-  // ALWAYS RELOAD once terminate() has run — success OR failure. terminate()
-  // kills this page's SDK instance for good; if clearIndexedDbPersistence()
-  // then throws (typically failed-precondition: another tab holds the shared
-  // multi-tab cache), an early exception used to skip the reload and strand
-  // the user on a page where EVERY read/write instantly fails with "The
-  // client has already been terminated" — which looked exactly like the
-  // original sync outage and sent the diagnosis in circles.
+  // BYPASS THE SDK. The SDK-level path (terminate → clearIndexedDbPersistence)
+  // routes through the SDK's internal async queue — and when that queue is the
+  // thing that's wedged (2026-08-19: disableNetwork() itself hung behind a dead
+  // write stream), those calls never return and the reset silently no-ops.
+  // Deleting the IndexedDB databases directly needs no live client at all.
+  // Firestore's persistence DB is named "firestore/<appName>/<projectId>/<db>"
+  // (+ "firestore/…/main" for the default DB); we delete every IndexedDB whose
+  // name starts with "firestore/". Auth storage ("firebaseLocalStorageDb") is
+  // deliberately left alone so the user stays signed in.
+  //
+  // ALWAYS RELOAD afterwards — success OR failure — so the page can never be
+  // stranded on a half-dead client (the bug that sent this diagnosis in circles).
   let cleared = false;
-  console.log('%c[resetFirestoreCache] step 1/3 — terminating the Firestore client…', 'color:#c60');
+  console.log('%c[resetFirestoreCache] step 1/3 — stopping the Firestore client (bounded 3s; may be wedged)…', 'color:#c60');
   try {
-    await terminate(db);
-    console.log('%c[resetFirestoreCache] step 2/3 — clearing the local IndexedDB cache + write queue…', 'color:#c60');
-    await clearIndexedDbPersistence(db);
+    await Promise.race([terminate(db), new Promise<void>(r => setTimeout(r, 3000))]);
+  } catch (e) { console.warn('[resetFirestoreCache] terminate threw (continuing):', e); }
+  console.log('%c[resetFirestoreCache] step 2/3 — deleting local Firestore IndexedDB cache + write queue directly…', 'color:#c60');
+  try {
+    const idb = (typeof indexedDB !== 'undefined') ? indexedDB : null;
+    if (!idb) throw new Error('IndexedDB unavailable');
+    // Enumerate when supported; otherwise fall back to the known name pattern.
+    let names: string[] = [];
+    const anyIdb = idb as unknown as { databases?: () => Promise<Array<{ name?: string }>> };
+    if (typeof anyIdb.databases === 'function') {
+      names = (await anyIdb.databases()).map(d => d.name || '').filter(n => n.startsWith('firestore/'));
+    }
+    if (!names.length) {
+      const appName = app.name || '[DEFAULT]';
+      const projectId = (app.options as { projectId?: string }).projectId || '';
+      names = [`firestore/${appName}/${projectId}/${DATABASE_ID}`, `firestore/${appName}/${projectId}/main`];
+    }
+    for (const n of names) {
+      await new Promise<void>((resolve) => {
+        const req = idb.deleteDatabase(n);
+        const done = (msg: string) => { console.log(`%c[resetFirestoreCache]   ${msg}: ${n}`, 'color:#c60'); resolve(); };
+        req.onsuccess = () => done('deleted');
+        req.onerror = () => done('delete FAILED');
+        // "blocked" = another tab still holds it open; it will be deleted when
+        // that tab closes. Don't hang — reload and retry on the next load.
+        req.onblocked = () => done('delete BLOCKED by another open tab (close other Sweet Pro tabs)');
+        setTimeout(() => done('delete timed out'), 5000);
+      });
+    }
     cleared = true;
-    console.log('%c[resetFirestoreCache] step 3/3 — cleared. Reloading…', 'color:#c60');
+    console.log('%c[resetFirestoreCache] step 3/3 — done. Reloading…', 'color:#c60');
   } catch (e) {
-    console.error('[resetFirestoreCache] clear failed (client is terminated regardless — reloading):', e);
+    console.error('[resetFirestoreCache] direct IndexedDB delete failed (reloading anyway):', e);
   }
   if (typeof window !== 'undefined') {
     // Flag so the next load can tell the user whether the queue was actually
@@ -147,11 +178,7 @@ if (typeof window !== 'undefined') {
     if (flag) {
       sessionStorage.removeItem('sweetpro.cacheReset');
       if (flag === 'failed') {
-        // db is a fresh, un-started instance here; clearing is only allowed
-        // before first use — this is that window.
-        clearIndexedDbPersistence(db)
-          .then(() => console.log('[resetFirestoreCache] Retry succeeded — local Firestore cache/queue cleared. Reload once more to start clean.'))
-          .catch((e) => console.error('[resetFirestoreCache] Retry ALSO failed — close EVERY other Sweet Pro tab/window, then run resetFirestoreCache() again:', e));
+        console.error('[resetFirestoreCache] The previous reset could not delete the local cache (another tab probably held it open). Close EVERY other Sweet Pro tab/window, then run resetFirestoreCache() again.');
       } else {
         console.log('[resetFirestoreCache] Local Firestore cache/queue was cleared on the previous load. Starting fresh from the server.');
       }
