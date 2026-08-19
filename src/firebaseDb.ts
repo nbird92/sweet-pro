@@ -14,6 +14,9 @@ import {
   getFirestore,
   terminate,
   clearIndexedDbPersistence,
+  disableNetwork,
+  enableNetwork,
+  waitForPendingWrites,
   type Firestore,
 } from 'firebase/firestore';
 import { app } from './firebaseConfig';
@@ -57,6 +60,40 @@ try {
   db = getFirestore(app, DATABASE_ID);
 }
 
+/** RECONNECT + DRAIN — non-destructive first resort. Tears down the SDK's
+ *  write stream and opens a fresh one, then waits (bounded) for every queued
+ *  local mutation to be acknowledged. Built for the case where the stream was
+ *  opened during a network fault (2026-08-19: a dead IPv6 route — the stream
+ *  hung on a half-open IPv6 socket even after the fault was fixed) and never
+ *  recovered on its own. No data is touched: queued writes are REPLAYED, not
+ *  dropped. Returns true when the queue fully drained.
+ *  Console:  await reconnectFirestore()
+ */
+export async function reconnectFirestore(timeoutMs = 30000): Promise<boolean> {
+  const log = (m: string) => console.log(`%c[reconnect] ${m}`, 'color:#0a7');
+  try {
+    log('disabling network (tears down the stale write stream)…');
+    await disableNetwork(db);
+    await new Promise(r => setTimeout(r, 500));
+    log('re-enabling network (fresh stream over the current route)…');
+    await enableNetwork(db);
+    log(`waiting up to ${Math.round(timeoutMs / 1000)}s for every queued local write to be acknowledged…`);
+    const drained = await Promise.race([
+      waitForPendingWrites(db).then(() => true),
+      new Promise<boolean>(r => setTimeout(() => r(false), timeoutMs)),
+    ]);
+    if (drained) log('✓ all pending local writes ACKNOWLEDGED by the server — queue is empty. Sync should be green.');
+    else console.error('[reconnect] queue did NOT drain in time — a queued mutation is being rejected server-side. Run resetFirestoreCache() to discard the stale queue (the data on screen is re-pushed from memory afterwards).');
+    return drained;
+  } catch (e) {
+    console.error('[reconnect] failed:', e);
+    return false;
+  }
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { reconnectFirestore?: typeof reconnectFirestore }).reconnectFirestore = reconnectFirestore;
+}
+
 /** DRAIN THE LOCAL WRITE QUEUE + CACHE for this database, then reload.
  *
  *  Firestore's offline mutation queue is FIFO: a write the SERVER permanently
@@ -85,10 +122,13 @@ export async function resetFirestoreCache(): Promise<void> {
   // client has already been terminated" — which looked exactly like the
   // original sync outage and sent the diagnosis in circles.
   let cleared = false;
+  console.log('%c[resetFirestoreCache] step 1/3 — terminating the Firestore client…', 'color:#c60');
   try {
     await terminate(db);
+    console.log('%c[resetFirestoreCache] step 2/3 — clearing the local IndexedDB cache + write queue…', 'color:#c60');
     await clearIndexedDbPersistence(db);
     cleared = true;
+    console.log('%c[resetFirestoreCache] step 3/3 — cleared. Reloading…', 'color:#c60');
   } catch (e) {
     console.error('[resetFirestoreCache] clear failed (client is terminated regardless — reloading):', e);
   }
@@ -193,17 +233,17 @@ if (typeof window !== 'undefined') {
 export async function findRejectedDocs(
   collectionName: string,
   docs?: Array<{ id: string } & Record<string, unknown>>,
-): Promise<void> {
+): Promise<{ tested: number; rejected: number } | null> {
   const log = (m: string) => console.log(`%c[find] ${m}`, 'color:#0a7');
   const bad = (m: string) => console.error(`[find] ${m}`);
   const { getAuth } = await import('firebase/auth');
   const u = getAuth(app).currentUser;
-  if (!u) { bad('not signed in'); return; }
+  if (!u) { bad('not signed in'); return null; }
   const token = await u.getIdToken(true);
   const projectId = (app.options as { projectId?: string }).projectId;
   const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents`;
   const list = docs ?? (window as unknown as { __sweetproDocs?: Record<string, Array<{ id: string }>> }).__sweetproDocs?.[collectionName];
-  if (!list || !list.length) { bad(`no docs supplied for "${collectionName}" — the app exposes current data as window.__sweetproDocs[collection]`); return; }
+  if (!list || !list.length) { bad(`no docs supplied for "${collectionName}" — the app exposes current data as window.__sweetproDocs[collection]`); return null; }
   log(`testing ${list.length} doc(s) in "${collectionName}" individually…`);
   // JSON → Firestore REST value encoding (enough for the shapes this app stores).
   const enc = (v: unknown): Record<string, unknown> => {
@@ -239,8 +279,9 @@ export async function findRejectedDocs(
       bad(`NETWORK FAIL id="${id}": ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  if (rejected === 0) log(`all ${list.length} doc(s) ACCEPTED by the server via REST. ⇒ The payload is fine; the SDK's local queue/transport is what is stuck. Run resetFirestoreCache().`);
+  if (rejected === 0) log(`all ${list.length} doc(s) ACCEPTED by the server via REST. ⇒ The payload is fine; the SDK's local queue/transport is what is stuck. The app will now cycle its connection automatically (reconnectFirestore).`);
   else bad(`${rejected} doc(s) rejected — these are what wedge the collection. Fix/remove them.`);
+  return { tested: list.length, rejected };
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { findRejectedDocs?: typeof findRejectedDocs }).findRejectedDocs = findRejectedDocs;

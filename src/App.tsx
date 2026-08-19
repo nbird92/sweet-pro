@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, findRejectedDocs } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, findRejectedDocs, reconnectFirestore } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -2734,6 +2734,8 @@ export default function App() {
   const writeAckTimeoutStreak = useRef(0);
   // Collections already run through findRejectedDocs this session (once each).
   const autoDiagnosed = useRef<Set<string>>(new Set());
+  // The non-destructive connection cycle (reconnectFirestore) is tried once per session.
+  const reconnectTried = useRef(false);
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
@@ -6294,7 +6296,19 @@ export default function App() {
           // document names itself in the console instead of being guessed at.
           if (!autoDiagnosed.current.has(task.collection) && upserts.length && upserts.length <= 500) {
             autoDiagnosed.current.add(task.collection);
-            findRejectedDocs(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>).catch(() => {});
+            findRejectedDocs(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>)
+              .then((res) => {
+                // SELF-HEAL. Server accepted every doc over REST ⇒ the payload,
+                // auth, rules and network are all fine and ONLY the SDK's stream/
+                // queue is stuck (e.g. a stream opened during a network fault that
+                // never recovered). Cycle the connection — once per session — so
+                // the SDK re-opens its stream and replays the queue.
+                if (res && res.rejected === 0 && !reconnectTried.current) {
+                  reconnectTried.current = true;
+                  reconnectFirestore().catch(() => {});
+                }
+              })
+              .catch(() => {});
           }
           // THREE consecutive no-acks = the write channel is dead for everyone.
           // Waiting out the 20s timeout on each of the ~40 remaining collections
