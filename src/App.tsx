@@ -63,7 +63,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, findRejectedDocs, reconnectFirestore } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -2732,10 +2732,6 @@ export default function App() {
   // pill until the local queue is cleared. Drives the "Repair Sync" banner.
   const [writeQueueJammed, setWriteQueueJammed] = useState(false);
   const writeAckTimeoutStreak = useRef(0);
-  // Collections already run through findRejectedDocs this session (once each).
-  const autoDiagnosed = useRef<Set<string>>(new Set());
-  // The non-destructive connection cycle (reconnectFirestore) is tried once per session.
-  const reconnectTried = useRef(false);
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
@@ -6210,6 +6206,7 @@ export default function App() {
     const failed: string[] = [];
     const pending: string[] = []; // written locally, server ack outstanding
     let statusFlipped = false;
+    let usedRestFallback = false; // at least one collection was persisted via REST
     for (const task of buildSyncTasks()) {
       if (sourcesClean(task)) continue; // identity unchanged since last clean pass — no serialize
       const dataStr = JSON.stringify(task.data);
@@ -6257,6 +6254,21 @@ export default function App() {
           `will reload next session. (Prevents load races / cache fallbacks from becoming data loss.)`,
         );
       }
+      // Advance the baseline to the just-pushed snapshot. Shared by the SDK
+      // success path, the SDK late-ack, and the REST fallback — whichever
+      // actually lands the write. Priming the per-doc cache with the strings
+      // computed during the diff keeps getDocBaseline from re-parsing the
+      // snapshot next cycle.
+      const advanceBaseline = () => {
+        lastSyncedData.current[task.key] = dataStr;
+        lastSyncedDocs.current[task.key] = { fromRaw: dataStr, map: nextDocMap };
+        recordSources(task);
+        // The snapshot now subsumes every write-through doc for this collection.
+        delete writeThroughDocs.current[task.collection];
+        // Ledgered deletes that reached the server are done — drop them so a
+        // later doc reusing the same id can't be silently deleted.
+        if (ledger) for (const id of deleteIds) ledger.delete(id);
+      };
       // ISOLATE EACH COLLECTION. This used to be an unguarded await: one failing
       // write (a rejected doc, a permissions blip, a transient network error) threw
       // out of the whole loop, so EVERY collection after it in the list never
@@ -6291,11 +6303,7 @@ export default function App() {
             // when real ack latency exceeded the watchdog).
             onLateAck: () => {
               if (lastSyncedData.current[task.key] !== baselineAtPush) return; // newer push already landed
-              lastSyncedData.current[task.key] = dataStr;
-              lastSyncedDocs.current[task.key] = { fromRaw: dataStr, map: nextDocMap };
-              recordSources(task);
-              delete writeThroughDocs.current[task.collection];
-              if (ledger) for (const id of deleteIds) ledger.delete(id);
+              advanceBaseline();
               setSyncStatus('synced');
               setLastSynced(new Date());
               setSyncError(null);
@@ -6304,68 +6312,44 @@ export default function App() {
         }
         // Advance the baseline to the just-pushed snapshot. ONLY on success —
         // leaving it behind on failure is what makes the retry pick the
-        // collection up again. Prime the per-doc cache with the strings computed
-        // during the diff so getDocBaseline doesn't round-trip the snapshot.
-        lastSyncedData.current[task.key] = dataStr;
-        lastSyncedDocs.current[task.key] = { fromRaw: dataStr, map: nextDocMap };
-        recordSources(task);
-        // The snapshot now subsumes every write-through doc for this collection.
-        delete writeThroughDocs.current[task.collection];
-        // Ledgered deletes that reached the server are done — drop them so a
-        // later doc reusing the same id can't be silently deleted.
-        if (ledger) for (const id of deleteIds) ledger.delete(id);
+        // collection up again.
+        advanceBaseline();
       } catch (e) {
         if (e instanceof SyncTimeoutError) {
-          // Saved locally, server ack outstanding. Not an error to alarm the user
-          // with — but we must NOT advance the baseline, so it re-confirms later.
-          pending.push(task.collection);
-          console.warn(`[sync] "${task.collection}" saved locally; awaiting server ack.`, e);
-          // AUTO-DIAGNOSE, once per collection per session: write the SAME docs
-          // individually over REST, which (unlike batch.commit under offline
-          // persistence) returns the server's real rejection — so the poison
-          // document names itself in the console instead of being guessed at.
-          if (!autoDiagnosed.current.has(task.collection) && upserts.length && upserts.length <= 500) {
-            autoDiagnosed.current.add(task.collection);
-            findRejectedDocs(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>)
-              .then((res) => {
-                // SELF-HEAL. Server accepted every doc over REST ⇒ the payload,
-                // auth, rules and network are all fine and ONLY the SDK's stream/
-                // queue is stuck (e.g. a stream opened during a network fault that
-                // never recovered). Cycle the connection — once per session — so
-                // the SDK re-opens its stream and replays the queue.
-                if (res && res.rejected === 0 && !reconnectTried.current) {
-                  reconnectTried.current = true;
-                  // reconnectFirestore can itself HANG (disableNetwork waits on
-                  // the SDK's internal queue — the very thing that's wedged), so
-                  // race it: if it hasn't reported a drained queue in 45s, the
-                  // SDK instance is unrecoverable in-process → wipe the local
-                  // cache directly (no SDK involved) and reload. Safe: the REST
-                  // probe just proved the server accepts every one of these
-                  // docs, and the in-memory state is re-pushed after reload, so
-                  // nothing in the discarded queue is unrecoverable.
-                  Promise.race([
-                    reconnectFirestore(45000),
-                    new Promise<boolean>(r => setTimeout(() => r(false), 50000)),
-                  ]).then((drained) => {
-                    if (drained) return;
-                    console.error('[sync] SDK write stream is unrecoverable in this page (reconnect hung or queue never drained) — resetting the local Firestore cache and reloading.');
-                    setSyncError('Repairing the local database connection — reloading…');
-                    resetFirestoreCache().catch(() => window.location.reload());
-                  }).catch(() => {});
-                }
-              })
-              .catch(() => {});
+          // The SDK's streaming write never acked. On this deployment that is
+          // usually NOT a real outage — plain REST writes to Firestore succeed
+          // on machines where the SDK's Write channel hangs (diagnosed
+          // 2026-08-19). So PERSIST THE SAME DIFF VIA REST. If it lands, the
+          // data is durably saved and we advance the baseline exactly as a
+          // normal success — the still-queued SDK write becomes a harmless
+          // duplicate. Only if REST ALSO fails do we treat it as pending.
+          let restSaved = false;
+          try {
+            const res = await restSyncCollection(
+              task.collection,
+              upserts as Array<{ id: string } & Record<string, unknown>>,
+              deleteIds,
+            );
+            if (res.ok) {
+              restSaved = true;
+              usedRestFallback = true;
+              advanceBaseline();
+              console.log(`%c[sync] "${task.collection}" persisted via REST (${res.upserted} upserts, ${res.deleted} deletes) — SDK stream was unresponsive.`, 'color:#0a7');
+            } else {
+              console.warn(`[sync] "${task.collection}" REST persist incomplete (${res.failed} failed): ${res.firstError}`);
+            }
+          } catch (restErr) {
+            console.warn(`[sync] "${task.collection}" REST persist threw:`, restErr);
           }
-          // THREE consecutive no-acks = the write channel is dead for everyone.
-          // Waiting out the 20s timeout on each of the ~40 remaining collections
-          // would take 10+ minutes per pass — which also kept the Repair Sync
-          // banner (gated on N *completed* failed passes) from ever appearing.
-          // Abort the pass (unpushed collections stay dirty and retry) and
-          // surface the repair immediately.
-          if (pending.length >= 3) {
-            console.warn('[sync] Write channel appears dead (3 collections in a row got no server ack) — aborting this pass and surfacing Repair Sync.');
-            setWriteQueueJammed(true);
-            break;
+          if (!restSaved) {
+            // REST also couldn't save — genuinely offline / server refusal.
+            pending.push(task.collection);
+            console.warn(`[sync] "${task.collection}" saved locally; awaiting server ack (REST fallback also failed).`, e);
+            if (pending.length >= 3) {
+              console.warn('[sync] Write channel appears dead (3 collections in a row got no server ack, REST fallback failing too) — surfacing Repair Sync.');
+              setWriteQueueJammed(true);
+              break;
+            }
           }
         } else {
           const msg = e instanceof Error ? e.message : String(e);
@@ -6393,6 +6377,13 @@ export default function App() {
     }
     if (pending.length) {
       throw new SyncTimeoutError(pending.join(', '));
+    }
+    // Everything landed. If some collections went through the REST fallback, the
+    // SDK's own stream is degraded on this machine — note it once so it's visible
+    // without being alarming (the data IS saved).
+    if (usedRestFallback) {
+      setWriteQueueJammed(false);
+      console.log('%c[sync] all collections persisted (some via the REST fallback). Data is saved on the server.', 'color:#0a7');
     }
     return changed;
   };

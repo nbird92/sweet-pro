@@ -282,39 +282,14 @@ export async function findRejectedDocs(
   const list = docs ?? (window as unknown as { __sweetproDocs?: Record<string, Array<{ id: string }>> }).__sweetproDocs?.[collectionName];
   if (!list || !list.length) { bad(`no docs supplied for "${collectionName}" — the app exposes current data as window.__sweetproDocs[collection]`); return null; }
   log(`testing ${list.length} doc(s) in "${collectionName}" individually…`);
-  // JSON → Firestore REST value encoding (enough for the shapes this app stores).
-  const enc = (v: unknown): Record<string, unknown> => {
-    if (v === null || v === undefined) return { nullValue: null };
-    if (typeof v === 'string') return { stringValue: v };
-    if (typeof v === 'boolean') return { booleanValue: v };
-    if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
-    if (Array.isArray(v)) return { arrayValue: { values: v.map(enc) } };
-    if (typeof v === 'object') {
-      const fields: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (x !== undefined) fields[k] = enc(x);
-      return { mapValue: { fields } };
-    }
-    return { stringValue: String(v) };
-  };
   let rejected = 0;
   for (const d of list) {
-    const { id, ...rest } = d;
-    const fields: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(rest)) if (x !== undefined) fields[k] = enc(x);
-    try {
-      const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields }),
-      });
-      if (!r.ok) {
-        rejected++;
-        bad(`REJECTED id="${id}" → HTTP ${r.status}: ${(await r.text()).slice(0, 400)}\n  doc: ${JSON.stringify(d).slice(0, 300)}`);
-      }
-    } catch (e) {
-      rejected++;
-      bad(`NETWORK FAIL id="${id}": ${e instanceof Error ? e.message : String(e)}`);
-    }
+    // Write the FULL document, INCLUDING the id field — the app reads docs via
+    // snapshot.data() and relies on the stored `id`. (A PATCH with no updateMask
+    // replaces the whole document, so omitting id would DELETE that field — an
+    // earlier version of this diagnostic did exactly that and corrupted docs.)
+    const err = await restPatchDoc(base, collectionName, token, d);
+    if (err) { rejected++; bad(`REJECTED id="${d.id}": ${err}\n  doc: ${JSON.stringify(d).slice(0, 300)}`); }
   }
   if (rejected === 0) log(`all ${list.length} doc(s) ACCEPTED by the server via REST. ⇒ The payload is fine; the SDK's local queue/transport is what is stuck. The app will now cycle its connection automatically (reconnectFirestore).`);
   else bad(`${rejected} doc(s) rejected — these are what wedge the collection. Fix/remove them.`);
@@ -322,6 +297,96 @@ export async function findRejectedDocs(
 }
 if (typeof window !== 'undefined') {
   (window as unknown as { findRejectedDocs?: typeof findRejectedDocs }).findRejectedDocs = findRejectedDocs;
+}
+
+// JSON → Firestore REST "Value" encoding (covers every shape this app stores:
+// strings, finite numbers, booleans, null, arrays, nested maps). Non-finite
+// numbers (NaN/Infinity) can't be represented and become null.
+function firestoreValue(v: unknown): Record<string, unknown> {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return { nullValue: null };
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(firestoreValue) } };
+  if (typeof v === 'object') {
+    const fields: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (x !== undefined) fields[k] = firestoreValue(x);
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(v) };
+}
+
+// PATCH one document over REST (full-document replace, matching batch.set).
+// Returns null on success, or an error string. base = documents root URL.
+async function restPatchDoc(base: string, collectionName: string, token: string, d: { id: string } & Record<string, unknown>): Promise<string | null> {
+  const clean = stripUndefinedDeep(d) as { id: string } & Record<string, unknown>;
+  if (JSON.stringify(clean).length > SINGLE_DOC_MAX_BYTES) return `exceeds Firestore's 1 MiB per-document limit`;
+  const fields: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(clean)) if (x !== undefined) fields[k] = firestoreValue(x);
+  try {
+    const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(String(d.id))}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    if (r.ok) return null;
+    return `HTTP ${r.status}: ${(await r.text()).slice(0, 180)}`;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/** PERSIST A COLLECTION DIFF VIA THE REST API — the reliable write path when the
+ *  SDK's streaming Write channel won't ack (diagnosed 2026-08-19: on the
+ *  operator's machine plain REST writes succeed every time while the SDK stream
+ *  hangs). Upserts are full-document replaces INCLUDING the id field; deletes
+ *  are REST DELETEs. Same document shape the SDK batch would have written, so the
+ *  in-memory baseline stays valid and the SDK's still-queued duplicate is a
+ *  harmless no-op. Runs in small concurrent chunks for speed without hammering.
+ *  Returns ok=true only if EVERY write/delete succeeded. */
+export async function restSyncCollection(
+  collectionName: string,
+  upserts: Array<{ id: string } & Record<string, unknown>>,
+  deleteIds: string[] = [],
+): Promise<{ ok: boolean; upserted: number; deleted: number; failed: number; firstError?: string }> {
+  const { getAuth } = await import('firebase/auth');
+  const u = getAuth(app).currentUser;
+  if (!u) return { ok: false, upserted: 0, deleted: 0, failed: upserts.length + deleteIds.length, firstError: 'not signed in' };
+  let token: string;
+  try { token = await u.getIdToken(); } catch (e) { return { ok: false, upserted: 0, deleted: 0, failed: upserts.length + deleteIds.length, firstError: `token: ${e instanceof Error ? e.message : String(e)}` }; }
+  const projectId = (app.options as { projectId?: string }).projectId;
+  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents`;
+  const hdr = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  let upserted = 0, deleted = 0, failed = 0;
+  let firstError: string | undefined;
+  const note = (e: string | null) => { if (e) { failed++; if (!firstError) firstError = e; } };
+
+  // Bounded concurrency so a big collection doesn't fire 500 requests at once.
+  const CHUNK = 8;
+  for (let i = 0; i < upserts.length; i += CHUNK) {
+    const slice = upserts.slice(i, i + CHUNK);
+    const results = await Promise.all(slice.map(d => restPatchDoc(base, collectionName, token, d)));
+    for (const e of results) { if (e === null) upserted++; else note(e); }
+  }
+  for (let i = 0; i < deleteIds.length; i += CHUNK) {
+    const slice = deleteIds.slice(i, i + CHUNK);
+    const results = await Promise.all(slice.map(async (id) => {
+      try {
+        // DELETE is idempotent — removing a doc that doesn't exist returns 200.
+        const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: hdr });
+        return r.ok ? null : `DELETE HTTP ${r.status} on ${id}`;
+      } catch (e) { return `delete ${id}: ${e instanceof Error ? e.message : String(e)}`; }
+    }));
+    for (const e of results) { if (e === null) deleted++; else note(e); }
+  }
+  return { ok: failed === 0, upserted, deleted, failed, firstError };
+}
+if (typeof window !== 'undefined') {
+  (window as unknown as { restSyncCollection?: typeof restSyncCollection }).restSyncCollection = restSyncCollection;
 }
 
 // Collection names matching the old Google Sheets tab names
@@ -682,13 +747,14 @@ function invalidDocIdReason(id: unknown): string | null {
   return null;
 }
 
-// 90s, raised from 20s (2026-08-19). On the operator's machine the write
-// stream's handshake is slow/flaky (400s + retries) and acks routinely arrive
-// after 20s. A timeout shorter than the real ack latency created an infinite
-// loop: report failure → don't advance baseline → re-push identical docs →
-// time out again — while the writes were in fact landing server-side. The
-// late-ack path (onLateAck below) closes the loop even beyond 90s.
-const BATCH_ACK_TIMEOUT_MS = 90000;
+// 15s. This is the window the SDK's streaming write gets before the caller
+// falls back to a REST write (which works on machines where the SDK stream
+// hangs). It does NOT need to exceed real ack latency: if the SDK ack arrives
+// later, opts.onLateAck still reconciles the baseline; if it never arrives, the
+// REST fallback has already persisted the data. Shorter than this would make
+// healthy-but-slow acks fall back needlessly; much longer would delay the REST
+// save on a machine where the stream is dead.
+const BATCH_ACK_TIMEOUT_MS = 15000;
 function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
