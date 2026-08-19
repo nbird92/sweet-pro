@@ -300,6 +300,7 @@ const PO_SCHEMA = {
     notes: { type: Type.STRING, description: 'Any special instructions worth surfacing.' },
     confidence: numStr('Overall extraction confidence 0..1 as a short decimal string (e.g. "0.85").'),
     isCallOff: { type: Type.BOOLEAN, description: 'True ONLY for a CALL-OFF / delivery-schedule release: ONE bulk order number with a TABLE of MULTIPLE scheduled deliveries on DIFFERENT dates. A normal PO with a single delivery is NOT a call-off (false).' },
+    hasCallOffKeyword: { type: Type.BOOLEAN, description: 'LITERAL TEXT CHECK, not a judgment: true ONLY if the document text actually contains the words "call off", "call-off", or "calloff" (case-insensitive) somewhere — e.g. a "CALL OFF" title. If those exact words do not appear anywhere in the document, this MUST be false, even if the layout looks like a delivery schedule.' },
     documentType: {
       type: Type.STRING,
       format: 'enum',
@@ -376,6 +377,7 @@ INTERNAL emails are NOT new orders:
 - An email whose SUBJECT contains "Stock Request" is ALWAYS an INTERNAL note that supplies a SPLIT NUMBER for an existing PO or invoice — it is NEVER a new order, regardless of sender. Classify it 'amendment', set amendsPoNumber to the referenced PO/invoice number, and put the split number in amendment.newSplitNumber AND the top-level splitNumber field.
 
 CALL-OFF / delivery-schedule releases (e.g. Ferrero "CALL OFF" PDFs):
+- REQUIRED KEYWORD: a call-off is treated as such ONLY when the document text literally contains the words "call off" / "call-off" / "calloff". Set hasCallOffKeyword accordingly (a pure literal-text check). If those words appear NOWHERE in the document, set BOTH hasCallOffKeyword = false AND isCallOff = false and treat it as a normal PO — keep its PO number exactly as printed and add no suffix, no matter how the layout looks.
 - A call-off is ONE bulk order number with a TABLE of MULTIPLE scheduled deliveries on DIFFERENT dates — several rows, each a distinct delivery date/time + quantity. Recognize these by a "CALL OFF" title or a multi-row delivery-schedule table under a single order number.
 - Set isCallOff = true ONLY for that case. A normal purchase order with a SINGLE delivery (one line item / one due date), even when it has "Pickup Date" / "Delivery Time" columns or the word "Delivery" in the filename, is NOT a call-off — set isCallOff = false, classify it 'new_order', keep its PO number exactly as printed, and capture its Unit Price / Line Total and Shipping Term like any other PO. Never emit more delivery rows than are actually printed.
 - A document that PRICES its line(s) — a Unit Price, a Line Total, or an order Total/Subtotal (e.g. an FGF/SAP PO showing "Unit Price 0.98308 … Line Total 29,492.40 … Total 29,492.40") — is a PRICED purchase order, NOT a call-off. Set isCallOff = false and keep the printed PO number. A real call-off delivery schedule carries NO prices and no order total.
@@ -616,6 +618,14 @@ function isoWeekOf(dateISO: string): number {
  *  the rows; it never does the week/sequence arithmetic. */
 export function expandCallOffDoc(doc: any): any[] {
   if (!doc || doc.isCallOff !== true) return [doc];
+  // HARD GATE: only ever split into per-delivery "-{week}{seq}" call-off numbers
+  // when the document LITERALLY contains the words "call off"/"call-off"/
+  // "calloff". Without that keyword it is a normal PO — keep its number exactly
+  // as printed and add no suffix. This stops the model's structural guess
+  // (bulk-order-with-a-date-table) from inventing a suffix like "-343" (an ISO
+  // week+sequence computed here in code) on an ordinary priced PO where the word
+  // "call off" appears nowhere in the email.
+  if (doc.hasCallOffKeyword !== true) return [doc];
   const lines = Array.isArray(doc.lineItems) ? doc.lineItems.filter((l: any) => l && typeof l === 'object') : [];
   const dated = lines.filter((l: any) => typeof l.deliveryDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(l.deliveryDate));
   const base = String(doc.poNumber || '').trim().replace(/[-_/\s]+$/, '');
