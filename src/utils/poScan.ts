@@ -353,9 +353,30 @@ export function findLearned(learned: LearnedMapping[], field: LearnedField, from
   return hit ? hit.to : null;
 }
 
-/** Stable document id for a learned mapping, for syncing to Firestore. */
+/** Stable document id for a learned mapping, for syncing to Firestore.
+ *
+ *  BOUNDED. Firestore document ids are capped at 1,500 bytes, and `from` is raw
+ *  text lifted from a PO email — a correction recorded against a pasted address
+ *  block or a long product description yields an id far past the cap. Firestore
+ *  rejects that write with a 400, and because every mapping goes in one batch,
+ *  the ONE oversize id poisoned the WHOLE poFieldMappings collection: it was the
+ *  only collection that failed to ack, every time, on every network (2026-08-18).
+ *  Ids longer than the budget are replaced by `<field>__<prefix>~<hash>` —
+ *  stable for the same input, always short. (An empty normalized `from` also
+ *  gets a deterministic suffix so several blank-ish sources don't collide.) */
+const LEARNED_ID_MAX = 200;
+function stableHash(s: string): string {
+  // FNV-1a 32-bit — deterministic, dependency-free; collisions are irrelevant
+  // at this scale and the prefix keeps ids human-readable anyway.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36);
+}
 export function learnedId(l: LearnedMapping): string {
-  return `${l.field}__${normalize(l.from)}`;
+  const n = normalize(l.from);
+  const base = `${l.field}__${n || 'blank'}`;
+  if (base.length <= LEARNED_ID_MAX) return base;
+  return `${l.field}__${n.slice(0, 120)}~${stableHash(n)}`;
 }
 
 /** Overwrite the whole localStorage learned store (used after a remote merge). */

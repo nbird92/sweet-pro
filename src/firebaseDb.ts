@@ -44,15 +44,14 @@ let db: Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    // AUTO-DETECT LONG-POLLING. 2026-08-18: writes stopped acking on the
-    // operator's machine (reproduced in Incognito, on a phone hotspot, with a
-    // correct clock, with plain HTTPS to firestore.googleapis.com working) —
-    // i.e. the SDK transport itself was failing, not the network path.
-    // experimentalForceLongPolling was tried first and did NOT help; forcing it
-    // is also known to degrade connections that CAN stream. AutoDetect is the
-    // Firebase-recommended setting: it probes and only falls back to long-
-    // polling when the streaming WebChannel is actually being broken.
-    experimentalAutoDetectLongPolling: true,
+    // DEFAULT (streaming WebChannel) TRANSPORT — deliberately. On 2026-08-18
+    // both experimentalForceLongPolling and experimentalAutoDetectLongPolling
+    // were tried while chasing writes that never acked. Neither helped (the
+    // real cause was a TERMINATED client stranded by resetFirestoreCache — see
+    // that function) and both made the initial bulk load — ~40 parallel
+    // getDocsFromServer reads over tens of thousands of docs — take MINUTES
+    // instead of seconds, because long-polling serializes what the stream
+    // multiplexes. Do not re-add either flag without a measured reason.
   }, DATABASE_ID);
 } catch {
   db = getFirestore(app, DATABASE_ID);
@@ -279,6 +278,8 @@ export async function saveDocsNow<T extends { id: string }>(
   let bytes = 0;
   const oversize: { id: string; size: number }[] = [];
   for (const item of valid) {
+    const idProblem = invalidDocIdReason(item.id);
+    if (idProblem) { console.error(`[saveDocsNow] "${collectionName}": skipped doc with invalid id "${String(item.id).slice(0, 80)}" — ${idProblem}`); continue; }
     const clean = stripUndefinedDeep(item);
     const size = JSON.stringify(clean).length;
     // See SINGLE_DOC_MAX_BYTES — one oversized doc 400s and wedges the collection.
@@ -521,6 +522,24 @@ export class SyncTimeoutError extends Error {
 // rather than letting one record poison the queue.
 const SINGLE_DOC_MAX_BYTES = 1_000_000;
 
+/** Why Firestore would REJECT this document id (null = valid). Firestore's
+ *  rules: non-empty, ≤ 1,500 bytes UTF-8, no "/", not "." or "..", and not the
+ *  reserved `__name__` form. A single bad id 400s its whole batch — and with
+ *  offline persistence that batch is retried forever and wedges the collection
+ *  on "still waiting for the server". This happened with poFieldMappings
+ *  (2026-08-18): ids were built from raw PO-email text and one exceeded 1,500
+ *  bytes. Skipping + naming the offender keeps the rest of the collection
+ *  syncing and makes the culprit visible instead of silent. */
+function invalidDocIdReason(id: unknown): string | null {
+  if (typeof id !== 'string' || id.length === 0) return 'empty / non-string id';
+  if (id === '.' || id === '..') return 'reserved "." / ".." id';
+  if (id.includes('/')) return 'contains "/"';
+  if (/^__.*__$/.test(id)) return 'reserved __name__ form';
+  // Byte length, not char length — multi-byte chars count more.
+  if (new TextEncoder().encode(id).length > 1500) return `exceeds 1,500 bytes (${id.length} chars)`;
+  return null;
+}
+
 const BATCH_ACK_TIMEOUT_MS = 20000;
 function withBatchTimeout<T>(p: Promise<T>, collectionName: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -577,9 +596,16 @@ export async function syncCollectionDiff<T extends { id: string }>(
   let bytes = 0;
   let totalBytes = 0;
   const oversize: { id: string; size: number }[] = [];
+  const badIds: { id: string; reason: string }[] = [];
   const flush = () => { if (count > 0) { batches.push(batch); batch = writeBatch(db); count = 0; bytes = 0; } };
 
   for (const item of upserts) {
+    // BAD DOCUMENT ID — Firestore would 400 the whole batch. Skip + name it.
+    const idProblem = invalidDocIdReason(item.id);
+    if (idProblem) {
+      badIds.push({ id: String(item.id).slice(0, 80), reason: idProblem });
+      continue;
+    }
     const clean = stripUndefinedDeep(item);
     // Rough but cheap size estimate; only needs to be the right order of magnitude.
     const size = JSON.stringify(clean).length;
@@ -605,6 +631,13 @@ export async function syncCollectionDiff<T extends { id: string }>(
       `[sync] "${collectionName}": ${oversize.length} document(s) exceed Firestore's 1 MiB per-document limit and were SKIPPED ` +
       `(they would 400 and wedge the whole collection). Fix these records — likely a runaway/duplicated array:\n` +
       oversize.map(o => `  • ${o.id} — ${Math.round(o.size / 1024)} KB`).join('\n'),
+    );
+  }
+  if (badIds.length) {
+    console.error(
+      `[sync] "${collectionName}": ${badIds.length} document(s) have an id Firestore would REJECT and were SKIPPED ` +
+      `(one bad id 400s the whole batch and wedges the collection):\n` +
+      badIds.map(b => `  • "${b.id}${b.id.length >= 80 ? '…' : ''}" — ${b.reason}`).join('\n'),
     );
   }
   if (!massDelete) {
