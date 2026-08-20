@@ -731,8 +731,14 @@ export default function App() {
   // Best ship-to site id within a given customer for an extraction's ship-to text.
   const matchShipToForCustomer = (customerId: string, po: ExtractedPO): string => {
     const c = customers.find(x => x.id === customerId);
-    const m = matchShipToLocation(po.shipToName, po.shipToAddress, c?.shipToLocations);
-    return m?.id || '';
+    const locs = c?.shipToLocations || [];
+    const m = matchShipToLocation(po.shipToName, po.shipToAddress, locs);
+    if (m?.id) return m.id;
+    // Only ONE ship-to on file → nothing to disambiguate, so auto-select it even
+    // when the scanned ship-to text didn't match (a common case for customers
+    // with a single delivery site).
+    if (locs.length === 1) return locs[0].id;
+    return '';
   };
 
   // Sucro contract numbers look like S######.### (e.g. S123456.001). Scan the
