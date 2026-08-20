@@ -6261,6 +6261,12 @@ export default function App() {
     const pending: string[] = []; // written locally, server ack outstanding
     let statusFlipped = false;
     let usedRestFallback = false; // at least one collection was persisted via REST
+    // TIMING — every dirty collection reports what it pushed and how long it
+    // took, so "syncs are slow" is diagnosable from the console (which
+    // collection, how many docs, which path) instead of guessed at.
+    const passT0 = performance.now();
+    let passUpserts = 0;
+    let passDeletes = 0;
     for (const task of buildSyncTasks()) {
       if (sourcesClean(task)) continue; // identity unchanged since last clean pass — no serialize
       const dataStr = JSON.stringify(task.data);
@@ -6333,6 +6339,9 @@ export default function App() {
       // next cycle, and the healthy collections still get written.
       try {
         if (upserts.length || deleteIds.length) {
+          passUpserts += upserts.length;
+          passDeletes += deleteIds.length;
+          const colT0 = performance.now();
           // REST-FIRST short-circuit: on a browser already proven to have a dead
           // SDK write stream, skip the 15s SDK attempt entirely and persist via
           // REST straight away. A failure here throws into the catch, which runs
@@ -6341,6 +6350,8 @@ export default function App() {
             const res = await restSyncCollection(task.collection, upserts as Array<{ id: string } & Record<string, unknown>>, deleteIds);
             if (!res.ok) throw new SyncTimeoutError(task.collection);
             advanceBaseline();
+            const colMs = Math.round(performance.now() - colT0);
+            if (colMs > 1500 || upserts.length > 25) console.log(`%c[sync] "${task.collection}": ${upserts.length} upserts, ${deleteIds.length} deletes via REST in ${colMs}ms`, 'color:#0a7');
             continue;
           }
           // BOUNDED WAIT. With offline persistence on, batch.commit() resolves only
@@ -6449,6 +6460,12 @@ export default function App() {
     if (usedRestFallback) {
       setWriteQueueJammed(false);
       console.log('%c[sync] all collections persisted (some via the REST fallback). Data is saved on the server.', 'color:#0a7');
+    }
+    // Pass summary — only when something was actually pushed and it wasn't
+    // instant, so a slow badge is explainable at a glance.
+    const passMs = Math.round(performance.now() - passT0);
+    if (changed > 0 && passMs > 1500) {
+      console.log(`%c[sync] pass done: ${changed} collection(s), ${passUpserts} upserts, ${passDeletes} deletes in ${(passMs / 1000).toFixed(1)}s`, 'color:#0a7');
     }
     return changed;
   };

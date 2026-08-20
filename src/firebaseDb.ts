@@ -366,7 +366,11 @@ export async function restSyncCollection(
   const note = (e: string | null) => { if (e) { failed++; if (!firstError) firstError = e; } };
 
   // Bounded concurrency so a big collection doesn't fire 500 requests at once.
-  const CHUNK = 8;
+  // 24 concurrent single-doc PATCHes. Browsers multiplex these over one HTTP/2
+  // connection, and Firestore handles per-doc writes at this rate comfortably —
+  // at 8 a first-time 900-doc backlog took minutes; at 24 it's ~3x faster while
+  // still bounded (never thousands of requests in flight at once).
+  const CHUNK = 24;
   for (let i = 0; i < upserts.length; i += CHUNK) {
     const slice = upserts.slice(i, i + CHUNK);
     const results = await Promise.all(slice.map(d => restPatchDoc(base, collectionName, token, d)));
