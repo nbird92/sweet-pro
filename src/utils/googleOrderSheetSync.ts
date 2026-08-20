@@ -2504,6 +2504,13 @@ export function parsedRowsToTransfersConfigured(
   // Track which existing transfers we've already updated this run (and hold the
   // running merged copy so several sheet rows can each fill different gaps).
   const updatedByNum = new Map<string, Transfer>();
+  // Transfers ADDED this run, by number. A later row with the same transfer
+  // number must merge into the just-added transfer — the old code sent it to
+  // existingByNum (where it isn't), spread `undefined` into an id-less garbage
+  // record, and each extra row of a multi-row transfer became junk instead of
+  // gap-fill. Holds the SAME object pushed into result.newTransfers, so in-place
+  // gap-filling updates the result directly.
+  const addedByNum = new Map<string, Transfer>();
   const compositeKey = (t: { from: string; to: string; product: string; date: string; po: string }) =>
     `${t.from.toUpperCase()}|${t.to.toUpperCase()}|${t.product.toUpperCase()}|${t.date}|${t.po.toUpperCase()}`;
   const existingComposites = new Set(
@@ -2552,6 +2559,13 @@ export function parsedRowsToTransfersConfigured(
 
       // Fields carried from this sheet row (used to build a new transfer OR to
       // fill an existing one's gaps).
+      // A transfer carries EXACTLY ONE lot code. Sheet cells sometimes hold a
+      // whole list (multi-line or comma-separated lots for the load) — keep only
+      // the FIRST, cleaned; never store the joined list on the transfer.
+      const firstLot = (raw?: string): string => {
+        const first = (raw || '').split(/[\n,;]+/).map(s => s.trim()).find(Boolean) || '';
+        return cleanLotCode(first);
+      };
       const fields: Partial<Transfer> = {
         from,
         to,
@@ -2561,7 +2575,7 @@ export function parsedRowsToTransfersConfigured(
         product: productRefs.productDisplayName || productRefs.productName,
         amount: r.quantityMT,
         po: r.poNumber || undefined,
-        lotCode: r.lotCode || undefined,
+        lotCode: firstLot(r.lotCode) || undefined,
         contractNumber: r.contractNumber || undefined,
         splitNumber: r.splitNumber || undefined,
         papsNo: r.papsNo || undefined,
@@ -2576,10 +2590,24 @@ export function parsedRowsToTransfersConfigured(
       };
       const isEmpty = (v: any) => v === undefined || v === null || v === '' || (typeof v === 'number' && v === 0);
 
+      // A later row for a transfer ADDED earlier this run: gap-fill it in place
+      // (same object as in result.newTransfers). The transfer keeps ONE lot code
+      // — the first row's — because fill-empty never overwrites a set field.
+      if (numU && addedByNum.has(numU)) {
+        const added = addedByNum.get(numU)! as any;
+        for (const [k, v] of Object.entries(fields)) {
+          if (isEmpty(added[k]) && !isEmpty(v)) added[k] = v;
+        }
+        continue;
+      }
       // An existing transfer with the same number is UPDATED — only its
       // empty/missing fields are filled from the sheet; populated fields stay.
       if (numU && (existingNums.has(numU) || updatedByNum.has(numU))) {
-        const base = updatedByNum.get(numU) || existingByNum.get(numU)!;
+        const base = updatedByNum.get(numU) || existingByNum.get(numU);
+        if (!base) { // number seen but no record to merge into (defensive)
+          result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Duplicate transfer number in the sheet' });
+          continue;
+        }
         const merged: any = { ...base };
         let changed = false;
         for (const [k, v] of Object.entries(fields)) {
@@ -2621,8 +2649,9 @@ export function parsedRowsToTransfersConfigured(
       };
       newTransfer.status = 'Pending';
 
-      result.newTransfers.push(stripUndefined(newTransfer));
-      if (numU) { existingNums.add(numU); }
+      const added = stripUndefined(newTransfer) as Transfer;
+      result.newTransfers.push(added);
+      if (numU) addedByNum.set(numU, added); // later same-number rows gap-fill this
       addedComposites.add(comp);
     } catch (err) {
       result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });

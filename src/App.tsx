@@ -2811,13 +2811,17 @@ export default function App() {
   // the only meaningful dependency.
   const enrichedTransfers = useMemo<Transfer[]>(() => transfers.map(t => {
     const r = resolveByPo(t.po);
+    // A transfer carries ONE lot code. The resolver's shipment contributor is a
+    // comma-JOINED list of every lot on the matching shipment, so borrowing it
+    // whole made one transfer display several lot codes — take the first only.
+    const resolvedLot = (r.lotCode || '').split(/[,;\n]+/).map(s => s.trim()).find(Boolean) || '';
     return {
       ...t,
       customer: t.customer || r.customer || undefined,
       product: t.product || r.product,
       contractNumber: t.contractNumber || r.contractNumber || undefined,
       splitNumber: t.splitNumber || r.splitNo || undefined,
-      lotCode: t.lotCode || r.lotCode || undefined,
+      lotCode: t.lotCode || resolvedLot || undefined,
       countryOfOrigin: t.countryOfOrigin || r.countryOfOrigin || undefined,
       carrier: t.carrier || r.carrier,
       trailerNo: t.trailerNo || r.trailerNo || undefined,
