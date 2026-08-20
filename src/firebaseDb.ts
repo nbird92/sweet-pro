@@ -689,31 +689,24 @@ export async function syncCollection<T extends { id: string }>(
     );
   }
 
-  const batchSize = 450;
-  const batches: ReturnType<typeof writeBatch>[] = [];
-  let batch = writeBatch(db);
-  let count = 0;
-  const rotate = () => { if (count >= batchSize) { batches.push(batch); batch = writeBatch(db); count = 0; } };
-
-  // Upsert every incoming doc (Firestore rejects `undefined` at any depth, so
-  // strip those recursively).
-  for (const item of data) {
-    const cleanItem = stripUndefinedDeep(item);
-    batch.set(doc(db, collectionName, item.id), cleanItem);
-    count++;
-    rotate();
+  // WRITE VIA REST — deliberately NOT SDK batches. The import/sheet-sync flows
+  // call this directly, and on the operator's machine the SDK's batch commit
+  // never gets a server ack: the write sat in the local queue forever, the
+  // .then() callbacks (badge + baseline updates) never fired, and a refresh
+  // re-read the server — which never received the import. "I synced invoices
+  // and after a refresh they were all lost" was exactly this. restSyncCollection
+  // is the same proven write path the autosave uses; it resolves only when the
+  // server has actually accepted every write, so a caller's .then() now means
+  // what it says.
+  const deleteIds = massDelete ? [] : toDelete.map(d => d.id);
+  const res = await restSyncCollection(
+    collectionName,
+    data as unknown as Array<{ id: string } & Record<string, unknown>>,
+    deleteIds,
+  );
+  if (!res.ok) {
+    throw new Error(`"${collectionName}" import save incomplete: ${res.failed} write(s) failed — ${res.firstError || 'unknown error'}. ${res.upserted} of ${data.length} docs did save; re-running the import will retry the rest.`);
   }
-  // Delete only genuine, small user removals.
-  if (!massDelete) {
-    for (const d of toDelete) {
-      batch.delete(d.ref);
-      count++;
-      rotate();
-    }
-  }
-  if (count > 0) batches.push(batch);
-
-  for (const b of batches) await b.commit();
 }
 
 // Per-document sync: write ONLY the docs this session actually changed (upserts)
