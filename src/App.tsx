@@ -6633,9 +6633,16 @@ export default function App() {
   const handleSyncNow = async () => {
     // Wait out an in-flight autosave (bounded ~10s) so two whole-collection
     // writes never interleave.
+    const waitT0 = performance.now();
     for (let i = 0; i < 40 && isSyncing.current; i++) await new Promise(r => setTimeout(r, 250));
-    if (isSyncing.current) return; // autosave still writing — it IS the push; try again after
+    if (isSyncing.current) {
+      // Autosave still writing after the 10s wait — it IS the push; but tell the
+      // operator instead of returning silently (which looked like a hung sync).
+      console.warn('[syncNow] an autosave pass is still running — it is doing the push; try Sync Now again once the badge settles.');
+      return;
+    }
     isSyncing.current = true;
+    const pushT0 = performance.now();
     try {
       await pushDirtyCollections();
     } catch (e) {
@@ -6647,7 +6654,13 @@ export default function App() {
       return;
     }
     isSyncing.current = false;
+    const pullT0 = performance.now();
     await loadDataFromFirestore();
+    // PHASE TIMING — makes "Sync Now is slow" diagnosable at a glance: how long
+    // it waited for an in-flight autosave, how long the push took, how long the
+    // full pull took. The pull's per-collection detail is logged by fetchAllData.
+    const end = performance.now();
+    console.log(`%c[syncNow] waited ${(Math.max(0, pushT0 - waitT0) / 1000).toFixed(1)}s for autosave · push ${(Math.max(0, pullT0 - pushT0) / 1000).toFixed(1)}s · pull ${((end - pullT0) / 1000).toFixed(1)}s`, 'color:#0a7');
   };
 
   // Fast-persist the review queues so a dismissed / approved PO or amendment

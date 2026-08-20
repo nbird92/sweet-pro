@@ -43,6 +43,11 @@ export const DATABASE_ID = 'sweetpro2';
 // acknowledged it". The multi-tab manager lets several tabs share one cache.
 // Falls back to the plain (memory-only) instance if IndexedDB isn't available
 // (private browsing / unsupported browser) so the app still runs.
+// Build marker — lets a console log confirm which sync architecture the loaded
+// bundle actually runs (stale cached bundles kept masquerading as new deploys).
+export const SYNC_BUILD = 'reads=streaming writes=REST v2026-08-20b';
+if (typeof window !== 'undefined') console.log(`%c[build] ${SYNC_BUILD}`, 'color:#888');
+
 let db: Firestore;
 try {
   db = initializeFirestore(app, {
@@ -587,12 +592,22 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
     return data && data.id != null ? data : { ...data, id: d.id };
   };
   try {
+    // TIMING — each collection reports its own read time, so a slow load/pull
+    // names the culprit in the console (collection, doc count, ms) instead of
+    // showing an opaque multi-minute "Syncing".
+    const t0 = performance.now();
+    const slow: string[] = [];
     const results = await Promise.all(
       names.map(async (name) => {
+        const ct0 = performance.now();
         const snapshot = await getDocsFromServer(collection(db, name));
+        const ms = Math.round(performance.now() - ct0);
+        if (ms > 3000 || snapshot.docs.length > 2000) slow.push(`${name}: ${snapshot.docs.length} docs in ${(ms / 1000).toFixed(1)}s`);
         return [name, snapshot.docs.map(withId)] as const;
       })
     );
+    const totalMs = Math.round(performance.now() - t0);
+    console.log(`%c[load] server pull: ${names.length} collections in ${(totalMs / 1000).toFixed(1)}s${slow.length ? ` — slowest/biggest: ${slow.join(' · ')}` : ''}`, 'color:#0a7');
     return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: false };
   } catch (serverErr) {
     console.warn('[fetchAllData] Server read failed — falling back to the local cache (READ-ONLY).', serverErr);
