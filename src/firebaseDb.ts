@@ -558,7 +558,13 @@ export async function fetchUserPrefs(uid: string): Promise<Record<string, any> |
   return snap.exists() ? (snap.data() as Record<string, any>) : null;
 }
 export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Promise<void> {
-  await setDoc(doc(db, 'userPreferences', uid), stripUndefinedDeep({ ...prefs, id: uid, updatedAt: new Date().toISOString() }));
+  // REST like every other write path — setDoc goes through the SDK write channel,
+  // which never acks on some machines, so column layouts / saved views silently
+  // failed to persist there while all business data (already on REST) saved fine.
+  const res = await restSyncCollection('userPreferences', [
+    stripUndefinedDeep({ ...prefs, id: uid, updatedAt: new Date().toISOString() }) as { id: string } & Record<string, unknown>,
+  ]);
+  if (!res.ok) throw new Error(res.firstError || 'preferences write failed');
 }
 
 // Fetch all data from all collections (one-time bulk read). Reads FROM THE SERVER
