@@ -47,24 +47,20 @@ let db: Firestore;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    // FORCE LONG-POLLING — decided on evidence, 2026-08-19. On the operator's
-    // machine a BRAND-NEW SDK instance (cache + queue just wiped, IPv6 disabled,
-    // auth/rules verified) still never receives an ack on its first batch
-    // write, while plain HTTPS fetches to the SAME documents via the REST API
-    // succeed every time (findRejectedDocs: "all N docs ACCEPTED"). The one
-    // thing unique to the SDK path is its long-lived streaming WebChannel
-    // connection — and that is what the environment kills. Long-polling uses
-    // the short-lived HTTPS requests that demonstrably work.
-    //
-    // Why FORCE and not AUTO-DETECT: auto-detect first TRIES the stream and
-    // only falls back after it times out — that detection delay, multiplied
-    // across ~40 parallel collection reads at startup, is what made the
-    // initial load take minutes. Forced mode has no detection phase.
-    //
-    // NOTE: this was reverted on 2026-08-19 morning as the suspected cause of
-    // the slow load; that revert was wrong about the mechanism (the delay was
-    // auto-detect's probing, not long-polling itself) and it re-broke writes.
-    experimentalForceLongPolling: true,
+    // DEFAULT (streaming) TRANSPORT — final division of labor, 2026-08-20:
+    //   READS  → SDK over the default streaming WebChannel. Reads have always
+    //            worked on the operator's machine (the original instant loads
+    //            were on this transport); it was only the WRITE stream that
+    //            never acked there.
+    //   WRITES → REST-first (see restSyncCollection + the app's restFirst flag):
+    //            plain HTTPS PATCH/DELETE that works everywhere.
+    // experimentalForceLongPolling was left on here after the write-channel
+    // experiments and made every BULK READ crawl — ~40 parallel
+    // getDocsFromServer over tens of thousands of docs took minutes on
+    // long-polling (a no-op "Sync Now", which pulls everything after pushing,
+    // ran 15+ min). With writes off the SDK channel entirely, there is no
+    // reason left to hobble the read transport. Do not re-add either
+    // long-polling flag: writes don't need it and reads are wrecked by it.
   }, DATABASE_ID);
 } catch {
   db = getFirestore(app, DATABASE_ID);
