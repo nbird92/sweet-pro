@@ -244,21 +244,38 @@ export default function QualityAssurancePage({
   const [sugarTypeDraft, setSugarTypeDraft] = useState<SugarType | null>(null);
   const [sugarTypeMode, setSugarTypeMode] = useState<'view' | 'edit' | 'add'>('view');
 
+  // True while the detail modal holds a BRAND-NEW location that has NOT been
+  // added to the list yet. The old flow appended a blank row the moment "Add"
+  // was clicked, so cancelling stranded blank rows — and its id was derived
+  // from locations.length, so adds COLLIDED with existing ids (two rows sharing
+  // an id: edits hit both, the sync collapsed them into one Firestore doc, and
+  // one vanished on reload — "keeps duplicating and not saving"). Now the row
+  // only enters the list on Save, under a collision-proof id.
+  const [isNewLocation, setIsNewLocation] = useState(false);
+
   const openLocationDetail = (loc: Location) => {
     setSelectedLocation(loc);
     setEditLocationData({ ...loc });
     setIsEditingLocation(false);
+    setIsNewLocation(false);
   };
 
   const closeLocationDetail = () => {
     setSelectedLocation(null);
     setEditLocationData(null);
     setIsEditingLocation(false);
+    setIsNewLocation(false); // discard an unsaved new location entirely
   };
 
   const saveLocationChanges = () => {
     if (!editLocationData) return;
-    onUpdateLocations(locations.map(l => l.id === editLocationData.id ? editLocationData : l));
+    if (isNewLocation) {
+      // First save of a new location — APPEND (it isn't in the list yet).
+      onUpdateLocations([...locations, editLocationData]);
+      setIsNewLocation(false);
+    } else {
+      onUpdateLocations(locations.map(l => l.id === editLocationData.id ? editLocationData : l));
+    }
     setSelectedLocation(editLocationData);
     setIsEditingLocation(false);
   };
@@ -1046,11 +1063,15 @@ export default function QualityAssurancePage({
           <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
           <button
             onClick={() => {
-              const id = `LOC-${String(locations.length + 1).padStart(3, '0')}`;
+              // Collision-proof id — NEVER derived from list length (see isNewLocation).
+              const id = `LOC-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
               const newLoc: Location = { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 };
-              onUpdateLocations([...locations, newLoc]);
-              openLocationDetail(newLoc);
+              // NOT added to the list yet — it enters on Save (and a Cancel/close
+              // discards it instead of stranding a blank row).
+              setSelectedLocation(newLoc);
+              setEditLocationData({ ...newLoc });
               setIsEditingLocation(true);
+              setIsNewLocation(true);
             }}
             className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors"
           >
@@ -2301,7 +2322,7 @@ export default function QualityAssurancePage({
                       <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors">
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
-                      <button onClick={() => { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
+                      <button onClick={() => { if (isNewLocation) { closeLocationDetail(); } else { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); } }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
                     </>
                   ) : (
                     <>
