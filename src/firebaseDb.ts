@@ -547,10 +547,6 @@ export const COLLECTIONS = {
   // Operator triage state (handled/dismissed) for inbox-feed emails. Client-owned
   // and synced (keyed by Gmail message id).
   inboxTriage: 'inboxTriage',
-  // Deliberately-deleted orders (by PO/BOL) — the orders sheet sync skips
-  // incoming rows matching a tombstone so "deleted stays deleted" survives
-  // Sync All re-imports. Written by Clear All / order delete.
-  orderTombstones: 'orderTombstones',
   // Learned PO field corrections (customer / product / contract aliases). The
   // app writes these as the operator corrects scans; the Gmail PO scan
   // (api/scan-po-inbox) reads them as extraction hints, so corrections improve

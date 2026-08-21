@@ -343,18 +343,6 @@ export interface Carrier {
   defaultLocationCode?: string;
 }
 
-/** A deliberately-deleted order, remembered so imports don't resurrect it.
- *  Written by Clear All / single-order delete; the orders sheet sync and Sync
- *  All skip any incoming row whose PO or BOL matches a tombstone. Delete the
- *  tombstone (or re-create the order manually) to allow the number back in. */
-export interface OrderTombstone {
-  id: string;          // poKey|BOL composite (stable across re-imports)
-  po?: string;
-  bol?: string;
-  customer?: string;   // for display when reviewing tombstones
-  deletedAt: string;   // ISO timestamp
-}
-
 export interface TransferLeg {
   id: string;
   legNumber: number;

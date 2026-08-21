@@ -71,7 +71,7 @@ import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
 import { generateDocumentPackagePdf } from './documentPackagePdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
-import type { EmailDocumentType, OrderTombstone } from './types';
+import type { EmailDocumentType } from './types';
 // Full-page components are code-split (React.lazy) so their code loads only when
 // the page is first opened, shrinking the initial bundle. Rendered inside one
 // <Suspense> at the renderContent() call site.
@@ -486,8 +486,6 @@ export default function App() {
   const [transfers, setTransfers] = useState<Transfer[]>(INITIAL_TRANSFERS);
   const [invoices, setInvoices] = useState<Invoice[]>(INITIAL_INVOICES);
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
-  // Deliberately-deleted orders (by PO/BOL) — see recordOrderTombstones.
-  const [orderTombstones, setOrderTombstones] = useState<OrderTombstone[]>([]);
   const [conferences, setConferences] = useState<Conference[]>(INITIAL_CONFERENCES);
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
   const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
@@ -6018,10 +6016,6 @@ export default function App() {
         setPoAmendments(data.poAmendments as PoAmendment[]);
         lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
       }
-      if (data.orderTombstones?.length) {
-        setOrderTombstones(data.orderTombstones as OrderTombstone[]);
-        lastSyncedData.current.ordertombstones = JSON.stringify(data.orderTombstones);
-      }
       {
         // Merge synced learned corrections with any local (unsynced) ones, drop
         // any older than 30 days, then persist the cleaned union to localStorage.
@@ -6157,9 +6151,6 @@ export default function App() {
         // collection is small, so falling through to the stringify compare every
         // cycle is cheap and always correct.
         { collection: COLLECTIONS.poFieldMappings, key: 'pofieldmappings', data: pruneExpired(poLearned).map(l => ({ id: learnedId(l), ...l })), allowMassDelete: true },
-        // Deleting a tombstone (re-allowing an order number) is a normal operator
-        // action; the list stays small, so allowMassDelete is safe here.
-        { collection: COLLECTIONS.orderTombstones, key: 'ordertombstones', data: orderTombstones, allowMassDelete: true },
   ];
 
   // Push every collection whose current state differs from what was last synced.
@@ -6203,34 +6194,6 @@ export default function App() {
     userDeletedIds.current[collection] = s;
   };
 
-  // ORDER TOMBSTONES — "deleted stays deleted". Deleting an order (Clear All or
-  // the row's delete button) records its PO/BOL here; the orders sheet sync and
-  // Sync All skip any incoming row matching a tombstone, so a deliberately
-  // deleted order can no longer resurrect from the source sheet on the next
-  // import. Synced to Firestore so the memory survives reloads and other
-  // machines. Remove a tombstone (or create the order manually) to re-allow it.
-  const tombstoneKey = (po?: string, bol?: string) =>
-    `${poKey(po || '')}|${(bol || '').trim().toUpperCase()}`;
-  const recordOrderTombstones = (list: Array<{ po?: string; bolNumber?: string; customer?: string }>) => {
-    const now = new Date().toISOString();
-    const fresh: OrderTombstone[] = [];
-    const have = new Set(orderTombstones.map(t => t.id));
-    for (const o of list) {
-      const id = tombstoneKey(o.po, o.bolNumber);
-      if (id === '|' || have.has(id)) continue;
-      have.add(id);
-      fresh.push({ id, po: o.po || undefined, bol: o.bolNumber || undefined, customer: o.customer || undefined, deletedAt: now });
-    }
-    if (!fresh.length) return;
-    setOrderTombstones(prev => [...prev, ...fresh]);
-    saveNow(COLLECTIONS.orderTombstones, fresh); // durable immediately
-  };
-  const isTombstonedOrder = (po?: string, bol?: string): boolean => {
-    if (!orderTombstones.length) return false;
-    const pk = poKey(po || '');
-    const b = (bol || '').trim().toUpperCase();
-    return orderTombstones.some(t => (pk && poKey(t.po || '') === pk) || (b && (t.bol || '').trim().toUpperCase() === b));
-  };
   // Wrap a whole-array state setter so that when a child page replaces the array
   // with FEWER items (a user delete), the removed ids are recorded in the ledger
   // and therefore actually get deleted from Firestore. Without this, pages that
@@ -6597,7 +6560,7 @@ export default function App() {
     // without them an edit touching only those collections never armed the timer
     // and silently stayed unsynced for the whole session. (lastSynced/user are
     // deliberately NOT deps — see the refs above.)
-  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned, orderTombstones]);
+  }, [customers, skus, supplyChain, freightRates, contracts, carriers, hamiltonShipments, vancouverShipments, locations, transfers, invoices, productGroups, orders, conferences, people, qaProducts, fuelSurcharges, tollingFees, vendors, demurrageInvoices, chepPalletMovements, salesLeads, sampleRequests, qaTemplates, sugarTypes, lotCodes, fiscalYears, customerForecasts, customerGroups, packagingFormats, namingFormulas, shippingTermsList, emailLog, emailSettings, returnOrders, poImportLog, poPendingImports, inboxTriage, poAmendments, poLearned]);
 
   // ONE-CLICK RECOVERY for a jammed write queue (see writeQueueJammed). Clears
   // this browser's local Firestore cache — including the stuck mutation queue —
@@ -8039,20 +8002,14 @@ export default function App() {
     ordersRef.current.forEach(o => addKeys(o.bolNumber, o.po));
     invoicesRef.current.forEach(i => addKeys(i.bolNumber, i.po));
     const freshNew: Order[] = [];
-    let tombstoned = 0;
     for (const o of preview.newOrders) {
       const b = (o.bolNumber || '').trim().toUpperCase();
       const p = poKey(o.po);
       if ((b && seenBol.has(b)) || (p && seenPo.has(p))) continue; // duplicate — skip
-      // Deliberately-deleted order — the operator removed it (Clear All / delete
-      // button); a sheet re-import must NOT resurrect it. Remove the tombstone
-      // to allow the number back in.
-      if (isTombstonedOrder(o.po, o.bolNumber)) { tombstoned++; continue; }
       if (b) seenBol.add(b);
       if (p) seenPo.add(p);
       freshNew.push(o);
     }
-    if (tombstoned > 0) console.log(`%c[orderSync] skipped ${tombstoned} sheet row(s) matching deleted orders (tombstoned PO/BOL) — deleted stays deleted.`, 'color:#0a7');
 
     // Orders must never carry an INACTIVE location (e.g. a tab's default or contract
     // origin still pointing at "Hamilton (Ferguson)"). Blank it — the order still
@@ -11688,18 +11645,18 @@ export default function App() {
                 // "Cleared" alert would lie and every order would resurrect on the
                 // next reload.
                 const ids = orders.map(o => o.id);
-                // Ledger first (the autosave will re-confirm the deletions), then
-                // TOMBSTONE every PO/BOL so a later sheet Sync All can't
-                // resurrect them, then delete on the server via REST (real acks —
-                // deleteDocs went through the SDK channel, which never acks on
-                // this machine, so the await hung and the server kept every
-                // order: the exact "Clear All then Sync All brings them back").
+                // Ledger first (the autosave re-confirms the deletions), then
+                // delete on the server via REST with real acks — deleteDocs went
+                // through the SDK channel, which never acks on this machine, so
+                // the await hung and the server kept every order. NO tombstones:
+                // the operator's workflow is "clear all, then re-import fresh
+                // from the sheet" — a later Sync All re-imports these numbers
+                // freely.
                 recordUserDeletes(COLLECTIONS.orders, ids);
-                recordOrderTombstones(orders);
                 setOrders([]);
                 try {
                   const res = await restSyncCollection(COLLECTIONS.orders, [], ids);
-                  if (res.ok) alert(`Cleared ${count} orders. Their PO/BOL numbers are remembered, so a sheet sync will NOT re-import them.`);
+                  if (res.ok) alert(`Cleared ${count} orders from the app and the server. A sheet sync will re-import them fresh.`);
                   else alert(`Cleared locally, but ${res.failed} server delete(s) failed: ${res.firstError}. They will be retried automatically.`);
                 } catch (err) {
                   alert(`Local state cleared, but the server delete failed: ${err instanceof Error ? err.message : String(err)}. It will be retried automatically.`);
@@ -25708,11 +25665,6 @@ export default function App() {
                   <button
                     onClick={() => {
                       recordUserDeletes(COLLECTIONS.orders, [orderDeleteConfirmId]);
-                      {
-                        // Remember the PO/BOL so a sheet sync can't re-import it.
-                        const del = orders.find(o => o.id === orderDeleteConfirmId);
-                        if (del) recordOrderTombstones([del]);
-                      }
                       setOrders(orders.filter(o => o.id !== orderDeleteConfirmId));
                       setOrderDeleteConfirmId(null);
                     }}
