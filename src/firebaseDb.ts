@@ -366,27 +366,69 @@ export async function restSyncCollection(
   let firstError: string | undefined;
   const note = (e: string | null) => { if (e) { failed++; if (!firstError) firstError = e; } };
 
-  // Bounded concurrency so a big collection doesn't fire 500 requests at once.
-  // 24 concurrent single-doc PATCHes. Browsers multiplex these over one HTTP/2
-  // connection, and Firestore handles per-doc writes at this rate comfortably —
-  // at 8 a first-time 900-doc backlog took minutes; at 24 it's ~3x faster while
-  // still bounded (never thousands of requests in flight at once).
-  const CHUNK = 24;
-  for (let i = 0; i < upserts.length; i += CHUNK) {
-    const slice = upserts.slice(i, i + CHUNK);
-    const results = await Promise.all(slice.map(d => restPatchDoc(base, collectionName, token, d)));
-    for (const e of results) { if (e === null) upserted++; else note(e); }
+  // BATCHED :commit — ONE request per ~450 writes instead of one request per
+  // document. The per-doc PATCH version cost a round-trip (~100-250ms) per doc,
+  // so an import touching hundreds of docs took many seconds to minutes; the
+  // documents:commit endpoint applies up to 500 writes atomically in a single
+  // round-trip. Chunked by op count AND bytes (the request cap is ~10 MiB).
+  // On a failed chunk, fall back to per-doc PATCHes for JUST that chunk so one
+  // bad document is salvaged around and NAMES ITSELF instead of failing 450.
+  const docName = (id: string) => `projects/${projectId}/databases/${DATABASE_ID}/documents/${collectionName}/${id}`;
+  type CommitWrite = { update?: { name: string; fields: Record<string, unknown> }; delete?: string };
+  const MAX_WRITES = 450;
+  const MAX_REQ_BYTES = 6 * 1024 * 1024;
+
+  // Build the write list (oversize docs skipped + reported, matching the old path).
+  const writes: Array<{ w: CommitWrite; bytes: number; isDelete: boolean; doc?: { id: string } & Record<string, unknown> }> = [];
+  for (const d of upserts) {
+    const clean = stripUndefinedDeep(d) as { id: string } & Record<string, unknown>;
+    const size = JSON.stringify(clean).length;
+    if (size > SINGLE_DOC_MAX_BYTES) { note(`"${d.id}" exceeds Firestore's 1 MiB per-document limit — skipped`); continue; }
+    const fields: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(clean)) if (x !== undefined) fields[k] = firestoreValue(x);
+    writes.push({ w: { update: { name: docName(String(d.id)), fields } }, bytes: size * 2, isDelete: false, doc: d });
   }
-  for (let i = 0; i < deleteIds.length; i += CHUNK) {
-    const slice = deleteIds.slice(i, i + CHUNK);
-    const results = await Promise.all(slice.map(async (id) => {
-      try {
-        // DELETE is idempotent — removing a doc that doesn't exist returns 200.
-        const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(id)}`, { method: 'DELETE', headers: hdr });
-        return r.ok ? null : `DELETE HTTP ${r.status} on ${id}`;
-      } catch (e) { return `delete ${id}: ${e instanceof Error ? e.message : String(e)}`; }
-    }));
-    for (const e of results) { if (e === null) deleted++; else note(e); }
+  for (const id of deleteIds) writes.push({ w: { delete: docName(id) }, bytes: 200, isDelete: true });
+
+  // Chunk by count + bytes, commit each chunk in one request.
+  let i = 0;
+  while (i < writes.length) {
+    const chunk: typeof writes = [];
+    let bytes = 0;
+    while (i < writes.length && chunk.length < MAX_WRITES && (chunk.length === 0 || bytes + writes[i].bytes <= MAX_REQ_BYTES)) {
+      bytes += writes[i].bytes;
+      chunk.push(writes[i]);
+      i++;
+    }
+    let chunkOk = false;
+    try {
+      const r = await fetch(`${base.replace(/\/documents$/, '')}/documents:commit`, {
+        method: 'POST',
+        headers: hdr,
+        body: JSON.stringify({ writes: chunk.map(c => c.w) }),
+      });
+      chunkOk = r.ok;
+      if (!r.ok && !firstError) firstError = `commit HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`;
+    } catch (e) {
+      if (!firstError) firstError = e instanceof Error ? e.message : String(e);
+    }
+    if (chunkOk) {
+      for (const c of chunk) { if (c.isDelete) deleted++; else upserted++; }
+      continue;
+    }
+    // Chunk rejected — salvage per-doc so one bad record doesn't fail 450 and
+    // the offender names itself in firstError.
+    for (const c of chunk) {
+      if (c.isDelete) {
+        try {
+          const dr = await fetch(`${base}/${encodeURIComponent(collectionName)}/${encodeURIComponent(c.w.delete!.split('/').pop()!)}`, { method: 'DELETE', headers: hdr });
+          if (dr.ok) deleted++; else note(`DELETE HTTP ${dr.status}`);
+        } catch (e) { note(e instanceof Error ? e.message : String(e)); }
+      } else if (c.doc) {
+        const err = await restPatchDoc(base, collectionName, token, c.doc);
+        if (err === null) upserted++; else note(`"${c.doc.id}": ${err}`);
+      }
+    }
   }
   return { ok: failed === 0, upserted, deleted, failed, firstError };
 }
