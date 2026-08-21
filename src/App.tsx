@@ -12225,12 +12225,16 @@ export default function App() {
       // Live sender categorization — the cron stamps senderCategory at scan time,
       // so emails scanned BEFORE a carrier's address was added to the Carriers
       // table keep a stale "Customer" chip. Recompute from the live carrier table
-      // + internal domains; keep the stored value when there's no sender address.
+      // + internal domains — but only ever UPGRADE (customer → logistics/internal).
+      // Never downgrade a stored 'logistics'/'internal' to 'customer': the cron
+      // classified it against the carrier table as it stood at scan time, and a
+      // carrier record that has since lost its email (or been renamed/removed)
+      // must not flip a Contrans email back to a "Customer" chip.
       const categorizedInboxFeed = inboxFeed.map(e => {
         if (!e.fromEmail) return e;
         const cat = isInternalEmployeeEmail(e.fromEmail) ? 'internal' as const
           : isLogisticsSenderEmail(e.fromEmail) ? 'logistics' as const
-          : 'customer' as const;
+          : (e.senderCategory || 'customer' as const);
         return cat === e.senderCategory ? e : { ...e, senderCategory: cat };
       });
       // Once an order has moved to the invoice table, its amendment suggestions are

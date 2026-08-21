@@ -462,7 +462,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const msg = await getMessage(token, inbox, meta.id);
-        const fromEmail = header(msg.payload, 'From');
+        // UNWRAP GOOGLE-GROUP REWRITES. Mail sent to the Order Desk group arrives
+        // with From REWRITTEN to the group address ("'Michael Zaitz' via Order
+        // Desk…" <orderdesk@sucro.ca>) — the TRUE sender survives only in
+        // X-Original-Sender / Reply-To. Classifying on the rewritten From made
+        // every group email read as "customer", including carrier mail
+        // (mzaitz@contrans.ca kept showing a Customer chip although Contrans and
+        // that exact address are in the Carriers table). Classify on the original
+        // sender when the group rewrote it — EXCEPT when the original is a Sucro
+        // employee (their forwards INTO the group must keep behaving like
+        // order-desk forwards, i.e. remain new-PO eligible).
+        const fromHeaderRaw = header(msg.payload, 'From');
+        const groupOriginal = (header(msg.payload, 'X-Original-Sender') || header(msg.payload, 'Reply-To') || '').trim();
+        const groupRewrote = isOrderDeskForward(fromHeaderRaw) || /\bvia\b.*order\s*desk/i.test(fromHeaderRaw);
+        const fromEmail = (groupRewrote && groupOriginal && !isInternalSender(groupOriginal)) ? groupOriginal : fromHeaderRaw;
         const subject = header(msg.payload, 'Subject');
         const receivedAt = new Date(Number(msg.internalDate) || Date.now()).toISOString();
         summary.scanned++;
