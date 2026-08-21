@@ -332,6 +332,7 @@ async function restPatchDoc(base: string, collectionName: string, token: string,
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ fields }),
+      signal: restTimeoutSignal(30000),
     });
     if (r.ok) return null;
     return `HTTP ${r.status}: ${(await r.text()).slice(0, 180)}`;
@@ -406,6 +407,10 @@ export async function restSyncCollection(
         method: 'POST',
         headers: hdr,
         body: JSON.stringify({ writes: chunk.map(c => c.w) }),
+        // HARD TIMEOUT — a fetch with no signal can hang indefinitely on a
+        // stalled connection, and anything that hangs here freezes the whole
+        // sync pass behind an eternal "Syncing" badge.
+        signal: restTimeoutSignal(60000),
       });
       chunkOk = r.ok;
       if (!r.ok && !firstError) firstError = `commit HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`;
@@ -436,6 +441,15 @@ if (typeof window !== 'undefined') {
   (window as unknown as { restSyncCollection?: typeof restSyncCollection }).restSyncCollection = restSyncCollection;
 }
 
+// Abort signal for REST calls — every fetch in the sync path MUST carry one: a
+// signal-less fetch on a stalled connection hangs forever, and one hung fetch
+// freezes the whole sync pass behind an eternal "Syncing" badge. Falls back to
+// undefined (no timeout) only on browsers without AbortSignal.timeout.
+function restTimeoutSignal(ms: number): AbortSignal | undefined {
+  const t = (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout;
+  return typeof t === 'function' ? t(ms) : undefined;
+}
+
 // Firestore REST "Value" → plain JSON (inverse of firestoreValue). Covers every
 // type this app writes; timestamps come back as ISO strings.
 function fromFirestoreValue(v: Record<string, unknown>): unknown {
@@ -464,6 +478,7 @@ async function restFetchCollection(name: string, token: string, projectId: strin
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ structuredQuery: { from: [{ collectionId: name }] } }),
+    signal: restTimeoutSignal(45000),
   });
   if (!r.ok) throw new Error(`runQuery "${name}" HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const rows = await r.json() as Array<{ document?: { name: string; fields?: Record<string, unknown> } }>;

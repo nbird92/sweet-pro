@@ -2736,6 +2736,22 @@ export default function App() {
   // guards shipped). Firestore replays its offline queue IN ORDER on every
   // reconnect and across reloads, so every later write sits behind the poison
   // pill until the local queue is cleared. Drives the "Repair Sync" banner.
+  // ETERNAL-SPINNER GUARD. The badge must never show "Syncing" indefinitely:
+  // whatever hung (a stream, an unbounded await, a lost promise), after 2
+  // minutes we declare the attempt failed, say so, and free the pipeline so the
+  // next attempt can run — instead of the operator watching arrows spin for 15+
+  // minutes with no information (which happened, repeatedly).
+  useEffect(() => {
+    if (syncStatus !== 'syncing') return;
+    const t = setTimeout(() => {
+      console.error('[sync] "Syncing" for over 2 minutes — the attempt is considered hung. Releasing the sync lock; check earlier console lines for the phase that stalled.');
+      isSyncing.current = false; // free the pipeline for the next attempt
+      setSyncStatus('error');
+      setSyncError('The last sync did not finish within 2 minutes and was abandoned. Your edits are safe locally — click Sync Now to retry, and check the browser console for the step that stalled.');
+    }, 120000);
+    return () => clearTimeout(t);
+  }, [syncStatus]);
+
   const [writeQueueJammed, setWriteQueueJammed] = useState(false);
   const writeAckTimeoutStreak = useRef(0);
   // REST-FIRST MODE. On some machines the Firestore SDK's streaming write channel
