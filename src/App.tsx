@@ -7875,7 +7875,14 @@ export default function App() {
     // time. Replacing the live invoice with it would revert any edit made after
     // the fetch started. Instead merge ONLY the fields the importer backfills —
     // blank on the current record (amount fillable when 0, matching the importer).
-    const isSyncBlank = (v: unknown) => v === undefined || v === null || v === '';
+    const isSyncBlank = (v: unknown) => v === undefined || v === null || v === ''
+      // An EMPTY ARRAY is blank too. The importer offers a lineItems backfill when
+      // the invoice has lineItems: [] — but this merge used to treat [] as "has a
+      // value" and silently drop the patch, so those invoices were re-reported as
+      // "updated" on EVERY sync run forever (same 70 updates each time, nothing
+      // ever persisted). Preview and apply must agree on what "blank" means.
+      || (Array.isArray(v) && v.length === 0);
+    let backfilledCount = 0;
     let afterUpdates = current.map(inv => {
       const u = updatedById.get(inv.id);
       if (!u) return inv;
@@ -7886,6 +7893,7 @@ export default function App() {
         const fillable = k === 'amount' ? (!merged.amount || merged.amount === 0) : isSyncBlank(merged[k]);
         if (fillable && !isSyncBlank(u[k])) { (merged as any)[k] = u[k]; changed = true; }
       });
+      if (changed) backfilledCount++;
       return changed ? merged : inv;
     });
     // Belt-and-braces for the Complete & Bill duplication: a NUMBERED new invoice
@@ -7934,6 +7942,11 @@ export default function App() {
       afterUpdates = afterUpdates.map(inv => adoptNumber.has(inv.id) ? { ...inv, invoiceNumber: adoptNumber.get(inv.id)! } : inv);
     }
     const merged = [...afterUpdates, ...freshNew];
+    // Apply summary — makes "the same invoices import every run" diagnosable:
+    // if appended/backfilled stay >0 across repeat runs, the persist isn't
+    // landing (watch the sync badge); if dropped-as-duplicate is high, the
+    // preview's dedup snapshot is stale vs the live list.
+    console.log(`%c[invoiceSync] applied: ${backfilledCount} backfilled, ${freshNew.length} appended, ${adoptNumber.size} SI numbers adopted, ${preview.newInvoices.length - freshNew.length - adoptNumber.size} dropped as duplicates`, 'color:#0a7');
     setInvoices(merged);
     // Any order now sharing an invoiced BOL/PO is no longer an order. (Uses a
     // functional setOrders internally, so it is safe to call mid-chain.)
