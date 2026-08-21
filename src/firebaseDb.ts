@@ -45,7 +45,7 @@ export const DATABASE_ID = 'sweetpro2';
 // (private browsing / unsupported browser) so the app still runs.
 // Build marker — lets a console log confirm which sync architecture the loaded
 // bundle actually runs (stale cached bundles kept masquerading as new deploys).
-export const SYNC_BUILD = 'reads=streaming writes=REST v2026-08-20b';
+export const SYNC_BUILD = 'reads=REST writes=REST v2026-08-21';
 if (typeof window !== 'undefined') console.log(`%c[build] ${SYNC_BUILD}`, 'color:#888');
 
 let db: Firestore;
@@ -436,6 +436,49 @@ if (typeof window !== 'undefined') {
   (window as unknown as { restSyncCollection?: typeof restSyncCollection }).restSyncCollection = restSyncCollection;
 }
 
+// Firestore REST "Value" → plain JSON (inverse of firestoreValue). Covers every
+// type this app writes; timestamps come back as ISO strings.
+function fromFirestoreValue(v: Record<string, unknown>): unknown {
+  if (!v || typeof v !== 'object') return null;
+  if ('nullValue' in v) return null;
+  if ('stringValue' in v) return v.stringValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return v.doubleValue;
+  if ('timestampValue' in v) return v.timestampValue;
+  if ('arrayValue' in v) return (((v.arrayValue as { values?: unknown[] })?.values) || []).map(x => fromFirestoreValue(x as Record<string, unknown>));
+  if ('mapValue' in v) {
+    const fields = ((v.mapValue as { fields?: Record<string, unknown> })?.fields) || {};
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(fields)) out[k] = fromFirestoreValue(x as Record<string, unknown>);
+    return out;
+  }
+  return null;
+}
+
+/** Read one whole collection over REST (:runQuery) — plain, short-lived HTTPS,
+ *  no SDK streams. Returns the decoded docs (with the document id filled in when
+ *  the `id` field is missing). Throws on HTTP/network failure. */
+async function restFetchCollection(name: string, token: string, projectId: string): Promise<any[]> {
+  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents:runQuery`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: name }] } }),
+  });
+  if (!r.ok) throw new Error(`runQuery "${name}" HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const rows = await r.json() as Array<{ document?: { name: string; fields?: Record<string, unknown> } }>;
+  const docs: any[] = [];
+  for (const row of rows) {
+    if (!row.document) continue; // progress/readTime-only entries
+    const fields = row.document.fields || {};
+    const data: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) data[k] = fromFirestoreValue(v as Record<string, unknown>);
+    if (data.id == null) data.id = row.document.name.split('/').pop();
+    docs.push(data);
+  }
+  return docs;
+}
+
 // Collection names matching the old Google Sheets tab names
 export const COLLECTIONS = {
   customers: 'customers',
@@ -645,17 +688,44 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
     // showing an opaque multi-minute "Syncing".
     const t0 = performance.now();
     const slow: string[] = [];
+    // READS VIA REST (:runQuery), one plain HTTPS POST per collection — no SDK
+    // streams. The SDK's shared read stream intermittently stalls or DIES on
+    // some machines (the same fragility that killed its write channel): a
+    // mid-pull stream death left fetchAllData awaiting forever with NO timeout,
+    // which is exactly the "Sync Now has been running 15 minutes" hang — the
+    // pull never completed and never errored. Plain HTTPS has been 100%
+    // reliable on the affected machine. Each collection is individually
+    // bounded (45s) and individually falls back to an SDK server read, so one
+    // bad response can neither hang nor fail the whole load.
+    const { getAuth } = await import('firebase/auth');
+    const authUser = getAuth(app).currentUser;
+    const projectId = (app.options as { projectId?: string }).projectId || '';
+    const token = authUser ? await authUser.getIdToken() : '';
+    const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+      Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${label} timed out after ${ms / 1000}s`)), ms))]);
     const results = await Promise.all(
       names.map(async (name) => {
         const ct0 = performance.now();
-        const snapshot = await getDocsFromServer(collection(db, name));
+        let docs: any[];
+        if (token) {
+          try {
+            docs = await withTimeout(restFetchCollection(name, token, projectId), 45000, `REST read "${name}"`);
+          } catch (restErr) {
+            console.warn(`[load] REST read of "${name}" failed — falling back to SDK server read.`, restErr);
+            const snapshot = await withTimeout(getDocsFromServer(collection(db, name)), 45000, `SDK read "${name}"`);
+            docs = snapshot.docs.map(withId);
+          }
+        } else {
+          const snapshot = await getDocsFromServer(collection(db, name));
+          docs = snapshot.docs.map(withId);
+        }
         const ms = Math.round(performance.now() - ct0);
-        if (ms > 3000 || snapshot.docs.length > 2000) slow.push(`${name}: ${snapshot.docs.length} docs in ${(ms / 1000).toFixed(1)}s`);
-        return [name, snapshot.docs.map(withId)] as const;
+        if (ms > 3000 || docs.length > 2000) slow.push(`${name}: ${docs.length} docs in ${(ms / 1000).toFixed(1)}s`);
+        return [name, docs] as const;
       })
     );
     const totalMs = Math.round(performance.now() - t0);
-    console.log(`%c[load] server pull: ${names.length} collections in ${(totalMs / 1000).toFixed(1)}s${slow.length ? ` — slowest/biggest: ${slow.join(' · ')}` : ''}`, 'color:#0a7');
+    console.log(`%c[load] server pull (REST): ${names.length} collections in ${(totalMs / 1000).toFixed(1)}s${slow.length ? ` — slowest/biggest: ${slow.join(' · ')}` : ''}`, 'color:#0a7');
     return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: false };
   } catch (serverErr) {
     console.warn('[fetchAllData] Server read failed — falling back to the local cache (READ-ONLY).', serverErr);
