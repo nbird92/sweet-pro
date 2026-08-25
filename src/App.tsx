@@ -13895,7 +13895,18 @@ export default function App() {
                     <button onClick={() => closeDemurrageDraft()} className="p-1 hover:bg-white/20 transition-colors" title={demurrageScanQueue.length ? 'Skip to next scanned invoice' : 'Close'}><X size={16} /></button>
                   </div>
                   <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div><label className={labelCls}>Carrier</label><input className={fieldCls} value={d.carrier} onChange={e => set({ carrier: e.target.value })} /></div>
+                    <div><label className={labelCls}>Carrier</label>
+                      <select className={fieldCls} value={d.carrier || ''} onChange={e => set({ carrier: e.target.value })}>
+                        <option value="">—</option>
+                        {[...carriers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        {/* Keep a stored carrier that isn't in the Carriers table (e.g.
+                            scanned off an invoice with a name variant) selectable so it
+                            renders instead of collapsing to "—" and getting cleared. */}
+                        {d.carrier && !carriers.some(c => c.name === d.carrier) && (
+                          <option value={d.carrier}>{d.carrier}</option>
+                        )}
+                      </select>
+                    </div>
                     <div><label className={labelCls}>Invoice #</label><input className={fieldCls} value={d.invoiceNumber} onChange={e => set({ invoiceNumber: e.target.value })} /></div>
                     <div><label className={labelCls}>PO #</label>
                       <input list="dem-po-list" className={fieldCls} value={d.po} onChange={e => setFromPo(e.target.value)} placeholder="Select or type a PO #" />
