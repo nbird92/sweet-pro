@@ -10885,7 +10885,10 @@ export default function App() {
               { key: 'transferNumber', label: 'Transfer No.', bold: true, widthClass: 'min-w-[150px]' },
               { key: 'from', label: 'From' },
               { key: 'to', label: 'To' },
-              { key: 'product', label: 'Product', bold: true },
+              // Shortform product code (e.g. "LC100", "20kg GC45") — same resolver
+              // the orders/invoices tables use; falls back to the stored name
+              // when no catalog product matches.
+              { key: 'product', label: 'Product', bold: true, render: (t) => productToShortform(t.product) || t.product || '—' },
               { key: 'customer', label: 'Customer', render: (t) => t.customer || '—' },
               { key: 'po', label: 'PO No.', render: (t) => t.po || '—' },
               { key: 'contractNumber', label: 'Contract #', mono: true, render: (t) => t.contractNumber || '—' },
