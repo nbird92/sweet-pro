@@ -64,6 +64,20 @@ export interface ShipToLocation {
   customerServiceEmail?: string;   // where this location's BOL / Return Order Confirmation are sent (and OC when no orderConfirmationEmail)
   logisticsEmail?: string;         // CC'd on this location's shipping documents (Order Confirmation / BOL / Return Order)
   notes?: string;
+  /** Per-SHIP-TO email-import rules — when a scanned PO matches this delivery
+   *  site, these beat the customer-level importRules (a site that always takes
+   *  one product from one origin is even more specific than the customer). */
+  importRules?: ShipToImportRules;
+}
+
+export interface ShipToImportRules {
+  defaultProducts?: Array<{
+    sugarForm: '' | 'liquid' | 'brown' | 'yellow' | 'granulated' | 'icing' | 'molasses';
+    productValue: string;
+    productKey: string;
+  }>;
+  defaultOrigin?: string; // canonical Location.name (shipping origin for this site)
+  updatedAt?: string;
 }
 
 export interface Customer {

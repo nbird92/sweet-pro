@@ -956,12 +956,16 @@ export default function App() {
    *  form. Exact-form entry first, then the '' (any-form) entry — but the
    *  any-form entry is only usable when it doesn't CONTRADICT a detected form
    *  (checked by the caller via formAgrees). */
-  const ruleProductFor = (cust: Customer | null | undefined, rawForm: string): { productValue: string; productKey: string } | null => {
-    const list = cust?.importRules?.defaultProducts;
-    if (!list || !list.length) return null;
-    return list.find(p => p.sugarForm === rawForm && p.productValue)
-      || list.find(p => p.sugarForm === '' && p.productValue)
-      || null;
+  const ruleProductFor = (cust: Customer | null | undefined, rawForm: string, shipTo?: ShipToLocation | null): { productValue: string; productKey: string } | null => {
+    const pick = (list?: Array<{ sugarForm: string; productValue: string; productKey: string }>) => {
+      if (!list || !list.length) return null;
+      return list.find(p => p.sugarForm === rawForm && p.productValue)
+        || list.find(p => p.sugarForm === '' && p.productValue)
+        || null;
+    };
+    // SHIP-TO rule first — a specific delivery site's default beats the
+    // customer-wide default; fall through to the customer rule.
+    return pick(shipTo?.importRules?.defaultProducts) || pick(cust?.importRules?.defaultProducts);
   };
   const resolveScannedProduct = (
     description: string | undefined,
@@ -974,6 +978,8 @@ export default function App() {
     // most once per PO, and ZERO times when a rule or learned alias resolves
     // the line first.
     affGetter?: () => ReturnType<typeof customerProductAffinity>,
+    // The matched delivery site — its per-location rule outranks the customer rule.
+    shipTo?: ShipToLocation | null,
   ): ScanOpt | null => {
     const byValue = (v: string | null) => (v ? (opts.find(o => o.value === v) || null) : null);
     const byKeyOrValue = (key?: string, value?: string) =>
@@ -1009,7 +1015,7 @@ export default function App() {
     //    LIQUID. This is the primary accuracy lever: it fires before any fuzzy
     //    scoring, and needs no description at all (rule-only lines resolve too).
     {
-      const rule = ruleProductFor(cust, rawForm);
+      const rule = ruleProductFor(cust, rawForm, shipTo);
       const hit = rule ? byKeyOrValue(rule.productKey, rule.productValue) : null;
       if (hit && formAgrees(hit)) return hit;
     }
@@ -1103,8 +1109,15 @@ export default function App() {
     // Inactive sites are skipped rather than blanking the whole chain, so a
     // contract still pointing at a retired plant falls through to the customer
     // default instead of leaving the order with no location.
+    // Resolve the delivery site FIRST — its per-location import rules (product /
+    // origin) are more specific than the customer-level ones and outrank them.
+    const shipToId = matchShipToForCustomer(cust?.id || '', po);
+    const shipTo = (shipToId ? cust?.shipToLocations?.find(l => l.id === shipToId) : null) || null;
     const origin = firstActiveLocation(
       contract?.origin,
+      // The matched ship-to's own origin rule — most specific, right after the
+      // contract's commercial term.
+      shipTo?.importRules?.defaultOrigin,
       // With alwaysApply, the customer's explicit rule origin outranks the
       // address heuristics (contract origin — a commercial term — still wins).
       ...(cust?.importRules?.alwaysApply ? [cust.importRules.defaultOrigin] : []),
@@ -1114,7 +1127,7 @@ export default function App() {
     );
     const aff = lazyAffinity(cust, origin); // one affinity computation max per PO
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff, shipTo);
       const factor = mtPerUnit(li.unit);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
@@ -1152,7 +1165,7 @@ export default function App() {
       customerRaw: po.customerName || '',
       location: origin,
       locationTouched: false,
-      shipToLocationId: matchShipToForCustomer(cust?.id || '', po),
+      shipToLocationId: shipToId,
       po: po.poNumber || '',
       shipmentDate,
       deliveryDate,
@@ -2051,8 +2064,15 @@ export default function App() {
     const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
     // Same precedence as reviewFromExtraction: contract origin, then a location
     // stated in the email, then the customer card's default.
+    // Resolve the delivery site FIRST — its per-location import rules (product /
+    // origin) are more specific than the customer-level ones and outrank them.
+    const shipToId = matchShipToForCustomer(cust?.id || '', po);
+    const shipTo = (shipToId ? cust?.shipToLocations?.find(l => l.id === shipToId) : null) || null;
     const origin = firstActiveLocation(
       contract?.origin,
+      // The matched ship-to's own origin rule — most specific, right after the
+      // contract's commercial term.
+      shipTo?.importRules?.defaultOrigin,
       // With alwaysApply, the customer's explicit rule origin outranks the
       // address heuristics (contract origin — a commercial term — still wins).
       ...(cust?.importRules?.alwaysApply ? [cust.importRules.defaultOrigin] : []),
@@ -2062,7 +2082,7 @@ export default function App() {
     );
     const aff = lazyAffinity(cust, origin); // one affinity computation max per PO
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff, shipTo);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
@@ -2080,12 +2100,10 @@ export default function App() {
     if (lines.length === 0) return null;
     const lineItems = lines.map(buildScanLineItem);
     const totalAmount = lineItems.reduce((s, li) => s + (li.lineAmount || 0), 0);
-    const location = firstActiveLocation(
-      contract?.origin,
-      detectOriginFromAddresses(po),
-      cust?.defaultLocation,
-    );
-    const shipToLocationId = matchShipToForCustomer(cust?.id || '', po);
+    // `origin` above already applied the full precedence chain (contract →
+    // ship-to rule → customer rule → address heuristics → customer default).
+    const location = origin;
+    const shipToLocationId = shipToId;
     const deliveryDate = po.deliveryDate || '';
     const shipmentDate = deliveryDate || po.shipmentDate || ''; // default ship date to delivery date
     return {
@@ -22769,40 +22787,56 @@ export default function App() {
                       <Plus size={12} /> Add Ship-To
                     </button>
                   </div>
-                  <table className="w-full text-xs">
+                  {/* Compact, FIXED-HEIGHT rows: address parts joined into one
+                      truncated cell and contacts collapsed to a count chip (full
+                      details in the tooltip / edit form) so every row is one
+                      standard height and the Actions column — including the edit
+                      pencil — fits WITHOUT maximizing the modal. */}
+                  <table className="w-full text-xs table-fixed">
                     <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest border-b border-[#141414]/10">
                       <tr>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">Code</th>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">Name</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70 w-14">Code</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70 w-[22%]">Name</th>
                         <th className="px-3 py-2 text-left font-bold opacity-70">Address</th>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">City / Province</th>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">Postal Code</th>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">Country</th>
-                        <th className="px-3 py-2 text-left font-bold opacity-70">Contact</th>
-                        <th className="px-3 py-2 text-right font-bold opacity-70">Actions</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70 w-20">Contacts</th>
+                        <th className="px-3 py-2 text-left font-bold opacity-70 w-[24%]">Import Rule</th>
+                        <th className="px-3 py-2 text-right font-bold opacity-70 w-20">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#141414]/10">
                       {(editingCustomer.shipToLocations || []).length === 0 && (
-                        <tr><td colSpan={8} className="p-6 text-center text-xs opacity-50 italic">No ship-to locations yet. Use "Add Ship-To" to add one.</td></tr>
+                        <tr><td colSpan={6} className="p-6 text-center text-xs opacity-50 italic">No ship-to locations yet. Use "Add Ship-To" to add one.</td></tr>
                       )}
-                      {(editingCustomer.shipToLocations || []).map(loc => (
-                        <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors">
-                          <td className="px-3 py-2 font-mono font-bold">{loc.locationCode}</td>
-                          <td className="px-3 py-2 font-bold">{loc.name}</td>
-                          <td className="px-3 py-2">{loc.addressLine1}{loc.addressLine2 ? `, ${loc.addressLine2}` : ''}</td>
-                          <td className="px-3 py-2">{[loc.city, loc.province].filter(Boolean).join(', ') || '—'}</td>
-                          <td className="px-3 py-2 font-mono">{loc.postalCode || '—'}</td>
-                          <td className="px-3 py-2">{loc.country || '—'}</td>
-                          <td className="px-3 py-2 text-[10px]">
-                            {loc.phone || '—'}
-                            {loc.coaEmail ? <><br /><span className="opacity-50">COA:</span> {loc.coaEmail}</> : null}
-                            {loc.orderConfirmationEmail ? <><br /><span className="opacity-50">OC:</span> {loc.orderConfirmationEmail}</> : null}
-                            {loc.customerServiceEmail ? <><br /><span className="opacity-50">CS:</span> {loc.customerServiceEmail}</> : null}
-                            {loc.logisticsEmail ? <><br /><span className="opacity-50">Log:</span> {loc.logisticsEmail}</> : null}
-                            {!loc.coaEmail && !loc.orderConfirmationEmail && !loc.customerServiceEmail && !loc.logisticsEmail && loc.email ? <><br />{loc.email}</> : null}
+                      {(editingCustomer.shipToLocations || []).map(loc => {
+                        const addr = [loc.addressLine1, loc.addressLine2, [loc.city, loc.province].filter(Boolean).join(', '), loc.postalCode, loc.country].filter(Boolean).join(' · ');
+                        const contactEmails = [
+                          loc.coaEmail && `COA: ${loc.coaEmail}`,
+                          loc.orderConfirmationEmail && `OC: ${loc.orderConfirmationEmail}`,
+                          loc.customerServiceEmail && `CS: ${loc.customerServiceEmail}`,
+                          loc.logisticsEmail && `Logistics: ${loc.logisticsEmail}`,
+                          !loc.coaEmail && !loc.orderConfirmationEmail && !loc.customerServiceEmail && !loc.logisticsEmail && loc.email ? loc.email : '',
+                          loc.phone && `Phone: ${loc.phone}`,
+                        ].filter(Boolean) as string[];
+                        const ruleBits = [
+                          ...(loc.importRules?.defaultProducts || []).filter(p => p.productValue).map(p => `${productToShortform(p.productValue) || p.productValue}${p.sugarForm ? ` (${p.sugarForm})` : ''}`),
+                          loc.importRules?.defaultOrigin ? `from ${loc.importRules.defaultOrigin}` : '',
+                        ].filter(Boolean);
+                        return (
+                        <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors h-10">
+                          <td className="px-3 py-0 font-mono font-bold whitespace-nowrap">{loc.locationCode}</td>
+                          <td className="px-3 py-0 font-bold truncate" title={loc.name}>{loc.name}</td>
+                          <td className="px-3 py-0 truncate" title={addr}>{addr || '—'}</td>
+                          <td className="px-3 py-0 whitespace-nowrap">
+                            {contactEmails.length
+                              ? <span className="inline-block px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 rounded-full text-[10px] font-bold cursor-default" title={contactEmails.join('\n')}>{contactEmails.length}</span>
+                              : <span className="opacity-40">—</span>}
                           </td>
-                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                          <td className="px-3 py-0 truncate text-[10px]" title={ruleBits.join(' · ')}>
+                            {ruleBits.length
+                              ? <span className="text-violet-800 font-bold">{ruleBits.join(' · ')}</span>
+                              : <span className="opacity-40 italic">none — set via edit</span>}
+                          </td>
+                          <td className="px-3 py-0 text-right whitespace-nowrap">
                             <button
                               type="button"
                               onClick={() => {
@@ -22823,6 +22857,7 @@ export default function App() {
                                   customerServiceEmail: loc.customerServiceEmail || '',
                                   logisticsEmail: loc.logisticsEmail || '',
                                   notes: loc.notes || '',
+                                  importRules: loc.importRules,
                                 });
                                 setShowShipToForm(true);
                               }}
@@ -22847,7 +22882,8 @@ export default function App() {
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
 
@@ -22912,6 +22948,59 @@ export default function App() {
                           <input type="email" value={shipToForm.logisticsEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, logisticsEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="CC'd on shipping documents" />
                         </div>
                       </div>
+
+                      {/* Per-SHIP-TO email import rule — when a scanned PO matches
+                          THIS delivery site, these defaults beat the customer-level
+                          rules (more specific wins). */}
+                      {(() => {
+                        const stRules = shipToForm.importRules || {};
+                        const setStRules = (patch: Partial<NonNullable<ShipToLocation['importRules']>>) =>
+                          setShipToForm({ ...shipToForm, importRules: { ...stRules, ...patch, updatedAt: new Date().toISOString() } });
+                        const stProducts = stRules.defaultProducts || [];
+                        const stOptions = buildOrderProductOptions(undefined, { selectableOnly: true });
+                        const setStProductAt = (idx: number, patch: Partial<{ sugarForm: any; productValue: string; productKey: string }>) =>
+                          setStRules({ defaultProducts: stProducts.map((p, i) => i === idx ? { ...p, ...patch } : p) });
+                        return (
+                          <div className="border border-violet-300 bg-violet-50/60 p-3 space-y-2">
+                            <div className="text-[10px] uppercase font-bold text-violet-800">Email Import Rule for this location <span className="normal-case font-normal opacity-70">— overrides the customer-level rule when a scanned PO ships here</span></div>
+                            {stProducts.map((p, idx) => (
+                              <div key={idx} className="grid grid-cols-[110px_1fr_auto] gap-2 items-center">
+                                <select value={p.sugarForm} onChange={(e) => setStProductAt(idx, { sugarForm: e.target.value })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
+                                  <option value="">Any form</option>
+                                  <option value="liquid">Liquid</option>
+                                  <option value="granulated">Granulated</option>
+                                  <option value="brown">Brown</option>
+                                  <option value="yellow">Yellow</option>
+                                  <option value="icing">Icing</option>
+                                  <option value="molasses">Molasses</option>
+                                </select>
+                                <select
+                                  value={p.productKey}
+                                  onChange={(e) => {
+                                    const opt = stOptions.find(o => o.key === e.target.value);
+                                    setStProductAt(idx, { productKey: e.target.value, productValue: opt?.value || '' });
+                                  }}
+                                  className="bg-white border border-[#141414] p-2 text-xs outline-none"
+                                >
+                                  <option value="">— Select product —</option>
+                                  {stOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                                </select>
+                                <button type="button" onClick={() => setStRules({ defaultProducts: stProducts.filter((_, i) => i !== idx) })} className="p-1.5 text-red-500 hover:bg-red-50 transition-colors" title="Remove"><X size={12} /></button>
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-3">
+                              <button type="button" onClick={() => setStRules({ defaultProducts: [...stProducts, { sugarForm: '', productValue: '', productKey: '' }] })} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"><Plus size={11} /> Default product</button>
+                              <div className="flex items-center gap-2">
+                                <label className="text-[9px] uppercase font-bold opacity-50 whitespace-nowrap">Default Origin</label>
+                                <select value={stRules.defaultOrigin || ''} onChange={(e) => setStRules({ defaultOrigin: e.target.value || undefined })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
+                                  <option value="">—</option>
+                                  {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div className="flex gap-2 pt-1">
                         <button
                           type="button"
