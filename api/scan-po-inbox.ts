@@ -120,6 +120,31 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
   ]);
   const customers = custSnap.docs.map(d => (d.data() as any).name).filter(Boolean);
 
+  // Per-customer ordering patterns from operator-set import rules
+  // (Customer.importRules). One capped prose line per customer — the model uses
+  // these to disambiguate product/location when the PO text is vague, never to
+  // override text explicitly printed on the document.
+  const customerRules: string[] = custSnap.docs
+    .map(d => d.data() as any)
+    .filter(c => c?.name && c.importRules && ((c.importRules.defaultProducts || []).some((p: any) => p?.productValue) || c.importRules.defaultOrigin || c.importRules.defaultShipToId))
+    .slice(0, 80)
+    .map((c) => {
+      const r = c.importRules;
+      const prods = (r.defaultProducts || [])
+        .filter((p: any) => p?.productValue)
+        .map((p: any) => `${p.productValue}${p.sugarForm ? ` (when ${p.sugarForm})` : ''}`)
+        .join(', ');
+      const shipTo = r.defaultShipToId
+        ? ((c.shipToLocations || []).find((l: any) => l?.id === r.defaultShipToId)?.name || '')
+        : '';
+      const parts: string[] = [];
+      if (prods) parts.push(`usually orders ${prods}`);
+      if (r.defaultOrigin) parts.push(`ships from ${r.defaultOrigin}`);
+      if (shipTo) parts.push(`delivered to ${shipTo}`);
+      return parts.length ? `${c.name}: ${parts.join('; ')}` : '';
+    })
+    .filter(Boolean);
+
   // Products at an INACTIVE location must not be suggested to the model — it
   // would normalise a PO line onto a product the app can no longer offer. Mirrors
   // the client-side rule (App.tsx inactiveLocationKeys) and FAILS OPEN: a product
@@ -184,6 +209,7 @@ async function buildHints(db: FirebaseFirestore.Firestore): Promise<ExtractHints
     contracts: Array.from(new Set(contracts)),
     carriers: Array.from(new Set(carriers)),
     carrierDomains,
+    customerRules,
     learned,
   };
 }

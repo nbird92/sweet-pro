@@ -71,7 +71,7 @@ import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
 import { generateDocumentPackagePdf } from './documentPackagePdf';
 import { sendEmail, idempotencyKey } from './utils/sendEmail';
-import type { EmailDocumentType } from './types';
+import type { EmailDocumentType, CustomerImportRules } from './types';
 // Full-page components are code-split (React.lazy) so their code loads only when
 // the page is first opened, shrinking the initial bundle. Rendered inside one
 // <Suspense> at the renderContent() call site.
@@ -732,13 +732,57 @@ export default function App() {
   const matchShipToForCustomer = (customerId: string, po: ExtractedPO): string => {
     const c = customers.find(x => x.id === customerId);
     const locs = c?.shipToLocations || [];
+    const ruleShipTo = c?.importRules?.defaultShipToId && locs.some(l => l.id === c.importRules!.defaultShipToId)
+      ? c.importRules.defaultShipToId : '';
     const m = matchShipToLocation(po.shipToName, po.shipToAddress, locs);
-    if (m?.id) return m.id;
+    if (m?.id) {
+      // An alwaysApply rule beats a FUZZY text match but never an exact one —
+      // a PO explicitly naming a different site must win.
+      if (ruleShipTo && ruleShipTo !== m.id && c?.importRules?.alwaysApply) {
+        const exact = `${po.shipToName || ''} ${po.shipToAddress || ''}`.toLowerCase();
+        const matched = locs.find(l => l.id === m.id);
+        const exactHit = !!matched && !!matched.addressLine1 && exact.includes((matched.addressLine1 || '').toLowerCase());
+        if (!exactHit) return ruleShipTo;
+      }
+      return m.id;
+    }
+    // No address match → the customer's explicit rule ship-to.
+    if (ruleShipTo) return ruleShipTo;
     // Only ONE ship-to on file → nothing to disambiguate, so auto-select it even
     // when the scanned ship-to text didn't match (a common case for customers
     // with a single delivery site).
     if (locs.length === 1) return locs[0].id;
     return '';
+  };
+
+  /** Save the current review card's product/origin/ship-to as the customer's
+   *  email-import rule (Customer.importRules) — the one-click "make this the
+   *  default" affordance on a review card. Durable immediately via saveNow. */
+  const saveImportRuleFromReview = (rev: { customerId: string; location?: string; shipToLocationId?: string; lines: Array<{ productValue: string; productKey: string; productRaw?: string }> }) => {
+    const cust = customers.find(c => c.id === rev.customerId);
+    if (!cust) return;
+    const line = rev.lines.find(l => l.productValue && l.productKey);
+    const form = (detectSugarForm(line?.productRaw) || '') as NonNullable<CustomerImportRules['defaultProducts']>[number]['sugarForm'];
+    const prev = cust.importRules || {};
+    const products = [...(prev.defaultProducts || [])];
+    if (line) {
+      const idx = products.findIndex(p => p.sugarForm === form);
+      const entry = { sugarForm: form, productValue: line.productValue, productKey: line.productKey };
+      if (idx >= 0) products[idx] = entry; else products.push(entry);
+    }
+    const updated: Customer = {
+      ...cust,
+      importRules: {
+        ...prev,
+        ...(line ? { defaultProducts: products } : {}),
+        ...(rev.location ? { defaultOrigin: rev.location } : {}),
+        ...(rev.shipToLocationId ? { defaultShipToId: rev.shipToLocationId } : {}),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    setCustomers(prevList => prevList.map(c => c.id === cust.id ? updated : c));
+    saveNow(COLLECTIONS.customers, [updated]);
+    setPoIngestNotice(`Saved import rule for ${cust.name}: ${[line ? `product ${line.productValue}${form ? ` (${form})` : ''}` : '', rev.location ? `origin ${rev.location}` : '', rev.shipToLocationId ? 'ship-to' : ''].filter(Boolean).join(', ')}`);
   };
 
   // Sucro contract numbers look like S######.### (e.g. S123456.001). Scan the
@@ -908,8 +952,32 @@ export default function App() {
     for (const o of orders) consider(o.lineItems?.length ? o.lineItems : [{ productName: o.product }], o.customer, o.location);
     return { keys, names };
   };
-  const resolveScannedProduct = (description: string | undefined, itemCode: string | undefined, cust: Customer | null | undefined, location: string | undefined, opts: ScanOpt[]): ScanOpt | null => {
+  /** Look up the customer's explicit import rule product for a detected sugar
+   *  form. Exact-form entry first, then the '' (any-form) entry — but the
+   *  any-form entry is only usable when it doesn't CONTRADICT a detected form
+   *  (checked by the caller via formAgrees). */
+  const ruleProductFor = (cust: Customer | null | undefined, rawForm: string): { productValue: string; productKey: string } | null => {
+    const list = cust?.importRules?.defaultProducts;
+    if (!list || !list.length) return null;
+    return list.find(p => p.sugarForm === rawForm && p.productValue)
+      || list.find(p => p.sugarForm === '' && p.productValue)
+      || null;
+  };
+  const resolveScannedProduct = (
+    description: string | undefined,
+    itemCode: string | undefined,
+    cust: Customer | null | undefined,
+    location: string | undefined,
+    opts: ScanOpt[],
+    // Lazy, per-PO-memoized affinity — computing it is O(orders + invoices), so
+    // callers processing several lines pass one shared getter and it runs at
+    // most once per PO, and ZERO times when a rule or learned alias resolves
+    // the line first.
+    affGetter?: () => ReturnType<typeof customerProductAffinity>,
+  ): ScanOpt | null => {
     const byValue = (v: string | null) => (v ? (opts.find(o => o.value === v) || null) : null);
+    const byKeyOrValue = (key?: string, value?: string) =>
+      (key ? opts.find(o => o.key === key) : null) || byValue(value || null);
     // The sugar form the DESCRIPTION itself states, e.g. "LIQUID SUCROSE BULK"
     // -> liquid. Computed up front because the learned mappings below must
     // respect it too.
@@ -923,7 +991,8 @@ export default function App() {
       const f = optionSugarForm(o);
       return !rawForm || !f || f === rawForm;
     };
-    // 1) Learned by the buyer's vendor item code (strongest — survives wording).
+    // 1) Learned by the buyer's vendor item code (strongest — survives wording,
+    //    and a buyer-specific code alias beats a general customer rule).
     if (itemCode && itemCode.trim()) {
       const hit = byValue(findLearned(poLearned, 'product', itemCode));
       if (hit && formAgrees(hit)) return hit;
@@ -933,9 +1002,20 @@ export default function App() {
       const hit = byValue(findLearned(poLearned, 'product', description));
       if (hit && formAgrees(hit)) return hit;
     }
+    // 3) CUSTOMER IMPORT RULE — the operator's explicit "this customer orders X"
+    //    default (Customer.importRules). Resolved against the ACTIVE option list
+    //    so a rule pointing at a retired-location product can't be selected, and
+    //    form-guarded so a granulated rule never overrides a line that says
+    //    LIQUID. This is the primary accuracy lever: it fires before any fuzzy
+    //    scoring, and needs no description at all (rule-only lines resolve too).
+    {
+      const rule = ruleProductFor(cust, rawForm);
+      const hit = rule ? byKeyOrValue(rule.productKey, rule.productValue) : null;
+      if (hit && formAgrees(hit)) return hit;
+    }
     if (!description || !description.trim()) return null;
-    // 3) Score with a sugar-form guard + customer/location affinity.
-    const aff = customerProductAffinity(cust, location);
+    // 4) Score with a sugar-form guard + customer/location affinity (lazy).
+    const aff = affGetter ? affGetter() : customerProductAffinity(cust, location);
     let best: ScanOpt | null = null;
     let bestScore = 0;
     for (const o of opts) {
@@ -947,7 +1027,7 @@ export default function App() {
       if (rawForm && oForm && rawForm === oForm) score += 0.15; // right-form bonus
       if (score > bestScore) { bestScore = score; best = o; }
     }
-    // 4) Confidence gate — auto-select only a confident match; else leave blank.
+    // 5) Confidence gate — auto-select only a confident match; else leave blank.
     if (best && bestScore >= 0.5) return best;
     // Fallback: if the customer (at this location) has bought exactly ONE product
     // in the line's sugar form, use it — a very strong single-product prior.
@@ -955,6 +1035,11 @@ export default function App() {
     const histOpts = opts.filter(o => inForm(o) && (aff.keys.get(o.key) || aff.names.get(nrm(o.value))));
     if (histOpts.length === 1) return histOpts[0];
     return null;
+  };
+  /** One-per-PO lazy memo for customerProductAffinity — see resolveScannedProduct. */
+  const lazyAffinity = (cust: Customer | null | undefined, location?: string) => {
+    let memo: ReturnType<typeof customerProductAffinity> | null = null;
+    return () => (memo ??= customerProductAffinity(cust, location));
   };
 
   // Turn a raw extraction into an editable review card with best-effort mappings.
@@ -1020,11 +1105,16 @@ export default function App() {
     // default instead of leaving the order with no location.
     const origin = firstActiveLocation(
       contract?.origin,
+      // With alwaysApply, the customer's explicit rule origin outranks the
+      // address heuristics (contract origin — a commercial term — still wins).
+      ...(cust?.importRules?.alwaysApply ? [cust.importRules.defaultOrigin] : []),
       detectOriginFromAddresses(po),
+      cust?.importRules?.defaultOrigin,
       cust?.defaultLocation,
     );
+    const aff = lazyAffinity(cust, origin); // one affinity computation max per PO
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff);
       const factor = mtPerUnit(li.unit);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
@@ -1963,11 +2053,16 @@ export default function App() {
     // stated in the email, then the customer card's default.
     const origin = firstActiveLocation(
       contract?.origin,
+      // With alwaysApply, the customer's explicit rule origin outranks the
+      // address heuristics (contract origin — a commercial term — still wins).
+      ...(cust?.importRules?.alwaysApply ? [cust.importRules.defaultOrigin] : []),
       detectOriginFromAddresses(po),
+      cust?.importRules?.defaultOrigin,
       cust?.defaultLocation,
     );
+    const aff = lazyAffinity(cust, origin); // one affinity computation max per PO
     const lines: POReviewLine[] = (po.lineItems || []).map(li => {
-      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts);
+      const prod = resolveScannedProduct(li.description, li.itemNumber, cust, origin, opts, aff);
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
@@ -2457,7 +2552,7 @@ export default function App() {
           // amendment so it updates an existing PO (carrier / split / qty) instead
           // of becoming a new PO. A customer PO forwarded via the Order Desk group
           // is preserved. (Demurrage docs are handled above and never reach here.)
-          if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other'
+          if (po.documentType !== 'amendment' && po.documentType !== 'cancellation' && po.documentType !== 'other' && po.documentType !== 'appointment_request'
               && (isStockRequestSubject(item?.subject) || isInternalEmployeeEmail(item?.fromEmail) || isLogisticsSenderEmail(item?.fromEmail))) {
             po.documentType = 'amendment';
             po.amendsPoNumber = (po.amendsPoNumber || po.poNumber || '').trim();
@@ -2533,7 +2628,7 @@ export default function App() {
                     customer: order.customer,
                     orderId: order.id,
                     orderBol: order.bolNumber,
-                    kind: 'amendment',
+                    kind: 'appointment',
                     summary: `Requested appointment ${plan.time} on ${apptDate} is NOT available${plan.suggestedTime ? ` — suggested ${plan.suggestedTime} (${plan.location})` : ' — no free slots that day'}`,
                     requestedApptDate: apptDate,
                     requestedApptTime: plan.time,
@@ -2555,6 +2650,51 @@ export default function App() {
               });
               if (changes.length) logs.push({ ...logBase(item, po), poNumber: refPo, customer: order.customer, orderId: order.id, orderBol: order.bolNumber, result: 'updated', note: `Auto-updated existing PO ${refPo}: ${changes.join(', ')}` });
             }
+          }
+          // APPOINTMENT REQUESTS get their own review queue (Email Center →
+          // Appointment Requests), never the new-PO path. Carrier-confirmed
+          // times with a matched order were already auto-booked (or queued as
+          // an unavailable-slot appointment) by the enrichment block above —
+          // everything else (customer/broker time requests, unmatched orders)
+          // is queued here for one-click booking.
+          if (po.documentType === 'appointment_request') {
+            const refPo = (po.amendsPoNumber || po.poNumber || '').trim();
+            const refBol = (po.bolNumber || '').trim().toUpperCase();
+            const ord = (refPo ? orders.find(o => samePoNumber(o.po, refPo)) : undefined)
+              || (refBol ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
+            const reqTime = (po.pickupTime || '').trim();
+            const reqDate = (po.shipmentDate || '').trim() || (ord?.shipmentDate || '');
+            // Carrier-confirmed times with a matched order were auto-booked (or
+            // queued as unavailable) by the enrichment block above.
+            const alreadyHandled = !!ord && isLogisticsSenderEmail(item?.fromEmail) && !!reqTime && !!reqDate;
+            if (!alreadyHandled && reqTime && reqDate) {
+              // Pre-compute a suggestion when the order is known, so the card
+              // can offer "book suggested" immediately.
+              const plan = ord ? planOrderAppointment(ord, reqDate, reqTime, ord.carrier || '', apptAdds) : null;
+              amendments.push({
+                id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                createdAt: nowIso,
+                receivedAt: item?.receivedAt,
+                fromEmail: item?.fromEmail,
+                subject: item?.subject,
+                sourceFile: item?.sourceFile,
+                poNumber: refPo || undefined,
+                customer: ord?.customer || po.customerName || undefined,
+                orderId: ord?.id,
+                orderBol: ord?.bolNumber || refBol || undefined,
+                kind: 'appointment',
+                summary: `Appointment requested for ${reqDate} at ${reqTime}${plan && plan.status === 'unavailable' ? (plan.suggestedTime ? ` — slot taken, suggested ${plan.suggestedTime}` : ' — no free slots that day') : ''}`,
+                requestedApptDate: reqDate,
+                requestedApptTime: reqTime,
+                ...(plan && plan.status === 'unavailable' && plan.suggestedTime ? { suggestedApptTime: plan.suggestedTime } : {}),
+                ...(plan && plan.status !== 'exists' ? { apptLocation: plan.location } : {}),
+                status: ord ? 'pending' : 'unmatched',
+              });
+              logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber, result: 'updated', note: `Appointment request queued for review: ${reqDate} ${reqTime}` });
+            } else if (!reqTime || !reqDate) {
+              logs.push({ ...logBase(item, po), poNumber: refPo, result: 'skipped', note: 'Appointment email had no readable date/time' });
+            }
+            continue;
           }
           // Order amendments/cancellations go to the review queue, not orders. The
           // carrier / split / contract fills above were applied without approval, so
@@ -22810,6 +22950,99 @@ export default function App() {
                   )}
                 </div>
 
+                {/* Email Import Rules — explicit defaults the PO scanner applies
+                    for this customer (most customers order the same product to
+                    the same place on every PO). */}
+                {(() => {
+                  const rules = editingCustomer.importRules || {};
+                  const setRules = (patch: Partial<CustomerImportRules>) =>
+                    setEditingCustomer({ ...editingCustomer, importRules: { ...rules, ...patch, updatedAt: new Date().toISOString() } });
+                  const ruleProductOptions = buildOrderProductOptions(undefined, { selectableOnly: true });
+                  const products = rules.defaultProducts || [];
+                  const setProductAt = (idx: number, patch: Partial<{ sugarForm: any; productValue: string; productKey: string }>) =>
+                    setRules({ defaultProducts: products.map((p, i) => i === idx ? { ...p, ...patch } : p) });
+                  return (
+                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 flex items-center justify-between">
+                        <span>Email Import Rules — what this customer usually orders</span>
+                        <label className="flex items-center gap-1.5 normal-case font-bold text-[10px] cursor-pointer" title="Off: rules fill blanks and settle uncertain matches. On: rules override the scanner's fuzzy guesses (never text explicitly printed on the PO).">
+                          <input type="checkbox" checked={!!rules.alwaysApply} onChange={(e) => setRules({ alwaysApply: e.target.checked || undefined })} className="w-3.5 h-3.5" />
+                          Always apply
+                        </label>
+                      </div>
+                      <p className="text-[10px] opacity-50">The email PO importer uses these before any guessing: default product (per sugar form), shipping origin, and ship-to site. Carrier and currency defaults above already act as import rules.</p>
+                      {products.map((p, idx) => (
+                        <div key={idx} className="grid grid-cols-[110px_1fr_auto] gap-2 items-center">
+                          <select value={p.sugarForm} onChange={(e) => setProductAt(idx, { sugarForm: e.target.value })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
+                            <option value="">Any form</option>
+                            <option value="liquid">Liquid</option>
+                            <option value="granulated">Granulated</option>
+                            <option value="brown">Brown</option>
+                            <option value="yellow">Yellow</option>
+                            <option value="icing">Icing</option>
+                            <option value="molasses">Molasses</option>
+                          </select>
+                          <select
+                            value={p.productKey}
+                            onChange={(e) => {
+                              const opt = ruleProductOptions.find(o => o.key === e.target.value);
+                              setProductAt(idx, { productKey: e.target.value, productValue: opt?.value || '' });
+                            }}
+                            className="bg-white border border-[#141414] p-2 text-xs outline-none"
+                          >
+                            <option value="">— Select product —</option>
+                            {ruleProductOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                          </select>
+                          <button type="button" onClick={() => setRules({ defaultProducts: products.filter((_, i) => i !== idx) })} className="p-1.5 text-red-500 hover:bg-red-50 transition-colors" title="Remove rule"><X size={12} /></button>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setRules({ defaultProducts: [...products, { sugarForm: '', productValue: '', productKey: '' }] })} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"><Plus size={11} /> Default product</button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Suggest a default product from THIS customer's order/invoice
+                            // history — only when one product truly dominates (>=90%
+                            // share, >=5 records), and never silently: it fills the form
+                            // for the operator to confirm with Save.
+                            const aff = customerProductAffinity(editingCustomer);
+                            let total = 0; let bestKey = ''; let bestW = 0;
+                            aff.keys.forEach((w, k) => { total += w; if (w > bestW) { bestW = w; bestKey = k; } });
+                            const opt = bestKey ? ruleProductOptions.find(o => o.key === bestKey) : undefined;
+                            if (!opt || total < 5 || bestW / total < 0.9) {
+                              alert(total === 0
+                                ? 'No order/invoice history found for this customer.'
+                                : 'No single product dominates this customer\'s history (needs ≥90% of ≥5 records) — set the default manually.');
+                              return;
+                            }
+                            setRules({ defaultProducts: [{ sugarForm: '', productValue: opt.value, productKey: opt.key }] });
+                          }}
+                          className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-white transition-colors"
+                          title="Looks at this customer's past orders/invoices; fills the default product only when one product accounts for ≥90% of ≥5 records."
+                        >
+                          Suggest from history
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Default Origin (ships from)</label>
+                          <select value={rules.defaultOrigin || ''} onChange={(e) => setRules({ defaultOrigin: e.target.value || undefined })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                            <option value="">—</option>
+                            {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Default Ship-To</label>
+                          <select value={rules.defaultShipToId || ''} onChange={(e) => setRules({ defaultShipToId: e.target.value || undefined })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" disabled={!(editingCustomer.shipToLocations || []).length}>
+                            <option value="">{(editingCustomer.shipToLocations || []).length ? '—' : 'no ship-to sites yet'}</option>
+                            {(editingCustomer.shipToLocations || []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
                   <textarea
@@ -24751,6 +24984,14 @@ export default function App() {
                           {!rev.created && rev.customerId && (rev.source.shipToName || rev.source.shipToAddress) && (
                             <button type="button" onClick={() => addScannedShipTo(rev)} className="text-[10px] font-bold uppercase text-emerald-700 hover:underline mt-0.5">
                               + Add scanned address as ship-to
+                            </button>
+                          )}
+                          {/* One-click customer rule: remember this card's product /
+                              origin / ship-to as the customer's import defaults so
+                              future scans resolve them without guessing. */}
+                          {!rev.created && rev.customerId && (rev.lines.some(l => l.productValue) || rev.location || rev.shipToLocationId) && (
+                            <button type="button" onClick={() => saveImportRuleFromReview(rev)} className="text-[10px] font-bold uppercase text-violet-700 hover:underline mt-0.5 block" title="Saves this card's product, origin and ship-to as this customer's email-import defaults (editable on the customer card).">
+                              ★ Save as import rule for this customer
                             </button>
                           )}
                         </div>

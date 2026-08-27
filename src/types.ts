@@ -90,6 +90,30 @@ export interface Customer {
   itasCustomerName?: string;
   customerGroupId?: string;
   shipToLocations?: ShipToLocation[];
+  /** Explicit, operator-edited defaults the email PO importer applies for this
+   *  customer — most customers order the same product to the same location on
+   *  nearly every PO, so a stored rule beats fuzzy text matching. */
+  importRules?: CustomerImportRules;
+}
+
+/** Per-customer email-import rules. `defaultProducts` is keyed by the sugar
+ *  form DETECTED in the PO line's description ('' = any / no form detected)
+ *  because liquid-vs-granulated is the one recurring ambiguity; a customer that
+ *  only ever orders one product gets a single '' entry. */
+export interface CustomerImportRules {
+  defaultProducts?: Array<{
+    sugarForm: '' | 'liquid' | 'brown' | 'yellow' | 'granulated' | 'icing' | 'molasses';
+    productValue: string;  // catalog product value (same string POReviewLine.productValue stores)
+    productKey: string;    // option key (qa.id / sku.id)
+  }>;
+  defaultOrigin?: string;    // canonical Location.name (shipping origin)
+  defaultShipToId?: string;  // ShipToLocation.id on this customer
+  /** false/undefined: rules fill blanks and break low-confidence ties.
+   *  true: rules override fuzzy matches (never explicit contract origins or
+   *  exact ship-to address matches). */
+  alwaysApply?: boolean;
+  notes?: string;
+  updatedAt?: string;
 }
 
 export interface Person {
@@ -560,7 +584,12 @@ export interface PoAmendment {
   customer?: string;
   orderId?: string;            // matched order (absent when status === 'unmatched')
   orderBol?: string;
-  kind: 'amendment' | 'cancellation';
+  /** 'appointment' = the email's purpose is a pickup/delivery TIME request or
+   *  confirmation (rendered in the Email Center's dedicated Appointment
+   *  Requests table, not Order Amendments). Legacy appointment rows predate
+   *  this value and carry kind 'amendment' + requestedApptTime — the UI filter
+   *  treats those as appointments too. */
+  kind: 'amendment' | 'cancellation' | 'appointment';
   // Requested change (only the fields that change are set):
   newShipmentDate?: string;
   newDeliveryDate?: string;

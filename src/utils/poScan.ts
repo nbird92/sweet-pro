@@ -54,7 +54,7 @@ export interface ExtractedPO {
   carrierInvoiceNumber?: string;
   /** Classification of the email/document. Absent => treat as a new order.
    *  'demurrage' = a carrier's demurrage/wait-time/accessorial invoice to Sucro. */
-  documentType?: 'new_order' | 'amendment' | 'cancellation' | 'demurrage' | 'other';
+  documentType?: 'new_order' | 'amendment' | 'cancellation' | 'appointment_request' | 'demurrage' | 'other';
   /** True when this PO came from a CALL-OFF release (one bulk order number +
    *  a delivery schedule). The server splits those into one PO per delivery,
    *  numbered {order}-{week}{seq} (e.g. 9330104660-261). */

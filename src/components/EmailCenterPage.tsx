@@ -6,7 +6,7 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
-import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2, Paperclip } from 'lucide-react';
+import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2, Paperclip, CalendarClock } from 'lucide-react';
 import PageBanner from './PageBanner';
 import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from '../types';
 
@@ -195,15 +195,22 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     [poPendingImports],
   );
 
+  // An APPOINTMENT request — its own review table, separate from order
+  // amendments. Legacy rows predate kind:'appointment' and carry
+  // kind:'amendment' + a requested appointment time, so match on shape too.
+  const isApptRequest = (a: PoAmendment) => a.kind === 'appointment' || !!(a.requestedApptDate && a.requestedApptTime);
   // Amendment review queue — pending/unmatched first (need action), then newest.
-  const amendmentsSorted = useMemo(() => {
+  const sortQueue = (list: PoAmendment[]) => {
     const rank = (s: PoAmendment['status']) => (s === 'pending' ? 0 : s === 'unmatched' ? 1 : 2);
-    return [...poAmendments].sort((a, b) => {
+    return [...list].sort((a, b) => {
       const r = rank(a.status) - rank(b.status);
       return r !== 0 ? r : (b.createdAt || '').localeCompare(a.createdAt || '');
     });
-  }, [poAmendments]);
-  const pendingAmendments = poAmendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
+  };
+  const apptRequestsSorted = useMemo(() => sortQueue(poAmendments.filter(isApptRequest)), [poAmendments]);
+  const amendmentsSorted = useMemo(() => sortQueue(poAmendments.filter(a => !isApptRequest(a))), [poAmendments]);
+  const pendingAmendments = poAmendments.filter(a => !isApptRequest(a) && (a.status === 'pending' || a.status === 'unmatched')).length;
+  const pendingApptRequests = poAmendments.filter(a => isApptRequest(a) && (a.status === 'pending' || a.status === 'unmatched')).length;
 
   const setSettings = (patch: Partial<EmailSettings>) => setEmailSettings({ ...emailSettings, ...patch });
   const setTriggers = (patch: Partial<EmailSettings['triggers']>) =>
@@ -512,8 +519,67 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
         </div>
       </div>
 
+      {/* Appointment requests — emailed pickup/delivery TIME requests, reviewed
+          and booked separately from order amendments. */}
+      {apptRequestsSorted.length > 0 && (
+        <div className="px-6 pt-2 pb-5">
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CalendarClock size={14} /> Appointment Requests</h3>
+            {pendingApptRequests > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 text-[9px] font-bold uppercase">{pendingApptRequests} to review</span>}
+          </div>
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
+            <table className="w-full text-left border-collapse">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">PO / BOL</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Requested</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Suggested</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Scheduler</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
+                  <th className="p-3 bg-[#141414]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#141414]/10">
+                {apptRequestsSorted.map(a => (
+                  <tr key={a.id} className="hover:bg-[#F9F9F9]">
+                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
+                    <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
+                    <td className="p-3 text-xs font-mono font-bold whitespace-nowrap">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</td>
+                    <td className="p-3 text-xs">{a.customer || '—'}</td>
+                    <td className="p-3 text-xs font-mono font-bold whitespace-nowrap">{a.requestedApptDate || '—'}{a.requestedApptTime ? ` ${a.requestedApptTime}` : ''}</td>
+                    <td className="p-3 text-xs font-mono whitespace-nowrap">{a.suggestedApptTime ? `${a.suggestedApptTime}` : '—'}</td>
+                    <td className="p-3 text-xs">{a.apptLocation || '—'}</td>
+                    <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
+                    <td className="p-3 whitespace-nowrap">
+                      {a.status === 'pending' ? (
+                        <div className="flex gap-2">
+                          <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800" title={a.suggestedApptTime ? `Books the suggested ${a.suggestedApptTime} (requested slot was taken), or the requested time if it has freed up` : 'Books the requested time'}>Book</button>
+                          <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                        </div>
+                      ) : a.status === 'unmatched' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] uppercase opacity-60">no matching order</span>
+                          <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
+                        </div>
+                      ) : a.status === 'applied' ? (
+                        <span className="text-[9px] uppercase opacity-60">{a.appliedAt ? `booked ${new Date(a.appliedAt).toLocaleDateString()}` : 'booked'}</span>
+                      ) : (
+                        <span className="text-[9px] uppercase opacity-40">dismissed</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Order amendment review queue — emailed changes awaiting approval */}
-      {poAmendments.length > 0 && (
+      {amendmentsSorted.length > 0 && (
         <div className="px-6 pt-2 pb-5">
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Pencil size={14} /> Order Amendments</h3>

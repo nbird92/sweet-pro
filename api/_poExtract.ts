@@ -257,6 +257,11 @@ export interface ExtractHints {
   /** Email domains of known freight carriers (from the carriers table) — used to
    *  recognise a sender as logistics, not a customer. */
   carrierDomains?: string[];
+  /** Per-customer ordering patterns from operator-set import rules — one prose
+   *  line each ("Nestlé: usually orders Liquid Sucrose 66; ships from Hamilton;
+   *  delivered to Toronto DC"). Used to DISAMBIGUATE vague PO text, never to
+   *  override text explicitly printed on the document. */
+  customerRules?: string[];
   learned?: Array<{ field: string; from: string; to: string }>;
 }
 
@@ -304,8 +309,8 @@ const PO_SCHEMA = {
     documentType: {
       type: Type.STRING,
       format: 'enum',
-      enum: ['new_order', 'amendment', 'cancellation', 'demurrage', 'other'],
-      description: "Classify the input: 'new_order' (a new purchase order), 'amendment' (changes an existing order's ship date or quantity), 'cancellation' (cancels an existing order), 'demurrage' (a freight carrier's invoice to Sucro for demurrage / detention / layover / wait-time / cancellation / accessorial charges — NOT a product order), or 'other' (unrelated mail).",
+      enum: ['new_order', 'amendment', 'cancellation', 'appointment_request', 'demurrage', 'other'],
+      description: "Classify the input: 'new_order' (a new purchase order), 'amendment' (changes an existing order's ship date or quantity), 'cancellation' (cancels an existing order), 'appointment_request' (the email's MAIN purpose is to request, propose, confirm or reschedule a pickup/delivery appointment TIME for an existing order — not a new PO, not a quantity/date amendment; still fill pickupTime, shipmentDate, bolNumber and amendsPoNumber), 'demurrage' (a freight carrier's invoice to Sucro for demurrage / detention / layover / wait-time / cancellation / accessorial charges — NOT a product order), or 'other' (unrelated mail).",
     },
     carrierInvoiceNumber: { type: Type.STRING, description: "For a 'demurrage' carrier invoice: the carrier's INVOICE number (e.g. 532476B), taken from the 'Invoice #' field." },
     amendsPoNumber: { type: Type.STRING, description: 'For amendment/cancellation: the PO number of the EXISTING order being changed.' },
@@ -391,6 +396,7 @@ CRITICAL — who is the customer:
 - Freight carriers / dispatchers (e.g. Contrans / "Contrans Tank Group", emails at contrans.ca, Denali, "CTT Burford Dispatch", a "Dispatcher" signature) are the CARRIER, never the customer. Put the carrier company in the carrier field.
 - A freight carrier / dispatcher email that merely references or confirms an EXISTING PO (a pickup or dispatch confirmation, "BOL/PO #…", trailer or load details) is NOT a new order. Classify it 'amendment' (or 'other' if there is no actionable change), set amendsPoNumber to the referenced PO number, and ALWAYS fill carrier + carrierDomain — the app uses these to attach the carrier to that PO automatically.
 - When a carrier CONFIRMS a pick-up / appointment time (e.g. "appt confirmed 0600 June 30 for B6900117"), ALWAYS fill pickupTime (24h HH:MM) and shipmentDate (ISO date), and capture the referenced BOL in bolNumber (and/or the PO in amendsPoNumber) — the app books the shipment appointment from these automatically.
+- When an email's MAIN content is an appointment TIME — someone requesting, proposing, confirming or rescheduling a pickup or delivery slot for an existing order ("can we pick up Thursday at 14:00?", "requesting dock appt 0800 on the 12th for PO …") — classify it 'appointment_request' (NOT 'new_order', NOT 'amendment'), and still fill pickupTime, shipmentDate, bolNumber and amendsPoNumber. A document that also changes quantity or adds line items is an 'amendment' instead; a full purchase order that merely mentions a delivery time stays 'new_order'.
 - Also set customerDomain to the customer's email domain (e.g. ca.nestle.com) and carrierDomain to the carrier's email domain (e.g. contrans.ca), taken from the participant addresses. These let the app remember "this domain = this customer/carrier" for next time.
 - In a thread, a LATER message that changes an already-stated order (e.g. "PO 4581816652 for 0600 on June 30", "move to 1400", "please cancel PO ...") is an amendment/cancellation of that PO — return it as a separate documents[] entry with documentType amendment/cancellation and amendsPoNumber set.
 
@@ -468,6 +474,9 @@ function hintsText(hints?: ExtractHints): string {
   if (hints.products?.length) parts.push(`Known products:\n${hints.products.slice(0, 400).join(', ')}`);
   if (hints.contracts?.length) parts.push(`Known contract numbers:\n${hints.contracts.slice(0, 400).join(', ')}`);
   if (hints.carriers?.length) parts.push(`Known freight carriers (normalize the carrier to these when matched):\n${hints.carriers.slice(0, 200).join(', ')}`);
+  if (hints.customerRules?.length) {
+    parts.push(`Known customer ordering patterns — use these to disambiguate the product, shipping origin and ship-to when the document is vague or ambiguous; NEVER use them to override text explicitly printed on the PO:\n${hints.customerRules.slice(0, 80).map(l => `- ${l}`).join('\n')}`);
+  }
   if (hints.learned?.length) {
     const lines = hints.learned.slice(0, 200).map(l => `- ${l.field}: when the document says "${l.from}", use "${l.to}"`).join('\n');
     parts.push(`Learned corrections from past reviews (apply when the source text matches):\n${lines}`);
