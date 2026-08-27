@@ -1,11 +1,12 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useContext } from 'react';
 import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer, Customer, Carrier, SKU } from '../types';
-import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import type { SheetSpec } from '../utils/exportExcel';
 import { samePoNumber } from '../utils/poNumber';
 import { cleanLotCode, sameLotCode } from '../utils/lotCode';
+import { ColumnOrderContext, ColumnVisibilityContext } from './DataTable';
 
 interface LabPageProps {
   lotCodes: LotCode[];
@@ -25,6 +26,9 @@ interface LabPageProps {
    *  Customer, Trailer) from the same PO/BOL's order/invoice/shipment record.
    *  Display-only — never mutates or persists. */
   resolveLot?: (lc: LotCode) => { bolNumber?: string; customerName?: string; trailerNumber?: string };
+  /** Opens the shared COA PDF preview for this lot code (same viewer the
+   *  invoice table uses). */
+  onPreviewCoa?: (lc: LotCode) => void;
 }
 
 const EMPTY_FORM = {
@@ -182,7 +186,7 @@ function weekKeyOf(raw?: string): string {
   return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, skus, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, skus, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot, onPreviewCoa }: LabPageProps) {
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -656,6 +660,62 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     { key: 'weeklyVerification', label: 'Weekly Verification', render: (lc) => dash(lc.weeklyVerification) },
   ];
 
+  // ── Column hide / reorder ────────────────────────────────────────────────
+  // Persisted through the app-provided Firestore-synced stores (same mechanism
+  // DataTable uses) with a localStorage fallback, keyed per sugar-type layout
+  // (the Granulated and Liquid logs have different column sets).
+  const colOrderStore = useContext(ColumnOrderContext);
+  const colVisStore = useContext(ColumnVisibilityContext);
+  const colTableKey = `labLotCodes:${filterSugarType === 'Granulated' ? 'granulated' : 'liquid'}`;
+  const readLocalList = (prefix: string): string[] => {
+    try {
+      const raw = window.localStorage.getItem(prefix + colTableKey);
+      const p = raw ? JSON.parse(raw) : [];
+      return Array.isArray(p) ? p.filter((x: unknown): x is string => typeof x === 'string') : [];
+    } catch { return []; }
+  };
+  // Local mirror so the table updates instantly even on the localStorage path.
+  const [colPrefsBump, setColPrefsBump] = useState(0);
+  const savedOrder = colOrderStore?.get(colTableKey) ?? readLocalList('dt-colorder:');
+  const hiddenKeys = colVisStore?.get(colTableKey) ?? readLocalList('dt-colhidden:');
+  const saveOrder = (keys: string[]) => {
+    if (colOrderStore) colOrderStore.set(colTableKey, keys);
+    else { try { window.localStorage.setItem('dt-colorder:' + colTableKey, JSON.stringify(keys)); } catch { /* ignore */ } }
+    setColPrefsBump(b => b + 1);
+  };
+  const saveHidden = (keys: string[]) => {
+    if (colVisStore) colVisStore.set(colTableKey, keys);
+    else { try { window.localStorage.setItem('dt-colhidden:' + colTableKey, JSON.stringify(keys)); } catch { /* ignore */ } }
+    setColPrefsBump(b => b + 1);
+  };
+  // Reconcile the saved order against the live column set: saved keys that still
+  // exist first (in saved order), then any new columns in their natural spot.
+  const orderedColumns = useMemo(() => {
+    const byKey = new Map(columns.map(c => [c.key, c]));
+    const out: LotCol[] = [];
+    for (const k of savedOrder) { const c = byKey.get(k); if (c) { out.push(c); byKey.delete(k); } }
+    for (const c of columns) if (byKey.has(c.key)) out.push(c);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterSugarType, savedOrder.join('|'), colPrefsBump]);
+  const hiddenSet = new Set(hiddenKeys);
+  const visibleColumns = orderedColumns.filter(c => !hiddenSet.has(c.key));
+  const moveColumn = (key: string, dir: -1 | 1) => {
+    const keys = orderedColumns.map(c => c.key);
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    saveOrder(keys);
+  };
+  const toggleColumn = (key: string) => {
+    const next = hiddenSet.has(key) ? hiddenKeys.filter(k => k !== key) : [...hiddenKeys, key];
+    // Never allow hiding EVERY column.
+    if (next.length >= orderedColumns.length) return;
+    saveHidden(next);
+  };
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+
   // Group the filtered lot codes into ISO weeks (newest first), like the Shipment
   // Schedule. Unparseable-date rows fall into an "undated" bucket at the bottom.
   const now = new Date();
@@ -723,6 +783,52 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
               </button>
             )}
           </div>
+          {/* Column show/hide + reorder — persisted per sugar-type layout. */}
+          <div className="relative ml-1">
+            <button
+              type="button"
+              onClick={() => setShowColumnsMenu(v => !v)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 text-[10px] font-bold uppercase hover:border-[#E4E3E0]/50 transition-colors"
+              title="Show, hide and reorder columns"
+            >
+              <SlidersHorizontal size={12} /> Columns{hiddenKeys.length ? ` (${hiddenKeys.length} hidden)` : ''}
+            </button>
+            {showColumnsMenu && (
+              <>
+                {/* click-away backdrop */}
+                <div className="fixed inset-0 z-[90]" onClick={() => setShowColumnsMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-[100] w-80 max-h-[420px] overflow-y-auto bg-white text-[#141414] border border-[#141414] shadow-[6px_6px_0px_0px_rgba(20,20,20,1)]">
+                  <div className="sticky top-0 bg-[#141414] text-[#E4E3E0] px-3 py-2 flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Columns — {filterSugarType === 'Granulated' ? 'Granulated' : 'Liquid'} log</span>
+                    <button
+                      type="button"
+                      onClick={() => { saveOrder([]); saveHidden([]); }}
+                      className="flex items-center gap-1 text-[9px] font-bold uppercase opacity-70 hover:opacity-100"
+                      title="Reset to the default order with every column shown"
+                    >
+                      <RotateCcw size={11} /> Reset
+                    </button>
+                  </div>
+                  <div className="divide-y divide-[#141414]/10">
+                    {orderedColumns.map((c, idx) => (
+                      <div key={c.key} className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-[#F9F9F9]">
+                        <input
+                          type="checkbox"
+                          checked={!hiddenSet.has(c.key)}
+                          onChange={() => toggleColumn(c.key)}
+                          className="w-3.5 h-3.5 cursor-pointer shrink-0"
+                          title={hiddenSet.has(c.key) ? 'Show column' : 'Hide column'}
+                        />
+                        <span className={`flex-1 truncate ${hiddenSet.has(c.key) ? 'opacity-40 line-through' : ''}`}>{c.label}</span>
+                        <button type="button" disabled={idx === 0} onClick={() => moveColumn(c.key, -1)} className="p-0.5 disabled:opacity-20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Move left"><ArrowUp size={12} /></button>
+                        <button type="button" disabled={idx === orderedColumns.length - 1} onClick={() => moveColumn(c.key, 1)} className="p-0.5 disabled:opacity-20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Move right"><ArrowDown size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
         <button
           onClick={handleDownloadTemplate}
@@ -788,7 +894,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-                            {columns.map((c) => (
+                            {onPreviewCoa && <th className="p-3 border-r border-[#141414]/10 w-12">COA</th>}
+                            {visibleColumns.map((c) => (
                               <th key={c.key} className={`p-3 border-r border-[#141414]/10 ${c.widthClass || ''}`}>{c.label}</th>
                             ))}
                           </tr>
@@ -796,11 +903,23 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                         <tbody className="divide-y divide-[#141414]/10">
                           {rows.length === 0 ? (
                             <tr>
-                              <td colSpan={columns.length} className="p-6 text-center text-xs opacity-50 italic">No lot codes this week.</td>
+                              <td colSpan={visibleColumns.length + (onPreviewCoa ? 1 : 0)} className="p-6 text-center text-xs opacity-50 italic">No lot codes this week.</td>
                             </tr>
                           ) : rows.map((lc) => (
                             <tr key={lc.id} onClick={() => openEdit(lc)} className="hover:bg-[#F9F9F9] transition-colors cursor-pointer">
-                              {columns.map((c) => (
+                              {onPreviewCoa && (
+                                <td className="p-3 border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => onPreviewCoa(lc)}
+                                    className="p-1 text-blue-700 hover:bg-blue-600 hover:text-white transition-colors"
+                                    title="Preview Certificate of Analysis for this lot"
+                                  >
+                                    <FileText size={13} />
+                                  </button>
+                                </td>
+                              )}
+                              {visibleColumns.map((c) => (
                                 <td key={c.key} className={`p-3 text-xs border-r border-[#141414]/10 ${c.mono ? 'font-mono' : ''} ${c.bold ? 'font-bold' : ''}`}>
                                   {c.render ? c.render(lc) : ((lc as any)[c.key] ?? '—')}
                                 </td>

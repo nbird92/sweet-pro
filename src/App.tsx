@@ -5535,6 +5535,42 @@ export default function App() {
     }
   };
 
+  /** Preview the COA for one LOT CODE (Hamilton Lab table). Reuses the shipment
+   *  COA generator: finds the shipment by the lot's BOL when one exists (for
+   *  customer/carrier/date context), else builds a minimal synthetic one — and
+   *  ALWAYS pins the shipment's lot list to THIS lot so the COA's result
+   *  columns show exactly the row the user clicked. */
+  const handleGenerateCoaForLot = (lc: LotCode) => {
+    const bol = (lc.bolNumber || resolveRecord({ po: lc.customerPo }).bolNumber || '').trim();
+    const bolU = bol.toUpperCase();
+    const real = bolU ? [...hamiltonShipments, ...vancouverShipments].find(s => (s.bol || '').trim().toUpperCase() === bolU) : undefined;
+    const shipment: Shipment = {
+      id: real?.id || `TMP-COA-${lc.id}`,
+      week: real?.week || '',
+      date: real?.date || lc.date || '',
+      day: real?.day || '',
+      time: real?.time || '',
+      bay: real?.bay || '',
+      customer: real?.customer || lc.customerName || resolveRecord({ bol, po: lc.customerPo }).customer || '',
+      product: real?.product || lc.sugarType || '',
+      contractNumber: real?.contractNumber || '',
+      po: real?.po || lc.customerPo || '',
+      bol,
+      qty: real?.qty || 0,
+      carrier: real?.carrier || lc.carrierName || '',
+      arrive: real?.arrive || '',
+      start: real?.start || '',
+      out: real?.out || '',
+      status: real?.status || 'Pending',
+      deliveryDate: real?.deliveryDate || '',
+      location: real?.location || 'Hamilton',
+      // Pin the COA to the clicked lot, even when the real shipment lists others.
+      lotNumber: lc.lotNumber,
+      lotNumbers: [lc.lotNumber],
+    } as Shipment;
+    handleGenerateCoa(shipment);
+  };
+
   /** True when any line item (or a product-name fallback) is a PACKAGED or TOTE
    *  product — i.e. it has bag IDs. Bulk / liquid loads return false. Resolves the
    *  product's format via the QA product / SKU catalog, then the name string. */
@@ -12641,6 +12677,7 @@ export default function App() {
             const r = resolveRecord({ bol: lc.bolNumber, po: lc.customerPo });
             return { bolNumber: r.bolNumber, customerName: r.customer, trailerNumber: r.trailerNo };
           }}
+          onPreviewCoa={handleGenerateCoaForLot}
           onUpdateLotCodes={withDeleteTracking(COLLECTIONS.lotCodes, lotCodes, setLotCodes)}
           onSyncLotCodes={() => {
             const preset = lotCodeSyncPresets[0] || DEFAULT_LOTCODE_IMPORT_CONFIG;
