@@ -335,6 +335,157 @@ function generateCoaPage(
 }
 
 // ============================================================
+// GRANULATED COA — mirrors the customer-provided Google Sheets template
+// (docs.google.com/spreadsheets/d/1CtUthOGFF…, "Granulated COA Template"):
+// centered title; Customer block left / BOL-Carrier-Trailer-Dates block right;
+// one item line (Qty | Product | Lot # | Brand | Production | Expiration);
+// a Specification | Standards | Results table with the template's five fixed
+// rows (Sensorial / Color / Moisture / Ash / Sucrose); MANUFACTURED BY /
+// SHIPPER / ORIGIN / DESTINATION; Loading Date + QA approval line; the
+// template's exact footer. Layout deliberately plain (no app-style banners).
+// ============================================================
+function generateGranulatedCoaPage(
+  doc: jsPDF,
+  shipment: Shipment,
+  order: Order | undefined,
+  customer: Customer | undefined,
+  shipFromLocation: Location | undefined,
+  shipmentLotCodes: LotCode[],
+  qaProduct: QAProduct | undefined,
+) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const M = 16;
+  const rightColX = 122;           // label column of the right-hand info block
+  const rightValX = 152;           // value column of the right-hand info block
+  const joinVals = (key: keyof LotCode) =>
+    [...new Set(shipmentLotCodes.map(lc => String((lc as any)[key] ?? '').trim()).filter(Boolean))].join(', ');
+
+  // ── Title ──
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(BLACK);
+  doc.text('CERTIFICATE OF ANALYSIS', pageWidth / 2, 20, { align: 'center' });
+
+  // ── Customer block (left) ──
+  let y = 34;
+  doc.setFontSize(10);
+  doc.text('Customer', M, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  y += 6;
+  doc.text(`Name: ${customer?.name || shipment.customer || ''}`, M, y);
+  y += 5.5;
+  const addr = [customer?.address, [customer?.city, customer?.province].filter(Boolean).join(', '), customer?.postalCode].filter(Boolean).join(' ');
+  const addrLines = doc.splitTextToSize(`Address: ${addr}`, 95) as string[];
+  doc.text(addrLines, M, y);
+  y += addrLines.length * 5 + 0.5;
+  doc.text(`Email: ${customer?.qaContractEmail || customer?.contactEmail || ''}`, M, y);
+
+  // ── Shipment block (right) ──
+  let ry = 34;
+  const rightRow = (label: string, value: string) => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(label, rightColX, ry);
+    doc.setFont('helvetica', 'normal');
+    doc.text(value || '', rightValX, ry);
+    ry += 5.5;
+  };
+  rightRow('BOL #', shipment.bol || order?.bolNumber || '');
+  rightRow('Carrier:', shipment.carrier || order?.carrier || '');
+  rightRow('Trailer #:', joinVals('trailerNumber') || shipment.trailerNo || '');
+  rightRow('Pick-up Date:', shipment.date || order?.shipmentDate || '');
+  rightRow('PO #:', order?.po || shipment.po || '');
+  rightRow('Delivery Required:', shipment.deliveryDate || order?.deliveryDate || '');
+
+  y = Math.max(y, ry) + 8;
+
+  // ── Item line ──
+  const lotNums = shipmentLotCodes.length
+    ? shipmentLotCodes.map(lc => lc.lotNumber).join(', ')
+    : (shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : [])).join(', ');
+  const productionDate = joinVals('date');
+  autoTable(doc, {
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Quantity', 'Product Name', 'Lot #', 'Brand', 'Production Date', 'Expiration Date']],
+    body: [[
+      shipment.qty ? `${shipment.qty} MT` : '',
+      order?.product || shipment.product || '',
+      lotNums,
+      'SUCRO CAN',
+      productionDate,
+      '', // expiration left for QA to stamp — the template carries the column
+    ]],
+    styles: { fontSize: 8, cellPadding: 2, lineColor: [20, 20, 20], lineWidth: 0.2, textColor: [20, 20, 20], halign: 'center' },
+    headStyles: { fillColor: [255, 255, 255], textColor: [20, 20, 20], fontStyle: 'bold', lineColor: [20, 20, 20], lineWidth: 0.2 },
+  });
+  y = ((doc as any).lastAutoTable?.finalY || y + 18) + 8;
+
+  // ── Specification | Standards | Results (the template's five fixed rows) ──
+  const res = (key: keyof LotCode) => joinVals(key);
+  const maxColor = qaProduct?.maxColor != null && qaProduct.maxColor !== 0 ? String(qaProduct.maxColor) : '';
+  autoTable(doc, {
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Specification', 'Standards', 'Results']],
+    body: [
+      ['Sensorial', 'Typical, Sweet, no off flavor or odor, dry crystalline, white refined sugar with a free flowing capacity', 'Conforms to Standard'],
+      ['Color', `Max. ICUMSA ${maxColor}`.trim(), res('color')],
+      ['Moisture', 'Max. 0.05%', res('moisture')],
+      ['Ash', 'Max. 0.04%', res('ash')],
+      ['Sucrose', 'Min. 99.8%', res('sucrose')],
+    ],
+    styles: { fontSize: 8.5, cellPadding: 2.5, lineColor: [20, 20, 20], lineWidth: 0.2, textColor: [20, 20, 20] },
+    headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', lineColor: [20, 20, 20], lineWidth: 0.2 },
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 38 }, 1: { cellWidth: 92 }, 2: { halign: 'center' } },
+  });
+  y = ((doc as any).lastAutoTable?.finalY || y + 40) + 4;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(7.5);
+  doc.text('*The results reported correspond only to the lots referenced above.', M, y);
+  y += 9;
+
+  // ── Manufacturer / Shipper / Origin / Destination ──
+  const block = (label: string, lines: string[]) => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(label, M, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    for (const l of lines) { doc.text(l, M, y); y += 4.5; }
+    y += 3;
+  };
+  block('MANUFACTURED BY:', ['Sucro Can Canada Inc']);
+  block('SHIPPER:', ['Sucro Can Canada Inc', '560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9', 'TEL: (289) 799-8966']);
+  const originTxt = shipFromLocation?.name ? `${shipFromLocation.name.replace(/\s*\(.+\)$/, '')}, ON, Canada` : 'Hamilton, ON, Canada';
+  const destTxt = [customer?.city, customer?.province, customer?.city || customer?.province ? 'Canada' : ''].filter(Boolean).join(', ');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.text('ORIGIN:', M, y); doc.setFont('helvetica', 'normal'); doc.text(originTxt, M + 30, y); y += 5.5;
+  doc.setFont('helvetica', 'bold'); doc.text('DESTINATION:', M, y); doc.setFont('helvetica', 'normal'); doc.text(destTxt, M + 30, y); y += 10;
+
+  // ── Loading Date + QA approval ──
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.text('Loading Date', M, y);
+  doc.text('Approved by QA Personnel ONLY', rightColX, y);
+  y += 8;
+  doc.setFont('helvetica', 'normal');
+  doc.text(shipment.date || '', M, y);
+  doc.setDrawColor(BLACK); doc.setLineWidth(0.3);
+  doc.line(M, y + 2, M + 55, y + 2);
+  doc.line(rightColX, y + 2, rightColX + 65, y + 2);
+  y += 14;
+
+  // ── Footer (template's exact block) ──
+  const footY = Math.max(y, doc.internal.pageSize.getHeight() - 24);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(80, 80, 80);
+  doc.text('SUCRO CANADA INC.', pageWidth / 2, footY, { align: 'center' });
+  doc.text('560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9', pageWidth / 2, footY + 4, { align: 'center' });
+  doc.text('TEL : (289)-799-8966   quality@sucro.ca', pageWidth / 2, footY + 8, { align: 'center' });
+  doc.setTextColor(BLACK);
+}
+
+// ============================================================
 // MAIN EXPORT
 // ============================================================
 /** Draw the Certificate of Analysis onto an existing jsPDF `doc` (its current
@@ -387,18 +538,10 @@ export function renderCoaInto(doc: jsPDF, {
       { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
     ];
   } else {
-    templateSubtitle = 'GRANULATED SUGAR';
-    parameters = [
-      { name: 'Polarization / Brix', spec: specs?.brix || '', unit: '°Z / °Bx', key: 'brix' },
-      { name: 'Color (ICUMSA)', spec: specs?.color || '', unit: 'IU', key: 'color' },
-      { name: 'Moisture', spec: specs?.moisture || '', unit: '%', key: 'moisture' },
-      { name: 'Ash (Conductivity)', spec: specs?.ash || '', unit: '%', key: 'ash' },
-      { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' },
-      { name: 'Granulation', spec: specs?.granulation || '', unit: '', key: null },
-      { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
-      { name: 'pH', spec: '', unit: '', key: 'ph' },
-      { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' },
-    ];
+    // GRANULATED uses the customer-approved template layout — see
+    // generateGranulatedCoaPage. (The liquid COA keeps the shared layout.)
+    generateGranulatedCoaPage(doc, shipment, order, customer, shipFromLocation, shipmentLotCodes, qaProduct);
+    return;
   }
 
   generateCoaPage(

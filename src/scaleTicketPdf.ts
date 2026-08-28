@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import type { Shipment, Order, Customer, Carrier, Location } from './types';
-import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter, BLACK } from './pdfDocHelpers';
+import { BLACK } from './pdfDocHelpers';
 
 export interface GenerateScaleTicketParams {
   shipment: Shipment;
@@ -10,93 +10,84 @@ export interface GenerateScaleTicketParams {
   shipFromLocation?: Location;
 }
 
-/** Draw a Scale (weigh) Ticket onto an existing jsPDF `doc`. Weight VALUES are
- *  intentionally left blank for now — they will be linked from the scale later. */
+/** Draw a Scale (weigh) Ticket matching the customer-provided Google Sheets
+ *  template ("Scale Ticket" tab): title, Shipping/Receiving checkboxes, a plain
+ *  label/value list (Pick Up Date, BOL #, PO #, Carrier, Trailer #, Gross/Tare/
+ *  Net Weight, Goods Ordered, Item Code, Notes) and Driver / Authorized
+ *  signature lines. Weight VALUES are intentionally left blank — recorded at
+ *  the scale. */
 export function renderScaleTicketInto(doc: jsPDF, {
   shipment,
   order,
-  customer,
+  customer: _customer,
   carrier,
-  shipFromLocation,
+  shipFromLocation: _shipFromLocation,
 }: GenerateScaleTicketParams): void {
   const pageWidth = doc.internal.pageSize.getWidth();
-  const M = 14;
-  const contentWidth = pageWidth - M * 2;
-  const halfWidth = contentWidth / 2;
-  const leftCol = M;
-  const rightCol = M + halfWidth + 2;
-  const rightHalf = halfWidth - 2;
+  const M = 18;
 
-  let y = drawDocHeader(doc, 'Scale Ticket');
-
-  const bolNum = shipment.bol || order?.bolNumber || '';
-
-  // Top info row — 4 fields
-  const fieldW = contentWidth / 4;
-  [
-    { label: 'Ticket #', value: bolNum },
-    { label: 'BOL #', value: bolNum },
-    { label: 'Customer PO #', value: order?.po || shipment.po || '' },
-    { label: 'Date', value: shipment.date || '' },
-  ].forEach((f, i) => drawInfoField(doc, f.label, f.value, leftCol + i * fieldW, y, fieldW));
-  y += 14;
-
-  // Carrier / Vehicle (left) & Product / Origin (right)
-  const headerY = y;
-  y = drawSectionHeader(doc, 'CARRIER / VEHICLE', leftCol, y, halfWidth);
-  drawSectionHeader(doc, 'PRODUCT / ORIGIN', rightCol, headerY, rightHalf);
-
-  const carrierName = carrier?.name || shipment.carrier || '';
-  const originName = shipment.originOfGoods || shipFromLocation?.name || order?.location || '';
-
-  let ly = y;
-  ly = drawFieldRow(doc, 'Carrier', carrierName, leftCol, ly, halfWidth);
-  ly = drawFieldRow(doc, 'Trailer #', shipment.trailerNo || '', leftCol, ly, halfWidth);
-  ly = drawFieldRow(doc, 'Driver', '', leftCol, ly, halfWidth);
-
-  let ry = y;
-  ry = drawFieldRow(doc, 'Customer', customer?.name || shipment.customer || '', rightCol, ry, rightHalf);
-  ry = drawFieldRow(doc, 'Product', order?.product || shipment.product || '', rightCol, ry, rightHalf);
-  ry = drawFieldRow(doc, 'Origin of Goods', originName, rightCol, ry, rightHalf);
-
-  y = Math.max(ly, ry) + 3;
-
-  // Weights — values intentionally blank (to be linked later).
-  y = drawSectionHeader(doc, 'WEIGHTS', leftCol, y, contentWidth);
-  const thirdW = contentWidth / 3;
-  // First row: the three weigh values, left blank.
-  drawFieldRow(doc, 'Gross Weight (Kg)', '', leftCol, y, thirdW, 15);
-  drawFieldRow(doc, 'Tare Weight (Kg)', '', leftCol + thirdW, y, thirdW, 15);
-  drawFieldRow(doc, 'Net Weight (Kg)', '', leftCol + thirdW * 2, y, thirdW, 15);
-  y += 15;
-  // Second row: weigh in/out times, left blank.
-  drawFieldRow(doc, 'Weighed In', '', leftCol, y, thirdW, 15);
-  drawFieldRow(doc, 'Weighed Out', '', leftCol + thirdW, y, thirdW, 15);
-  drawFieldRow(doc, 'Scale / Operator', '', leftCol + thirdW * 2, y, thirdW, 15);
-  y += 15;
-
-  // Note that weights are pending.
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7.5);
-  doc.setTextColor(150, 150, 150);
-  doc.text('Weight values to be recorded at the scale.', leftCol + 2, y + 4);
+  // ── Title ──
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
   doc.setTextColor(BLACK);
-  y += 10;
+  doc.text('Scale Ticket', M, 22);
 
-  // Signatures
-  const sigHeaderY = y;
-  y = drawSectionHeader(doc, 'WEIGHMASTER', leftCol, y, halfWidth);
-  drawSectionHeader(doc, 'RECEIVED BY', rightCol, sigHeaderY, rightHalf);
-  const sigRowH = 11;
-  let wy = y;
-  wy = drawFieldRow(doc, 'Name', '', leftCol, wy, halfWidth, sigRowH);
-  wy = drawFieldRow(doc, 'Signature / Date', '', leftCol, wy, halfWidth, sigRowH);
-  let rcy = y;
-  rcy = drawFieldRow(doc, 'Name', '', rightCol, rcy, rightHalf, sigRowH);
-  rcy = drawFieldRow(doc, 'Signature / Date', '', rightCol, rcy, rightHalf, sigRowH);
-  y = Math.max(wy, rcy) + 6;
+  // ── Shipping / Receiving checkboxes (template row) ──
+  let y = 36;
+  const checkbox = (x: number, label: string) => {
+    doc.setDrawColor(BLACK);
+    doc.setLineWidth(0.4);
+    doc.rect(x, y - 4, 5, 5);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(label, x + 8, y);
+  };
+  checkbox(M, 'Shipping');
+  checkbox(M + 70, 'Receiving');
+  y += 12;
 
-  drawDocFooter(doc, Math.min(y, doc.internal.pageSize.getHeight() - 8));
+  // ── Label / value rows (template order; underlined value area) ──
+  const labelX = M;
+  const valueX = M + 62;
+  const valueW = pageWidth - M - valueX;
+  const row = (label: string, value: string) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(label, labelX, y);
+    doc.setFont('helvetica', 'normal');
+    let v = value || '';
+    while (doc.getTextWidth(v) > valueW - 2 && v.length) v = v.slice(0, -1);
+    doc.text(v, valueX, y);
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.2);
+    doc.line(valueX, y + 1.5, valueX + valueW, y + 1.5);
+    y += 10;
+  };
+  const bolNum = shipment.bol || order?.bolNumber || '';
+  row('Pick Up Date:', shipment.date || order?.shipmentDate || '');
+  row('Bill of Lading #:', bolNum);
+  row('Customer PO #:', order?.po || shipment.po || '');
+  row('Carrier:', carrier?.name || shipment.carrier || '');
+  row('Trailer #:', shipment.trailerNo || '');
+  row('Gross Weight (kg):', ''); // recorded at the scale
+  row('Tare Weight:', '');
+  row('Net Weight (kg):', '');
+  row('Goods Ordered:', order?.product || shipment.product || '');
+  row('Item Code:', '');
+  row('Notes:', '');
+  y += 24;
+
+  // ── Signature lines ──
+  const sigW = 70;
+  const rightSigX = pageWidth - M - sigW;
+  doc.setDrawColor(BLACK);
+  doc.setLineWidth(0.4);
+  doc.line(M, y, M + sigW, y);
+  doc.line(rightSigX, y, rightSigX + sigW, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text('Driver Signature', M + sigW / 2, y + 5, { align: 'center' });
+  doc.text('Authorized Signature', rightSigX + sigW / 2, y + 5, { align: 'center' });
 }
 
 export function generateScaleTicketPdf(params: GenerateScaleTicketParams): { blobUrl: string; filename: string } {
