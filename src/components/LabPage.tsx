@@ -253,8 +253,15 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     return byKw('bulk') || 'Bulk';
   };
 
+  // The LOT NUMBER's type letter (HS-[R/L/M/I/B/Y]…) is authoritative — sheet
+  // imports stamp the tab's default sugar type onto every row, so a molasses
+  // lot (HS-M…) imported through the granulated log carries sugarType
+  // 'Granulated' and used to appear under the wrong filter. Decode the lot
+  // number first; fall back to the stored field only when it doesn't parse.
+  const effectiveSugarType = (lc: LotCode): string =>
+    parseLotCode(lc.lotNumber).sugarType || lc.sugarType || '';
   const bySugar = filterSugarType
-    ? lotCodes.filter(lc => lc.sugarType === filterSugarType)
+    ? lotCodes.filter(lc => effectiveSugarType(lc) === filterSugarType)
     : lotCodes;
   const searchQ = search.trim().toLowerCase();
   const filtered = !searchQ ? bySugar : bySugar.filter(lc => {

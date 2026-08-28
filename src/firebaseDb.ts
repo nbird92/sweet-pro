@@ -633,21 +633,56 @@ export async function deleteDocs(collectionName: string, ids: string[]): Promise
   // Let failures propagate so callers with a try/catch (e.g. Clear All) actually
   // surface a "sync failed" warning instead of falsely reporting success.
   // Best-effort callers attach their own .catch() at the call site.
-  await Promise.all(ids.map(id => deleteDoc(doc(db, collectionName, id))));
+  // VIA REST — SDK deleteDoc never acks on the operator's machine, so these
+  // deletes (dedupe drops, lot-code collapse, queue drains) silently never
+  // reached the server and the "deleted" records resurrected on reload.
+  if (!ids.length) return;
+  const res = await restSyncCollection(collectionName, [], ids);
+  if (!res.ok) throw new Error(`deleteDocs "${collectionName}": ${res.failed} delete(s) failed — ${res.firstError || 'unknown error'}`);
 }
 
-// Atomically CLAIM a queue doc: in a transaction, read it and (if it still
-// exists) delete it, returning its data. Returns null when another client
-// already claimed it. This lets two open browser sessions drain the same
+// Atomically CLAIM a queue doc — read it, then delete it with an EXISTS
+// precondition, returning its data. Returns null when another client already
+// claimed it. This lets two open browser sessions drain the same
 // incomingPoOrders queue without double-processing the same emailed PO.
+//
+// VIA REST, deliberately. This was the LAST write path still on the SDK
+// channel (runTransaction) — which never gets a server ack on the operator's
+// machine — so PO ingestion silently died after the REST migration: the cron
+// kept queueing incomingPoOrders (1,100+ backlog) while the client's claims
+// hung forever and no new POs ever appeared in the app. The REST equivalent of
+// the transaction is a delete with currentDocument.exists=true: it fails with
+// FAILED_PRECONDITION when another session deleted the doc first, which is
+// exactly the "someone else claimed it" signal.
 export async function claimDoc<T>(collectionName: string, id: string): Promise<T | null> {
-  const ref = doc(db, collectionName, id);
-  return runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) return null;
-    tx.delete(ref);
-    return snap.data() as T;
+  const { getAuth } = await import('firebase/auth');
+  const u = getAuth(app).currentUser;
+  if (!u) return null;
+  const token = await u.getIdToken();
+  const projectId = (app.options as { projectId?: string }).projectId;
+  const name = `projects/${projectId}/databases/${DATABASE_ID}/documents/${collectionName}/${id}`;
+  const hdr = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  // 1) Read the doc.
+  const rd = await fetch(`https://firestore.googleapis.com/v1/${name}`, { headers: hdr, signal: restTimeoutSignal(30000) });
+  if (rd.status === 404) return null; // already claimed
+  if (!rd.ok) throw new Error(`claim read "${collectionName}/${id}" HTTP ${rd.status}`);
+  const docBody = await rd.json() as { fields?: Record<string, unknown> };
+  const data: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(docBody.fields || {})) data[k] = fromFirestoreValue(v as Record<string, unknown>);
+  // 2) Claim it: delete ONLY if it still exists (atomic on the server).
+  const cm = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/${DATABASE_ID}/documents:commit`, {
+    method: 'POST',
+    headers: hdr,
+    body: JSON.stringify({ writes: [{ delete: name, currentDocument: { exists: true } }] }),
+    signal: restTimeoutSignal(30000),
   });
+  if (!cm.ok) {
+    // Precondition failure = another session claimed it between our read and
+    // delete — not an error, just "not ours".
+    if (cm.status === 409 || cm.status === 400 || cm.status === 412) return null;
+    throw new Error(`claim commit "${collectionName}/${id}" HTTP ${cm.status}`);
+  }
+  return data as T;
 }
 
 // Per-user UI preferences (page/nav order, hidden pages, per-table column order).
