@@ -8115,6 +8115,11 @@ export default function App() {
       // ever persisted). Preview and apply must agree on what "blank" means.
       || (Array.isArray(v) && v.length === 0);
     let backfilledCount = 0;
+    // Every doc this apply actually changes/creates — persisted IMMEDIATELY at
+    // the end (saveNow), not left to the debounced autosave: if that push fails
+    // or memory is later replaced by a pull, an import that only lived in state
+    // evaporates and the SAME "48 new invoices" re-list on every future preview.
+    const changedDocs: Invoice[] = [];
     let afterUpdates = current.map(inv => {
       const u = updatedById.get(inv.id);
       if (!u) return inv;
@@ -8125,7 +8130,7 @@ export default function App() {
         const fillable = k === 'amount' ? (!merged.amount || merged.amount === 0) : isSyncBlank(merged[k]);
         if (fillable && !isSyncBlank(u[k])) { (merged as any)[k] = u[k]; changed = true; }
       });
-      if (changed) backfilledCount++;
+      if (changed) { backfilledCount++; changedDocs.push(merged); }
       return changed ? merged : inv;
     });
     // Belt-and-braces for the Complete & Bill duplication: a NUMBERED new invoice
@@ -8171,7 +8176,12 @@ export default function App() {
       freshNew.push(inv);
     }
     if (adoptNumber.size) {
-      afterUpdates = afterUpdates.map(inv => adoptNumber.has(inv.id) ? { ...inv, invoiceNumber: adoptNumber.get(inv.id)! } : inv);
+      afterUpdates = afterUpdates.map(inv => {
+        if (!adoptNumber.has(inv.id)) return inv;
+        const patched = { ...inv, invoiceNumber: adoptNumber.get(inv.id)! };
+        changedDocs.push(patched);
+        return patched;
+      });
     }
     const merged = [...afterUpdates, ...freshNew];
     // Apply summary — makes "the same invoices import every run" diagnosable:
@@ -8180,6 +8190,11 @@ export default function App() {
     // preview's dedup snapshot is stale vs the live list.
     console.log(`%c[invoiceSync] applied: ${backfilledCount} backfilled, ${freshNew.length} appended, ${adoptNumber.size} SI numbers adopted, ${preview.newInvoices.length - freshNew.length - adoptNumber.size} dropped as duplicates`, 'color:#0a7');
     setInvoices(merged);
+    // DURABLE IMMEDIATELY — an applied import is finished work; write every new
+    // and changed invoice to Firestore right now instead of trusting the
+    // debounced autosave to still be alive/successful later.
+    const toPersist = [...changedDocs, ...freshNew];
+    if (toPersist.length) saveNow(COLLECTIONS.invoices, toPersist);
     // Any order now sharing an invoiced BOL/PO is no longer an order. (Uses a
     // functional setOrders internally, so it is safe to call mid-chain.)
     removeOrdersInvoicedBy(merged);
@@ -8236,6 +8251,15 @@ export default function App() {
     const merged = [...afterUpdates, ...freshNew].map(stripInactiveLoc);
     ordersRef.current = merged; // advance synchronously so a following sync/ingest sees these
     setOrders(merged);
+    // DURABLE IMMEDIATELY — write the imported/updated orders to Firestore at
+    // apply time (see the invoice apply for the rationale: state-only imports
+    // that miss the autosave re-list on every future sync preview).
+    {
+      const changedIds = new Set([...updated.map(o => o.id), ...freshNew.map(o => o.id)]);
+      const toPersist = merged.filter(o => changedIds.has(o.id));
+      console.log(`%c[orderSync] applied: ${updated.length} updated, ${freshNew.length} appended, ${preview.newOrders.length - freshNew.length} dropped as duplicates`, 'color:#0a7');
+      if (toPersist.length) saveNow(COLLECTIONS.orders, toPersist);
+    }
     if (bolRemap.size) {
       const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
       setHamiltonShipments(prev => prev.map(remapShip));
@@ -8250,6 +8274,9 @@ export default function App() {
     const upById = new Map((preview.updatedTransfers || []).map((t): [string, Transfer] => [t.id, t]));
     const merged = [...current.map(t => upById.get(t.id) || t), ...preview.newTransfers];
     setTransfers(merged);
+    // Durable immediately (same rationale as the invoice/order applies).
+    const toPersist = [...(preview.updatedTransfers || []), ...preview.newTransfers];
+    if (toPersist.length) saveNow(COLLECTIONS.transfers, toPersist);
     return merged;
   };
 
@@ -8284,6 +8311,13 @@ export default function App() {
     // duplicates — leaving them in Firestore to reappear on reload, so a targeted
     // delete is required instead of relying on the state-diff sync.
     if (removedIds.length) deleteDocs(COLLECTIONS.lotCodes, removedIds).catch(() => {});
+    // Durable immediately — persist the imported/updated lots (post-collapse
+    // versions where they survived) at apply time.
+    {
+      const changedIds = new Set([...(preview.updatedLotCodes || []).map(lc => lc.id), ...freshNew.map(lc => lc.id)]);
+      const toPersist = merged.filter(lc => changedIds.has(lc.id));
+      if (toPersist.length) saveNow(COLLECTIONS.lotCodes, toPersist);
+    }
     return merged;
   };
 
