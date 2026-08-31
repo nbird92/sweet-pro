@@ -1066,6 +1066,44 @@ export default function App() {
     return () => (memo ??= customerProductAffinity(cust, location));
   };
 
+  /** Suggest the right loading BAY for a scanned PO from the product's sugar
+   *  form: liquid/molasses loads point at the origin location's liquid bay
+   *  (name contains "liquid"/"tank"), everything else at the dry-bulk bay
+   *  ("dry", else a non-liquid "bulk"). Intuitive-name matching against the
+   *  Location's own bay list, so renaming bays keeps working; '' when nothing
+   *  matches (operator picks manually). */
+  const suggestBayForReview = (originName: string, lines: Array<{ productValue?: string; productLabel?: string; productRaw?: string }>): string => {
+    const loc = locations.find(l => l.name === originName);
+    const bays = loc?.bays || [];
+    if (!bays.length) return '';
+    const text = lines.map(l => `${l.productValue || ''} ${l.productLabel || ''} ${l.productRaw || ''}`).join(' ');
+    const form = detectSugarForm(text);
+    const isLiquid = form === 'liquid' || form === 'molasses';
+    // 1) EXPLICIT bay → product-group assignment on the Location (set in the
+    //    location detail's Bays section) — the operator's rule wins.
+    const productGroupOfLines = (): string => {
+      for (const l of lines) {
+        const nm = l.productValue;
+        if (!nm) continue;
+        const qa = qaProducts.find(q => q.skuName === nm);
+        const sku = skus.find(s => s.name === nm);
+        const g = qa?.productGroup || sku?.productGroup;
+        if (g) return g;
+      }
+      return isLiquid ? 'Liquid' : '';
+    };
+    const grp = productGroupOfLines().toLowerCase();
+    if (grp && loc?.bayProductGroups) {
+      const hit = bays.find(b => (loc.bayProductGroups?.[b] || '').toLowerCase() === grp);
+      if (hit) return hit;
+    }
+    // 2) Fallback: intuitive bay-NAME matching (liquid → "liquid"/"tank" bay;
+    //    granulated/dry → "dry", else a non-liquid "bulk" bay).
+    const find = (re: RegExp, exclude?: RegExp) => bays.find(b => re.test(b) && !(exclude && exclude.test(b))) || '';
+    if (isLiquid) return find(/liquid|\bliq\b|tank/i);
+    return find(/dry/i) || find(/bulk/i, /liquid/i);
+  };
+
   // Turn a raw extraction into an editable review card with best-effort mappings.
   const reviewFromExtraction = (poRaw: ExtractedPO): POReview => {
     // Never trust the extraction to be well-formed — a null/partial object here
@@ -1093,7 +1131,9 @@ export default function App() {
     // Normalize to a VALID ISO YYYY-MM-DD (or blank) — the model sometimes returns
     // a non-ISO / malformed date, which later throws "Invalid time value" when the
     // scheduler formats new Date(date + 'T12:00:00').
-    const deliveryDate = toIsoDateSafe(po.deliveryDate);
+    // Same-day delivery is the norm: when the PO states only one of the two
+    // dates, mirror it into the other so neither field arrives blank.
+    const deliveryDate = toIsoDateSafe(po.deliveryDate) || toIsoDateSafe(po.shipmentDate);
     const shipmentDate = toIsoDateSafe(po.shipmentDate) || deliveryDate;
     // Currency: the matched contract's currency wins; else the single currency
     // shared by ALL of this customer's active contracts; else the customer
@@ -1199,7 +1239,9 @@ export default function App() {
       // pick-up date is known.
       scheduleAppt: !!shipmentDate,
       apptTime: po.pickupTime || '',
-      apptBay: '',
+      // Bay pre-selected from the product's sugar form (liquid → liquid bay,
+      // granulated/dry → dry bulk bay) — see suggestBayForReview.
+      apptBay: suggestBayForReview(origin, lines),
       lines,
       created: false,
     };
@@ -2140,8 +2182,8 @@ export default function App() {
     // ship-to rule → customer rule → address heuristics → customer default).
     const location = origin;
     const shipToLocationId = shipToId;
-    const deliveryDate = po.deliveryDate || '';
-    const shipmentDate = deliveryDate || po.shipmentDate || ''; // default ship date to delivery date
+    const deliveryDate = po.deliveryDate || po.shipmentDate || ''; // same-day delivery is the norm
+    const shipmentDate = po.shipmentDate || deliveryDate || '';
     return {
       id: `ORD-PO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       bolNumber: generateBOLNumber(lineItems, extraBols),
@@ -14312,18 +14354,44 @@ export default function App() {
                         <Plus size={10} /> Add Bay
                       </button>
                     </div>
+                    <p className="text-[9px] opacity-50">Assigning a Product Group to a bay makes the scan-PO menu auto-select that bay for matching loads (e.g. Liquid → the liquid bay, Bulk → the dry bulk bay).</p>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                       {liveLoc.bays.map((bay, idx) => (
                         <div key={idx} className="flex gap-2">
                           <input
                             type="text"
                             value={bay}
-                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b) } : l))}
+                            onChange={(e) => setLocations(locations.map(l => {
+                              if (l.id !== liveLoc.id) return l;
+                              // Renaming a bay carries its product-group assignment along.
+                              const groups = { ...(l.bayProductGroups || {}) };
+                              if (groups[bay] !== undefined) { groups[e.target.value] = groups[bay]; delete groups[bay]; }
+                              return { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b), bayProductGroups: groups };
+                            }))}
                             className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
                             placeholder={`Bay ${idx + 1} Name`}
                           />
+                          <select
+                            value={liveLoc.bayProductGroups?.[bay] || ''}
+                            onChange={(e) => setLocations(locations.map(l => {
+                              if (l.id !== liveLoc.id) return l;
+                              const groups = { ...(l.bayProductGroups || {}) };
+                              if (e.target.value) groups[bay] = e.target.value; else delete groups[bay];
+                              return { ...l, bayProductGroups: groups };
+                            }))}
+                            className="bg-white border border-[#141414]/20 p-2 text-xs w-28"
+                            title="Product group this bay handles — drives the scan-PO bay auto-suggestion"
+                          >
+                            <option value="">— group —</option>
+                            {productGroups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+                          </select>
                           <button
-                            onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: l.bays.filter((_, i) => i !== idx) } : l))}
+                            onClick={() => setLocations(locations.map(l => {
+                              if (l.id !== liveLoc.id) return l;
+                              const groups = { ...(l.bayProductGroups || {}) };
+                              delete groups[bay];
+                              return { ...l, bays: l.bays.filter((_, i) => i !== idx), bayProductGroups: groups };
+                            }))}
                             className="p-2 hover:bg-red-500 hover:text-white transition-colors"
                           >
                             <Trash2 size={12} />
@@ -25371,7 +25439,7 @@ export default function App() {
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                 <div className="space-y-0.5">
                                   <label className="text-[9px] uppercase font-bold opacity-50">Location</label>
-                                  <select value={apptLoc} onChange={(e) => updateReview(rev.id, { location: e.target.value, locationTouched: true, apptBay: '', apptTime: '' })} disabled={rev.created} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
+                                  <select value={apptLoc} onChange={(e) => updateReview(rev.id, { location: e.target.value, locationTouched: true, apptBay: suggestBayForReview(e.target.value, rev.lines), apptTime: '' })} disabled={rev.created} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                                     <option value="">Select Location</option>
                                     {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
                                     {apptLoc && !activeLocations.some(l => l.name === apptLoc) && <option value={apptLoc}>{apptLoc}</option>}

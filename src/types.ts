@@ -321,6 +321,10 @@ export interface Location {
   province: string;
   postalCode: string;
   bays: string[];
+  /** Optional bay → product group mapping (bay name → ProductGroup.name, e.g.
+   *  "Liquid Bay" → "Liquid", "Dry Bulk" → "Bulk"). Drives the scan-PO menu's
+   *  bay auto-suggestion: a load's product group picks its assigned bay. */
+  bayProductGroups?: Record<string, string>;
   /** Terminals served from this location — each a { terminal, terminalName } pair. */
   terminalNames?: TerminalName[];
   active?: boolean; // Whether this location is shown in the location dropdowns across the app. Defaults to true when undefined.
