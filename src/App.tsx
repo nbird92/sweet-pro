@@ -693,6 +693,9 @@ export default function App() {
   const [poScanLoading, setPoScanLoading] = useState(false);
   const [poScanError, setPoScanError] = useState<string | null>(null);
   const [poReviews, setPoReviews] = useState<POReview[]>([]);
+  // How many review cards the modal paints at once (see the windowing note at
+  // the render site) — rendering a whole drained backlog froze the modal.
+  const [reviewVisibleCount, setReviewVisibleCount] = useState(10);
   const [poLearned, setPoLearned] = useState<LearnedMapping[]>(() => loadLearned());
   const [poIngestNotice, setPoIngestNotice] = useState<string | null>(null);
   const poScanInputRef = useRef<HTMLInputElement>(null);
@@ -1839,10 +1842,11 @@ export default function App() {
     // Schedule a shipment appointment for the new PO (every PO needs one). The
     // appointment date is the shipment date (= pick-up date); time is the pick-up
     // time. Filed in the Hamilton or Vancouver scheduler by the order's origin.
+    let apptShipments: Shipment[] = [];
     if (rev.scheduleAppt && (rev.shipmentDate || '').trim()) {
       const apptDate = rev.shipmentDate.trim();
       const apptLoc = location || customer.defaultLocation || '';
-      const apptShipments: Shipment[] = newOrder.lineItems.map(item => ({
+      apptShipments = newOrder.lineItems.map(item => ({
         id: `SHIP-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         week: `Week ${getWeekNumber(apptDate)}`,
         date: apptDate,
@@ -1892,12 +1896,21 @@ export default function App() {
       if (carrierRaw && carrierRaw.toLowerCase() !== rev.carrier.toLowerCase()) recordLearned('carrier', carrierRaw, rev.carrier);
     }
     setPoLearned(loadLearned());
+    // ── DURABLE IMMEDIATELY ──────────────────────────────────────────────
+    // An APPROVAL is finished work — it must survive the app being closed the
+    // next second. State-only + debounced autosave lost whole approval batches
+    // (REST writes started during unload get aborted by the browser), which
+    // also resurrected the "pending" rows: the approved POs reappeared in the
+    // review list on the next launch. Persist every artifact right now.
+    saveNow(COLLECTIONS.orders, [newOrder]);
+    if (apptShipments.length) saveNow(COLLECTIONS.shipments, apptShipments);
     // If this review came from an emailed PO awaiting approval, clear it from the
     // pending queue and record the outcome in the import-history log.
     if (rev.pendingImportId) {
       const pid = rev.pendingImportId;
       setPoPendingImports(prev => prev.filter(p => p.id !== pid));
-      setPoImportLog(prev => [...prev, {
+      deleteDocs(COLLECTIONS.poPendingImports, [pid]).catch((e) => console.warn('[approve] pending-queue delete will retry via autosave:', e));
+      const logEntry = {
         id: `POLOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         importedAt: new Date().toISOString(),
         poNumber: newOrder.po || undefined,
@@ -1906,8 +1919,10 @@ export default function App() {
         orderBol: newOrder.bolNumber,
         amount: newOrder.amount,
         productSummary: newOrder.product,
-        result: 'created',
-      }].slice(-1000));
+        result: 'created' as const,
+      };
+      setPoImportLog(prev => [...prev, logEntry].slice(-1000));
+      saveNow(COLLECTIONS.poImportLog, [logEntry]);
     }
     setPoReviews(prev => prev.map(r => r.id === rev.id ? { ...r, created: true } : r));
     return newOrder.bolNumber;
@@ -1992,13 +2007,17 @@ export default function App() {
     }).filter(Boolean) as POReview[];
     if (!reviews.length) { setErrorBox('Could not build review cards for these POs (unreadable extraction data).'); return; }
     setPoReviews(reviews);
+    setReviewVisibleCount(10); // fresh batch → fresh window
     setIsScanningPO(true);
   };
 
   // Discard an emailed PO without creating an order; record it in the history log.
+  // Durable immediately (like approval): a dismissed PO must never resurrect in
+  // the review list because the app was closed before the debounced autosave ran.
   const dismissPendingImport = (imp: PoPendingImport) => {
     setPoPendingImports(prev => prev.filter(p => p.id !== imp.id));
-    setPoImportLog(prev => [...prev, {
+    deleteDocs(COLLECTIONS.poPendingImports, [imp.id]).catch((e) => console.warn('[dismiss] pending-queue delete will retry via autosave:', e));
+    const logEntry = {
       id: `POLOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       importedAt: new Date().toISOString(),
       receivedAt: imp.receivedAt,
@@ -2007,9 +2026,11 @@ export default function App() {
       sourceFile: imp.sourceFile,
       poNumber: imp.poNumber,
       customer: imp.customer,
-      result: 'skipped',
+      result: 'skipped' as const,
       note: 'Dismissed during review',
-    }].slice(-1000));
+    };
+    setPoImportLog(prev => [...prev, logEntry].slice(-1000));
+    saveNow(COLLECTIONS.poImportLog, [logEntry]);
   };
 
   // Email Import History maintenance — delete a single entry or clear all. These
@@ -25028,8 +25049,19 @@ export default function App() {
                     </>
                   )}
 
-                  {/* Review step — one card (= one order) per uploaded file */}
-                  {poReviews.map((rev, ri) => {
+                  {/* Review step — one card (= one order) per uploaded file.
+                      WINDOWED: rendering every card at once (each with product /
+                      contract selects per line) is what made a big review batch
+                      crawl — paint the first slice and reveal more on demand.
+                      "Create All" still processes EVERY review, not just the
+                      rendered ones. */}
+                  {poReviews.length > reviewVisibleCount && (
+                    <div className="flex items-center justify-between bg-amber-50 border border-amber-300 px-4 py-2 text-xs">
+                      <span className="font-bold text-amber-800">Showing {reviewVisibleCount} of {poReviews.length} POs to review</span>
+                      <button onClick={() => setReviewVisibleCount(c => c + 10)} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80">Show 10 more</button>
+                    </div>
+                  )}
+                  {poReviews.slice(0, reviewVisibleCount).map((rev, ri) => {
                     const selectedCustomer = customers.find(c => c.id === rev.customerId);
                     const poTrim = rev.po.trim().toLowerCase();
                     const poExists = !!rev.po.trim() && orders.some(o => samePoNumber(o.po, rev.po));
@@ -25091,7 +25123,10 @@ export default function App() {
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">PO No.</label>
-                          <input value={rev.po} onChange={(e) => updateReview(rev.id, { po: e.target.value })} disabled={rev.created} className={`w-full border px-2 py-1.5 text-xs font-mono outline-none ${poExists ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-[#F5F5F5] border-[#141414]'}`} />
+                          {/* UNCONTROLLED (commit on blur): a controlled input here
+                              re-rendered the entire app per keystroke — the review
+                              modal's typing lag. keyed so switching cards resets. */}
+                          <input key={`po-${rev.id}`} defaultValue={rev.po} onBlur={(e) => { if (e.target.value !== rev.po) updateReview(rev.id, { po: e.target.value }); }} disabled={rev.created} className={`w-full border px-2 py-1.5 text-xs font-mono outline-none ${poExists ? 'bg-amber-50 border-amber-500 text-amber-800' : 'bg-[#F5F5F5] border-[#141414]'}`} />
                         </div>
                         <div className="space-y-1">
                           <label className="text-[9px] uppercase font-bold opacity-50">Location (origin)</label>
@@ -25209,10 +25244,10 @@ export default function App() {
                                   {(line.productRaw || line.productCodeRaw) && <div className="text-[9px] opacity-50 mt-0.5">read: "{line.productRaw}"{line.productCodeRaw && <> · item <span className="font-mono">{line.productCodeRaw}</span></>}</div>}
                                 </td>
                                 <td className="p-2 text-right">
-                                  <input type="number" step="0.001" value={line.qtyMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { qtyMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
+                                  <input key={`qty-${rev.id}-${idx}`} type="number" step="0.001" defaultValue={line.qtyMt || ''} disabled={rev.created} onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v !== (line.qtyMt || 0)) updateReviewLine(rev.id, idx, { qtyMt: v }); }} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
                                 </td>
                                 <td className="p-2 text-right">
-                                  <input type="number" step="0.01" value={line.pricePerMt || ''} disabled={rev.created} onChange={(e) => updateReviewLine(rev.id, idx, { pricePerMt: parseFloat(e.target.value) || 0 })} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
+                                  <input key={`price-${rev.id}-${idx}`} type="number" step="0.01" defaultValue={line.pricePerMt || ''} disabled={rev.created} onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v !== (line.pricePerMt || 0)) updateReviewLine(rev.id, idx, { pricePerMt: v }); }} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
                                 </td>
                                 <td className="p-2">
                                   <select

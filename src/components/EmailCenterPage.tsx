@@ -194,6 +194,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     () => [...poPendingImports].sort((a, b) => (b.receivedAt || b.createdAt || '').localeCompare(a.receivedAt || a.createdAt || '')),
     [poPendingImports],
   );
+  const [pendingVisibleCount, setPendingVisibleCount] = useState(50);
 
   // An APPOINTMENT request — its own review table, separate from order
   // amendments. Legacy rows predate kind:'appointment' and carry
@@ -384,7 +385,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
-                {pendingImportsSorted.map(imp => {
+                {/* Windowed — a drained scan backlog can hold hundreds of rows;
+                    painting them all froze the page. */}
+                {pendingImportsSorted.slice(0, pendingVisibleCount).map(imp => {
                   const ex = imp.extraction || {};
                   const lines = Array.isArray(ex.lineItems) ? ex.lineItems : [];
                   const open = expandedImport === imp.id;
@@ -452,6 +455,12 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 })}
               </tbody>
             </table>
+            {pendingImportsSorted.length > pendingVisibleCount && (
+              <div className="flex items-center justify-center gap-3 p-3 border-t border-[#141414]/10 bg-[#F9F9F9] text-[10px] uppercase tracking-widest font-bold">
+                <span className="opacity-50 normal-case font-mono">Showing {pendingVisibleCount} of {pendingImportsSorted.length}</span>
+                <button onClick={() => setPendingVisibleCount(c => c + 50)} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors">Show 50 more</button>
+              </div>
+            )}
           </div>
         </div>
       )}

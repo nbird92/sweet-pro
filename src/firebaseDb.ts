@@ -328,11 +328,13 @@ async function restPatchDoc(base: string, collectionName: string, token: string,
   const fields: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(clean)) if (x !== undefined) fields[k] = firestoreValue(x);
   try {
+    const body = JSON.stringify({ fields });
     const r = await fetch(`${base}/${collectionName}/${encodeURIComponent(String(d.id))}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields }),
+      body,
       signal: restTimeoutSignal(30000),
+      ...(body.length < 60000 ? { keepalive: true } : {}),
     });
     if (r.ok) return null;
     return `HTTP ${r.status}: ${(await r.text()).slice(0, 180)}`;
@@ -403,14 +405,19 @@ export async function restSyncCollection(
     }
     let chunkOk = false;
     try {
+      const body = JSON.stringify({ writes: chunk.map(c => c.w) });
       const r = await fetch(`${base.replace(/\/documents$/, '')}/documents:commit`, {
         method: 'POST',
         headers: hdr,
-        body: JSON.stringify({ writes: chunk.map(c => c.w) }),
+        body,
         // HARD TIMEOUT — a fetch with no signal can hang indefinitely on a
         // stalled connection, and anything that hangs here freezes the whole
         // sync pass behind an eternal "Syncing" badge.
         signal: restTimeoutSignal(60000),
+        // Small commits survive the page/app being CLOSED mid-flight (browsers
+        // abort normal fetches on unload, which lost just-approved work).
+        // keepalive is limited to ~64KB bodies, so only request it when small.
+        ...(body.length < 60000 ? { keepalive: true } : {}),
       });
       chunkOk = r.ok;
       if (!r.ok && !firstError) firstError = `commit HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`;
