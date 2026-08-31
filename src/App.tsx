@@ -2532,6 +2532,16 @@ export default function App() {
             logs.push({ ...logBase(item, po), result: 'skipped', note: 'No readable PO data in the attachment' });
             continue;
           }
+          // DEGENERATE-IDENTIFIER GUARD (client mirror of the extractor's):
+          // legacy queued docs can carry a runaway repeated-char identifier
+          // ("PO-000000000…") from a model degeneration — blank it before any
+          // matching/display so it can't pollute the feed, amendments or orders.
+          for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber'] as const) {
+            const v = String((po as any)[k] ?? '').trim();
+            if (!v) continue;
+            const compact = v.replace(/[^A-Za-z0-9]/g, '');
+            if (v.length > 40 || (compact.length > 8 && new Set(compact).size === 1)) (po as any)[k] = '';
+          }
           // Carrier DEMURRAGE / wait-time / accessorial invoices are NOT sugar POs —
           // route them to the Supply Chain demurrage table, inheriting the customer
           // and location from the order (or invoice) referenced by the invoice's PO

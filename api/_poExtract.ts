@@ -805,6 +805,17 @@ export async function extractPO(
       // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably, and derive
       // $/MT from a total order price ÷ quantity when no per-unit price is given.
       deriveDocMetrics(doc);
+      // DEGENERATE-IDENTIFIER GUARD. The model occasionally emits a runaway
+      // repeated-character string ("PO-000000000…" hundreds of chars long) into
+      // an identifier field; stored verbatim it pollutes the feed/queue and
+      // every downstream match. Blank any identifier that is absurdly long or
+      // is one character repeated.
+      for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber'] as const) {
+        const v = String((doc as any)[k] ?? '').trim();
+        if (!v) continue;
+        const compact = v.replace(/[^A-Za-z0-9]/g, '');
+        if (v.length > 40 || (compact.length > 8 && new Set(compact).size === 1)) (doc as any)[k] = '';
+      }
       return doc;
     })
     // Split call-off releases into one PO per scheduled delivery, numbered

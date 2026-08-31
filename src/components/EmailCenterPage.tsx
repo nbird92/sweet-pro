@@ -896,7 +896,14 @@ function FeedSuggestionPill({ suggestion, poNumber }: { suggestion?: InboxFeedIt
   } as const;
   const m = map[suggestion];
   if (!m) return <span className="text-[10px] opacity-40">—</span>;
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${m.cls}`}>{m.label}{poNumber ? ` · ${poNumber}` : ''}</span>;
+  // Guard against degenerate stored PO numbers (a model runaway once produced
+  // "PO-000000000…" hundreds of chars long): hide repeated-char garbage, and
+  // hard-cap the chip so a long-but-real value can't stretch the row.
+  let po = (poNumber || '').trim();
+  const compact = po.replace(/[^A-Za-z0-9]/g, '');
+  if (po.length > 40 || (compact.length > 8 && new Set(compact).size === 1)) po = '';
+  if (po.length > 24) po = `${po.slice(0, 24)}…`;
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${m.cls}`}>{m.label}{po ? ` · ${po}` : ''}</span>;
 }
 
 function ImportResultPill({ result, note }: { result: PoImportLogEntry['result']; note?: string }) {
