@@ -1094,7 +1094,11 @@ export default function App() {
     };
     const grp = productGroupOfLines().toLowerCase();
     if (grp && loc?.bayProductGroups) {
-      const hit = bays.find(b => (loc.bayProductGroups?.[b] || '').toLowerCase() === grp);
+      const groupsOf = (b: string): string[] => {
+        const v = loc.bayProductGroups?.[b];
+        return Array.isArray(v) ? v : v ? [v] : [];
+      };
+      const hit = bays.find(b => groupsOf(b).some(g => (g || '').toLowerCase() === grp));
       if (hit) return hit;
     }
     // 2) Fallback: intuitive bay-NAME matching (liquid → "liquid"/"tank" bay;
@@ -14354,37 +14358,49 @@ export default function App() {
                         <Plus size={10} /> Add Bay
                       </button>
                     </div>
-                    <p className="text-[9px] opacity-50">Assigning a Product Group to a bay makes the scan-PO menu auto-select that bay for matching loads (e.g. Liquid → the liquid bay, Bulk → the dry bulk bay).</p>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {liveLoc.bays.map((bay, idx) => (
-                        <div key={idx} className="flex gap-2">
+                    <p className="text-[9px] opacity-50">Click the product groups each bay handles — the scan-PO menu auto-selects the matching bay for a load (e.g. a Liquid order books the bay tagged Liquid; a Bulk order the bay tagged Bulk). A bay can handle several groups.</p>
+                    <div className="space-y-2">
+                      {liveLoc.bays.map((bay, idx) => {
+                        const raw = liveLoc.bayProductGroups?.[bay];
+                        const bayGroups: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+                        const setBayGroups = (next: string[]) => setLocations(locations.map(l => {
+                          if (l.id !== liveLoc.id) return l;
+                          const groups = { ...(l.bayProductGroups || {}) };
+                          if (next.length) groups[bay] = next; else delete groups[bay];
+                          return { ...l, bayProductGroups: groups };
+                        }));
+                        return (
+                        <div key={idx} className="bg-white border border-[#141414]/15 p-3 flex flex-wrap items-center gap-x-4 gap-y-2">
                           <input
                             type="text"
                             value={bay}
                             onChange={(e) => setLocations(locations.map(l => {
                               if (l.id !== liveLoc.id) return l;
-                              // Renaming a bay carries its product-group assignment along.
+                              // Renaming a bay carries its product-group assignments along.
                               const groups = { ...(l.bayProductGroups || {}) };
                               if (groups[bay] !== undefined) { groups[e.target.value] = groups[bay]; delete groups[bay]; }
                               return { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b), bayProductGroups: groups };
                             }))}
-                            className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
+                            className="w-44 bg-[#F5F5F5] border border-[#141414]/20 p-2 text-xs font-bold"
                             placeholder={`Bay ${idx + 1} Name`}
                           />
-                          <select
-                            value={liveLoc.bayProductGroups?.[bay] || ''}
-                            onChange={(e) => setLocations(locations.map(l => {
-                              if (l.id !== liveLoc.id) return l;
-                              const groups = { ...(l.bayProductGroups || {}) };
-                              if (e.target.value) groups[bay] = e.target.value; else delete groups[bay];
-                              return { ...l, bayProductGroups: groups };
-                            }))}
-                            className="bg-white border border-[#141414]/20 p-2 text-xs w-28"
-                            title="Product group this bay handles — drives the scan-PO bay auto-suggestion"
-                          >
-                            <option value="">— group —</option>
-                            {productGroups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
-                          </select>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] uppercase font-bold opacity-40">Handles:</span>
+                            {productGroups.map(g => {
+                              const active = bayGroups.includes(g.name);
+                              return (
+                                <button
+                                  key={g.id}
+                                  type="button"
+                                  onClick={() => setBayGroups(active ? bayGroups.filter(x => x !== g.name) : [...bayGroups, g.name])}
+                                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border transition-colors ${active ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-[#141414]/60 border-[#141414]/25 hover:border-[#141414]'}`}
+                                  title={active ? `This bay handles ${g.name} loads — click to remove` : `Click to assign ${g.name} loads to this bay`}
+                                >
+                                  {g.name}
+                                </button>
+                              );
+                            })}
+                          </div>
                           <button
                             onClick={() => setLocations(locations.map(l => {
                               if (l.id !== liveLoc.id) return l;
@@ -14392,14 +14408,16 @@ export default function App() {
                               delete groups[bay];
                               return { ...l, bays: l.bays.filter((_, i) => i !== idx), bayProductGroups: groups };
                             }))}
-                            className="p-2 hover:bg-red-500 hover:text-white transition-colors"
+                            className="ml-auto p-2 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
+                            title="Delete bay"
                           >
                             <Trash2 size={12} />
                           </button>
                         </div>
-                      ))}
+                        );
+                      })}
                       {liveLoc.bays.length === 0 && (
-                        <div className="col-span-full text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
+                        <div className="text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
                       )}
                     </div>
                   </div>
