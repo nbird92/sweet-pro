@@ -810,11 +810,16 @@ export async function extractPO(
       // an identifier field; stored verbatim it pollutes the feed/queue and
       // every downstream match. Blank any identifier that is absurdly long or
       // is one character repeated.
-      for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber'] as const) {
+      for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber', 'carrierInvoiceNumber'] as const) {
         const v = String((doc as any)[k] ?? '').trim();
         if (!v) continue;
         const compact = v.replace(/[^A-Za-z0-9]/g, '');
-        if (v.length > 40 || (compact.length > 8 && new Set(compact).size === 1)) (doc as any)[k] = '';
+        // Degenerate = absurdly long, or one character dominating (≥90%) a
+        // long-ish value — catches both "0000…" and "1000…000" runaways.
+        let maxRun = 0;
+        const counts = new Map<string, number>();
+        for (const ch of compact) { const n = (counts.get(ch) || 0) + 1; counts.set(ch, n); if (n > maxRun) maxRun = n; }
+        if (v.length > 40 || (compact.length > 10 && maxRun / compact.length >= 0.9)) (doc as any)[k] = '';
       }
       return doc;
     })

@@ -203,6 +203,21 @@ function rawPriceUsdCwt(rawPriceUsdMt?: number): number | null {
   return v < 100 ? v : v / MT_TO_CWT;
 }
 
+/** True for a "runaway" identifier the AI extractor sometimes emits — absurdly
+ *  long, or one character dominating (≥90%) a long-ish value. Catches both
+ *  "0000000…" and "1000000…000" degenerations. */
+function isDegenerateIdentifier(v: string): boolean {
+  const s = (v || '').trim();
+  if (!s) return false;
+  if (s.length > 40) return true;
+  const compact = s.replace(/[^A-Za-z0-9]/g, '');
+  if (compact.length <= 10) return false;
+  let maxRun = 0;
+  const counts = new Map<string, number>();
+  for (const ch of compact) { const n = (counts.get(ch) || 0) + 1; counts.set(ch, n); if (n > maxRun) maxRun = n; }
+  return maxRun / compact.length >= 0.9;
+}
+
 const MONTH_ABBR_TO_NUM: Record<string, string> = {
   jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
@@ -2536,11 +2551,10 @@ export default function App() {
           // legacy queued docs can carry a runaway repeated-char identifier
           // ("PO-000000000…") from a model degeneration — blank it before any
           // matching/display so it can't pollute the feed, amendments or orders.
-          for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber'] as const) {
+          for (const k of ['poNumber', 'amendsPoNumber', 'bolNumber', 'contractNumber', 'splitNumber', 'carrierInvoiceNumber'] as const) {
             const v = String((po as any)[k] ?? '').trim();
             if (!v) continue;
-            const compact = v.replace(/[^A-Za-z0-9]/g, '');
-            if (v.length > 40 || (compact.length > 8 && new Set(compact).size === 1)) (po as any)[k] = '';
+            if (isDegenerateIdentifier(v)) (po as any)[k] = '';
           }
           // Carrier DEMURRAGE / wait-time / accessorial invoices are NOT sugar POs —
           // route them to the Supply Chain demurrage table, inheriting the customer
@@ -6145,7 +6159,12 @@ export default function App() {
         lastSyncedData.current.vendors = JSON.stringify(data.vendors);
       }
       if (data.demurrageInvoices?.length) {
-        setDemurrageInvoices(data.demurrageInvoices);
+        // Heal degenerate invoice numbers ("1000000…" runaways stored before the
+        // extractor guard existed). Blanking here makes the state differ from the
+        // baseline, so the autosave persists the healed doc back to Firestore.
+        const healed = (data.demurrageInvoices as DemurrageInvoice[]).map(d =>
+          isDegenerateIdentifier(d.invoiceNumber || '') ? { ...d, invoiceNumber: '' } : d);
+        setDemurrageInvoices(healed);
         lastSyncedData.current.demurrageInvoices = JSON.stringify(data.demurrageInvoices);
       }
       if (data.chepPalletMovements?.length) {
