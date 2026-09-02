@@ -3096,6 +3096,18 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [transfers, recordIndex]);
 
+  // Lot-code options for the transfer add/edit forms — newest test date first
+  // (blank/unparseable dates sink to the bottom), so the freshest lots are at
+  // the top of the dropdown.
+  const transferLotOptions = useMemo(() => {
+    const iso = (d?: string) => toIsoDateSafe(d) || '';
+    return [...lotCodes].sort((a, b) => {
+      const da = iso(a.date), db = iso(b.date);
+      if (da !== db) return db.localeCompare(da); // newest first; '' sorts last
+      return (a.lotNumber || '').localeCompare(b.lotNumber || '');
+    });
+  }, [lotCodes]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const orderFileInputRef = useRef<HTMLInputElement>(null);
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
@@ -27133,10 +27145,17 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Lot Code <span className="text-[8px] opacity-40">(sets country/silo/brix)</span></label>
-                      <select name="lotCode" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        <option value="">Select Lot Code</option>
-                        {lotCodes.map(l => <option key={l.id} value={l.lotNumber}>{l.lotNumber}</option>)}
-                      </select>
+                      {/* Combobox: pick from the catalog (newest lots first) OR
+                          type a lot code manually. */}
+                      <input
+                        name="lotCode"
+                        list="transfer-lot-options"
+                        placeholder="Select or type a lot code"
+                        className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none font-mono"
+                      />
+                      <datalist id="transfer-lot-options">
+                        {transferLotOptions.map(l => <option key={l.id} value={l.lotNumber}>{toIsoDateSafe(l.date) || l.date || ''}</option>)}
+                      </datalist>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
@@ -27333,19 +27352,22 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Lot Code</label>
-                    <select value={editingTransfer.lotCode || ''} onChange={(e) => {
-                      const ln = e.target.value;
-                      const lc = lotCodes.find(l => sameLotCode(l.lotNumber, ln));
-                      setEditingTransfer({ ...editingTransfer, lotCode: ln, ...(lc ? { countryOfOrigin: lc.countryOfOrigin || editingTransfer.countryOfOrigin, silo: lc.silo || editingTransfer.silo, brix: lc.brix || editingTransfer.brix } : {}) });
-                    }} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">Select Lot Code</option>
-                      {lotCodes.map(l => <option key={l.id} value={l.lotNumber}>{l.lotNumber}</option>)}
-                      {/* EXACT compare on purpose: a <select> only shows its value when an
-                          <option> carries that byte-identical string, so a stored lot that
-                          differs from the catalog spelling (e.g. a legacy spaced copy not yet
-                          cleaned) still needs this fallback option to render. */}
-                      {editingTransfer.lotCode && !lotCodes.some(l => l.lotNumber === editingTransfer.lotCode) && <option value={editingTransfer.lotCode}>{editingTransfer.lotCode}</option>}
-                    </select>
+                    {/* Combobox: pick from the catalog (newest lots first) OR type
+                        manually. A catalog match still auto-fills country/silo/brix. */}
+                    <input
+                      list="transfer-lot-options-edit"
+                      value={editingTransfer.lotCode || ''}
+                      onChange={(e) => {
+                        const ln = e.target.value;
+                        const lc = lotCodes.find(l => sameLotCode(l.lotNumber, ln));
+                        setEditingTransfer({ ...editingTransfer, lotCode: ln, ...(lc ? { countryOfOrigin: lc.countryOfOrigin || editingTransfer.countryOfOrigin, silo: lc.silo || editingTransfer.silo, brix: lc.brix || editingTransfer.brix } : {}) });
+                      }}
+                      placeholder="Select or type a lot code"
+                      className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none font-mono"
+                    />
+                    <datalist id="transfer-lot-options-edit">
+                      {transferLotOptions.map(l => <option key={l.id} value={l.lotNumber}>{toIsoDateSafe(l.date) || l.date || ''}</option>)}
+                    </datalist>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
