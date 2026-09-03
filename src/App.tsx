@@ -896,6 +896,32 @@ export default function App() {
     return lines[0]?.finalPriceMt || 0;
   };
 
+  // Volume a contract can still accept, in MT: outstanding (contract volume −
+  // invoiced) MINUS what open, un-invoiced orders already have on order. Order
+  // creation never decrements volumeOutstanding (only Complete & Bill does), so
+  // open orders must be netted out or a contract can be over-booked.
+  // excludeOrderId removes the order being edited so its own lines aren't
+  // counted against itself.
+  const contractAvailableMt = (contract: Contract, excludeOrderId?: string): number => {
+    const st = contractVolumeStats.get(contract.id);
+    const outstanding = st ? st.outstanding : ((contract.volumeOutstanding ?? contract.contractVolume) || 0);
+    let onOrder = st?.onOrder || 0;
+    if (excludeOrderId) {
+      const o = orders.find(x => x.id === excludeOrderId);
+      if (o && o.status !== 'Cancelled') {
+        const cn = contract.contractNumber;
+        const lineItems = o.lineItems || [];
+        const lineW = lineItems.filter(li => li.contractNumber === cn).reduce((s, li) => s + (li.totalWeight || 0), 0);
+        const headerMatch = o.contractNumber === cn || (o.splitNumber && contractNumberFromSplit(o.splitNumber) === cn);
+        // Mirror contractVolumeStats: lines naming this contract, else (on a
+        // header/split match) the whole order's weight.
+        const w = lineW > 0 ? lineW : (headerMatch ? lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : 0);
+        onOrder = Math.max(0, onOrder - w);
+      }
+    }
+    return outstanding - onOrder;
+  };
+
   // The next contract a customer can draw on: active, priced, with outstanding
   // volume remaining. The contract with the MOST volume on order wins first
   // (it's the one being actively drawn on); ties / no on-order volume fall back
@@ -907,9 +933,8 @@ export default function App() {
       const candidates = contractsForCustomer(cust).filter(c => {
         if (c.active === false) return false;
         if (cur && c.currency && c.currency.toUpperCase() !== cur) return false;
-        const st = contractVolumeStats.get(c.id);
-        const outstanding = st ? st.outstanding : ((c.volumeOutstanding ?? c.contractVolume) || 0);
-        return outstanding > 0 && contractPriceFor(c) > 0;
+        // True availability: outstanding minus volume already on order.
+        return contractAvailableMt(c) > 0 && contractPriceFor(c) > 0;
       });
       if (!candidates.length) return null;
       const onOrder = (c: Contract) => contractVolumeStats.get(c.id)?.onOrder || 0;
@@ -1910,12 +1935,16 @@ export default function App() {
     for (const [cn, mt] of mtByContract) {
       const ct = contracts.find(c => c.contractNumber === cn);
       if (!ct) continue; // scanned / unknown contract — not restricted
-      const base = ct.volumeOutstanding != null
-        ? ct.volumeOutstanding
-        : Math.max(0, (ct.contractVolume || 0) - (ct.volumeTaken || 0));
+      // Outstanding from the computed roll-up (contract volume − invoiced) —
+      // the stored volumeOutstanding drifts when invoices change without
+      // touching the contract.
+      const base = contractVolumeStats.get(ct.id)?.outstanding
+        ?? (ct.volumeOutstanding != null
+          ? ct.volumeOutstanding
+          : Math.max(0, (ct.contractVolume || 0) - (ct.volumeTaken || 0)));
       const remaining = base - (committedByContract.get(cn) || 0);
       if (mt > remaining + 1e-6) {
-        setErrorBox(`Not enough contract volume on ${cn}: ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT remaining (after open orders), but this order books ${mt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT against it. Reduce the quantity or choose a different contract.`);
+        setErrorBox(`Not enough volume on contract ${cn}: ${base.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT outstanding − ${(committedByContract.get(cn) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} MT already on order = ${remaining.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT available, but this order books ${mt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MT against it. Reduce the quantity or choose a different contract.`);
         return null;
       }
     }
@@ -9535,16 +9564,22 @@ export default function App() {
       const existingWeightOnContract = orderLineItems
         .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
         .reduce((sum, li) => sum + li.totalWeight, 0);
-      const outstanding = (contract.volumeOutstanding || contract.contractVolume) - existingWeightOnContract;
-      if (totalWeight > outstanding) {
-        const overage = totalWeight - outstanding;
-        const proceed = window.confirm(
-          `⚠ Contract volume warning\n\n`
-          + `Contract ${contract.contractNumber} has ${outstanding.toFixed(2)} MT outstanding, but this item requires ${totalWeight.toFixed(2)} MT.\n\n`
-          + `Adding this line item will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
-          + `Are you sure you want to proceed?`
+      // HARD availability check: outstanding volume minus what open orders
+      // already have on order (excluding the order being edited), minus this
+      // order's other lines on the same contract. An order can never book a
+      // contract past its available volume.
+      const st = contractVolumeStats.get(contract.id);
+      const outstandingVol = st ? st.outstanding : ((contract.volumeOutstanding ?? contract.contractVolume) || 0);
+      const available = contractAvailableMt(contract, editingOrder?.id) - existingWeightOnContract;
+      if (totalWeight > available + 1e-6) {
+        const onOrderVol = Math.max(0, outstandingVol - available - existingWeightOnContract);
+        setErrorBox(
+          `Not enough volume on contract ${contract.contractNumber}: `
+          + `${outstandingVol.toFixed(2)} MT outstanding − ${(onOrderVol + existingWeightOnContract).toFixed(2)} MT already on order = `
+          + `${Math.max(0, available).toFixed(2)} MT available, but this item requires ${totalWeight.toFixed(2)} MT. `
+          + `Reduce the quantity or choose a different contract.`
         );
-        if (!proceed) return;
+        return;
       }
       // Use contract line price if available, otherwise use contract finalPrice
       const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
