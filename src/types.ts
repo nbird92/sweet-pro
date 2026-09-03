@@ -25,6 +25,7 @@ export interface CommodityConfig {
   shippingTerms?: string;
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   customerDifferentialCadMt: number; // Customer-specific differential (CAD/MT)
+  sugarLossPct?: number; // Sugar loss % — final price is multiplied by (1 + pct/100)
 }
 
 export interface SKU {

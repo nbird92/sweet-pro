@@ -7371,7 +7371,8 @@ export default function App() {
     palletCostCadMt: 15.00,
     palletType: '',
     paymentTerms: undefined,
-    customerDifferentialCadMt: 0
+    customerDifferentialCadMt: 0,
+    sugarLossPct: 0
   });
 
   // Auto-calculate market inputs based on contract dates
@@ -9962,6 +9963,11 @@ export default function App() {
     const isUsd = config.currency === 'USD';
     const convert = (valCad: number) => isUsd ? valCad / fx : valCad;
     const convertUsd = (valUsd: number) => isUsd ? valUsd : valUsd * fx;
+
+    // Apply Sugar Loss % — uplifts the final price by (1 + pct/100)
+    if (config.sugarLossPct) {
+      finalCadMt *= 1 + (config.sugarLossPct / 100);
+    }
 
     const displayFinalMt = convert(finalCadMt);
     
@@ -16026,6 +16032,7 @@ export default function App() {
               <InputField label="Contract Volume (MT)" value={config.volumeMt} onChange={(v) => handleInputChange('volumeMt', v)} />
               <InputField label="Refining Margin (CAD/MT)" value={config.refiningMarginCadMt} onChange={(v) => handleInputChange('refiningMarginCadMt', v)} />
               <InputField label="Customer Differential (CAD/MT)" value={config.customerDifferentialCadMt} onChange={(v) => handleInputChange('customerDifferentialCadMt', v)} />
+              <InputField label="Sugar Loss %" value={config.sugarLossPct || 0} onChange={(v) => handleInputChange('sugarLossPct', v)} step="0.1" />
 
               <div className="pt-4 border-t border-[#141414]/10 space-y-3">
                 <div className="flex items-center justify-between">
