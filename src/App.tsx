@@ -9307,9 +9307,9 @@ export default function App() {
   // the user selected, instead of the raw stored name / shortform.
   const productNameToDisplay = (productName: string | undefined): string => {
     if (!productName) return '';
-    // Already a shortform code (e.g. an imported "GC45") — keep it as-is rather
-    // than expanding it to the canonical descriptive name. See isShortformCode.
-    if (isShortformCode(productName)) return productName;
+    // Shortform codes (e.g. an imported "GC45" or "1000kg GC100") expand to the
+    // canonical long-form Product Name via resolveProduct — the tables must map
+    // shortforms seamlessly to their longform. Unmatched text stays as-is.
     const { sku, qa } = resolveProduct(productName);
     if (!sku && !qa) return productName;
     const product = buildProductAttrs(sku, qa);
@@ -9321,6 +9321,26 @@ export default function App() {
     }
     return sku?.name || qa?.skuName || productName;
   };
+
+  // Cached long-form resolver for table cells (mirror of shortformCache): a
+  // stored shortform like "GC100" / "1000kg GC100" renders as its canonical
+  // long-form Product Name; unmatched free text stays as-is.
+  const longformCache = useMemo(
+    () => new Map<string, string>(),
+    [qaProducts, skus, namingFormulas, sugarTypes, productGroups],
+  );
+  const productToLongform = (name?: string): string => {
+    if (!name) return '';
+    const hit = longformCache.get(name);
+    if (hit !== undefined) return hit;
+    const v = productNameToDisplay(name) || name;
+    longformCache.set(name, v);
+    return v;
+  };
+  // Line-item variant: the stored productDisplayName (dropdown label) wins when
+  // it resolves; else the raw productName is expanded.
+  const lineItemToLongform = (li: { productKey?: string; productDisplayName?: string; productName: string }): string =>
+    productToLongform(li.productDisplayName || li.productName);
 
   // Compute the user-facing Product Name for a SKU + its QA pairing.
   // Uses user-defined naming-formula rules first; falls back to legacy concatenation.
@@ -11327,10 +11347,10 @@ export default function App() {
               { key: 'transferNumber', label: 'Transfer No.', bold: true, widthClass: 'min-w-[150px]' },
               { key: 'from', label: 'From' },
               { key: 'to', label: 'To' },
-              // Shortform product code (e.g. "LC100", "20kg GC45") — same resolver
-              // the orders/invoices tables use; falls back to the stored name
-              // when no catalog product matches.
-              { key: 'product', label: 'Product', bold: true, render: (t) => productToShortform(t.product) || t.product || '—' },
+              // Long-form Product Name — a stored shortform ("LC100", "1000kg
+              // GC100") maps to its canonical longform; falls back to the stored
+              // name when no catalog product matches.
+              { key: 'product', label: 'Product', bold: true, render: (t) => productToLongform(t.product) || t.product || '—' },
               { key: 'customer', label: 'Customer', render: (t) => t.customer || '—' },
               { key: 'po', label: 'PO No.', render: (t) => t.po || '—' },
               { key: 'contractNumber', label: 'Contract #', mono: true, render: (t) => t.contractNumber || '—' },
@@ -11640,8 +11660,8 @@ export default function App() {
                     ? invoiceLineItems.every(li => productMatches(li.productName))
                     : productMatches(i.product);
                   const productDisplay = invoiceLineItems.length
-                    ? invoiceLineItems.map(li => lineItemToShortform(li)).filter(Boolean).join(', ')
-                    : productShortformCached(i.product);
+                    ? invoiceLineItems.map(li => lineItemToLongform(li)).filter(Boolean).join(', ')
+                    : productToLongform(i.product);
                   const productTitle = invoiceLineItems.length
                     ? invoiceLineItems.map(li => li.productName).join(', ')
                     : i.product;
@@ -12177,15 +12197,13 @@ export default function App() {
                 {visibleOrders.map(ord => {
                   const totalWeight = ord.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
                   // Build the product display by resolving each line item to its
-                  // shortform via lineItemToShortform — which prefers the stored
-                  // productKey (QA id) so multi-QA SKU collisions resolve to the
-                  // exact variant the user picked (e.g. LC170 vs. GC100 sharing
-                  // an SKU name). Falls back to the order's joined .product string.
+                  // LONG-FORM Product Name (stored shortforms map seamlessly to
+                  // longform). Falls back to the order's joined .product string.
                   const lineItemDisplay = ord.lineItems
-                    .map(li => lineItemToShortform(li))
+                    .map(li => lineItemToLongform(li))
                     .filter(Boolean)
                     .join(', ');
-                  const productDisplay = lineItemDisplay || (ord.product ? productToShortform(ord.product) : '—');
+                  const productDisplay = lineItemDisplay || (ord.product ? productToLongform(ord.product) : '—');
                   // Outlier check: product (or any line item) does not match a current SKU
                   const productUnmatched = ord.product
                     ? !productMatchesCurrentSku(ord.product)
