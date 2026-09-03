@@ -29,6 +29,8 @@ interface LabPageProps {
   /** Opens the shared COA PDF preview for this lot code (same viewer the
    *  invoice table uses). */
   onPreviewCoa?: (lc: LotCode) => void;
+  /** Render a stored product name as its compact shortform code (e.g. "LC100"). */
+  productToShortform?: (name?: string) => string;
 }
 
 const EMPTY_FORM = {
@@ -186,7 +188,9 @@ function weekKeyOf(raw?: string): string {
   return `${isoWeekYear(iso)}-W${String(getWeekNumber(iso)).padStart(2, '0')}`;
 }
 
-export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, skus, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot, onPreviewCoa }: LabPageProps) {
+export default function LabPage({ lotCodes, sugarTypes, people, productGroups, customers, carriers, skus, shipments, transfers, onUpdateLotCodes, onUpdateShipments, onSyncLotCodes, resolveLot, onPreviewCoa, productToShortform }: LabPageProps) {
+  // Compact product display: shortform when the resolver is provided and matches.
+  const shortProd = (name?: string) => (productToShortform ? productToShortform(name) : '') || name || '—';
   const [filterSugarType, setFilterSugarType] = useState('Granulated');
   const [search, setSearch] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -1357,7 +1361,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                         <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{s.bol || '—'}</td>
                         <td className="p-3 text-xs font-mono border-r border-[#141414]/10">{s.po || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{s.product || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{shortProd(s.product)}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{s.date || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{s.carrier || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">
@@ -1400,7 +1404,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                         <td className="p-3 text-xs font-mono font-bold border-r border-[#141414]/10">{t.transferNumber || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{t.from || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{t.to || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{t.product || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{shortProd(t.product)}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{t.amount || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{t.shipmentDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">

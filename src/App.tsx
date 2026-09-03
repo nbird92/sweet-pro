@@ -11347,10 +11347,10 @@ export default function App() {
               { key: 'transferNumber', label: 'Transfer No.', bold: true, widthClass: 'min-w-[150px]' },
               { key: 'from', label: 'From' },
               { key: 'to', label: 'To' },
-              // Long-form Product Name — a stored shortform ("LC100", "1000kg
-              // GC100") maps to its canonical longform; falls back to the stored
-              // name when no catalog product matches.
-              { key: 'product', label: 'Product', bold: true, render: (t) => productToLongform(t.product) || t.product || '—' },
+              // Shortform product code (e.g. "LC100", "20kg GC45") — compact
+              // display; the long-form name shows in the detail view. Falls back
+              // to the stored name when no catalog product matches.
+              { key: 'product', label: 'Product', bold: true, render: (t) => productToShortform(t.product) || t.product || '—' },
               { key: 'customer', label: 'Customer', render: (t) => t.customer || '—' },
               { key: 'po', label: 'PO No.', render: (t) => t.po || '—' },
               { key: 'contractNumber', label: 'Contract #', mono: true, render: (t) => t.contractNumber || '—' },
@@ -11660,8 +11660,8 @@ export default function App() {
                     ? invoiceLineItems.every(li => productMatches(li.productName))
                     : productMatches(i.product);
                   const productDisplay = invoiceLineItems.length
-                    ? invoiceLineItems.map(li => lineItemToLongform(li)).filter(Boolean).join(', ')
-                    : productToLongform(i.product);
+                    ? invoiceLineItems.map(li => lineItemToShortform(li)).filter(Boolean).join(', ')
+                    : productShortformCached(i.product);
                   const productTitle = invoiceLineItems.length
                     ? invoiceLineItems.map(li => li.productName).join(', ')
                     : i.product;
@@ -12197,13 +12197,14 @@ export default function App() {
                 {visibleOrders.map(ord => {
                   const totalWeight = ord.lineItems.reduce((sum, item) => sum + item.totalWeight, 0);
                   // Build the product display by resolving each line item to its
-                  // LONG-FORM Product Name (stored shortforms map seamlessly to
-                  // longform). Falls back to the order's joined .product string.
+                  // SHORTFORM code (compact — more info in less space); the
+                  // long-form name shows in the detail view. Falls back to the
+                  // order's joined .product string.
                   const lineItemDisplay = ord.lineItems
-                    .map(li => lineItemToLongform(li))
+                    .map(li => lineItemToShortform(li))
                     .filter(Boolean)
                     .join(', ');
-                  const productDisplay = lineItemDisplay || (ord.product ? productToLongform(ord.product) : '—');
+                  const productDisplay = lineItemDisplay || (ord.product ? productToShortform(ord.product) : '—');
                   // Outlier check: product (or any line item) does not match a current SKU
                   const productUnmatched = ord.product
                     ? !productMatchesCurrentSku(ord.product)
@@ -12944,6 +12945,7 @@ export default function App() {
             return { bolNumber: r.bolNumber, customerName: r.customer, trailerNumber: r.trailerNo };
           }}
           onPreviewCoa={handleGenerateCoaForLot}
+          productToShortform={(name) => productToShortform(name)}
           onUpdateLotCodes={withDeleteTracking(COLLECTIONS.lotCodes, lotCodes, setLotCodes)}
           onSyncLotCodes={() => {
             const preset = lotCodeSyncPresets[0] || DEFAULT_LOTCODE_IMPORT_CONFIG;
