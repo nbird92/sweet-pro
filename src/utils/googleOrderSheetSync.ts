@@ -2531,10 +2531,12 @@ export function parsedRowsToTransfersConfigured(
         result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Row marked cancelled' });
         continue;
       }
-      const from = (r.fromLocation || '').trim();
+      // Origin: the row's From column, else the tab's configured default
+      // location (the same origin stamped on orders imported from this tab).
+      const from = (r.fromLocation || '').trim() || (tabByName.get(r.tab)?.defaultLocation || '').trim();
       const to = (r.toLocation || '').trim();
       if (!from || !to) {
-        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Row is missing a From or To location' });
+        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: !from ? 'Row is missing a From location (and the tab has no default location)' : 'Row is missing a To location' });
         continue;
       }
       if (!r.shipmentDate) {
