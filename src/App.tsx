@@ -10664,7 +10664,7 @@ export default function App() {
           { header: 'Contract #', key: 'contractNumber' },
           { header: 'PO', key: 'po' },
           { header: 'BOL', key: 'bol' },
-          { header: 'Qty (MT)', key: 'qty', format: 'number' },
+          { header: 'Order Qty (MT)', key: 'qty', format: 'number' },
           { header: 'Scaled Qty', key: 'scaledQty', format: 'number' },
           { header: 'Carrier', key: 'carrier' },
           { header: 'Trailer No.', key: 'trailerNo' },
@@ -10843,7 +10843,7 @@ export default function App() {
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Contract</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">PO</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">BOL</th>
-                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[55px]">QTY</th>
+                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[75px]">Order QTY</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[95px]">Scaled Qty (MT)</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[110px]">Carrier</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Trailer No</th>
@@ -11978,7 +11978,7 @@ export default function App() {
           { header: 'Order Date', key: 'date' },
           { header: 'Shipment Date', key: 'shipmentDate' },
           { header: 'Delivery Date', key: 'deliveryDate' },
-          { header: 'Qty (MT)', key: 'qty', format: 'number' },
+          { header: 'Order Qty (MT)', key: 'qty', format: 'number' },
           { header: 'Price/MT', key: 'pricePerMt', format: 'currency' },
           { header: 'Currency', key: 'currency' },
           { header: 'Carrier', key: 'carrier' },
@@ -12152,7 +12152,7 @@ export default function App() {
                   <SortableHeader label="Ship To" sortKey="shipToName" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Order Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="PO No." sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Delivery Date" sortKey="deliveryDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -17375,9 +17375,9 @@ export default function App() {
                       <thead className="bg-[#E4E3E0]/10 border-b border-[#141414]/10">
                         <tr>
                           <th className="p-3 text-left font-bold">Product</th>
-                          <th className="p-3 text-left font-bold">QTY (units)</th>
-                          <th className="p-3 text-left font-bold">Weight/Unit (MT)</th>
-                          <th className="p-3 text-left font-bold">Total Weight (MT)</th>
+                          <th className="p-3 text-left font-bold">Order QTY (units)</th>
+                          <th className="p-3 text-left font-bold">Order Weight/Unit (MT)</th>
+                          <th className="p-3 text-left font-bold">Order Total Weight (MT)</th>
                           <th className="p-3 text-left font-bold">$/Unit</th>
                           <th className="p-3 text-left font-bold">$/MT</th>
                           <th className="p-3 text-left font-bold">Line Amount</th>
@@ -20522,7 +20522,7 @@ export default function App() {
                               <th className="p-2 text-left font-bold text-[10px] uppercase">Customer</th>
                               <th className="p-2 text-left font-bold text-[10px] uppercase">Product</th>
                               <th className="p-2 text-left font-bold text-[10px] uppercase">PO #</th>
-                              <th className="p-2 text-right font-bold text-[10px] uppercase">Weight (KG)</th>
+                              <th className="p-2 text-right font-bold text-[10px] uppercase">Order Weight (KG)</th>
                               <th className="p-2 text-center font-bold text-[10px] uppercase">Schedule</th>
                             </tr>
                           </thead>
@@ -20699,7 +20699,7 @@ export default function App() {
                                     <th className="p-2 text-left font-bold text-[10px] uppercase">Customer</th>
                                     <th className="p-2 text-left font-bold text-[10px] uppercase">Product</th>
                                     <th className="p-2 text-left font-bold text-[10px] uppercase">PO #</th>
-                                    <th className="p-2 text-right font-bold text-[10px] uppercase">Weight (KG)</th>
+                                    <th className="p-2 text-right font-bold text-[10px] uppercase">Order Weight (KG)</th>
                                     <th className="p-2 text-center font-bold text-[10px] uppercase">Schedule</th>
                                   </tr>
                                 </thead>
@@ -21134,7 +21134,7 @@ export default function App() {
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Customer</span><span className="font-bold">{editingShipment.customer}</span></div>
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Product</span><span className={`font-bold ${!productMatchesCurrentSku(editingShipment.product) ? 'text-red-700' : ''}`}>{productToShortform(editingShipment.product)}{!productMatchesCurrentSku(editingShipment.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</span></div>
                       <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">BOL #</span><span className="font-bold font-mono">{editingShipment.bol}</span></div>
-                      <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">QTY</span><span className="font-bold">{editingShipment.qty}</span></div>
+                      <div><span className="text-[10px] uppercase font-bold opacity-50 block mb-0.5">Order QTY</span><span className="font-bold">{editingShipment.qty}</span></div>
                     </div>
                     <div className="flex gap-4">
                       <button
@@ -24735,7 +24735,7 @@ export default function App() {
                       <thead className="bg-[#141414] text-[#E4E3E0]">
                         <tr className="text-[10px] uppercase font-bold">
                           <th className="p-3">Product</th>
-                          <th className="p-3">QTY (units)</th>
+                          <th className="p-3">Order QTY (units)</th>
                           <th className="p-3">Contract #</th>
                           {/* Split Number is only entered when editing an existing
                               order — it isn't known when first creating one. */}
@@ -24848,8 +24848,8 @@ export default function App() {
                       <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
                         <tr>
                           <th className="p-2 font-bold">Product</th>
-                          <th className="p-2 font-bold">QTY (units)</th>
-                          <th className="p-2 font-bold">Weight (KG)</th>
+                          <th className="p-2 font-bold">Order QTY (units)</th>
+                          <th className="p-2 font-bold">Order Weight (KG)</th>
                           <th className="p-2 font-bold">Contract #</th>
                           <th className="p-2 font-bold">$/Unit</th>
                           <th className="p-2 font-bold">$/MT</th>
@@ -25884,8 +25884,8 @@ export default function App() {
                                 <th className="p-3">Shipment Date</th>
                                 <th className="p-3">Delivery Date</th>
                                 <th className="p-3">PO #</th>
-                                <th className="p-3">Qty (units)</th>
-                                <th className="p-3">Weight (KG)</th>
+                                <th className="p-3">Order Qty (units)</th>
+                                <th className="p-3">Order Weight (KG)</th>
                                 <th className="p-3">Carrier</th>
                                 <th className="p-3">Amount ($)</th>
                                 <th className="p-3"></th>
@@ -25998,7 +25998,7 @@ export default function App() {
                           <div className="text-sm font-bold">{totalUnits}</div>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Weight (KG)</div>
+                          <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Order Total Weight (KG)</div>
                           <div className="text-sm font-bold">{totalWeightKg.toFixed(0)}</div>
                         </div>
                         <div>
@@ -26877,9 +26877,9 @@ export default function App() {
                             <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
                               <tr>
                                 <th className="p-2 text-left font-bold">Product</th>
-                                <th className="p-2 text-left font-bold">QTY (units)</th>
-                                <th className="p-2 text-left font-bold">Weight/Unit (KG)</th>
-                                <th className="p-2 text-left font-bold">Total Weight (KG)</th>
+                                <th className="p-2 text-left font-bold">Order QTY (units)</th>
+                                <th className="p-2 text-left font-bold">Order Weight/Unit (KG)</th>
+                                <th className="p-2 text-left font-bold">Order Total Weight (KG)</th>
                                 <th className="p-2 text-left font-bold">Contract #</th>
                               </tr>
                             </thead>
@@ -26927,7 +26927,7 @@ export default function App() {
                             <div className="text-sm font-bold">{order ? order.lineItems.length : transfer?.product}</div>
                           </div>
                           <div>
-                            <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Weight (KG)</div>
+                            <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Order Total Weight (KG)</div>
                             <div className="text-sm font-bold">{order ? (totalWeight * 1000).toFixed(0) : ((transfer?.amount || 0) * 1000).toFixed(0)}</div>
                           </div>
                           <div>
