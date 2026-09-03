@@ -880,6 +880,42 @@ export default function App() {
     return best;
   };
 
+  // A contract's $/MT for a given product text: the matching contract line's
+  // final price first, then the contract-level final price, then the first
+  // priced line. Contract pricing is the source of truth for scanned POs —
+  // the number printed on a PO is often wrong (line totals, typos).
+  const contractPriceFor = (c: Contract, productText?: string): number => {
+    const lines = (c.contractLines || []).filter(l => typeof l.finalPriceMt === 'number' && l.finalPriceMt > 0);
+    const t = (productText || '').trim().toUpperCase();
+    if (t && lines.length) {
+      const m = lines.find(l => l.productName
+        && (t.includes(l.productName.toUpperCase()) || l.productName.toUpperCase().includes(t)));
+      if (m) return m.finalPriceMt;
+    }
+    if (typeof c.finalPrice === 'number' && c.finalPrice > 0) return c.finalPrice;
+    return lines[0]?.finalPriceMt || 0;
+  };
+
+  // The next contract a customer can draw on: active, priced, with outstanding
+  // volume remaining — soonest-expiring first so contracts are used up in order.
+  // Falls back to ignoring the currency filter when nothing matches with it.
+  const nextAvailableContract = (cust: Customer | null, currency?: string): Contract | null => {
+    if (!cust) return null;
+    const pick = (cur: string): Contract | null => {
+      const candidates = contractsForCustomer(cust).filter(c => {
+        if (c.active === false) return false;
+        if (cur && c.currency && c.currency.toUpperCase() !== cur) return false;
+        const st = contractVolumeStats.get(c.id);
+        const outstanding = st ? st.outstanding : ((c.volumeOutstanding ?? c.contractVolume) || 0);
+        return outstanding > 0 && contractPriceFor(c) > 0;
+      });
+      if (!candidates.length) return null;
+      return candidates.sort((a, b) => (a.endDate || '9999').localeCompare(b.endDate || '9999'))[0];
+    };
+    const cur = (currency || '').trim().toUpperCase();
+    return pick(cur) || (cur ? pick('') : null);
+  };
+
   // Validate/normalize a date to ISO YYYY-MM-DD, or '' if unparseable. Guards
   // against malformed extracted dates that would otherwise throw "Invalid time
   // value" the moment they're formatted (e.g. in the appointment scheduler).
@@ -1130,6 +1166,13 @@ export default function App() {
       const byPrice = matchContractByPrice(cust, poPrice, po.currency);
       if (byPrice) { contract = byPrice; contractNumber = byPrice.contractNumber; }
     }
+    // Still no contract: link the customer's next active contract with
+    // outstanding volume — its pricing beats whatever is printed on the PO.
+    // Keep a raw scanned S-code (unmatched) as the visible contract number.
+    if (!contract && cust) {
+      const fallback = nextAvailableContract(cust, po.currency);
+      if (fallback) { contract = fallback; if (!contractNumber) contractNumber = fallback.contractNumber; }
+    }
     // The shipment date is the PICK-UP date (po.shipmentDate is the requested
     // ship/pick-up date); fall back to the delivery date only if no pick-up date.
     // Normalize to a VALID ISO YYYY-MM-DD (or blank) — the model sometimes returns
@@ -1204,6 +1247,12 @@ export default function App() {
       if (!pricePerMt && typeof li.amount === 'number' && li.amount > 0 && qtyMt > 0) {
         pricePerMt = li.amount / qtyMt;
       }
+      // Contract pricing beats the scanned price: POs frequently print a line
+      // total or a plainly wrong number in the price column. When any contract
+      // is linked (by number, by price match, or the next-available fallback),
+      // its $/MT wins; the scanned price survives only with no usable contract.
+      const contractPrice = contract ? contractPriceFor(contract, prod?.label || li.description) : 0;
+      if (contractPrice > 0) pricePerMt = contractPrice;
       return {
         productValue: prod?.value || '',
         productKey: prod?.key || '',
@@ -2138,8 +2187,17 @@ export default function App() {
   // lands as Open and can be corrected in the table.
   const buildOrderFromExtraction = (po: ExtractedPO, extraBols: string[] = []): Order | null => {
     const cust = matchCustomer(po.customerName, po.customerNumber, customers, poLearned);
-    const contract = matchContract(po.contractNumber, contracts, poLearned);
-    const contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
+    let contract = matchContract(po.contractNumber, contracts, poLearned);
+    let contractNumber = resolveContractNumber(po); // match, else scanned S######.### code
+    // Same contract-price precedence as reviewFromExtraction: match the scanned
+    // price to a contract, else link the next active contract with outstanding
+    // volume — contract pricing is the source of truth, not the printed PO price.
+    if (!contract && cust) {
+      const poPrice = (po.lineItems || []).map(li => li.pricePerMt).find(p => typeof p === 'number' && p > 0) || 0;
+      const byPrice = matchContractByPrice(cust, poPrice, po.currency);
+      const fallback = byPrice || nextAvailableContract(cust, po.currency);
+      if (fallback) { contract = fallback; if (!contractNumber) contractNumber = fallback.contractNumber; }
+    }
     // selectableOnly is most important HERE: this path auto-approves an order with
     // NO human review, so an unfiltered pool would write a retired-site product
     // straight into production.
@@ -2168,6 +2226,8 @@ export default function App() {
       const qtyMt = typeof li.quantityMt === 'number' && li.quantityMt > 0
         ? li.quantityMt
         : (li.unit && /^(mt|tonne|tonnes|metric)/i.test(li.unit.trim()) ? li.quantity : 0);
+      // Contract pricing beats the scanned price (see reviewFromExtraction).
+      const contractPrice = contract ? contractPriceFor(contract, prod?.label || li.description) : 0;
       return {
         productValue: prod?.value || li.description || '',
         productKey: prod?.key || '',
@@ -2175,7 +2235,7 @@ export default function App() {
         productRaw: li.description || '',
         productCodeRaw: li.itemNumber || '',
         qtyMt: Math.round((qtyMt || 0) * 1000) / 1000,
-        pricePerMt: typeof li.pricePerMt === 'number' ? li.pricePerMt : 0,
+        pricePerMt: contractPrice > 0 ? contractPrice : (typeof li.pricePerMt === 'number' ? li.pricePerMt : 0),
         contractNumber,
       };
     }).filter(l => l.qtyMt > 0 || l.productValue);
@@ -25415,13 +25475,20 @@ export default function App() {
                                   <input key={`qty-${rev.id}-${idx}`} type="number" step="0.001" defaultValue={line.qtyMt || ''} disabled={rev.created} onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v !== (line.qtyMt || 0)) updateReviewLine(rev.id, idx, { qtyMt: v }); }} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
                                 </td>
                                 <td className="p-2 text-right">
-                                  <input key={`price-${rev.id}-${idx}`} type="number" step="0.01" defaultValue={line.pricePerMt || ''} disabled={rev.created} onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v !== (line.pricePerMt || 0)) updateReviewLine(rev.id, idx, { pricePerMt: v }); }} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
+                                  <input key={`price-${rev.id}-${idx}-${line.pricePerMt}`} type="number" step="0.01" defaultValue={line.pricePerMt || ''} disabled={rev.created} onBlur={(e) => { const v = parseFloat(e.target.value) || 0; if (v !== (line.pricePerMt || 0)) updateReviewLine(rev.id, idx, { pricePerMt: v }); }} className="w-24 bg-white border border-[#141414] px-2 py-1.5 text-xs text-right font-mono outline-none" />
                                 </td>
                                 <td className="p-2">
                                   <select
                                     value={line.contractNumber}
                                     disabled={rev.created}
-                                    onChange={(e) => updateReviewLine(rev.id, idx, { contractNumber: e.target.value })}
+                                    onChange={(e) => {
+                                      const cn = e.target.value;
+                                      // Re-price the line from the chosen contract — contract pricing
+                                      // is the source of truth over the scanned PO price.
+                                      const c = contracts.find(k => k.contractNumber === cn);
+                                      const p = c ? contractPriceFor(c, line.productLabel || line.productRaw) : 0;
+                                      updateReviewLine(rev.id, idx, p > 0 ? { contractNumber: cn, pricePerMt: Math.round(p * 100) / 100 } : { contractNumber: cn });
+                                    }}
                                     className="w-full bg-white border border-[#141414] px-2 py-1.5 text-xs font-mono outline-none"
                                   >
                                     <option value="">{selectedCustomer && customerContracts.length === 0 ? '— no contracts —' : '— None —'}</option>
