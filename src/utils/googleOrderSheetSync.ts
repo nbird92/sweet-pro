@@ -2554,10 +2554,22 @@ export function parsedRowsToTransfersConfigured(
 
       const numU = (r.transferNumber || '').trim().toUpperCase();
 
+      // Per-tab defaults: explicit config > built-in tabDefaults — same as the
+      // orders path. The format hint steers resolveProduct to the right QA
+      // variant (e.g. Tote → "1000kg GC100" instead of the bulk GC100).
       const explicit = tabByName.get(r.tab);
-      const expectedFormat = explicit?.expectedFormat;
+      const builtIn = tabDefaults(r.tab);
+      const expectedFormat = explicit?.expectedFormat ?? builtIn.expectedFormat;
+      const netWeightPerUnitKg = explicit?.netWeightPerUnitKg ?? builtIn.netWeightPerUnitKg;
       const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
       const carrierCanonical = resolveCarrier(r.carrierName, carriers);
+      // Stored product name carries the per-unit weight prefix for unitized
+      // tabs ("GC100" → "1000kg GC100") unless the resolved catalog name
+      // already starts with a kg weight.
+      let storedProduct = productRefs.productDisplayName || productRefs.productName;
+      if (netWeightPerUnitKg > 0 && storedProduct && !/^\d+(\.\d+)?\s*kg\b/i.test(storedProduct)) {
+        storedProduct = `${netWeightPerUnitKg}kg ${storedProduct}`;
+      }
 
       // Fields carried from this sheet row (used to build a new transfer OR to
       // fill an existing one's gaps).
@@ -2574,7 +2586,7 @@ export function parsedRowsToTransfersConfigured(
         shipmentDate: r.shipmentDate,
         arrivalDate: r.deliveryDate || r.shipmentDate,
         carrier: carrierCanonical || '',
-        product: productRefs.productDisplayName || productRefs.productName,
+        product: storedProduct,
         amount: r.quantityMT,
         po: r.poNumber || undefined,
         lotCode: firstLot(r.lotCode) || undefined,
@@ -2621,10 +2633,9 @@ export function parsedRowsToTransfersConfigured(
       }
 
       // IMPORTANT: use the SAME product value that gets stored on the transfer
-      // (the display name) so the composite matches existingComposites, which is
-      // built from t.product. Using productName here instead let numberless
-      // transfers re-import as duplicates on every sync run.
-      const storedProduct = productRefs.productDisplayName || productRefs.productName;
+      // (storedProduct, incl. any kg prefix) so the composite matches
+      // existingComposites, which is built from t.product. Diverging here let
+      // numberless transfers re-import as duplicates on every sync run.
       const comp = compositeKey({ from, to, product: storedProduct, date: r.shipmentDate, po: r.poNumber });
       if (!numU && (existingComposites.has(comp) || addedComposites.has(comp))) {
         result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'An identical transfer already exists (same from/to/product/date/PO)' });
@@ -2643,7 +2654,7 @@ export function parsedRowsToTransfersConfigured(
         shipmentDate: r.shipmentDate,
         arrivalDate: r.deliveryDate || r.shipmentDate,
         carrier: carrierCanonical || '',
-        product: productRefs.productDisplayName || productRefs.productName,
+        product: storedProduct,
         amount: r.quantityMT,
         status: 'Pending',
         ...fields,
