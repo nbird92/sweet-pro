@@ -897,7 +897,9 @@ export default function App() {
   };
 
   // The next contract a customer can draw on: active, priced, with outstanding
-  // volume remaining — soonest-expiring first so contracts are used up in order.
+  // volume remaining. The contract with the MOST volume on order wins first
+  // (it's the one being actively drawn on); ties / no on-order volume fall back
+  // to soonest-expiring so contracts are used up in order.
   // Falls back to ignoring the currency filter when nothing matches with it.
   const nextAvailableContract = (cust: Customer | null, currency?: string): Contract | null => {
     if (!cust) return null;
@@ -910,7 +912,10 @@ export default function App() {
         return outstanding > 0 && contractPriceFor(c) > 0;
       });
       if (!candidates.length) return null;
-      return candidates.sort((a, b) => (a.endDate || '9999').localeCompare(b.endDate || '9999'))[0];
+      const onOrder = (c: Contract) => contractVolumeStats.get(c.id)?.onOrder || 0;
+      return candidates.sort((a, b) =>
+        (onOrder(b) - onOrder(a))
+        || (a.endDate || '9999').localeCompare(b.endDate || '9999'))[0];
     };
     const cur = (currency || '').trim().toUpperCase();
     return pick(cur) || (cur ? pick('') : null);
