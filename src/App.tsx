@@ -6409,8 +6409,12 @@ export default function App() {
         setInboxFeed(data.inboxFeed as InboxFeedItem[]);
       }
       if (data.poAmendments?.length) {
-        setPoAmendments(data.poAmendments as PoAmendment[]);
-        lastSyncedData.current.poamendments = JSON.stringify(data.poAmendments);
+        // Heal degenerate PO numbers on stored amendments (e.g. a whole email
+        // body extracted into the PO field before the identifier guard existed).
+        const healedAmendments = (data.poAmendments as PoAmendment[]).map(a =>
+          isDegenerateIdentifier(a.poNumber || '') ? { ...a, poNumber: '' } : a);
+        setPoAmendments(healedAmendments);
+        lastSyncedData.current.poamendments = JSON.stringify(healedAmendments);
       }
       {
         // Merge synced learned corrections with any local (unsynced) ones, drop

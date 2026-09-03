@@ -398,7 +398,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                         <td className="p-3 text-xs font-mono whitespace-nowrap">{(imp.receivedAt || imp.createdAt) ? new Date(imp.receivedAt || imp.createdAt).toLocaleString() : '—'}</td>
                         <td className="p-3 text-xs max-w-[180px] truncate" title={imp.fromEmail}>{imp.fromEmail || '—'}</td>
                         <td className="p-3 text-xs max-w-[240px] truncate" title={imp.subject}>{imp.subject || '—'}</td>
-                        <td className="p-3 text-xs font-mono font-bold">{imp.poNumber || ex.poNumber || '—'}</td>
+                        <td className="p-3 text-xs font-mono font-bold" title={imp.poNumber || ex.poNumber || ''}><div className="max-w-[140px] truncate">{imp.poNumber || ex.poNumber || '—'}</div></td>
                         <td className="p-3 text-xs">{imp.customer || ex.customerName || '—'}</td>
                         <td className="p-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                           <div className="flex gap-2">
@@ -508,7 +508,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <td className="p-3 text-xs">{e.fromEmail || '—'}</td>
                   <td className="p-3 text-xs max-w-[240px] truncate" title={e.subject}>{e.subject || '—'}</td>
                   <td className="p-3 text-xs font-mono">{e.sourceFile || '—'}</td>
-                  <td className="p-3 text-xs font-mono font-bold">{e.poNumber || '—'}</td>
+                  <td className="p-3 text-xs font-mono font-bold" title={e.poNumber || ''}><div className="max-w-[140px] truncate">{e.poNumber || '—'}</div></td>
                   <td className="p-3 text-xs">{e.customer || '—'}</td>
                   <td className="p-3 text-xs font-mono">{e.orderBol || '—'}</td>
                   <td className="p-3 text-xs text-right font-mono">{typeof e.amount === 'number' && e.amount > 0 ? `$${e.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
@@ -556,7 +556,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <tr key={a.id} className="hover:bg-[#F9F9F9]">
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
-                    <td className="p-3 text-xs font-mono font-bold whitespace-nowrap">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</td>
+                    <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold whitespace-nowrap">{a.requestedApptDate || '—'}{a.requestedApptTime ? ` ${a.requestedApptTime}` : ''}</td>
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{a.suggestedApptTime ? `${a.suggestedApptTime}` : '—'}</td>
@@ -612,9 +612,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <tr key={a.id} className="hover:bg-[#F9F9F9]">
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
-                    <td className="p-3 text-xs font-mono font-bold">{a.poNumber || '—'}</td>
-                    <td className="p-3 text-xs font-mono">{a.orderBol || '—'}</td>
-                    <td className={`p-3 text-xs ${a.kind === 'cancellation' || a.cancel ? 'text-red-700 font-bold' : ''}`} title={a.summary}>{amendmentChangeText(a)}</td>
+                    <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[140px] truncate">{a.poNumber || '—'}</div></td>
+                    <td className="p-3 text-xs font-mono"><div className="max-w-[110px] truncate">{a.orderBol || '—'}</div></td>
+                    <td className={`p-3 text-xs ${a.kind === 'cancellation' || a.cancel ? 'text-red-700 font-bold' : ''}`} title={a.summary}><div className="max-w-[280px] truncate">{amendmentChangeText(a)}</div></td>
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
                     <td className="p-3 whitespace-nowrap">
                       {a.status === 'pending' ? (
