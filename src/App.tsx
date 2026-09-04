@@ -2637,13 +2637,28 @@ export default function App() {
       // about the same load (carrier + customer + follow-ups) must not stack
       // duplicate rows in the Appointment Requests table.
       const isApptAmendment = (x: PoAmendment) => x.kind === 'appointment' || !!x.requestedApptTime;
-      const openApptExists = (refPo?: string, refBol?: string): boolean => {
+      const findOpenAppt = (refPo?: string, refBol?: string): PoAmendment | undefined => {
         const bolU = (refBol || '').trim().toUpperCase();
-        return [...poAmendments, ...amendments].some(x =>
+        return [...amendments, ...poAmendments].find(x =>
           isApptAmendment(x)
           && (x.status === 'pending' || x.status === 'unmatched')
           && ((!!refPo && !!x.poNumber && samePoNumber(x.poNumber, refPo))
             || (!!bolU && (x.orderBol || '').trim().toUpperCase() === bolU)));
+      };
+      // In-place patches for open appointment requests already in STATE (a
+      // reschedule email updates the existing row instead of stacking a new
+      // one); applied alongside the new amendments at the end of the ingest.
+      const apptUpdates = new Map<string, Partial<PoAmendment>>();
+      // A reschedule (same PO/BOL, different requested date/time) refreshes the
+      // open request; an identical repeat is a duplicate and is skipped.
+      // Returns 'updated' | 'duplicate'.
+      const upsertOpenAppt = (existing: PoAmendment, patch: Partial<PoAmendment>): 'updated' | 'duplicate' => {
+        const sameSlot = (existing.requestedApptDate || '') === (patch.requestedApptDate || '')
+          && (existing.requestedApptTime || '') === (patch.requestedApptTime || '');
+        if (sameSlot) return 'duplicate';
+        if (amendments.includes(existing)) Object.assign(existing, patch);
+        else apptUpdates.set(existing.id, patch);
+        return 'updated';
       };
       const pendingImports: PoPendingImport[] = [];
       const built: Order[] = [];        // auto-approved orders (opt-in)
@@ -2831,26 +2846,35 @@ export default function App() {
                 if (plan.status === 'created') {
                   apptAdds.push(...plan.shipments);
                   changes.push(`appointment booked ${apptDate} ${plan.time} @ ${plan.bay}`);
-                } else if (plan.status === 'unavailable' && !openApptExists(order.po || refPo, order.bolNumber)) {
-                  amendments.push({
-                    id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                    createdAt: nowIso,
+                } else if (plan.status === 'unavailable') {
+                  const patch: Partial<PoAmendment> = {
                     receivedAt: item?.receivedAt,
                     fromEmail: item?.fromEmail,
                     subject: item?.subject,
                     sourceFile: item?.sourceFile,
-                    poNumber: (order.po || refPo) || undefined,
-                    customer: order.customer,
-                    orderId: order.id,
-                    orderBol: order.bolNumber,
-                    kind: 'appointment',
                     summary: `Requested appointment ${plan.time} on ${apptDate} is NOT available${plan.suggestedTime ? ` — suggested ${plan.suggestedTime} (${plan.location})` : ' — no free slots that day'}`,
                     requestedApptDate: apptDate,
                     requestedApptTime: plan.time,
-                    ...(plan.suggestedTime ? { suggestedApptTime: plan.suggestedTime } : {}),
+                    suggestedApptTime: plan.suggestedTime || undefined,
                     apptLocation: plan.location,
-                    status: 'pending',
-                  });
+                  };
+                  const existing = findOpenAppt(order.po || refPo, order.bolNumber);
+                  if (existing) {
+                    // Reschedule → refresh the open request; identical repeat → skip.
+                    if (upsertOpenAppt(existing, patch) === 'updated') changes.push(`appointment request rescheduled to ${apptDate} ${plan.time}`);
+                  } else {
+                    amendments.push({
+                      id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      createdAt: nowIso,
+                      poNumber: (order.po || refPo) || undefined,
+                      customer: order.customer,
+                      orderId: order.id,
+                      orderBol: order.bolNumber,
+                      kind: 'appointment',
+                      status: 'pending',
+                      ...patch,
+                    } as PoAmendment);
+                  }
                 }
               }
               if (Object.keys(cur).length) orderPatch.set(order.id, cur);
@@ -2882,32 +2906,45 @@ export default function App() {
             // Carrier-confirmed times with a matched order were auto-booked (or
             // queued as unavailable) by the enrichment block above.
             const alreadyHandled = !!ord && isLogisticsSenderEmail(item?.fromEmail) && !!reqTime && !!reqDate;
-            if (!alreadyHandled && reqTime && reqDate && openApptExists(refPo, ord?.bolNumber || refBol)) {
-              logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber, result: 'skipped', note: `Duplicate appointment request for ${reqDate} ${reqTime} — an open request already exists for this PO/BOL` });
-            } else if (!alreadyHandled && reqTime && reqDate) {
+            if (!alreadyHandled && reqTime && reqDate) {
               // Pre-compute a suggestion when the order is known, so the card
               // can offer "book suggested" immediately.
               const plan = ord ? planOrderAppointment(ord, reqDate, reqTime, ord.carrier || '', apptAdds) : null;
-              amendments.push({
-                id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                createdAt: nowIso,
+              const patch: Partial<PoAmendment> = {
                 receivedAt: item?.receivedAt,
                 fromEmail: item?.fromEmail,
                 subject: item?.subject,
                 sourceFile: item?.sourceFile,
-                poNumber: refPo || undefined,
-                customer: ord?.customer || po.customerName || undefined,
-                orderId: ord?.id,
-                orderBol: ord?.bolNumber || refBol || undefined,
-                kind: 'appointment',
                 summary: `Appointment requested for ${reqDate} at ${reqTime}${plan && plan.status === 'unavailable' ? (plan.suggestedTime ? ` — slot taken, suggested ${plan.suggestedTime}` : ' — no free slots that day') : ''}`,
                 requestedApptDate: reqDate,
                 requestedApptTime: reqTime,
-                ...(plan && plan.status === 'unavailable' && plan.suggestedTime ? { suggestedApptTime: plan.suggestedTime } : {}),
+                suggestedApptTime: plan && plan.status === 'unavailable' && plan.suggestedTime ? plan.suggestedTime : undefined,
                 ...(plan && plan.status !== 'exists' ? { apptLocation: plan.location } : {}),
-                status: ord ? 'pending' : 'unmatched',
-              });
-              logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber, result: 'updated', note: `Appointment request queued for review: ${reqDate} ${reqTime}` });
+              };
+              const existing = findOpenAppt(refPo, ord?.bolNumber || refBol);
+              if (existing) {
+                // Same PO/BOL with a NEW date/time = a reschedule — refresh the
+                // open request in place; an identical repeat is skipped.
+                const r = upsertOpenAppt(existing, patch);
+                logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber,
+                  result: r === 'updated' ? 'updated' : 'skipped',
+                  note: r === 'updated'
+                    ? `Appointment request rescheduled to ${reqDate} ${reqTime} (updated the open request)`
+                    : `Duplicate appointment request for ${reqDate} ${reqTime} — an open request already exists for this PO/BOL` });
+              } else {
+                amendments.push({
+                  id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  createdAt: nowIso,
+                  poNumber: refPo || undefined,
+                  customer: ord?.customer || po.customerName || undefined,
+                  orderId: ord?.id,
+                  orderBol: ord?.bolNumber || refBol || undefined,
+                  kind: 'appointment',
+                  status: ord ? 'pending' : 'unmatched',
+                  ...patch,
+                } as PoAmendment);
+                logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber, result: 'updated', note: `Appointment request queued for review: ${reqDate} ${reqTime}` });
+              }
             } else if (!reqTime || !reqDate) {
               logs.push({ ...logBase(item, po), poNumber: refPo, result: 'skipped', note: 'Appointment email had no readable date/time' });
             }
@@ -2998,7 +3035,10 @@ export default function App() {
       if (pendingImports.length) setPoPendingImports(prev => [...prev, ...pendingImports].slice(-500));
       // Cap the persisted log so the whole-collection resync stays bounded.
       if (logs.length) setPoImportLog(prev => [...prev, ...logs].slice(-1000));
-      if (amendments.length) setPoAmendments(prev => [...prev, ...amendments].slice(-500));
+      if (amendments.length || apptUpdates.size) setPoAmendments(prev => [
+        ...prev.map(x => apptUpdates.has(x.id) ? { ...x, ...apptUpdates.get(x.id) } : x),
+        ...amendments,
+      ].slice(-500));
       const pendingAmend = amendments.filter(a => a.status === 'pending' || a.status === 'unmatched').length;
       const autoUpdated = orderPatch.size;
       if (built.length || pendingImports.length || pendingAmend || autoUpdated || newDemurrage.length) {
@@ -13845,7 +13885,8 @@ export default function App() {
                 .sort((a, b) => b.mt - a.mt),
               invoices: Array.from(r.invoices.values())
                 .map(iv => { const net = iv.mt * rate; const t = net * (taxRate / 100); return { invoiceNumber: iv.invoiceNumber, customer: iv.customer, date: iv.date, po: iv.po, products: Array.from(iv.products).join(', '), mt: Math.round(iv.mt * 1000) / 1000, netAmount: net, tax: t, fees: net + t }; })
-                .sort((a, b) => b.fees - a.fees || b.mt - a.mt),
+                // Chronological — oldest invoice first (undated rows sink to the bottom).
+                .sort((a, b) => (toIsoDateSafe(a.date) || '9999-99-99').localeCompare(toIsoDateSafe(b.date) || '9999-99-99')),
             };
           }).sort((a, b) => b.totalFees - a.totalFees);
           const mt = rows.reduce((s, r) => s + r.mt, 0);
