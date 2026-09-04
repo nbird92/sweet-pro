@@ -2633,6 +2633,18 @@ export default function App() {
       incoming.sort((a, b) => extractionRichness(b) - extractionRichness(a));
       const logs: PoImportLogEntry[] = [];
       const amendments: PoAmendment[] = [];
+      // Each PO/BOL gets at most ONE open appointment request — repeated emails
+      // about the same load (carrier + customer + follow-ups) must not stack
+      // duplicate rows in the Appointment Requests table.
+      const isApptAmendment = (x: PoAmendment) => x.kind === 'appointment' || !!x.requestedApptTime;
+      const openApptExists = (refPo?: string, refBol?: string): boolean => {
+        const bolU = (refBol || '').trim().toUpperCase();
+        return [...poAmendments, ...amendments].some(x =>
+          isApptAmendment(x)
+          && (x.status === 'pending' || x.status === 'unmatched')
+          && ((!!refPo && !!x.poNumber && samePoNumber(x.poNumber, refPo))
+            || (!!bolU && (x.orderBol || '').trim().toUpperCase() === bolU)));
+      };
       const pendingImports: PoPendingImport[] = [];
       const built: Order[] = [];        // auto-approved orders (opt-in)
       const newDemurrage: DemurrageInvoice[] = []; // carrier demurrage invoices → Supply Chain
@@ -2819,7 +2831,7 @@ export default function App() {
                 if (plan.status === 'created') {
                   apptAdds.push(...plan.shipments);
                   changes.push(`appointment booked ${apptDate} ${plan.time} @ ${plan.bay}`);
-                } else if (plan.status === 'unavailable') {
+                } else if (plan.status === 'unavailable' && !openApptExists(order.po || refPo, order.bolNumber)) {
                   amendments.push({
                     id: `AMD-APPT-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                     createdAt: nowIso,
@@ -2870,7 +2882,9 @@ export default function App() {
             // Carrier-confirmed times with a matched order were auto-booked (or
             // queued as unavailable) by the enrichment block above.
             const alreadyHandled = !!ord && isLogisticsSenderEmail(item?.fromEmail) && !!reqTime && !!reqDate;
-            if (!alreadyHandled && reqTime && reqDate) {
+            if (!alreadyHandled && reqTime && reqDate && openApptExists(refPo, ord?.bolNumber || refBol)) {
+              logs.push({ ...logBase(item, po), poNumber: refPo, customer: ord?.customer, orderId: ord?.id, orderBol: ord?.bolNumber, result: 'skipped', note: `Duplicate appointment request for ${reqDate} ${reqTime} — an open request already exists for this PO/BOL` });
+            } else if (!alreadyHandled && reqTime && reqDate) {
               // Pre-compute a suggestion when the order is known, so the card
               // can offer "book suggested" immediately.
               const plan = ord ? planOrderAppointment(ord, reqDate, reqTime, ord.carrier || '', apptAdds) : null;
@@ -6411,8 +6425,30 @@ export default function App() {
       if (data.poAmendments?.length) {
         // Heal degenerate PO numbers on stored amendments (e.g. a whole email
         // body extracted into the PO field before the identifier guard existed).
-        const healedAmendments = (data.poAmendments as PoAmendment[]).map(a =>
+        let healedAmendments = (data.poAmendments as PoAmendment[]).map(a =>
           isDegenerateIdentifier(a.poNumber || '') ? { ...a, poNumber: '' } : a);
+        // Collapse duplicate OPEN appointment requests: each PO/BOL keeps only
+        // its newest pending/unmatched request; older duplicates are dismissed.
+        {
+          const isAppt = (x: PoAmendment) => x.kind === 'appointment' || !!x.requestedApptTime;
+          const keyOf = (x: PoAmendment) =>
+            (x.poNumber || '').replace(/\D/g, '') || (x.orderBol || '').trim().toUpperCase();
+          const newestByKey = new Map<string, PoAmendment>();
+          for (const x of healedAmendments) {
+            if (!isAppt(x) || (x.status !== 'pending' && x.status !== 'unmatched')) continue;
+            const k = keyOf(x);
+            if (!k) continue;
+            const prev = newestByKey.get(k);
+            const ts = (y: PoAmendment) => y.receivedAt || y.createdAt || '';
+            if (!prev || ts(x) > ts(prev)) newestByKey.set(k, x);
+          }
+          healedAmendments = healedAmendments.map(x => {
+            if (!isAppt(x) || (x.status !== 'pending' && x.status !== 'unmatched')) return x;
+            const k = keyOf(x);
+            if (!k || newestByKey.get(k) === x) return x;
+            return { ...x, status: 'dismissed' as const };
+          });
+        }
         setPoAmendments(healedAmendments);
         lastSyncedData.current.poamendments = JSON.stringify(healedAmendments);
       }
