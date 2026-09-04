@@ -23250,7 +23250,9 @@ export default function App() {
                           loc.phone && `Phone: ${loc.phone}`,
                         ].filter(Boolean) as string[];
                         const ruleBits = [
-                          ...(loc.importRules?.defaultProducts || []).filter(p => p.productValue).map(p => `${productToShortform(p.productValue) || p.productValue}${p.sugarForm ? ` (${p.sugarForm})` : ''}`),
+                          // Resolve via the stored productKey (QA/SKU id) first — free-text
+                          // shortform resolution on the value can land on the wrong product.
+                          ...(loc.importRules?.defaultProducts || []).filter(p => p.productValue).map(p => `${lineItemToShortform({ productKey: p.productKey, productName: p.productValue }) || p.productValue}${p.sugarForm ? ` (${p.sugarForm})` : ''}`),
                           loc.importRules?.defaultOrigin ? `from ${loc.importRules.defaultOrigin}` : '',
                         ].filter(Boolean);
                         return (
