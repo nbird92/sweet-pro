@@ -5952,7 +5952,7 @@ export default function App() {
   const [emailSubject, setEmailSubject] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
-  const [orderSortConfig, setOrderSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'shipmentDate', direction: 'asc' });
+  const [orderSortConfig, setOrderSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'shipmentDate', direction: 'desc' });
   // Orders with 'Completed' status are auto-hidden from the Orders table by
   // default; this toggle reveals them (they also surface while searching).
   const [showCompletedOrders, setShowCompletedOrders] = useState(false);
@@ -11544,7 +11544,12 @@ export default function App() {
     }
 
     if (activePage === 'Invoices') {
-      const filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['invoiceNumber', 'bolNumber', 'customer', 'product', 'po', 'status']);
+      let filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['invoiceNumber', 'bolNumber', 'customer', 'product', 'po', 'status']);
+      // Default order (no column sort chosen): newest invoice date first.
+      if (!sortConfig) {
+        filteredInvoices = [...filteredInvoices].sort((a, b) =>
+          (toIsoDateSafe(b.date) || '').localeCompare(toIsoDateSafe(a.date) || ''));
+      }
       // Progressive rendering: paint only the first invoiceVisibleCount rows.
       // The browser's content-visibility hint (applied to each <tr> below) also
       // skips render work for off-screen rows that ARE in the DOM.
