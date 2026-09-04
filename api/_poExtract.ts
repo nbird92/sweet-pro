@@ -657,10 +657,18 @@ export function expandCallOffDoc(doc: any): any[] {
   // or where it hallucinates duplicate rows for the same date — has one distinct
   // date, so it is returned unchanged (its real PO number is kept, never suffixed
   // with a "-{week}{seq}" that isn't on the document).
-  const distinctDates = new Set(dated.map((l: any) => l.deliveryDate));
+  // Each qualifying delivery row must carry a REAL quantity (MT, or a unit count
+  // above 1). A bare qty-1 "Bulk" row with just a date+time is the signature of
+  // the model hallucinating a delivery schedule out of thread chatter (e.g. a
+  // "RE:" reply quoting an old call-off) — expanding those fabricates sequential
+  // per-delivery PO numbers that exist on no document.
+  const quantified = dated.filter((l: any) =>
+    (typeof l.quantityMt === 'number' && l.quantityMt > 0)
+    || (typeof l.quantity === 'number' && l.quantity >= 2));
+  const distinctDates = new Set(quantified.map((l: any) => l.deliveryDate));
   if (!base || distinctDates.size < 2) return [doc]; // not a multi-date schedule
   const timeOf = (l: any) => String(l.deliveryTime || '').trim();
-  const sorted = [...dated].sort((a: any, b: any) =>
+  const sorted = [...quantified].sort((a: any, b: any) =>
     `${a.deliveryDate} ${timeOf(a)}`.localeCompare(`${b.deliveryDate} ${timeOf(b)}`));
   const seqByWeek = new Map<number, number>();
   return sorted.map((l: any) => {
