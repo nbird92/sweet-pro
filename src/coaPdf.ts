@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Shipment, Order, Customer, Location, LotCode, QAProduct } from './types';
+import type { Shipment, Order, Customer, Location, ShipToLocation, LotCode, QAProduct } from './types';
 import { sameLotCode } from './utils/lotCode';
 
 interface GenerateCoaParams {
@@ -8,6 +8,10 @@ interface GenerateCoaParams {
   order?: Order;
   customer?: Customer;
   shipFromLocation?: Location;
+  /** The order's ship-to site — the DELIVER TO / DESTINATION address. The
+   *  customer's own address is the consignee (corporate) address, never the
+   *  delivery address when a ship-to site is known. */
+  shipTo?: ShipToLocation;
   lotCodes: LotCode[];
   qaProducts: QAProduct[];
 }
@@ -350,6 +354,7 @@ function generateGranulatedCoaPage(
   order: Order | undefined,
   customer: Customer | undefined,
   shipFromLocation: Location | undefined,
+  shipTo: ShipToLocation | undefined,
   shipmentLotCodes: LotCode[],
   qaProduct: QAProduct | undefined,
 ) {
@@ -457,7 +462,11 @@ function generateGranulatedCoaPage(
   block('MANUFACTURED BY:', ['Sucro Can Canada Inc']);
   block('SHIPPER:', ['Sucro Can Canada Inc', '560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9', 'TEL: (289) 799-8966']);
   const originTxt = shipFromLocation?.name ? `${shipFromLocation.name.replace(/\s*\(.+\)$/, '')}, ON, Canada` : 'Hamilton, ON, Canada';
-  const destTxt = [customer?.city, customer?.province, customer?.city || customer?.province ? 'Canada' : ''].filter(Boolean).join(', ');
+  // DESTINATION is the DELIVER-TO: the order's ship-to site address. The
+  // customer's corporate address is only the fallback when no site is known.
+  const destTxt = shipTo
+    ? [shipTo.city || shipTo.addressLine1, shipTo.province, shipTo.country || (shipTo.city || shipTo.province ? 'Canada' : '')].filter(Boolean).join(', ')
+    : [customer?.city, customer?.province, customer?.city || customer?.province ? 'Canada' : ''].filter(Boolean).join(', ');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('ORIGIN:', M, y); doc.setFont('helvetica', 'normal'); doc.text(originTxt, M + 30, y); y += 5.5;
   doc.setFont('helvetica', 'bold'); doc.text('DESTINATION:', M, y); doc.setFont('helvetica', 'normal'); doc.text(destTxt, M + 30, y); y += 10;
@@ -495,6 +504,7 @@ export function renderCoaInto(doc: jsPDF, {
   order,
   customer,
   shipFromLocation,
+  shipTo,
   lotCodes,
   qaProducts,
 }: GenerateCoaParams): void {
@@ -540,7 +550,7 @@ export function renderCoaInto(doc: jsPDF, {
   } else {
     // GRANULATED uses the customer-approved template layout — see
     // generateGranulatedCoaPage. (The liquid COA keeps the shared layout.)
-    generateGranulatedCoaPage(doc, shipment, order, customer, shipFromLocation, shipmentLotCodes, qaProduct);
+    generateGranulatedCoaPage(doc, shipment, order, customer, shipFromLocation, shipTo, shipmentLotCodes, qaProduct);
     return;
   }
 

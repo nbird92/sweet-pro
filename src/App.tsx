@@ -5594,6 +5594,7 @@ export default function App() {
       const gen = generateCoaPdf({
         shipment, order, customer,
         shipFromLocation: shipFromLoc,
+        shipTo: order.shipToLocationId ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId) : undefined,
         lotCodes, qaProducts,
       });
       blobUrl = gen.blobUrl;
@@ -5771,6 +5772,7 @@ export default function App() {
         order: linkedOrder,
         customer: cust,
         shipFromLocation: shipFromLoc,
+        shipTo: linkedOrder?.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId) : undefined,
         lotCodes,
         qaProducts,
       });
@@ -22286,7 +22288,7 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Address</label>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Corporate Address</label>
                     <input
                       type="text"
                       value={newCustomer.address || ''}
@@ -23034,10 +23036,10 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Address</label>
-                    <input 
-                      type="text" 
-                      value={editingCustomer.address || ''} 
+                    <label className="text-[10px] uppercase font-bold opacity-50">Corporate Address</label>
+                    <input
+                      type="text"
+                      value={editingCustomer.address || ''}
                       onChange={(e) => setEditingCustomer({ ...editingCustomer, address: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
@@ -23398,7 +23400,7 @@ export default function App() {
                           <div className="border border-violet-300 bg-violet-50/60 p-3 space-y-2">
                             <div className="text-[10px] uppercase font-bold text-violet-800">Email Import Rule for this location <span className="normal-case font-normal opacity-70">— overrides the customer-level rule when a scanned PO ships here</span></div>
                             {stProducts.map((p, idx) => (
-                              <div key={idx} className="grid grid-cols-[110px_1fr_auto] gap-2 items-center">
+                              <div key={idx} className="grid grid-cols-[110px_minmax(0,1fr)_auto] gap-2 items-center">
                                 <select value={p.sugarForm} onChange={(e) => setStProductAt(idx, { sugarForm: e.target.value })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
                                   <option value="">Any form</option>
                                   <option value="liquid">Liquid</option>
@@ -23414,7 +23416,7 @@ export default function App() {
                                     const opt = stOptions.find(o => o.key === e.target.value);
                                     setStProductAt(idx, { productKey: e.target.value, productValue: opt?.value || '' });
                                   }}
-                                  className="bg-white border border-[#141414] p-2 text-xs outline-none"
+                                  className="w-full min-w-0 bg-white border border-[#141414] p-2 text-xs outline-none"
                                 >
                                   <option value="">— Select product —</option>
                                   {stOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}

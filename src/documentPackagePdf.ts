@@ -39,7 +39,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
   // is included only for packaged / tote shipments.
   const steps: Array<() => void> = [
     () => renderBolInto(doc, { shipment, order, customer, carrier, shipFromLocation, shipToCustomer: customer, shipToLocation, qaProducts, lotCodes }),
-    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, lotCodes, qaProducts }),
+    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts }),
     () => renderPackingListInto(doc, { shipment, order, customer, shipFromLocation, shipToLocation, qaProducts }),
   ];
   if (includeBagIdReport) {
