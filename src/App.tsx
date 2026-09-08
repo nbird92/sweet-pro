@@ -6294,11 +6294,21 @@ export default function App() {
         lastSyncedData.current.transfers = JSON.stringify(mapped);
       }
       if (data.invoices?.length) {
-        const mapped = data.invoices.map((i: any) => ({
-          ...i,
-          qty: parseFloat(i.qty) || 0,
-          amount: parseFloat(i.amount) || 0
-        }));
+        // Heal a historical import mis-mapping: thousands of invoices carry a
+        // LOCATION NAME ("Hamilton (Ferguson)") in shippingTerms with location
+        // blank. Move the value to location and clear shippingTerms.
+        const locNames = new Set((data.locations || locations || []).map((l: any) => (l.name || '').trim().toLowerCase()).filter(Boolean));
+        const mapped = data.invoices.map((i: any) => {
+          const st = (i.shippingTerms || '').trim();
+          const fixed = st && locNames.has(st.toLowerCase())
+            ? { ...i, location: (i.location || '').trim() || st, shippingTerms: '' }
+            : i;
+          return {
+            ...fixed,
+            qty: parseFloat(fixed.qty) || 0,
+            amount: parseFloat(fixed.amount) || 0
+          };
+        });
 
         // De-dupe only by the unique record id (multiple invoices may share a
         // shipment/BOL — they're distinct as long as their invoice numbers differ).
@@ -16958,7 +16968,15 @@ export default function App() {
                         )}
                       </select></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location (Origin)</label>
-                      <input type="text" value={editingInvoiceCard.location || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, location: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                      {/* ALL locations — active AND inactive: historical invoices
+                          legitimately originate from closed plants. */}
+                      <select value={editingInvoiceCard.location || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, location: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]">
+                        <option value="">—</option>
+                        {locations.map(l => <option key={l.id} value={l.name}>{l.name}{l.active === false ? ' (inactive)' : ''}</option>)}
+                        {editingInvoiceCard.location && !locations.some(l => l.name === editingInvoiceCard.location) && (
+                          <option value={editingInvoiceCard.location}>{editingInvoiceCard.location}</option>
+                        )}
+                      </select></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
                       <input type="text" value={editingInvoiceCard.product || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   </div>
