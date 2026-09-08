@@ -1223,7 +1223,10 @@ export default function SalesForecastPage({
 
   // ── Sorted & filtered customer forecasts ────────────────────────────────
   const sortedCustomerForecasts = useMemo(() => {
-    let list = mergedForecasts;
+    // Only customers with forecast DATA are listed — deleting a customer's
+    // forecast removes their row. Use the picker above the table to start a
+    // forecast for any other customer.
+    let list = mergedForecasts.filter(cf => cf.lines.length > 0);
     // Search filter
     if (customerSearch.trim()) {
       const q = customerSearch.toLowerCase();
@@ -1446,6 +1449,20 @@ export default function SalesForecastPage({
             className="flex-1 bg-transparent text-xs focus:outline-none placeholder:opacity-40"
           />
           {customerSearch && <button onClick={() => setCustomerSearch('')} className="opacity-50 hover:opacity-100"><X size={12} /></button>}
+          {/* Start a forecast for a customer not yet in the table (only customers
+              WITH forecast data are listed as rows). */}
+          <select
+            value=""
+            onChange={(e) => { if (e.target.value) openCustomerModal(e.target.value); }}
+            className="bg-white border border-[#141414] px-2 py-1 text-xs outline-none max-w-[240px]"
+            title="Open the forecast editor for a customer without any forecast yet"
+          >
+            <option value="">+ Add customer forecast…</option>
+            {mergedForecasts
+              .filter(cf => cf.lines.length === 0)
+              .sort((a, b) => a.customerName.localeCompare(b.customerName))
+              .map(cf => <option key={cf.customerId} value={cf.customerId}>{cf.customerName}</option>)}
+          </select>
         </div>
         <DataTable<CustomerForecast>
           title={`Customer ${typeLabel}`}
