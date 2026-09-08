@@ -5733,13 +5733,28 @@ export default function App() {
    *  orderForInvoice threads the invoice's own line items through so the goods
    *  table (Qty/Net/Gross/Total) and ship-from location populate even with no
    *  linked order. */
+  /** Rescale the shipment + order a document draws from to the INVOICE's
+   *  official quantity (inv.qty = the scaled Qty (MT) — the weighed product on
+   *  the trailer). Every document generated FROM the invoice table (BOL, COA,
+   *  Packing List, Scale Ticket) must show the scaled weight, not the ordered
+   *  weight: qty units, total/gross weights and per-line weights all rescale. */
+  const scaleDocSourcesToInvoice = (inv: Invoice, shipment: Shipment, order?: Order): { shipment: Shipment; order?: Order } => {
+    const qty = inv.qty || 0;
+    if (!(qty > 0)) return { shipment, order };
+    const scaledOrder = order
+      ? { ...order, lineItems: rescaleLineItemsToMt(order.lineItems || [], qty) }
+      : order;
+    return { shipment: { ...shipment, qty, scaledQty: qty }, order: scaledOrder };
+  };
+
   const handleGenerateBolForInvoice = (inv: Invoice) => {
     const shipment = resolveInvoiceShipment(inv);
     if (!shipment) {
       setErrorBox('This invoice has no BOL number — cannot generate a Bill of Lading.');
       return;
     }
-    handleGenerateBol(shipment, orderForInvoice(inv));
+    const scaled = scaleDocSourcesToInvoice(inv, shipment, orderForInvoice(inv));
+    handleGenerateBol(scaled.shipment, scaled.order);
   };
 
   /** Pick the COA template for a sugar type. The Sugar Type record's "COA Type"
@@ -5934,7 +5949,10 @@ export default function App() {
     const orderOverride = orderForInvoice(inv);
     const lineItems = (inv.lineItems && inv.lineItems.length) ? inv.lineItems : orderOverride?.lineItems;
     const includeBagIdReport = hasPackagedOrToteProducts(lineItems, inv.product || shipment.product);
-    handleGenerateDocumentPackage(shipment, includeBagIdReport, orderOverride);
+    // All package documents show the invoice's scaled Qty (MT) — the official
+    // weighed quantity — not the ordered quantity.
+    const scaled = scaleDocSourcesToInvoice(inv, shipment, orderOverride);
+    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order);
   };
 
   useEffect(() => {

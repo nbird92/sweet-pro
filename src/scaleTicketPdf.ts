@@ -69,9 +69,14 @@ export function renderScaleTicketInto(doc: jsPDF, {
   row('Customer PO #:', order?.po || shipment.po || '');
   row('Carrier:', carrier?.name || shipment.carrier || '');
   row('Trailer #:', shipment.trailerNo || '');
-  row('Gross Weight (kg):', ''); // recorded at the scale
+  // The scaled quantity (MT) is the official on-trailer product weight — when it
+  // has been recorded, print it (in kg); otherwise leave for the scale operator.
+  const scaledKg = shipment.scaledQty && shipment.scaledQty > 0
+    ? Math.round(shipment.scaledQty * 1000).toLocaleString()
+    : '';
+  row('Gross Weight (kg):', scaledKg);
   row('Tare Weight:', '');
-  row('Net Weight (kg):', '');
+  row('Net Weight (kg):', scaledKg);
   row('Goods Ordered:', order?.product || shipment.product || '');
   row('Item Code:', '');
   row('Notes:', '');
