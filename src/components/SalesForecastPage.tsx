@@ -903,6 +903,12 @@ export default function SalesForecastPage({
       if (!s.qty || s.qty <= 0 || !s.customer || !s.product || !inWindow(s.date)) continue;
       // A cancelled/void shipment never moved product — don't seed a forecast row.
       if (!isCountableShipment(s)) continue;
+      // Only shipments that ACTUALLY MOVED product are history. Scheduler rows
+      // ('Scheduled', 'Confirmed', …) are pipeline — often placeholder products
+      // ('Bulk') or pre-booked slots — and counting them seeded forecast lines
+      // for products the customer never bought.
+      const shipSt = (s.status || '').trim().toLowerCase();
+      if (!/complet|shipped|billed/.test(shipSt)) continue;
       // Same phantom guard as invoices: a comma-joined mixed-load product string
       // is not a real product, so don't seed a forecast line from it.
       if (s.product.includes(',')) continue;
