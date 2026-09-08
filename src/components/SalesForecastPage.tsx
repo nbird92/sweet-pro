@@ -390,15 +390,14 @@ export default function SalesForecastPage({
    *  key as the forecast row it should fill. */
   const actualsLocation = (customerName: string, productName: string, invLocation?: string): string => {
     if (invLocation && invLocation.trim()) return invLocation;
-    // Resolve the catalog/default fallback using the CANONICAL product name and a
-    // case-insensitive customer match — identical to how the auto-populate line
-    // builder locates a blank-location row — so the actuals key and the forecast
-    // row land on the same location when the source transaction carried none.
-    const cName = canonProduct(productName);
-    const qaProd = qaProducts.find((p) => p.skuName === cName);
-    const skuProd = skus.find((s) => s.name === cName);
+    // Resolve the catalog/default fallback through catalogEntry (the app's real
+    // resolver) — identical to how the auto-populate line builder locates a
+    // blank-location row — so the actuals key and the forecast row land on the
+    // same location when the source transaction carried none. (Almost every
+    // invoice stores NO location, so this fallback is the common path.)
+    const hit = catalogEntry(productName);
     const cust = customers.find((c) => custKey(c.name) === custKey(customerName));
-    return qaProd?.location || skuProd?.location || cust?.defaultLocation || '';
+    return hit?.qa?.location || hit?.sku?.location || cust?.defaultLocation || '';
   };
 
   /** Add an invoice's actual MT to `map` under
@@ -979,10 +978,11 @@ export default function SalesForecastPage({
         const rounded = Math.round(monthlyAvg);
 
         // Location resolved from the transaction; product catalog is only the
-        // fallback when the source row carried no location.
-        const qaProd = qaProducts.find((p) => p.skuName === productName);
-        const skuProd = skus.find((s) => s.name === productName);
-        const prodLocation = location || resolveLocName(qaProd?.location || skuProd?.location || cust.defaultLocation);
+        // fallback when the source row carried no location. Resolve through
+        // catalogEntry — productName is a canonical shortform here, which never
+        // equals a raw skuName/SKU.name (those are format-only, e.g. 'Bulk').
+        const hit = catalogEntry(productName);
+        const prodLocation = location || resolveLocName(hit?.qa?.location || hit?.sku?.location || cust.defaultLocation);
         // A closed plant gets NO future forecast — but its HISTORY must still
         // display, and the grid can only show actuals inside a row. So the row
         // is kept with all-zero forecast values: past periods render the real
@@ -1460,8 +1460,8 @@ export default function SalesForecastPage({
               render: (cf) => getAnnualWithActuals(cf).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             },
             {
-              key: 'delete', label: '', sortable: false, align: 'right',
-              render: (cf) => cf.lines.length > 0 ? (
+              key: 'delete', label: 'Actions', sortable: false, align: 'right',
+              render: (cf) => (
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDeleteForecast(cf.customerId); }}
                   className="p-1.5 text-red-500 hover:bg-red-50 transition-colors"
@@ -1469,7 +1469,7 @@ export default function SalesForecastPage({
                 >
                   <Trash2 size={13} />
                 </button>
-              ) : null,
+              ),
             },
           ]}
           rows={sortedCustomerForecasts}
