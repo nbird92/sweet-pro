@@ -22946,7 +22946,7 @@ export default function App() {
           </div>
         )}
 
-        {editingCustomer && !getModalState('customer').minimized && (
+        {editingCustomer && (
           <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -22958,7 +22958,6 @@ export default function App() {
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Customer: {editingCustomer.customerNumber || editingCustomer.id}</h3>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setModalMinimized('customer', true)} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
                   <button onClick={() => setModalMaximized('customer', !getModalState('customer').maximized)} className="p-1 hover:bg-white/20 transition-colors" title={getModalState('customer').maximized ? 'Restore' : 'Maximize'}>{getModalState('customer').maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
                   <button onClick={() => { setEditingCustomer(null); resetModalState('customer'); }} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
