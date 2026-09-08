@@ -954,6 +954,35 @@ export default function SalesForecastPage({
 
     const numMonths = LOOKBACK_MONTHS;
 
+    // HISTORY pairs from the SELECTED FISCAL YEAR's invoices — every
+    // customer|product|location invoiced in the year, ANY location (inactive
+    // plants included). Pairs outside the 12-month averaging window (or too
+    // small to earn a forecast) still get a ZERO-value row, so all invoiced
+    // history in the year displays in the grid's past periods.
+    const fyPairs = new Map<string, Map<string, { productName: string; location: string }>>();
+    for (const inv of invoices) {
+      if (!inv.customer || !isCountableInvoice(inv)) continue;
+      const d = inv.date;
+      if (!d || d < selectedFY.startDate || d > selectedFY.endDate) continue;
+      const push = (rawProduct: string) => {
+        const ck = custKey(inv.customer);
+        if (!ck) return;
+        const cName = canonProduct(rawProduct);
+        if (!cName) return;
+        // Same location resolution the actuals overlay uses, so the zero row
+        // lands exactly where the actuals key will look for it.
+        const loc = resolveLocName(actualsLocation(inv.customer, rawProduct, inv.location));
+        const key = `${cName}||${locCanon(loc)}`;
+        if (!fyPairs.has(ck)) fyPairs.set(ck, new Map());
+        if (!fyPairs.get(ck)!.has(key)) fyPairs.get(ck)!.set(key, { productName: cName, location: loc });
+      };
+      if (inv.lineItems?.length) {
+        for (const li of inv.lineItems) if (li.productName && li.totalWeight > 0) push(li.productName);
+      } else if (inv.qty > 0 && inv.product && !inv.product.includes(',')) {
+        push(inv.product);
+      }
+    }
+
     // Build forecast entries for each customer. This is an AUTHORITATIVE rebuild:
     // for every customer with recent purchases we REPLACE their forecast with
     // exactly the products they actually bought (one row per product+location), so
@@ -963,8 +992,9 @@ export default function SalesForecastPage({
     const updatedForecasts = [...customerForecasts];
 
     for (const cust of customers) {
-      const prodMap = salesMap.get(custKey(cust.name));
-      if (!prodMap || prodMap.size === 0) continue;
+      const prodMap = salesMap.get(custKey(cust.name)) || new Map<string, { productName: string; location: string; qty: number }>();
+      const historyPairs = fyPairs.get(custKey(cust.name));
+      if (prodMap.size === 0 && !(historyPairs && historyPairs.size > 0)) continue;
 
       const existingIdx = updatedForecasts.findIndex(
         (cf) => cf.customerId === cust.id && cf.fiscalYearId === selectedFY.id && cf.type === forecastType
@@ -1006,6 +1036,24 @@ export default function SalesForecastPage({
           location: prodLocation,
           entries,
         });
+      }
+
+      // Zero-value rows for every in-FY invoiced pair not already covered by a
+      // forecast line — so the grid shows ALL of the year's invoiced history
+      // (inactive plants included) even when the pair earned no forward forecast.
+      if (historyPairs) {
+        const have = new Set(lines.map(l => `${canonProduct(l.productName)}||${locCanon(l.location)}`));
+        for (const p of historyPairs.values()) {
+          const k = `${p.productName}||${locCanon(p.location)}`;
+          if (have.has(k)) continue;
+          have.add(k);
+          lines.push({
+            id: generateId('CFL'),
+            productName: p.productName,
+            location: p.location,
+            entries: Array.from({ length: 12 }, (_, m) => ({ periodIndex: m, value: 0 })),
+          });
+        }
       }
 
       // Collapse any rows that resolved to the SAME product+location — e.g. a
