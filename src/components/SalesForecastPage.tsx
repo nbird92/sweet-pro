@@ -943,23 +943,28 @@ export default function SalesForecastPage({
         const monthlyAvg = qty / numMonths;
         // Forecasts are whole MT — round the monthly average to the nearest integer.
         const rounded = Math.round(monthlyAvg);
-        // A pair whose monthly average rounds to 0 has no meaningful recent
-        // demand — emit no line at all rather than a row of zeros.
-        if (rounded <= 0) continue;
-
-        const entries: ForecastEntry[] = [];
-        for (let m = 0; m < 12; m++) {
-          entries.push({ periodIndex: m, value: rounded });
-        }
 
         // Location resolved from the transaction; product catalog is only the
         // fallback when the source row carried no location.
         const qaProd = qaProducts.find((p) => p.skuName === productName);
         const skuProd = skus.find((s) => s.name === productName);
         const prodLocation = location || resolveLocName(qaProd?.location || skuProd?.location || cust.defaultLocation);
-        // Never seed a FUTURE forecast line at a closed plant — history at an
-        // inactive location is not future demand there.
-        if (isInactiveLoc(prodLocation)) continue;
+        // A closed plant gets NO future forecast — but its HISTORY must still
+        // display, and the grid can only show actuals inside a row. So the row
+        // is kept with all-zero forecast values: past periods render the real
+        // invoiced actuals, future periods forecast nothing, and the product /
+        // group / tolling tables already exclude inactive locations.
+        const inactive = isInactiveLoc(prodLocation);
+        // A pair whose monthly average rounds to 0 has no meaningful recent
+        // demand — emit no line at all rather than a row of zeros (unless the
+        // row exists purely to carry inactive-location history).
+        if (rounded <= 0 && !inactive) continue;
+        const perMonth = inactive ? 0 : rounded;
+
+        const entries: ForecastEntry[] = [];
+        for (let m = 0; m < 12; m++) {
+          entries.push({ periodIndex: m, value: perMonth });
+        }
 
         lines.push({
           id: generateId('CFL'),
