@@ -53,6 +53,12 @@ interface SalesForecastPageProps {
    *  needs). Without this the product tables can only print the raw stored string,
    *  which is the long "Product Description", not the short code shown elsewhere. */
   productToShortform?: (name: string | undefined) => string;
+  /** The app's FULL product resolver (App.tsx resolveProduct): resolves any name
+   *  form — shortform codes ("GC100", "LC325X"), long descriptions, naming-formula
+   *  renderings — to the catalog SKU/QA record. Required for real matching here:
+   *  raw SKU names are just the format ("Bulk"/"Bag"/"Tote"), so name equality
+   *  alone can never identify a product. */
+  resolveCatalogProduct?: (name: string) => { sku: SKU | null; qa: QAProduct | null };
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -147,6 +153,7 @@ export default function SalesForecastPage({
   invoices,
   orders,
   shipments,
+  resolveCatalogProduct,
   tollingFees,
   productToShortform,
 }: SalesForecastPageProps) {
@@ -281,15 +288,35 @@ export default function SalesForecastPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skus, qaProducts, productToShortform]);
 
+  // Memoized per-name resolution cache — resolveCatalogProduct walks naming
+  // formulas, so each unique name resolves once per catalog change.
+  const resolveCache = useMemo(
+    () => new Map<string, { sku: SKU | null; qa: QAProduct | null } | null>(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [skus, qaProducts, resolveCatalogProduct]
+  );
   const catalogEntry = useCallback(
     (productName: string): { sku: SKU | null; qa: QAProduct | null } | null => {
       const n = catalogIndex.norm(productName);
       if (!n) return null;
-      const sku = catalogIndex.bySku.get(n) || catalogIndex.byShortSku.get(n) || null;
-      const qa = catalogIndex.byQa.get(n) || catalogIndex.byShortQa.get(n) || null;
-      return (sku || qa) ? { sku, qa } : null;
+      const hit = resolveCache.get(n);
+      if (hit !== undefined) return hit;
+      let out: { sku: SKU | null; qa: QAProduct | null } | null = null;
+      // The app's full resolver FIRST — it disambiguates properly (SKU names are
+      // format-only, so the exact-name maps below collide on "Bulk"/"Tote").
+      if (resolveCatalogProduct) {
+        const r = resolveCatalogProduct(productName);
+        if (r && (r.sku || r.qa)) out = { sku: r.sku || null, qa: r.qa || null };
+      }
+      if (!out) {
+        const sku = catalogIndex.bySku.get(n) || catalogIndex.byShortSku.get(n) || null;
+        const qa = catalogIndex.byQa.get(n) || catalogIndex.byShortQa.get(n) || null;
+        if (sku || qa) out = { sku, qa };
+      }
+      resolveCache.set(n, out);
+      return out;
     },
-    [catalogIndex]
+    [catalogIndex, resolveCache, resolveCatalogProduct]
   );
 
   /** Canonical product identity for a raw product name: resolve to the catalog
@@ -304,9 +331,14 @@ export default function SalesForecastPage({
       const raw = (name || '').trim();
       if (!raw) return '';
       const hit = catalogEntry(raw);
-      return hit?.sku?.name || hit?.qa?.skuName || raw;
+      if (!hit) return raw;
+      // Canonical identity is the SHORTFORM ("GC100", "LC325") — unique per real
+      // product. Raw SKU/QA names are format-only ("Bulk"/"Tote"), so using them
+      // here collapsed every bulk product into one identity.
+      const sf = productToShortform ? (productToShortform(raw) || '').trim() : '';
+      return sf || hit.sku?.name || hit.qa?.skuName || raw;
     },
-    [catalogEntry]
+    [catalogEntry, productToShortform]
   );
 
   /** Canonical customer key — trims and lowercases so an invoice's customer string
@@ -462,18 +494,20 @@ export default function SalesForecastPage({
         if (!catalogEntry(line.productName)) continue;
         // Future forecasts never include volume at a closed plant.
         if (isInactiveLoc(line.location)) continue;
-        const key = `${line.productName}|${line.location}`;
+        // Canonical (shortform) identity so name variants merge onto one row.
+        const cName = canonProduct(line.productName);
+        const key = `${cName}|${line.location}`;
         const existing = map.get(key);
         const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
         if (existing) {
           existing.annual += lineTotal;
         } else {
-          map.set(key, { productName: line.productName, location: line.location, annual: lineTotal });
+          map.set(key, { productName: cName, location: line.location, annual: lineTotal });
         }
       }
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [mergedForecasts, catalogEntry, isInactiveLoc]);
+  }, [mergedForecasts, catalogEntry, canonProduct, isInactiveLoc]);
 
   // ── Forecast by Product Group (rollup of the product rows) ──────────────
   // Rolls up by group AND location: the rollup used to key on group alone, which
@@ -1370,8 +1404,22 @@ export default function SalesForecastPage({
           </div>
         )}
 
-        {/* Auto-Populate Button */}
-        <div className="mt-5 ml-auto">
+        {/* Auto-Populate + Clear All */}
+        <div className="mt-5 ml-auto flex items-center gap-2">
+          <button
+            onClick={() => {
+              if (!selectedFY) return;
+              if (!confirm(`Delete ALL ${typeLabel.toLowerCase()} data for EVERY customer in ${selectedFY.name}? This clears the slate — use Auto-Populate afterwards to rebuild from invoices and orders.`)) return;
+              onUpdateCustomerForecasts(customerForecasts.filter(
+                (cf) => !(cf.fiscalYearId === selectedFY.id && cf.type === forecastType)
+              ));
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 border border-red-500 text-red-600 text-xs font-bold uppercase tracking-widest hover:bg-red-500 hover:text-white transition-colors"
+            title={`Delete every customer's ${typeLabel.toLowerCase()} for this fiscal year to start fresh`}
+          >
+            <Eraser size={14} />
+            Clear All {typeLabel}s
+          </button>
           <button
             onClick={handleAutoPopulate}
             className="flex items-center gap-1.5 px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors shadow-[2px_2px_0px_0px_rgba(20,20,20,0.3)]"
@@ -1410,6 +1458,18 @@ export default function SalesForecastPage({
               key: 'annual', label: `Annual ${typeLabel} (MT)`, align: 'right', mono: true, bold: true,
               sortValue: (cf) => getAnnualWithActuals(cf),
               render: (cf) => getAnnualWithActuals(cf).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+            {
+              key: 'delete', label: '', sortable: false, align: 'right',
+              render: (cf) => cf.lines.length > 0 ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDeleteForecast(cf.customerId); }}
+                  className="p-1.5 text-red-500 hover:bg-red-50 transition-colors"
+                  title={`Delete this customer's ${typeLabel.toLowerCase()}`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              ) : null,
             },
           ]}
           rows={sortedCustomerForecasts}
