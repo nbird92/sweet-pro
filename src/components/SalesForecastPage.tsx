@@ -485,9 +485,21 @@ export default function SalesForecastPage({
   );
 
   // ── Product Forecast Table data ─────────────────────────────────────────
+  // FORWARD-LOOKING ONLY: a forecast is future demand, so entries in periods
+  // that have already elapsed (whose values the grid replaces with actuals) do
+  // not count. Only the current period onward is summed.
+  const futurePeriodFrom = useCallback((isWeekly: boolean): number => {
+    if (!selectedFY) return 0;
+    if (TODAY_ISO < selectedFY.startDate) return 0;                       // whole FY is ahead
+    if (TODAY_ISO > selectedFY.endDate) return Number.MAX_SAFE_INTEGER;   // whole FY is history
+    const idx = isWeekly ? weekIndexForDate(TODAY_ISO, selectedFY.startDate) : periodIndexForDate(TODAY_ISO, selectedFY.periods);
+    return idx < 0 ? 0 : idx;
+  }, [selectedFY]);
+
   const productForecastRows = useMemo(() => {
     const map = new Map<string, { productName: string; location: string; annual: number }>();
     for (const cf of mergedForecasts) {
+      const fromIdx = futurePeriodFrom((cf.viewMode || 'Monthly') === 'Weekly');
       for (const line of cf.lines) {
         // Include anything resolvable in EITHER catalog (SKU or QA product).
         if (!catalogEntry(line.productName)) continue;
@@ -497,7 +509,7 @@ export default function SalesForecastPage({
         const cName = canonProduct(line.productName);
         const key = `${cName}|${line.location}`;
         const existing = map.get(key);
-        const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
+        const lineTotal = line.entries.reduce((s, e) => s + (e.periodIndex >= fromIdx ? e.value : 0), 0);
         if (existing) {
           existing.annual += lineTotal;
         } else {
@@ -506,7 +518,7 @@ export default function SalesForecastPage({
       }
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [mergedForecasts, catalogEntry, canonProduct, isInactiveLoc]);
+  }, [mergedForecasts, catalogEntry, canonProduct, isInactiveLoc, futurePeriodFrom]);
 
   // ── Forecast by Product Group (rollup of the product rows) ──────────────
   // Rolls up by group AND location: the rollup used to key on group alone, which
@@ -544,12 +556,14 @@ export default function SalesForecastPage({
       || tollingFees.find(t => norm(t.productGroup) === norm(group));
     const map = new Map<string, { group: string; location: string; mt: number }>();
     for (const cf of mergedForecasts) {
+      const fromIdx = futurePeriodFrom((cf.viewMode || 'Monthly') === 'Weekly');
       for (const line of cf.lines) {
         if (!catalogEntry(line.productName)) continue;
         if (isInactiveLoc(line.location)) continue; // no tolling forecast at closed plants
         const g = groupOf(line.productName);
         const key = `${g}|${line.location}`;
-        const mt = line.entries.reduce((s, e) => s + e.value, 0);
+        // Forward-looking only — elapsed periods are history, not forecast.
+        const mt = line.entries.reduce((s, e) => s + (e.periodIndex >= fromIdx ? e.value : 0), 0);
         const cur = map.get(key) || { group: g, location: line.location, mt: 0 };
         cur.mt += mt;
         map.set(key, cur);
@@ -563,7 +577,7 @@ export default function SalesForecastPage({
       const tax = net * (taxRate / 100);
       return { ...r, rate, net, tax, total: net + tax, currency: fee?.currency || '' };
     }).sort((a, b) => b.total - a.total);
-  }, [mergedForecasts, skus, qaProducts, tollingFees, catalogEntry, groupOf, isInactiveLoc]);
+  }, [mergedForecasts, skus, qaProducts, tollingFees, catalogEntry, groupOf, isInactiveLoc, futurePeriodFrom]);
 
   // ── Packaging material needs from forecast (BOM × forecast units) ──────────
   // For each forecast product, convert forecast MT → selling units via the QA
