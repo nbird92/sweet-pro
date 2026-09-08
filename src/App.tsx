@@ -23398,7 +23398,7 @@ export default function App() {
                           setStRules({ defaultProducts: stProducts.map((p, i) => i === idx ? { ...p, ...patch } : p) });
                         return (
                           <div className="border border-violet-300 bg-violet-50/60 p-3 space-y-2">
-                            <div className="text-[10px] uppercase font-bold text-violet-800">Email Import Rule for this location <span className="normal-case font-normal opacity-70">— overrides the customer-level rule when a scanned PO ships here</span></div>
+                            <div className="text-[10px] uppercase font-bold text-violet-800">Email Import Rule for this location <span className="normal-case font-normal opacity-70">— applied when a scanned PO ships here</span></div>
                             {stProducts.map((p, idx) => (
                               <div key={idx} className="grid grid-cols-[110px_minmax(0,1fr)_auto] gap-2 items-center">
                                 <select value={p.sugarForm} onChange={(e) => setStProductAt(idx, { sugarForm: e.target.value })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
@@ -23475,98 +23475,7 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Email Import Rules — explicit defaults the PO scanner applies
-                    for this customer (most customers order the same product to
-                    the same place on every PO). */}
-                {(() => {
-                  const rules = editingCustomer.importRules || {};
-                  const setRules = (patch: Partial<CustomerImportRules>) =>
-                    setEditingCustomer({ ...editingCustomer, importRules: { ...rules, ...patch, updatedAt: new Date().toISOString() } });
-                  const ruleProductOptions = buildOrderProductOptions(undefined, { selectableOnly: true });
-                  const products = rules.defaultProducts || [];
-                  const setProductAt = (idx: number, patch: Partial<{ sugarForm: any; productValue: string; productKey: string }>) =>
-                    setRules({ defaultProducts: products.map((p, i) => i === idx ? { ...p, ...patch } : p) });
-                  return (
-                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 flex items-center justify-between">
-                        <span>Email Import Rules — what this customer usually orders</span>
-                        <label className="flex items-center gap-1.5 normal-case font-bold text-[10px] cursor-pointer" title="Off: rules fill blanks and settle uncertain matches. On: rules override the scanner's fuzzy guesses (never text explicitly printed on the PO).">
-                          <input type="checkbox" checked={!!rules.alwaysApply} onChange={(e) => setRules({ alwaysApply: e.target.checked || undefined })} className="w-3.5 h-3.5" />
-                          Always apply
-                        </label>
-                      </div>
-                      <p className="text-[10px] opacity-50">The email PO importer uses these before any guessing: default product (per sugar form), shipping origin, and ship-to site. Carrier and currency defaults above already act as import rules.</p>
-                      {products.map((p, idx) => (
-                        <div key={idx} className="grid grid-cols-[110px_1fr_auto] gap-2 items-center">
-                          <select value={p.sugarForm} onChange={(e) => setProductAt(idx, { sugarForm: e.target.value })} className="bg-white border border-[#141414] p-2 text-xs outline-none">
-                            <option value="">Any form</option>
-                            <option value="liquid">Liquid</option>
-                            <option value="granulated">Granulated</option>
-                            <option value="brown">Brown</option>
-                            <option value="yellow">Yellow</option>
-                            <option value="icing">Icing</option>
-                            <option value="molasses">Molasses</option>
-                          </select>
-                          <select
-                            value={p.productKey}
-                            onChange={(e) => {
-                              const opt = ruleProductOptions.find(o => o.key === e.target.value);
-                              setProductAt(idx, { productKey: e.target.value, productValue: opt?.value || '' });
-                            }}
-                            className="bg-white border border-[#141414] p-2 text-xs outline-none"
-                          >
-                            <option value="">— Select product —</option>
-                            {ruleProductOptions.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
-                          </select>
-                          <button type="button" onClick={() => setRules({ defaultProducts: products.filter((_, i) => i !== idx) })} className="p-1.5 text-red-500 hover:bg-red-50 transition-colors" title="Remove rule"><X size={12} /></button>
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => setRules({ defaultProducts: [...products, { sugarForm: '', productValue: '', productKey: '' }] })} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1"><Plus size={11} /> Default product</button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            // Suggest a default product from THIS customer's order/invoice
-                            // history — only when one product truly dominates (>=90%
-                            // share, >=5 records), and never silently: it fills the form
-                            // for the operator to confirm with Save.
-                            const aff = customerProductAffinity(editingCustomer);
-                            let total = 0; let bestKey = ''; let bestW = 0;
-                            aff.keys.forEach((w, k) => { total += w; if (w > bestW) { bestW = w; bestKey = k; } });
-                            const opt = bestKey ? ruleProductOptions.find(o => o.key === bestKey) : undefined;
-                            if (!opt || total < 5 || bestW / total < 0.9) {
-                              alert(total === 0
-                                ? 'No order/invoice history found for this customer.'
-                                : 'No single product dominates this customer\'s history (needs ≥90% of ≥5 records) — set the default manually.');
-                              return;
-                            }
-                            setRules({ defaultProducts: [{ sugarForm: '', productValue: opt.value, productKey: opt.key }] });
-                          }}
-                          className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-white transition-colors"
-                          title="Looks at this customer's past orders/invoices; fills the default product only when one product accounts for ≥90% of ≥5 records."
-                        >
-                          Suggest from history
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase font-bold opacity-50">Default Origin (ships from)</label>
-                          <select value={rules.defaultOrigin || ''} onChange={(e) => setRules({ defaultOrigin: e.target.value || undefined })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
-                            <option value="">—</option>
-                            {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] uppercase font-bold opacity-50">Default Ship-To</label>
-                          <select value={rules.defaultShipToId || ''} onChange={(e) => setRules({ defaultShipToId: e.target.value || undefined })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" disabled={!(editingCustomer.shipToLocations || []).length}>
-                            <option value="">{(editingCustomer.shipToLocations || []).length ? '—' : 'no ship-to sites yet'}</option>
-                            {(editingCustomer.shipToLocations || []).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
+                {/* Customer-level email import rules removed — rules live on each ship-to location (see the Ship-To Locations table above). */}
 
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
