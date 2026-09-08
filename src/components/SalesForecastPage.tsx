@@ -261,15 +261,32 @@ export default function SalesForecastPage({
     const byQa = new Map<string, QAProduct>();
     for (const s of skus) if (s.name) bySku.set(norm(s.name), s);
     for (const q of qaProducts) if (q.skuName) byQa.set(norm(q.skuName), q);
-    return { norm, bySku, byQa };
-  }, [skus, qaProducts]);
+    // SHORTFORM index: forecast lines frequently store the short code ("LC325",
+    // "GC100") rather than the catalog's stored name, and the exact-name lookup
+    // alone silently dropped every such line from the product tables (which is
+    // why only literally-named products like MOL / 1000kg GC100 appeared).
+    const byShortSku = new Map<string, SKU>();
+    const byShortQa = new Map<string, QAProduct>();
+    if (productToShortform) {
+      for (const s of skus) {
+        const sf = norm(productToShortform(s.name));
+        if (sf && sf !== norm(s.name) && !byShortSku.has(sf)) byShortSku.set(sf, s);
+      }
+      for (const q of qaProducts) {
+        const sf = norm(productToShortform(q.skuName));
+        if (sf && sf !== norm(q.skuName) && !byShortQa.has(sf)) byShortQa.set(sf, q);
+      }
+    }
+    return { norm, bySku, byQa, byShortSku, byShortQa };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skus, qaProducts, productToShortform]);
 
   const catalogEntry = useCallback(
     (productName: string): { sku: SKU | null; qa: QAProduct | null } | null => {
       const n = catalogIndex.norm(productName);
       if (!n) return null;
-      const sku = catalogIndex.bySku.get(n) || null;
-      const qa = catalogIndex.byQa.get(n) || null;
+      const sku = catalogIndex.bySku.get(n) || catalogIndex.byShortSku.get(n) || null;
+      const qa = catalogIndex.byQa.get(n) || catalogIndex.byShortQa.get(n) || null;
       return (sku || qa) ? { sku, qa } : null;
     },
     [catalogIndex]
@@ -443,6 +460,8 @@ export default function SalesForecastPage({
       for (const line of cf.lines) {
         // Include anything resolvable in EITHER catalog (SKU or QA product).
         if (!catalogEntry(line.productName)) continue;
+        // Future forecasts never include volume at a closed plant.
+        if (isInactiveLoc(line.location)) continue;
         const key = `${line.productName}|${line.location}`;
         const existing = map.get(key);
         const lineTotal = line.entries.reduce((s, e) => s + e.value, 0);
@@ -454,7 +473,7 @@ export default function SalesForecastPage({
       }
     }
     return Array.from(map.values()).sort((a, b) => a.productName.localeCompare(b.productName));
-  }, [mergedForecasts, catalogEntry]);
+  }, [mergedForecasts, catalogEntry, isInactiveLoc]);
 
   // ── Forecast by Product Group (rollup of the product rows) ──────────────
   // Rolls up by group AND location: the rollup used to key on group alone, which
@@ -494,6 +513,7 @@ export default function SalesForecastPage({
     for (const cf of mergedForecasts) {
       for (const line of cf.lines) {
         if (!catalogEntry(line.productName)) continue;
+        if (isInactiveLoc(line.location)) continue; // no tolling forecast at closed plants
         const g = groupOf(line.productName);
         const key = `${g}|${line.location}`;
         const mt = line.entries.reduce((s, e) => s + e.value, 0);
@@ -510,7 +530,7 @@ export default function SalesForecastPage({
       const tax = net * (taxRate / 100);
       return { ...r, rate, net, tax, total: net + tax, currency: fee?.currency || '' };
     }).sort((a, b) => b.total - a.total);
-  }, [mergedForecasts, skus, qaProducts, tollingFees]);
+  }, [mergedForecasts, skus, qaProducts, tollingFees, catalogEntry, groupOf, isInactiveLoc]);
 
   // ── Packaging material needs from forecast (BOM × forecast units) ──────────
   // For each forecast product, convert forecast MT → selling units via the QA
@@ -580,21 +600,19 @@ export default function SalesForecastPage({
         return { name: cf.customerName, values, total };
       });
     } else {
-      // Aggregate by product: sum across all customers for each product
-      const skuNames = new Set(skus.map(s => s.name));
+      // Aggregate by product: sum across all customers for each product.
+      // Resolve line names through catalogEntry (exact OR shortform) so
+      // shortform-named lines aren't silently dropped; skip closed plants.
       const productMap = new Map<string, number[]>();
-
-      for (const sku of skus) {
-        if (!productMap.has(sku.name)) {
-          productMap.set(sku.name, new Array(count).fill(0) as number[]);
-        }
-      }
 
       for (const cf of mergedForecasts) {
         for (const line of cf.lines) {
-          if (!skuNames.has(line.productName)) continue;
-          const values = productMap.get(line.productName);
-          if (!values) continue;
+          const hit = catalogEntry(line.productName);
+          if (!hit) continue;
+          if (isInactiveLoc(line.location)) continue;
+          const cname = hit.sku?.name || hit.qa?.skuName || line.productName;
+          let values = productMap.get(cname);
+          if (!values) { values = new Array(count).fill(0) as number[]; productMap.set(cname, values); }
           for (const entry of line.entries) {
             if (entry.periodIndex >= 0 && entry.periodIndex < count) {
               values[entry.periodIndex] += entry.value;
@@ -611,7 +629,7 @@ export default function SalesForecastPage({
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
     }
-  }, [mergedForecasts, periodAggregateMode, periodViewMode, selectedFY, skus]);
+  }, [mergedForecasts, periodAggregateMode, periodViewMode, selectedFY, skus, catalogEntry, isInactiveLoc]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -931,6 +949,9 @@ export default function SalesForecastPage({
         const qaProd = qaProducts.find((p) => p.skuName === productName);
         const skuProd = skus.find((s) => s.name === productName);
         const prodLocation = location || resolveLocName(qaProd?.location || skuProd?.location || cust.defaultLocation);
+        // Never seed a FUTURE forecast line at a closed plant — history at an
+        // inactive location is not future demand there.
+        if (isInactiveLoc(prodLocation)) continue;
 
         lines.push({
           id: generateId('CFL'),
