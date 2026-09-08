@@ -895,26 +895,28 @@ export default function SalesForecastPage({
       }
     }
 
-    // 2. Shipments that were never billed (no invoice carries that BOL) — i.e.
-    //    shipped but not yet invoiced. ORDERS are deliberately not ingested: an
-    //    Open order is pipeline rather than history, and a Completed one is already
-    //    counted through its invoice — the old code ingested both and double-counted.
-    for (const s of shipments) {
-      if (!s.qty || s.qty <= 0 || !s.customer || !s.product || !inWindow(s.date)) continue;
-      // A cancelled/void shipment never moved product — don't seed a forecast row.
-      if (!isCountableShipment(s)) continue;
-      // Only shipments that ACTUALLY MOVED product are history. Scheduler rows
-      // ('Scheduled', 'Confirmed', …) are pipeline — often placeholder products
-      // ('Bulk') or pre-booked slots — and counting them seeded forecast lines
-      // for products the customer never bought.
-      const shipSt = (s.status || '').trim().toLowerCase();
-      if (!/complet|shipped|billed/.test(shipSt)) continue;
-      // Same phantom guard as invoices: a comma-joined mixed-load product string
-      // is not a real product, so don't seed a forecast line from it.
-      if (s.product.includes(',')) continue;
-      const bol = (s.bol || '').trim();
+    // 2. ORDERS whose BOL was never invoiced — the confirmed order book (real
+    //    products the customer actually ordered). Invoices stay authoritative
+    //    for billed history; an order whose BOL already appears on an invoice is
+    //    skipped so nothing double-counts. Cancelled orders never seed a row.
+    //    Shipments are deliberately NOT ingested: scheduler rows carry
+    //    placeholder products ('Bulk', pre-booked slots) that seeded forecast
+    //    lines for products the customer never bought.
+    for (const o of orders) {
+      if (!o.customer) continue;
+      const oDate = o.shipmentDate || o.date;
+      if (!inWindow(oDate)) continue;
+      const st = (o.status || '').trim().toLowerCase();
+      if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
+      const bol = (o.bolNumber || '').trim();
       if (bol && invoicedBols.has(bol)) continue;
-      addToMap(s.customer, s.product, s.location || '', s.qty);
+      // Orders carry their real per-product weights on line items; an order
+      // without any has no weight to seed.
+      for (const li of o.lineItems || []) {
+        if (li.productName && li.totalWeight > 0) {
+          addToMap(o.customer, li.productName, o.location || '', li.totalWeight);
+        }
+      }
     }
 
     const numMonths = LOOKBACK_MONTHS;
@@ -1009,7 +1011,7 @@ export default function SalesForecastPage({
     }
 
     onUpdateCustomerForecasts(updatedForecasts);
-  }, [selectedFY, customers, customerForecasts, forecastType, invoices, shipments, qaProducts, skus, canonProduct, custKey, locCanon, resolveLocName, dedupeLines, isCountableInvoice, isCountableShipment, onUpdateCustomerForecasts]);
+  }, [selectedFY, customers, customerForecasts, forecastType, invoices, orders, qaProducts, skus, canonProduct, custKey, locCanon, resolveLocName, dedupeLines, isCountableInvoice, isInactiveLoc, onUpdateCustomerForecasts]);
 
   // ── Available products for adding ───────────────────────────────────────
   // Feeds the "Add Product" picker. Includes every catalog product PLUS every
@@ -1049,11 +1051,11 @@ export default function SalesForecastPage({
         add(inv.product, inv.location || '');
       }
     }
-    for (const s of shipments) {
-      if (s.product && !s.product.includes(',')) add(s.product, s.location || '');
+    for (const o of orders) {
+      for (const li of o.lineItems || []) if (li.productName) add(li.productName, o.location || '');
     }
     return prods.sort((a, b) => a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
-  }, [qaProducts, skus, invoices, shipments, canonProduct, resolveLocName, locCanon, isInactiveLoc]);
+  }, [qaProducts, skus, invoices, orders, canonProduct, resolveLocName, locCanon, isInactiveLoc]);
 
   const filteredAvailableProducts = useMemo(() => {
     let filtered = availableProducts;
@@ -1368,7 +1370,7 @@ export default function SalesForecastPage({
           <button
             onClick={handleAutoPopulate}
             className="flex items-center gap-1.5 px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors shadow-[2px_2px_0px_0px_rgba(20,20,20,0.3)]"
-            title="Auto-populate forecast from current invoices, orders, and shipments using monthly averages × 12"
+            title="Auto-populate forecast from invoiced sales and un-invoiced orders using monthly averages × 12"
           >
             <BarChart3 size={14} />
             Auto-Populate {typeLabel}
