@@ -543,7 +543,9 @@ export default function App() {
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
   // Line items & contracts for the transfer modals (same pattern as orders).
   const [transferLineItems, setTransferLineItems] = useState<OrderLineItem[]>([]);
-  const [transferLineDraft, setTransferLineDraft] = useState<{ productKey: string; productValue: string; productLabel: string; qtyMt: number; contractNumber: string }>({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+  // qtyUnits is a UNIT count (bags/totes; 1 unit = 1 MT for bulk/liquid) —
+  // converted to MT via the product's catalog per-unit weight on commit.
+  const [transferLineDraft, setTransferLineDraft] = useState<{ productKey: string; productValue: string; productLabel: string; qtyUnits: number; contractNumber: string }>({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
   const [editingTransferLineIdx, setEditingTransferLineIdx] = useState<number | null>(null);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
@@ -6041,23 +6043,29 @@ export default function App() {
    *  (outstanding − on order) hard-checked. */
   const commitTransferLineDraft = () => {
     const d = transferLineDraft;
-    if (!d.productValue || !(d.qtyMt > 0)) { setErrorBox('Pick a product and enter a quantity (MT).'); return; }
+    if (!d.productValue || !(d.qtyUnits > 0)) { setErrorBox('Pick a product and enter a quantity (units).'); return; }
+    // Units → MT via the product's catalog per-unit weight (1 MT/unit for
+    // bulk/liquid products without one) — same convention as order lines.
+    const unitSku = skus.find(s => s.name === d.productValue);
+    const unitQa = qaProducts.find(q => q.skuName === d.productValue);
+    const perUnitKg = (unitSku?.netWeightKg || unitSku?.netWeight || unitQa?.netWeightKg || 0) || 1000;
+    const qtyMtFromUnits = Math.round(d.qtyUnits * perUnitKg) / 1000;
     const c = d.contractNumber ? contracts.find(k => k.contractNumber === d.contractNumber) : undefined;
     if (d.contractNumber && c) {
       const otherWeight = transferLineItems
         .filter((li, i) => li.contractNumber === d.contractNumber && i !== editingTransferLineIdx)
         .reduce((s, li) => s + (li.totalWeight || 0), 0);
       const available = contractAvailableMt(c) - otherWeight;
-      if (d.qtyMt > available + 1e-6) {
-        setErrorBox(`Not enough volume on contract ${c.contractNumber}: ${Math.max(0, available).toFixed(2)} MT available, but this line requires ${d.qtyMt.toFixed(2)} MT. Reduce the quantity or choose a different contract.`);
+      if (qtyMtFromUnits > available + 1e-6) {
+        setErrorBox(`Not enough volume on contract ${c.contractNumber}: ${Math.max(0, available).toFixed(2)} MT available, but this line requires ${qtyMtFromUnits.toFixed(2)} MT. Reduce the quantity or choose a different contract.`);
         return;
       }
     }
     const price = c ? contractPriceFor(c, d.productLabel || d.productValue) : 0;
-    const li = buildScanLineItem({ productValue: d.productValue, productKey: d.productKey, productLabel: d.productLabel, productRaw: '', productCodeRaw: '', qtyMt: d.qtyMt, pricePerMt: price, contractNumber: d.contractNumber });
+    const li = buildScanLineItem({ productValue: d.productValue, productKey: d.productKey, productLabel: d.productLabel, productRaw: '', productCodeRaw: '', qtyMt: qtyMtFromUnits, pricePerMt: price, contractNumber: d.contractNumber });
     setTransferLineItems(prev => editingTransferLineIdx !== null ? prev.map((x, i) => i === editingTransferLineIdx ? li : x) : [...prev, li]);
     setEditingTransferLineIdx(null);
-    setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+    setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
   };
 
   /** "Line Items & Contracts" section shared by the new/edit transfer modals —
@@ -6074,7 +6082,7 @@ export default function App() {
             <thead className="bg-[#141414] text-[#E4E3E0]">
               <tr className="text-[10px] uppercase font-bold">
                 <th className="p-3">Product</th>
-                <th className="p-3 w-32">Order QTY (MT)</th>
+                <th className="p-3 w-32">Transfer QTY (Units)</th>
                 <th className="p-3 w-52">Contract #</th>
                 <th className="p-3 w-32 text-center">Actions</th>
               </tr>
@@ -6092,7 +6100,7 @@ export default function App() {
                   </select>
                 </td>
                 <td className="p-2">
-                  <input type="text" inputMode="decimal" value={transferLineDraft.qtyMt || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyMt: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
+                  <input type="text" inputMode="decimal" value={transferLineDraft.qtyUnits || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyUnits: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
                 </td>
                 <td className="p-2">
                   <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
@@ -6103,7 +6111,7 @@ export default function App() {
                 <td className="p-2 text-center whitespace-nowrap">
                   <button type="button" onClick={commitTransferLineDraft} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors">{editingTransferLineIdx !== null ? 'Update' : 'Add'}</button>
                   {editingTransferLineIdx !== null && (
-                    <button type="button" onClick={() => { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); }} className="ml-1 px-2 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
+                    <button type="button" onClick={() => { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' }); }} className="ml-1 px-2 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
                   )}
                 </td>
               </tr>
@@ -6115,8 +6123,8 @@ export default function App() {
             <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
               <tr>
                 <th className="p-2 font-bold">Product</th>
-                <th className="p-2 font-bold text-right">Order QTY (units)</th>
-                <th className="p-2 font-bold text-right">Order Weight (MT)</th>
+                <th className="p-2 font-bold text-right">Transfer QTY (Units)</th>
+                <th className="p-2 font-bold text-right">Transfer Weight (MT)</th>
                 <th className="p-2 font-bold">Contract #</th>
                 <th className="p-2 font-bold text-right">$/MT</th>
                 <th className="p-2 font-bold text-right">Amount ($)</th>
@@ -6133,8 +6141,8 @@ export default function App() {
                   <td className="p-2 text-right font-mono">{li.mtAmount ? `$${li.mtAmount.toFixed(2)}` : '—'}</td>
                   <td className="p-2 text-right font-mono font-bold">{li.lineAmount ? `$${li.lineAmount.toFixed(2)}` : '—'}</td>
                   <td className="p-2 text-center whitespace-nowrap">
-                    <button type="button" onClick={() => { setEditingTransferLineIdx(idx); setTransferLineDraft({ productKey: li.productKey || '', productValue: li.productName, productLabel: li.productDisplayName || '', qtyMt: li.totalWeight || 0, contractNumber: li.contractNumber || '' }); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit line"><Pencil size={12} /></button>
-                    <button type="button" onClick={() => { setTransferLineItems(prev => prev.filter((_, i) => i !== idx)); if (editingTransferLineIdx === idx) { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); } }} className="p-1 text-red-500 hover:bg-red-50 transition-colors" title="Remove line"><Trash2 size={12} /></button>
+                    <button type="button" onClick={() => { setEditingTransferLineIdx(idx); setTransferLineDraft({ productKey: li.productKey || '', productValue: li.productName, productLabel: li.productDisplayName || '', qtyUnits: li.qty || 0, contractNumber: li.contractNumber || '' }); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit line"><Pencil size={12} /></button>
+                    <button type="button" onClick={() => { setTransferLineItems(prev => prev.filter((_, i) => i !== idx)); if (editingTransferLineIdx === idx) { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' }); } }} className="p-1 text-red-500 hover:bg-red-50 transition-colors" title="Remove line"><Trash2 size={12} /></button>
                   </td>
                 </tr>
               ))}
@@ -11645,7 +11653,7 @@ export default function App() {
                 setNewTransferLegs([]);
                 setTransferLineItems([]);
                 setEditingTransferLineIdx(null);
-                setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+                setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
                 setIsAddingTransfer(true);
               }}
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
@@ -11795,7 +11803,7 @@ export default function App() {
               setEditingTransfer({ ...orig }); setIsAddingTransfer(false);
               setTransferLineItems(orig.lineItems || []);
               setEditingTransferLineIdx(null);
-              setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+              setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
             }}
             emptyMessage='No transfers yet. Use "New Transfer" to create one.'
             defaultSortKey="transferNumber"
@@ -27536,12 +27544,7 @@ export default function App() {
                         {buildOrderProductOptions(undefined, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
                       </select>
                     </div>
-                    {newTransferLegs.length === 0 && (
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                        <input name="amount" type="text" inputMode="decimal" defaultValue="22" onFocus={(e) => e.target.select()} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                      </div>
-                    )}
+                    {/* Amount derives from the line items (or legs) — no header field. */}
                     {newTransferLegs.length > 0 && (
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
@@ -27750,12 +27753,8 @@ export default function App() {
                       {editingTransfer.product && !buildOrderProductOptions().some(o => o.value === editingTransfer.product) && <option value={editingTransfer.product}>{editingTransfer.product}</option>}
                     </select>
                   </div>
-                  {!hasLegs ? (
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Amount (MT)</label>
-                      <input type="text" inputMode="decimal" value={editingTransfer.amount || ""} onFocus={(e) => e.target.select()} onChange={(e) => setEditingTransfer({...editingTransfer, amount: parseFloat(e.target.value) || 0})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                    </div>
-                  ) : (
+                  {/* Amount derives from the line items (or legs) — no header field. */}
+                  {hasLegs && (
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
                       <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{editLegs.reduce((s, l) => s + l.amount, 0).toFixed(1)} MT</div>
