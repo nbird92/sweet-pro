@@ -5955,6 +5955,82 @@ export default function App() {
     handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order);
   };
 
+  /** Transfer-table action: build the document package (BOL, COA, Packing List,
+   *  Scale Ticket) for an inter-plant transfer. Transfers move product between
+   *  OUR OWN locations, so the SHIPPER and CONSIGNEE are the same party — the
+   *  origin location's legal entity; Deliver To carries the destination plant. */
+  const handleGenerateDocumentPackageForTransfer = (t: Transfer) => {
+    try {
+      const findLoc = (nm?: string) => {
+        const n = (nm || '').trim();
+        if (!n) return undefined;
+        return locations.find(l => l.name === n || l.locationCode === n)
+          || locations.find(l => l.name.toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes(l.name.toLowerCase()));
+      };
+      const fromLoc = findLoc(t.from);
+      const toLoc = findLoc(t.to);
+      const shipperName = fromLoc?.bolName || fromLoc?.name || t.from || 'Sucro Can Canada Inc';
+      // Consignee = shipper (same company on a transfer).
+      const consignee = {
+        id: `TMP-CONS-${t.id}`,
+        name: shipperName,
+        address: fromLoc?.address || '',
+        city: fromLoc?.city || '',
+        province: fromLoc?.province || '',
+        postalCode: fromLoc?.postalCode || '',
+        defaultLocation: fromLoc?.name || '',
+        defaultMargin: 0,
+      } as unknown as Customer;
+      const shipTo: ShipToLocation = {
+        id: `TMP-SHIPTO-${t.id}`,
+        locationCode: toLoc?.locationCode || '',
+        name: toLoc?.name || t.to || '',
+        addressLine1: toLoc?.address || '',
+        city: toLoc?.city || '',
+        province: toLoc?.province || '',
+        postalCode: toLoc?.postalCode || '',
+        country: 'Canada',
+      } as ShipToLocation;
+      const lots = (t.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      const shipment: Shipment = {
+        id: `TMP-TRF-${t.id}`, week: '', date: t.shipmentDate || '', day: '', time: '', bay: '',
+        customer: shipperName, product: t.product || '', po: t.po || '',
+        bol: t.transferNumber || '',
+        qty: t.amount || 0, scaledQty: t.amount || 0,
+        carrier: t.carrier || '', arrive: '', start: '', out: '',
+        status: t.status || '', trailerNo: t.trailerNo,
+        deliveryDate: t.arrivalDate,
+        lotNumber: lots[0], lotNumbers: lots,
+        contractNumber: t.contractNumber, location: t.from,
+      };
+      const order: Order = {
+        id: `TMP-ORD-TRF-${t.id}`, bolNumber: t.transferNumber || '',
+        customer: shipperName, product: t.product || '',
+        contractNumber: t.contractNumber, po: t.po || '',
+        date: t.shipmentDate || '', shipmentDate: t.shipmentDate, deliveryDate: t.arrivalDate,
+        status: 'Completed',
+        lineItems: [{
+          id: `TMP-LI-${t.id}`, productName: t.product || '', qty: t.amount || 0,
+          contractNumber: t.contractNumber || '', netWeightPerUnit: 0, totalWeight: t.amount || 0,
+        }],
+        amount: 0, carrier: t.carrier || '', location: t.from || '',
+      };
+      const carr = carriers.find(c => c.name === t.carrier);
+      const includeBag = hasPackagedOrToteProducts(order.lineItems, t.product);
+      const { blobUrl, filename } = generateDocumentPackagePdf({
+        shipment, order, customer: consignee, carrier: carr,
+        shipFromLocation: fromLoc, shipToLocation: shipTo,
+        lotCodes, qaProducts,
+        includeBagIdReport: includeBag,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, title: 'Transfer Document Package' });
+    } catch (e: any) {
+      console.error('Generate transfer document package failed:', e);
+      setErrorBox('Failed to generate transfer documents: ' + (e?.message || 'Unknown error'));
+    }
+  };
+
   useEffect(() => {
     if (user) {
       fetchMarketData();
@@ -11476,6 +11552,18 @@ export default function App() {
               { key: 'customsEntryNo', label: 'Customs Entry #', mono: true, render: (t) => t.customsEntryNo || '—' },
               { key: 'portOfEntry', label: 'Port of Entry', render: (t) => t.portOfEntry || '—' },
               { key: 'htsCode', label: 'HTS Code', mono: true, render: (t) => t.htsCode || '—' },
+              {
+                key: 'docs', label: 'Docs', sortable: false,
+                render: (t) => (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleGenerateDocumentPackageForTransfer(t); }}
+                    className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase hover:bg-indigo-200 transition-colors whitespace-nowrap"
+                    title="Generate BOL, COA, Packing List and Scale Ticket for this transfer (shipper = consignee)"
+                  >
+                    Docs
+                  </button>
+                ),
+              },
               {
                 key: 'legs', label: 'Legs', sortable: false,
                 render: (t) => t.legs && t.legs.length > 0 ? (
