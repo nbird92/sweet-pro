@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useContext } from 'react';
 import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat, NamingFormula, FormulaToken } from '../types';
 import { resolveProductName, resolveShortForm } from '../utils/namingFormulaResolver';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus } from 'lucide-react';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 import PageBanner from './PageBanner';
-import DataTable from './DataTable';
+import DataTable, { ColumnOrderContext, ColumnVisibilityContext } from './DataTable';
 import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
 
@@ -374,6 +374,75 @@ export default function QualityAssurancePage({
         : { key, direction: 'asc' }
     );
   };
+
+  // ── QA table column definitions + hide/reorder (mirrors the Lab table) ────
+  type QaCol = { key: string; label: string; cell: (p: QAProduct, pg?: ProductGroup) => React.ReactNode; tdClass?: string };
+  const qaColumns: QaCol[] = [
+    { key: 'productCode', label: 'Prod No.', tdClass: 'font-mono', cell: (p) => p.productCode || '—' },
+    { key: 'productName', label: 'Product Name', tdClass: 'font-bold', cell: (p) => displayNameFor(p) || '—' },
+    { key: 'productFormat', label: 'Packaging Format', cell: (p) => p.productFormat || '—' },
+    {
+      key: 'productGroup', label: 'Product Group', cell: (p, pg) => (
+        <span className="px-2 py-1 text-[10px] font-bold uppercase border border-[#141414]/20" style={{ backgroundColor: pg?.color || '#F5F5F5' }}>
+          {p.productGroup}
+        </span>
+      ),
+    },
+    { key: 'sugarType', label: 'Sugar Type', tdClass: 'font-bold', cell: (p) => p.sugarType || '—' },
+    { key: 'shortform', label: 'Shortform', tdClass: 'font-mono font-bold', cell: (p) => shortformFor(p) || '—' },
+    { key: 'category', label: 'Conv./Organic', cell: (p) => p.category },
+    { key: 'maxColor', label: 'Max Color', cell: (p) => p.maxColor },
+    { key: 'location', label: 'Location', cell: (p) => p.location },
+    { key: 'netWeightKg', label: 'Net Weight (KG)', cell: (p) => p.netWeightKg ?? '-' },
+    { key: 'grossWeightKg', label: 'Gross Weight (KG)', cell: (p) => p.grossWeightKg ?? '-' },
+  ];
+  const colOrderStore = useContext(ColumnOrderContext);
+  const colVisStore = useContext(ColumnVisibilityContext);
+  const colTableKey = 'qaProducts';
+  const readLocalList = (prefix: string): string[] => {
+    try {
+      const raw = window.localStorage.getItem(prefix + colTableKey);
+      const p = raw ? JSON.parse(raw) : [];
+      return Array.isArray(p) ? p.filter((x: unknown): x is string => typeof x === 'string') : [];
+    } catch { return []; }
+  };
+  const [colPrefsBump, setColPrefsBump] = useState(0);
+  const savedOrder = colOrderStore?.get(colTableKey) ?? readLocalList('dt-colorder:');
+  const hiddenKeys = colVisStore?.get(colTableKey) ?? readLocalList('dt-colhidden:');
+  const saveColOrder = (keys: string[]) => {
+    if (colOrderStore) colOrderStore.set(colTableKey, keys);
+    else { try { window.localStorage.setItem('dt-colorder:' + colTableKey, JSON.stringify(keys)); } catch { /* ignore */ } }
+    setColPrefsBump(b => b + 1);
+  };
+  const saveColHidden = (keys: string[]) => {
+    if (colVisStore) colVisStore.set(colTableKey, keys);
+    else { try { window.localStorage.setItem('dt-colhidden:' + colTableKey, JSON.stringify(keys)); } catch { /* ignore */ } }
+    setColPrefsBump(b => b + 1);
+  };
+  const orderedQaColumns = useMemo(() => {
+    const byKey = new Map(qaColumns.map(c => [c.key, c]));
+    const out: QaCol[] = [];
+    for (const k of savedOrder) { const c = byKey.get(k); if (c) { out.push(c); byKey.delete(k); } }
+    for (const c of qaColumns) if (byKey.has(c.key)) out.push(c);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedOrder.join('|'), colPrefsBump, namingFormulas, sugarTypes, productGroups]);
+  const qaHiddenSet = new Set(hiddenKeys);
+  const visibleQaColumns = orderedQaColumns.filter(c => !qaHiddenSet.has(c.key));
+  const moveQaColumn = (key: string, dir: -1 | 1) => {
+    const keys = orderedQaColumns.map(c => c.key);
+    const i = keys.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    saveColOrder(keys);
+  };
+  const toggleQaColumn = (key: string) => {
+    const next = qaHiddenSet.has(key) ? hiddenKeys.filter(k => k !== key) : [...hiddenKeys, key];
+    if (next.length >= orderedQaColumns.length) return; // never hide every column
+    saveColHidden(next);
+  };
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
 
   // New product template
   const createBlankProduct = (): QAProduct => ({
@@ -964,8 +1033,54 @@ export default function QualityAssurancePage({
       </PageBanner>
     <div className="p-6 space-y-4">
 
-      {/* Search */}
-      <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by name, product group, ID, or location..." />
+      {/* Search + column controls */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1"><SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by name, product group, ID, or location..." /></div>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowColumnsMenu(v => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+            title="Show, hide and reorder columns"
+          >
+            <SlidersHorizontal size={12} /> Columns{hiddenKeys.length ? ` (${hiddenKeys.length} hidden)` : ''}
+          </button>
+          {showColumnsMenu && (
+            <>
+              <div className="fixed inset-0 z-[90]" onClick={() => setShowColumnsMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-[100] w-80 max-h-[420px] overflow-y-auto bg-white text-[#141414] border border-[#141414] shadow-[6px_6px_0px_0px_rgba(20,20,20,1)]">
+                <div className="sticky top-0 bg-[#141414] text-[#E4E3E0] px-3 py-2 flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-widest">Columns — QA Products</span>
+                  <button
+                    type="button"
+                    onClick={() => { saveColOrder([]); saveColHidden([]); }}
+                    className="flex items-center gap-1 text-[9px] font-bold uppercase opacity-70 hover:opacity-100"
+                    title="Reset to the default order with every column shown"
+                  >
+                    <RotateCcw size={11} /> Reset
+                  </button>
+                </div>
+                <div className="divide-y divide-[#141414]/10">
+                  {orderedQaColumns.map((c, idx) => (
+                    <div key={c.key} className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-[#F9F9F9]">
+                      <input
+                        type="checkbox"
+                        checked={!qaHiddenSet.has(c.key)}
+                        onChange={() => toggleQaColumn(c.key)}
+                        className="w-3.5 h-3.5 cursor-pointer shrink-0"
+                        title={qaHiddenSet.has(c.key) ? 'Show column' : 'Hide column'}
+                      />
+                      <span className={`flex-1 truncate ${qaHiddenSet.has(c.key) ? 'opacity-40 line-through' : ''}`}>{c.label}</span>
+                      <button type="button" disabled={idx === 0} onClick={() => moveQaColumn(c.key, -1)} className="p-0.5 disabled:opacity-20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Move left"><ArrowUp size={12} /></button>
+                      <button type="button" disabled={idx === orderedQaColumns.length - 1} onClick={() => moveQaColumn(c.key, 1)} className="p-0.5 disabled:opacity-20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Move right"><ArrowDown size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Product Table */}
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
@@ -973,17 +1088,20 @@ export default function QualityAssurancePage({
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                <SortHeader label="Prod No." sortKey="productCode" />
-                <SortHeader label="Product Name" sortKey="productName" />
-                <SortHeader label="Packaging Format" sortKey="productFormat" />
-                <SortHeader label="Product Group" sortKey="productGroup" />
-                <SortHeader label="Sugar Type" sortKey="sugarType" />
-                <SortHeader label="Shortform" sortKey="shortform" />
-                <SortHeader label="Conv./Organic" sortKey="category" />
-                <SortHeader label="Max Color" sortKey="maxColor" />
-                <SortHeader label="Location" sortKey="location" />
-                <SortHeader label="Net Weight (KG)" sortKey="netWeightKg" />
-                <SortHeader label="Gross Weight (KG)" sortKey="grossWeightKg" />
+                {visibleQaColumns.map(c => (
+                  <th
+                    key={c.key}
+                    className="p-4 bg-[#141414] border-r border-white/10 cursor-pointer hover:bg-white/5 transition-colors select-none"
+                    onClick={() => handleSort(c.key)}
+                  >
+                    <div className="flex items-center gap-1">
+                      {c.label}
+                      {sortConfig?.key === c.key && (
+                        <ChevronDown size={10} className={`transition-transform ${sortConfig.direction === 'desc' ? 'rotate-180' : ''}`} />
+                      )}
+                    </div>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
@@ -1001,46 +1119,16 @@ export default function QualityAssurancePage({
                     style={{ borderLeft: pg ? `4px solid ${pg.color}` : 'none', contentVisibility: 'auto', containIntrinsicSize: '0 52px' } as React.CSSProperties}
                     onClick={() => openDetail(p)}
                   >
-                    <td className="p-4 text-xs font-mono border-r border-[#141414]/10">{p.productCode || '—'}</td>
-                    <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{(() => {
-                      const resolved = resolveProductName(namingFormulas, p, { sugarTypes, productGroups });
-                      if (resolved && resolved.trim()) return resolved;
-                      return (p.productFormat && p.sugarType)
-                        ? `${p.netWeightKg ? `${p.netWeightKg}kg ` : ''}${p.productFormat} ${p.sugarType} ${p.category} ${p.maxColor || 0}`
-                        : '—';
-                    })()}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.productFormat || '—'}</td>
-                    <td className="p-4 border-r border-[#141414]/10">
-                      <span
-                        className="px-2 py-1 text-[10px] font-bold uppercase border border-[#141414]/20"
-                        style={{ backgroundColor: pg?.color || '#F5F5F5' }}
-                      >
-                        {p.productGroup}
-                      </span>
-                    </td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{p.sugarType || '—'}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10 font-mono font-bold">{(() => {
-                      const resolved = resolveShortForm(namingFormulas, p, { sugarTypes, productGroups });
-                      if (resolved && resolved.trim()) return resolved;
-                      // Legacy fallback
-                      if (p.sugarType === 'Molasses') return 'MOL';
-                      const st = sugarTypes.find(s => s.name === p.sugarType);
-                      if (!st) return '—';
-                      const co = p.category === 'Conventional' ? 'C' : 'B';
-                      if (p.productGroup === 'Bulk') return `${st.abbreviation}${co}${p.maxColor}`;
-                      const wt = p.netWeightKg ? `${p.netWeightKg}kg ` : '';
-                      return `${wt}${st.abbreviation}${co}${p.maxColor}`;
-                    })()}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.category}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.maxColor}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.location}</td>
-                    <td className="p-4 text-xs border-r border-[#141414]/10">{p.netWeightKg ?? '-'}</td>
-                    <td className="p-4 text-xs">{p.grossWeightKg ?? '-'}</td>
+                    {visibleQaColumns.map((c, ci) => (
+                      <td key={c.key} className={`p-4 text-xs ${ci < visibleQaColumns.length - 1 ? 'border-r border-[#141414]/10' : ''} ${c.tdClass || ''}`}>
+                        {c.cell(p, pg)}
+                      </td>
+                    ))}
                   </tr>
                 );
               }) : (
                 <tr>
-                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={11}>
+                  <td className="p-12 text-center text-xs opacity-50 italic" colSpan={visibleQaColumns.length}>
                     No products added yet. Click "Add Product" to get started.
                   </td>
                 </tr>
