@@ -10264,6 +10264,10 @@ export default function App() {
     }
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
     const selectedCustomer = customers.find(c => c.name === customer) || customers[0];
+    if (!selectedSku || !selectedCustomer) {
+      setErrorBox('The product catalog and customer list are still loading — try again in a moment.');
+      return;
+    }
 
     const newContract: Contract = {
       id: `CON-${Date.now()}`,
@@ -10432,8 +10436,11 @@ export default function App() {
       fcaVancouverBulk = fcaHamiltonBulk + totalSupplyChainCostPerMt;
     }
 
-    const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
-    
+    // Catalog not loaded yet (state starts EMPTY, no demo seeds) — use a
+    // harmless placeholder so the memo never dereferences undefined.
+    const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0]
+      || ({ id: '', name: '', productGroup: '', category: 'Conventional', netWeight: 0, brix: 0, premiumCadMt: 0, maxColor: 0 } as SKU);
+
     // Start with the appropriate base price
     let finalCadMt = config.origin === 'Vancouver' ? fcaVancouverBulk : fcaHamiltonBulk;
 
@@ -17052,7 +17059,7 @@ export default function App() {
                   setEmailTo(selectedCust?.salesContactEmail || selectedCust?.contactEmail || '');
                   setEmailCc('');
                   const sku = skus.find(s => s.id === selectedSkuId) || skus[0];
-                  setEmailSubject(`Quote - ${customer} - ${sku.name} - ${config.volumeMt} MT`);
+                  setEmailSubject(`Quote - ${customer} - ${sku?.name || ''} - ${config.volumeMt} MT`);
                   setEmailIncludeMargin(false);
                   setShowEmailQuote(true);
                 }} className="px-4 py-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors text-xs font-bold flex items-center gap-2">
@@ -19031,7 +19038,8 @@ export default function App() {
       {/* Modals */}
       <AnimatePresence>
         {showContractConfirm && (() => {
-          const confirmSku = skus.find(s => s.id === selectedSkuId) || skus[0];
+          const confirmSku = skus.find(s => s.id === selectedSkuId) || skus[0]
+            || ({ id: '', name: '(catalog loading)', productGroup: '', category: 'Conventional', netWeight: 0, brix: 0, premiumCadMt: 0, maxColor: 0 } as SKU);
           const confirmCustomer = customers.find(c => c.name === customer);
           const totalValue = calculations.finalMt * config.volumeMt;
           const finalPriceCadMt = calculations.finalMt;
@@ -19219,7 +19227,8 @@ export default function App() {
         })()}
 
         {showEmailQuote && (() => {
-          const emailSku = skus.find(s => s.id === selectedSkuId) || skus[0];
+          const emailSku = skus.find(s => s.id === selectedSkuId) || skus[0]
+            || ({ id: '', name: '(catalog loading)', productGroup: '', category: 'Conventional', netWeight: 0, brix: 0, premiumCadMt: 0, maxColor: 0 } as SKU);
           const emailCustomer = customers.find(c => c.name === customer);
           const cs = calculations.currencySymbol;
           const senderName = user?.displayName || 'Sweet Pro Trading';
@@ -27641,7 +27650,13 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     {/* Product comes from the Line Items & Contracts section below. */}
-                    {/* Amount derives from the line items (or legs) — no header field. */}
+                    {/* Total weight comes straight from the Line Items section. */}
+                    {newTransferLegs.length === 0 && (
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Total Weight (MT)</label>
+                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)} MT</div>
+                      </div>
+                    )}
                     {newTransferLegs.length > 0 && (
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
@@ -27848,7 +27863,13 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   {/* Product comes from the Line Items & Contracts section below. */}
-                  {/* Amount derives from the line items (or legs) — no header field. */}
+                  {/* Total weight comes straight from the Line Items section. */}
+                  {!hasLegs && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Total Weight (MT)</label>
+                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)} MT</div>
+                    </div>
+                  )}
                   {hasLegs && (
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
