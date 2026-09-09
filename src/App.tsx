@@ -80,7 +80,7 @@ const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
 const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_CUSTOMERS, INITIAL_SUPPLY_CHAIN, INITIAL_FREIGHT_RATES, INITIAL_CONTRACTS, INITIAL_CARRIERS, INITIAL_LOCATIONS, INITIAL_PRODUCT_GROUPS, INITIAL_TRANSFERS, INITIAL_INVOICES, INITIAL_ORDERS, INITIAL_CONFERENCES, INITIAL_PEOPLE, INITIAL_QA_PRODUCTS, INITIAL_FUEL_SURCHARGES, INITIAL_TOLLING_FEES, INITIAL_VENDORS, INITIAL_CHEP_PALLET_MOVEMENTS, INITIAL_SALES_LEADS, INITIAL_QA_TEMPLATES, INITIAL_SAMPLE_REQUESTS, INITIAL_SUGAR_TYPES, INITIAL_LOT_CODES, INITIAL_FISCAL_YEARS, INITIAL_CUSTOMER_FORECASTS, INITIAL_CUSTOMER_GROUPS, INITIAL_PACKAGING_FORMATS, INITIAL_NAMING_FORMULAS, INITIAL_SHIPPING_TERMS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
 const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
 const PeoplePage = lazy(() => import('./components/PeoplePage'));
 const QualityAssurancePage = lazy(() => import('./components/QualityAssurancePage'));
@@ -460,9 +460,9 @@ export default function App() {
   // demo customer list on the server whenever a session synced before/without
   // a completed load. Real customers always come from Firestore.
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
-  const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
-  const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>(INITIAL_SHIPPING_TERMS);
+  const [skus, setSkus] = useState<SKU[]>([]);
+  const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>([]);
+  const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>([]);
   // DetailModal state for the standardized Shipping Terms table.
   const [shippingTermDraft, setShippingTermDraft] = useState<ShippingTerm | null>(null);
   const [shippingTermMode, setShippingTermMode] = useState<'view' | 'edit' | 'add'>('view');
@@ -494,26 +494,26 @@ export default function App() {
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
-  const [freightRates, setFreightRates] = useState<FreightRate[]>(INITIAL_FREIGHT_RATES);
-  const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>(INITIAL_FUEL_SURCHARGES);
-  const [tollingFees, setTollingFees] = useState<TollingFee[]>(INITIAL_TOLLING_FEES);
-  const [vendors, setVendors] = useState<Vendor[]>(INITIAL_VENDORS);
-  const [chepPalletMovements, setChepPalletMovements] = useState<ChepPalletMovement[]>(INITIAL_CHEP_PALLET_MOVEMENTS);
-  const [contracts, setContracts] = useState<Contract[]>(INITIAL_CONTRACTS);
-  const [carriers, setCarriers] = useState<Carrier[]>(INITIAL_CARRIERS);
-  const [locations, setLocations] = useState<Location[]>(INITIAL_LOCATIONS);
-  const [transfers, setTransfers] = useState<Transfer[]>(INITIAL_TRANSFERS);
-  const [invoices, setInvoices] = useState<Invoice[]>(INITIAL_INVOICES);
-  const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
-  const [conferences, setConferences] = useState<Conference[]>(INITIAL_CONFERENCES);
-  const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
-  const [qaProducts, setQaProducts] = useState<QAProduct[]>(INITIAL_QA_PRODUCTS);
-  const [salesLeads, setSalesLeads] = useState<SalesLead[]>(INITIAL_SALES_LEADS);
-  const [sampleRequests, setSampleRequests] = useState<SampleRequest[]>(INITIAL_SAMPLE_REQUESTS);
-  const [qaTemplates, setQaTemplates] = useState<QATemplate[]>(INITIAL_QA_TEMPLATES);
-  const [sugarTypes, setSugarTypes] = useState<SugarType[]>(INITIAL_SUGAR_TYPES);
-  const [packagingFormats, setPackagingFormats] = useState<PackagingFormat[]>(INITIAL_PACKAGING_FORMATS);
-  const [namingFormulas, setNamingFormulas] = useState<NamingFormula[]>(INITIAL_NAMING_FORMULAS);
+  const [freightRates, setFreightRates] = useState<FreightRate[]>([]);
+  const [fuelSurcharges, setFuelSurcharges] = useState<FuelSurcharge[]>([]);
+  const [tollingFees, setTollingFees] = useState<TollingFee[]>([]);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [chepPalletMovements, setChepPalletMovements] = useState<ChepPalletMovement[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [conferences, setConferences] = useState<Conference[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [qaProducts, setQaProducts] = useState<QAProduct[]>([]);
+  const [salesLeads, setSalesLeads] = useState<SalesLead[]>([]);
+  const [sampleRequests, setSampleRequests] = useState<SampleRequest[]>([]);
+  const [qaTemplates, setQaTemplates] = useState<QATemplate[]>([]);
+  const [sugarTypes, setSugarTypes] = useState<SugarType[]>([]);
+  const [packagingFormats, setPackagingFormats] = useState<PackagingFormat[]>([]);
+  const [namingFormulas, setNamingFormulas] = useState<NamingFormula[]>([]);
   const [demurrageInvoices, setDemurrageInvoices] = useState<DemurrageInvoice[]>([]);
   const [demurrageDraft, setDemurrageDraft] = useState<DemurrageInvoice | null>(null); // add/edit modal
   const [demurrageLocFilter, setDemurrageLocFilter] = useState<string>('all');
@@ -524,10 +524,10 @@ export default function App() {
   // the next queued draft opens).
   const [demurrageScanQueue, setDemurrageScanQueue] = useState<DemurrageInvoice[]>([]);
   const demurrageFileInputRef = useRef<HTMLInputElement>(null);
-  const [lotCodes, setLotCodes] = useState<LotCode[]>(INITIAL_LOT_CODES);
-  const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>(INITIAL_FISCAL_YEARS);
-  const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>(INITIAL_CUSTOMER_FORECASTS);
-  const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>(INITIAL_CUSTOMER_GROUPS);
+  const [lotCodes, setLotCodes] = useState<LotCode[]>([]);
+  const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>([]);
+  const [customerForecasts, setCustomerForecasts] = useState<CustomerForecast[]>([]);
+  const [customerGroups, setCustomerGroups] = useState<CustomerGroup[]>([]);
   const [editingInvoiceCard, setEditingInvoiceCard] = useState<Invoice | null>(null);
   // Read-only "Invoice Details" view shown first on row click (mirrors the order
   // details card); an Edit Invoice button opens editingInvoiceCard.
@@ -3132,7 +3132,7 @@ export default function App() {
   const [shipmentSearchBOL, setShipmentSearchBOL] = useState('');
   const [shipmentSearchTransfer, setShipmentSearchTransfer] = useState('');
 
-  const [productGroups, setProductGroups] = useState<ProductGroup[]>(INITIAL_PRODUCT_GROUPS);
+  const [productGroups, setProductGroups] = useState<ProductGroup[]>([]);
   const [customer, setCustomer] = useState('');
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -6345,19 +6345,19 @@ export default function App() {
   // Track last synced data to avoid redundant syncs
   const lastSyncedData = useRef<Record<string, string>>({
     customers: JSON.stringify([]),
-    products: JSON.stringify(INITIAL_SKUS),
-    logistics: JSON.stringify(INITIAL_SUPPLY_CHAIN),
-    freightrates: JSON.stringify(INITIAL_FREIGHT_RATES),
-    contracts: JSON.stringify(INITIAL_CONTRACTS),
-    carriers: JSON.stringify(INITIAL_CARRIERS),
+    products: JSON.stringify([]),
+    logistics: JSON.stringify([]),
+    freightrates: JSON.stringify([]),
+    contracts: JSON.stringify([]),
+    carriers: JSON.stringify([]),
     shipments: JSON.stringify([]),
-    locations: JSON.stringify(INITIAL_LOCATIONS),
+    locations: JSON.stringify([]),
     transfers: JSON.stringify([]),
     invoices: JSON.stringify([]),
     orders: JSON.stringify([]),
-    productgroups: JSON.stringify(INITIAL_PRODUCT_GROUPS),
+    productgroups: JSON.stringify([]),
     conferences: JSON.stringify([]),
-    people: JSON.stringify(INITIAL_PEOPLE),
+    people: JSON.stringify([]),
     qaproducts: JSON.stringify([]),
     fuelsurcharges: JSON.stringify([]),
     vendors: JSON.stringify([]),
@@ -6366,12 +6366,12 @@ export default function App() {
     salesleads: JSON.stringify([]),
     qatemplates: JSON.stringify([]),
     customergroups: JSON.stringify([]),
-    shippingterms: JSON.stringify(INITIAL_SHIPPING_TERMS),
+    shippingterms: JSON.stringify([]),
     // Seed these two demo-populated baselines so a FAILED initial load (state
     // still holds the INITIAL_ defaults) doesn't read as "dirty" and push the
     // demo sugar types / naming formulas over real records on the first autosave.
-    sugartypes: JSON.stringify(INITIAL_SUGAR_TYPES),
-    namingformulas: JSON.stringify(INITIAL_NAMING_FORMULAS),
+    sugartypes: JSON.stringify([]),
+    namingformulas: JSON.stringify([]),
     emaillog: JSON.stringify([]),
     emailsettings: JSON.stringify([INITIAL_EMAIL_SETTINGS]),
     returnorders: JSON.stringify([]),
