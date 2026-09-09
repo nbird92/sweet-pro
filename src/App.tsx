@@ -11759,13 +11759,22 @@ export default function App() {
               {
                 key: 'docs', label: 'Docs', sortable: false,
                 render: (t) => (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleGenerateDocumentPackageForTransfer(t); }}
-                    className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[8px] uppercase hover:bg-indigo-200 transition-colors whitespace-nowrap"
-                    title="Generate BOL, COA, Packing List and Scale Ticket for this transfer (shipper = consignee)"
-                  >
-                    Docs
-                  </button>
+                  <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleGenerateDocumentPackageForTransfer(t)}
+                      className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                      title="View Document Package (BOL, COA, Packing List, Scale Ticket)"
+                    >
+                      <Files size={14} />
+                    </button>
+                    <button
+                      onClick={() => handleGenerateBolForTransfer(t)}
+                      className="p-1 hover:bg-blue-600 hover:text-white transition-colors"
+                      title="Preview BOL"
+                    >
+                      <Truck size={14} />
+                    </button>
+                  </div>
                 ),
               },
               {
@@ -11856,7 +11865,16 @@ export default function App() {
               // row, so opening + saving never silently persists resolved values.
               const orig = transfers.find(x => x.id === t.id) || t;
               setEditingTransfer({ ...orig }); setIsAddingTransfer(false);
-              setTransferLineItems(orig.lineItems || []);
+              // Auto-seed the line items from the transfer's existing details
+              // (product / amount / contract) when none are stored yet.
+              if ((!orig.lineItems || orig.lineItems.length === 0) && (orig.product || '').trim()) {
+                const cn = (orig.contractNumber || '').split(',')[0].trim();
+                const c = cn ? contracts.find(k => k.contractNumber === cn) : undefined;
+                const price = c ? contractPriceFor(c, orig.product) : 0;
+                setTransferLineItems([buildScanLineItem({ productValue: orig.product, productKey: '', productLabel: '', productRaw: '', productCodeRaw: '', qtyMt: orig.amount || 0, pricePerMt: price, contractNumber: cn })]);
+              } else {
+                setTransferLineItems(orig.lineItems || []);
+              }
               setEditingTransferLineIdx(null);
               setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
             }}
@@ -27567,8 +27585,8 @@ export default function App() {
                   const g = (k: string) => ((data.get(k) as string) || '').trim();
                   const lotCode = g('lotCode');
                   const lc = lotCodes.find(l => sameLotCode(l.lotNumber, lotCode));
-                  if (!(data.get('product') as string) && transferLineItems.length === 0) {
-                    setErrorBox('Pick a product, or add at least one line item.');
+                  if (transferLineItems.length === 0) {
+                    setErrorBox('Add at least one line item to the transfer.');
                     return;
                   }
                   const t: Transfer = {
@@ -27619,13 +27637,7 @@ export default function App() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Product <span className="text-[8px] opacity-40">(or use line items below)</span></label>
-                      <select name="product" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        <option value="">Select Product</option>
-                        {buildOrderProductOptions(undefined, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
-                      </select>
-                    </div>
+                    {/* Product comes from the Line Items & Contracts section below. */}
                     {/* Amount derives from the line items (or legs) — no header field. */}
                     {newTransferLegs.length > 0 && (
                       <div className="space-y-1">
@@ -27832,14 +27844,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
-                    <select value={editingTransfer.product} onChange={(e) => setEditingTransfer({...editingTransfer, product: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">Select Product</option>
-                      {buildOrderProductOptions(editingTransfer.product, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
-                      {editingTransfer.product && !buildOrderProductOptions().some(o => o.value === editingTransfer.product) && <option value={editingTransfer.product}>{editingTransfer.product}</option>}
-                    </select>
-                  </div>
+                  {/* Product comes from the Line Items & Contracts section below. */}
                   {/* Amount derives from the line items (or legs) — no header field. */}
                   {hasLegs && (
                     <div className="space-y-1">
