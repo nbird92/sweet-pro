@@ -426,6 +426,9 @@ export interface Transfer {
   htsCode?: string;
   silo?: string;
   countryOfOrigin?: string;
+  /** Per-product line items (same shape as order lines) — when present, the
+   *  transfer's product/amount are derived from these. */
+  lineItems?: OrderLineItem[];
 }
 
 export interface Invoice {

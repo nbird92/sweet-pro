@@ -57,7 +57,8 @@ import {
   ScanLine,
   Sparkles,
   Boxes,
-  Copy
+  Copy,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -540,6 +541,10 @@ export default function App() {
   const [newSampleData, setNewSampleData] = useState<SampleRequest>({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
+  // Line items & contracts for the transfer modals (same pattern as orders).
+  const [transferLineItems, setTransferLineItems] = useState<OrderLineItem[]>([]);
+  const [transferLineDraft, setTransferLineDraft] = useState<{ productKey: string; productValue: string; productLabel: string; qtyMt: number; contractNumber: string }>({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+  const [editingTransferLineIdx, setEditingTransferLineIdx] = useState<number | null>(null);
   const [newTransferLegs, setNewTransferLegs] = useState<TransferLeg[]>([]);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
   const [viewingOrderCard, setViewingOrderCard] = useState<Order | null>(null);
@@ -6009,7 +6014,7 @@ export default function App() {
         contractNumber: t.contractNumber, po: t.po || '',
         date: t.shipmentDate || '', shipmentDate: t.shipmentDate, deliveryDate: t.arrivalDate,
         status: 'Completed',
-        lineItems: [{
+        lineItems: (t.lineItems && t.lineItems.length) ? t.lineItems : [{
           id: `TMP-LI-${t.id}`, productName: t.product || '', qty: t.amount || 0,
           contractNumber: t.contractNumber || '', netWeightPerUnit: 0, totalWeight: t.amount || 0,
         }],
@@ -6029,6 +6034,127 @@ export default function App() {
       console.error('Generate transfer document package failed:', e);
       setErrorBox('Failed to generate transfer documents: ' + (e?.message || 'Unknown error'));
     }
+  };
+
+  /** Add / update the transfer line draft into transferLineItems — mirrors the
+   *  order menus: contract pricing applied automatically, contract availability
+   *  (outstanding − on order) hard-checked. */
+  const commitTransferLineDraft = () => {
+    const d = transferLineDraft;
+    if (!d.productValue || !(d.qtyMt > 0)) { setErrorBox('Pick a product and enter a quantity (MT).'); return; }
+    const c = d.contractNumber ? contracts.find(k => k.contractNumber === d.contractNumber) : undefined;
+    if (d.contractNumber && c) {
+      const otherWeight = transferLineItems
+        .filter((li, i) => li.contractNumber === d.contractNumber && i !== editingTransferLineIdx)
+        .reduce((s, li) => s + (li.totalWeight || 0), 0);
+      const available = contractAvailableMt(c) - otherWeight;
+      if (d.qtyMt > available + 1e-6) {
+        setErrorBox(`Not enough volume on contract ${c.contractNumber}: ${Math.max(0, available).toFixed(2)} MT available, but this line requires ${d.qtyMt.toFixed(2)} MT. Reduce the quantity or choose a different contract.`);
+        return;
+      }
+    }
+    const price = c ? contractPriceFor(c, d.productLabel || d.productValue) : 0;
+    const li = buildScanLineItem({ productValue: d.productValue, productKey: d.productKey, productLabel: d.productLabel, productRaw: '', productCodeRaw: '', qtyMt: d.qtyMt, pricePerMt: price, contractNumber: d.contractNumber });
+    setTransferLineItems(prev => editingTransferLineIdx !== null ? prev.map((x, i) => i === editingTransferLineIdx ? li : x) : [...prev, li]);
+    setEditingTransferLineIdx(null);
+    setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
+  };
+
+  /** "Line Items & Contracts" section shared by the new/edit transfer modals —
+   *  same layout as the order menus (entry row + line table with edit/delete). */
+  const renderTransferLineItemsSection = () => {
+    const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
+    const activeContracts = contracts.filter(c => c.active !== false);
+    return (
+      <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Line Items &amp; Contracts</h4>
+        <div className="grid grid-cols-[minmax(0,1fr)_110px_170px_auto] gap-2 items-end">
+          <div className="space-y-0.5">
+            <label className="text-[9px] uppercase font-bold opacity-50">Product</label>
+            <select
+              value={transferLineDraft.productKey}
+              onChange={(e) => { const o = opts.find(x => x.key === e.target.value); setTransferLineDraft(v => ({ ...v, productKey: e.target.value, productValue: o?.value || '', productLabel: o?.label || '' })); }}
+              className="w-full min-w-0 bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+            >
+              <option value="">— Select product —</option>
+              {opts.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+            </select>
+          </div>
+          <div className="space-y-0.5">
+            <label className="text-[9px] uppercase font-bold opacity-50">Order QTY (MT)</label>
+            <input type="text" inputMode="decimal" value={transferLineDraft.qtyMt || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyMt: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
+          </div>
+          <div className="space-y-0.5">
+            <label className="text-[9px] uppercase font-bold opacity-50">Contract #</label>
+            <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
+              <option value="">— None —</option>
+              {activeContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}{c.customerName ? ` — ${c.customerName}` : ''}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-1">
+            <button type="button" onClick={commitTransferLineDraft} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors">{editingTransferLineIdx !== null ? 'Update' : 'Add'}</button>
+            {editingTransferLineIdx !== null && (
+              <button type="button" onClick={() => { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); }} className="px-2 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
+            )}
+          </div>
+        </div>
+        {transferLineItems.length > 0 && (
+          <table className="w-full text-left text-xs">
+            <thead className="bg-[#F5F5F5] border-b border-[#141414]/10">
+              <tr>
+                <th className="p-2 font-bold">Product</th>
+                <th className="p-2 font-bold text-right">Order QTY (units)</th>
+                <th className="p-2 font-bold text-right">Order Weight (MT)</th>
+                <th className="p-2 font-bold">Contract #</th>
+                <th className="p-2 font-bold text-right">$/MT</th>
+                <th className="p-2 font-bold text-right">Amount ($)</th>
+                <th className="p-2 font-bold text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#141414]/10">
+              {transferLineItems.map((li, idx) => (
+                <tr key={li.id} className="hover:bg-[#F9F9F9]">
+                  <td className="p-2">{lineItemToShortform(li)}</td>
+                  <td className="p-2 text-right font-mono">{(li.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                  <td className="p-2 text-right font-mono font-bold">{(li.totalWeight || 0).toFixed(2)}</td>
+                  <td className="p-2 font-mono">{li.contractNumber || '—'}</td>
+                  <td className="p-2 text-right font-mono">{li.mtAmount ? `$${li.mtAmount.toFixed(2)}` : '—'}</td>
+                  <td className="p-2 text-right font-mono font-bold">{li.lineAmount ? `$${li.lineAmount.toFixed(2)}` : '—'}</td>
+                  <td className="p-2 text-center whitespace-nowrap">
+                    <button type="button" onClick={() => { setEditingTransferLineIdx(idx); setTransferLineDraft({ productKey: li.productKey || '', productValue: li.productName, productLabel: li.productDisplayName || '', qtyMt: li.totalWeight || 0, contractNumber: li.contractNumber || '' }); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit line"><Pencil size={12} /></button>
+                    <button type="button" onClick={() => { setTransferLineItems(prev => prev.filter((_, i) => i !== idx)); if (editingTransferLineIdx === idx) { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); } }} className="p-1 text-red-500 hover:bg-red-50 transition-colors" title="Remove line"><Trash2 size={12} /></button>
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-[#F5F5F5] font-bold">
+                <td className="p-2">Total</td>
+                <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.qty || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)}</td>
+                <td className="p-2"></td>
+                <td className="p-2"></td>
+                <td className="p-2 text-right font-mono">{`$${transferLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0).toFixed(2)}`}</td>
+                <td className="p-2"></td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  };
+
+  /** Merge the modal's line items onto a transfer being saved: product and
+   *  amount derive from the lines (legs still win the amount), the contract
+   *  list joins the distinct line contracts when none was typed. */
+  const applyTransferLineItems = <T extends Transfer>(t: T): T => {
+    if (!transferLineItems.length) return { ...t, lineItems: undefined };
+    const out: T = { ...t, lineItems: transferLineItems };
+    out.product = transferLineItems.map(li => li.productDisplayName || li.productName).join(', ');
+    if (!(out.legs && out.legs.length > 0)) out.amount = Math.round(transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000) / 1000;
+    if (!(out.contractNumber || '').trim()) {
+      const cns = Array.from(new Set(transferLineItems.map(li => li.contractNumber).filter(Boolean)));
+      out.contractNumber = cns.join(', ') || undefined;
+    }
+    return out;
   };
 
   useEffect(() => {
@@ -11505,6 +11631,9 @@ export default function App() {
               onClick={() => {
                 setEditingTransfer(null);
                 setNewTransferLegs([]);
+                setTransferLineItems([]);
+                setEditingTransferLineIdx(null);
+                setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
                 setIsAddingTransfer(true);
               }}
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
@@ -11652,6 +11781,9 @@ export default function App() {
               // row, so opening + saving never silently persists resolved values.
               const orig = transfers.find(x => x.id === t.id) || t;
               setEditingTransfer({ ...orig }); setIsAddingTransfer(false);
+              setTransferLineItems(orig.lineItems || []);
+              setEditingTransferLineIdx(null);
+              setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' });
             }}
             emptyMessage='No transfers yet. Use "New Transfer" to create one.'
             defaultSortKey="transferNumber"
@@ -27333,6 +27465,10 @@ export default function App() {
                   const g = (k: string) => ((data.get(k) as string) || '').trim();
                   const lotCode = g('lotCode');
                   const lc = lotCodes.find(l => sameLotCode(l.lotNumber, lotCode));
+                  if (!(data.get('product') as string) && transferLineItems.length === 0) {
+                    setErrorBox('Pick a product, or add at least one line item.');
+                    return;
+                  }
                   const t: Transfer = {
                     id: `TRF-${Date.now()}`,
                     transferNumber: `TRF-${new Date().getFullYear()}-${String(transfers.length + 1).padStart(3, '0')}`,
@@ -27361,7 +27497,7 @@ export default function App() {
                     portOfEntry: g('portOfEntry') || undefined,
                     htsCode: g('htsCode') || undefined,
                   };
-                  setTransfers([...transfers, t]);
+                  setTransfers([...transfers, applyTransferLineItems(t)]);
                   setIsAddingTransfer(false);
                 }} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
@@ -27380,8 +27516,8 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
-                      <select name="product" required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Product <span className="text-[8px] opacity-40">(or use line items below)</span></label>
+                      <select name="product" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
                         <option value="">Select Product</option>
                         {buildOrderProductOptions(undefined, { selectableOnly: true }).map(o => <option key={o.key} value={o.value}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
                       </select>
@@ -27462,6 +27598,9 @@ export default function App() {
                       <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">HTS Code</label><input name="htsCode" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
                     </div>
                   </div>
+
+                  {/* Line Items & Contracts — same section as the order menus. */}
+                  {renderTransferLineItemsSection()}
 
                   {/* Transfer Legs Section */}
                   <div className="border-t border-[#141414]/10 pt-4 space-y-3">
@@ -27721,6 +27860,9 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Line Items & Contracts — same section as the order menus. */}
+                {renderTransferLineItemsSection()}
+
                 {/* Transfer Legs Section */}
                 <div className="border-t border-[#141414]/10 pt-4 space-y-3">
                   <div className="flex justify-between items-center">
@@ -27793,6 +27935,7 @@ export default function App() {
                         updatedTransfer.amount = updatedTransfer.legs.reduce((s, l) => s + l.amount, 0);
                         updatedTransfer.carrier = updatedTransfer.legs.map(l => l.carrier).filter(Boolean).join(' → ');
                       }
+                      updatedTransfer = applyTransferLineItems(updatedTransfer);
                       setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
                     }}
