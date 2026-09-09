@@ -5966,8 +5966,8 @@ export default function App() {
    *  Scale Ticket) for an inter-plant transfer. Transfers move product between
    *  OUR OWN locations, so the SHIPPER and CONSIGNEE are the same party — the
    *  origin location's legal entity; Deliver To carries the destination plant. */
-  const handleGenerateDocumentPackageForTransfer = (t: Transfer) => {
-    try {
+  /** Shared source builder for all transfer documents (BOL / COA / package). */
+  const buildTransferDocSources = (t: Transfer) => {
       const findLoc = (nm?: string) => {
         const n = (nm || '').trim();
         if (!n) return undefined;
@@ -6023,10 +6023,16 @@ export default function App() {
         amount: 0, carrier: t.carrier || '', location: t.from || '',
       };
       const carr = carriers.find(c => c.name === t.carrier);
-      const includeBag = hasPackagedOrToteProducts(order.lineItems, t.product);
+      return { shipment, order, consignee, carrier: carr, shipFromLocation: fromLoc, shipToLocation: shipTo };
+  };
+
+  const handleGenerateDocumentPackageForTransfer = (t: Transfer) => {
+    try {
+      const s = buildTransferDocSources(t);
+      const includeBag = hasPackagedOrToteProducts(s.order.lineItems, t.product);
       const { blobUrl, filename } = generateDocumentPackagePdf({
-        shipment, order, customer: consignee, carrier: carr,
-        shipFromLocation: fromLoc, shipToLocation: shipTo,
+        shipment: s.shipment, order: s.order, customer: s.consignee, carrier: s.carrier,
+        shipFromLocation: s.shipFromLocation, shipToLocation: s.shipToLocation,
         lotCodes, qaProducts,
         includeBagIdReport: includeBag,
       });
@@ -6036,6 +6042,55 @@ export default function App() {
       console.error('Generate transfer document package failed:', e);
       setErrorBox('Failed to generate transfer documents: ' + (e?.message || 'Unknown error'));
     }
+  };
+
+  /** Preview just the BOL for a transfer (shipper = consignee). */
+  const handleGenerateBolForTransfer = (t: Transfer) => {
+    try {
+      const s = buildTransferDocSources(t);
+      const { blobUrl, filename } = generateBolPdf({
+        shipment: s.shipment, order: s.order, customer: s.consignee, carrier: s.carrier,
+        shipFromLocation: s.shipFromLocation, shipToCustomer: s.consignee, shipToLocation: s.shipToLocation,
+        qaProducts, lotCodes,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Bill of Lading' });
+    } catch (e: any) {
+      setErrorBox('Failed to generate the transfer BOL: ' + (e?.message || 'Unknown error'));
+    }
+  };
+
+  /** Preview just the COA for a transfer. */
+  const handleGenerateCoaForTransfer = (t: Transfer) => {
+    try {
+      const s = buildTransferDocSources(t);
+      const { blobUrl, filename } = generateCoaPdf({
+        shipment: s.shipment, order: s.order, customer: s.consignee,
+        shipFromLocation: s.shipFromLocation, shipTo: s.shipToLocation,
+        lotCodes, qaProducts,
+      });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis' });
+    } catch (e: any) {
+      setErrorBox('Failed to generate the transfer COA: ' + (e?.message || 'Unknown error'));
+    }
+  };
+
+  /** Open the pick-up appointment (shipment) editor for a transfer — mirrors the
+   *  transfers table's Appointment column: edit the existing TRANSFER:{id}
+   *  shipment when one is booked, else start creating one. */
+  const handleEditTransferShipment = (t: Transfer) => {
+    const allShipments = [...hamiltonShipments, ...vancouverShipments];
+    const transferShipment = allShipments.find(sh => sh.notes === `TRANSFER:${t.id}`);
+    if (transferShipment) {
+      const loc = transferShipment.bay?.toLowerCase().includes('ferguson') ? 'Hamilton' : 'Vancouver';
+      setShipmentCreationData({ location: loc, date: transferShipment.date, time: transferShipment.time, bay: transferShipment.bay, carrier: transferShipment.carrier, orderId: '', transferId: t.id });
+    } else {
+      const fromLoc = locations.find(l => l.name.toLowerCase().includes((t.from || '').toLowerCase()));
+      setShipmentCreationData({ location: fromLoc ? fromLoc.name : 'Hamilton', date: t.shipmentDate || '', time: '', bay: '', carrier: t.carrier || '', orderId: '', transferId: t.id });
+    }
+    setIsCreatingTransferShipment(true);
+    setIsCreatingShipments(true);
   };
 
   /** Add / update the transfer line draft into transferLineItems — mirrors the
@@ -27445,6 +27500,33 @@ export default function App() {
 
       {/* Add New Transfer Modal */}
       {isAddingTransfer && (() => {
+          // Assemble a PREVIEW transfer from the live form so BOL / COA can be
+          // previewed before the transfer is created (same as the order menus).
+          const readNewTransferDraft = (): Transfer | null => {
+            const form = document.getElementById('new-transfer-form') as HTMLFormElement | null;
+            if (!form) return null;
+            const data = new FormData(form);
+            const g = (k: string) => ((data.get(k) as string) || '').trim();
+            const totalLegAmount = newTransferLegs.reduce((s, l) => s + l.amount, 0);
+            return applyTransferLineItems({
+              id: 'TMP-NEW-TRANSFER',
+              transferNumber: 'TRF-PREVIEW',
+              from: g('from'), to: g('to'), product: g('product'),
+              po: g('po') || undefined, lotCode: g('lotCode') || '',
+              amount: newTransferLegs.length > 0 ? totalLegAmount : 0,
+              carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : g('carrier'),
+              shipmentDate: g('shipmentDate'), arrivalDate: g('arrivalDate'),
+              notes: g('notes'), status: 'Pending',
+              customer: g('customer') || undefined,
+              contractNumber: g('contractNumber') || undefined,
+              splitNumber: g('splitNumber') || undefined,
+              brix: g('brix') || undefined, silo: g('silo') || undefined,
+              countryOfOrigin: g('countryOfOrigin') || undefined,
+              papsNo: g('papsNo') || undefined, trailerNo: g('trailerNo') || undefined,
+              customsEntryNo: g('customsEntryNo') || undefined,
+              portOfEntry: g('portOfEntry') || undefined, htsCode: g('htsCode') || undefined,
+            });
+          };
           const addLeg = () => {
             setNewTransferLegs(prev => [...prev, {
               id: `LEG-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
@@ -27519,7 +27601,7 @@ export default function App() {
                   };
                   setTransfers([...transfers, applyTransferLineItems(t)]);
                   setIsAddingTransfer(false);
-                }} className="space-y-4">
+                }} id="new-transfer-form" className="space-y-4">
                   {/* Route, Product & Dates — grouped card, same as the order menu. */}
                   <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
@@ -27673,6 +27755,11 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">Notes</label>
                     <textarea name="notes" rows={2} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none resize-none" />
+                  </div>
+                  {/* Document previews — same footer actions as the order menus. */}
+                  <div className="flex gap-2 pt-2">
+                    <button type="button" onClick={() => { const d = readNewTransferDraft(); if (d) handleGenerateBolForTransfer(d); }} className="px-4 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><FileText size={12} /> Preview BOL</button>
+                    <button type="button" onClick={() => { const d = readNewTransferDraft(); if (d) handleGenerateCoaForTransfer(d); }} className="px-4 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><FileText size={12} /> Preview COA</button>
                   </div>
                   <div className="flex gap-4 pt-2">
                     <button type="submit" className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Create Transfer</button>
@@ -27930,6 +28017,12 @@ export default function App() {
                   ))}
                 </div>
 
+                {/* Document previews + shipment — same footer actions as the order menus. */}
+                <div className="flex gap-2 pt-2">
+                  <button type="button" onClick={() => handleGenerateBolForTransfer(applyTransferLineItems({ ...editingTransfer }))} className="px-4 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><FileText size={12} /> Preview BOL</button>
+                  <button type="button" onClick={() => handleGenerateCoaForTransfer(applyTransferLineItems({ ...editingTransfer }))} className="px-4 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><FileText size={12} /> Preview COA</button>
+                  <button type="button" onClick={() => handleEditTransferShipment(editingTransfer)} className="px-4 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"><Truck size={12} /> Edit Shipment</button>
+                </div>
                 <div className="flex gap-4 pt-2">
                   {/* Delete moved here from the table's old Actions column. */}
                   <button
