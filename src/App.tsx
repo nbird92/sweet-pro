@@ -6066,37 +6066,49 @@ export default function App() {
     const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
     const activeContracts = contracts.filter(c => c.active !== false);
     return (
-      <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+      <div className="space-y-3">
         <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Line Items &amp; Contracts</h4>
-        <div className="grid grid-cols-[minmax(0,1fr)_110px_170px_auto] gap-2 items-end">
-          <div className="space-y-0.5">
-            <label className="text-[9px] uppercase font-bold opacity-50">Product</label>
-            <select
-              value={transferLineDraft.productKey}
-              onChange={(e) => { const o = opts.find(x => x.key === e.target.value); setTransferLineDraft(v => ({ ...v, productKey: e.target.value, productValue: o?.value || '', productLabel: o?.label || '' })); }}
-              className="w-full min-w-0 bg-white border border-[#141414] p-2 text-xs focus:outline-none"
-            >
-              <option value="">— Select product —</option>
-              {opts.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
-            </select>
-          </div>
-          <div className="space-y-0.5">
-            <label className="text-[9px] uppercase font-bold opacity-50">Order QTY (MT)</label>
-            <input type="text" inputMode="decimal" value={transferLineDraft.qtyMt || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyMt: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
-          </div>
-          <div className="space-y-0.5">
-            <label className="text-[9px] uppercase font-bold opacity-50">Contract #</label>
-            <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
-              <option value="">— None —</option>
-              {activeContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}{c.customerName ? ` — ${c.customerName}` : ''}</option>)}
-            </select>
-          </div>
-          <div className="flex gap-1">
-            <button type="button" onClick={commitTransferLineDraft} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors">{editingTransferLineIdx !== null ? 'Update' : 'Add'}</button>
-            {editingTransferLineIdx !== null && (
-              <button type="button" onClick={() => { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); }} className="px-2 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
-            )}
-          </div>
+        {/* Entry table — same dark-headed layout as the order menus. */}
+        <div className="border border-[#141414]">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#141414] text-[#E4E3E0]">
+              <tr className="text-[10px] uppercase font-bold">
+                <th className="p-3">Product</th>
+                <th className="p-3 w-32">Order QTY (MT)</th>
+                <th className="p-3 w-52">Contract #</th>
+                <th className="p-3 w-32 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="bg-white">
+                <td className="p-2">
+                  <select
+                    value={transferLineDraft.productKey}
+                    onChange={(e) => { const o = opts.find(x => x.key === e.target.value); setTransferLineDraft(v => ({ ...v, productKey: e.target.value, productValue: o?.value || '', productLabel: o?.label || '' })); }}
+                    className="w-full min-w-0 bg-white border border-[#141414] p-2 text-xs focus:outline-none"
+                  >
+                    <option value="">— Select product —</option>
+                    {opts.map(o => <option key={o.key} value={o.key}>{o.label}{o.location ? ` — ${o.location}` : ''}</option>)}
+                  </select>
+                </td>
+                <td className="p-2">
+                  <input type="text" inputMode="decimal" value={transferLineDraft.qtyMt || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyMt: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
+                </td>
+                <td className="p-2">
+                  <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
+                    <option value="">— None —</option>
+                    {activeContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}{c.customerName ? ` — ${c.customerName}` : ''}</option>)}
+                  </select>
+                </td>
+                <td className="p-2 text-center whitespace-nowrap">
+                  <button type="button" onClick={commitTransferLineDraft} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors">{editingTransferLineIdx !== null ? 'Update' : 'Add'}</button>
+                  {editingTransferLineIdx !== null && (
+                    <button type="button" onClick={() => { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyMt: 0, contractNumber: '' }); }} className="ml-1 px-2 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
         {transferLineItems.length > 0 && (
           <table className="w-full text-left text-xs">
@@ -27445,15 +27457,15 @@ export default function App() {
             setNewTransferLegs(prev => prev.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 })));
           };
           return (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-[95vw] w-full overflow-hidden my-8 max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">New Transfer</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Add New Transfer</h3>
                 <button onClick={() => setIsAddingTransfer(false)} className="hover:rotate-90 transition-transform"><X size={18} /></button>
               </div>
               <div className="p-6 space-y-4">
@@ -27500,6 +27512,8 @@ export default function App() {
                   setTransfers([...transfers, applyTransferLineItems(t)]);
                   setIsAddingTransfer(false);
                 }} className="space-y-4">
+                  {/* Route, Product & Dates — grouped card, same as the order menu. */}
+                  <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
@@ -27574,9 +27588,10 @@ export default function App() {
                       <input name="arrivalDate" type="date" defaultValue={new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]} required className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
                   </div>
+                  </div>
 
                   {/* Additional Details */}
-                  <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                  <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-3">
                     <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Additional Details</h4>
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-1">
@@ -27657,8 +27672,8 @@ export default function App() {
                     <textarea name="notes" rows={2} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none resize-none" />
                   </div>
                   <div className="flex gap-4 pt-2">
-                    <button type="submit" className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Create Transfer</button>
-                    <button type="button" onClick={() => setIsAddingTransfer(false)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+                    <button type="submit" className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Create Transfer</button>
+                    <button type="button" onClick={() => setIsAddingTransfer(false)} className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
                 </form>
               </div>
@@ -27698,18 +27713,20 @@ export default function App() {
             setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
           };
           return (
-          <div className="fixed inset-0 z-[200] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+              className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-[95vw] w-full overflow-hidden my-8 max-h-[90vh] overflow-y-auto"
             >
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
                 <h3 className="text-xs font-bold uppercase tracking-widest">Edit Transfer — {editingTransfer.transferNumber}</h3>
                 <button onClick={() => setEditingTransfer(null)} className="hover:rotate-90 transition-transform"><X size={18} /></button>
               </div>
               <div className="p-6 space-y-4">
+                {/* Route, Product & Dates — grouped card, same as the order menu. */}
+                <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">From (Origin)</label>
@@ -27804,9 +27821,10 @@ export default function App() {
                     <input type="text" value={editingTransfer.notes || ''} onChange={(e) => setEditingTransfer({...editingTransfer, notes: e.target.value})} placeholder="Optional notes..." className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
                 </div>
+                </div>
 
                 {/* Additional Details */}
-                <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+                <div className="bg-[#F5F5F5] p-6 border border-[#141414]/10 space-y-3">
                   <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Additional Details</h4>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-1">
@@ -27923,7 +27941,7 @@ export default function App() {
                         setEditingTransfer(null);
                       }
                     }}
-                    className="px-6 py-3 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
+                    className="px-6 py-4 border border-red-500 text-red-600 font-bold text-xs uppercase flex items-center gap-2 hover:bg-red-500 hover:text-white transition-colors"
                   >
                     <Trash2 size={14} /> Delete
                   </button>
@@ -27939,11 +27957,11 @@ export default function App() {
                       setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
                     }}
-                    className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
+                    className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
                     Save Changes
                   </button>
-                  <button onClick={() => setEditingTransfer(null)} className="flex-1 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+                  <button onClick={() => setEditingTransfer(null)} className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                 </div>
               </div>
             </motion.div>
