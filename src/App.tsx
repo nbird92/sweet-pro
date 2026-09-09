@@ -456,7 +456,10 @@ export default function App() {
   const prefsDirtyRef = useRef(false);
   const [isEditingSidebar, setIsEditingSidebar] = useState(false);
   const [scheduleLocation, setScheduleLocation] = useState('Hamilton');
-  const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
+  // NO seed customers: initializing with INITIAL_CUSTOMERS resurrected the
+  // demo customer list on the server whenever a session synced before/without
+  // a completed load. Real customers always come from Firestore.
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [skus, setSkus] = useState<SKU[]>(INITIAL_SKUS);
   const [supplyChain, setSupplyChain] = useState<SupplyChainComponent[]>(INITIAL_SUPPLY_CHAIN);
   const [shippingTermsList, setShippingTermsList] = useState<ShippingTerm[]>(INITIAL_SHIPPING_TERMS);
@@ -3130,7 +3133,7 @@ export default function App() {
   const [shipmentSearchTransfer, setShipmentSearchTransfer] = useState('');
 
   const [productGroups, setProductGroups] = useState<ProductGroup[]>(INITIAL_PRODUCT_GROUPS);
-  const [customer, setCustomer] = useState(INITIAL_CUSTOMERS[0].name);
+  const [customer, setCustomer] = useState('');
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSynced, setLastSynced] = useState<Date | null>(null);
@@ -6341,7 +6344,7 @@ export default function App() {
 
   // Track last synced data to avoid redundant syncs
   const lastSyncedData = useRef<Record<string, string>>({
-    customers: JSON.stringify(INITIAL_CUSTOMERS),
+    customers: JSON.stringify([]),
     products: JSON.stringify(INITIAL_SKUS),
     logistics: JSON.stringify(INITIAL_SUPPLY_CHAIN),
     freightrates: JSON.stringify(INITIAL_FREIGHT_RATES),
