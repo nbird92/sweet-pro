@@ -17478,8 +17478,14 @@ export default function App() {
                       if (manualProduct !== null) card = { ...card, product: manualProduct };
                     }
                     const finalCard = card;
-                    // Commit the edited working copy back to the invoices list (synced to Firestore).
-                    setInvoices(prev => prev.map(inv => inv.id === finalCard.id ? { ...inv, ...finalCard } : inv));
+                    // Commit the edited working copy back to the invoices list AND
+                    // persist immediately — user actions must be durable at click
+                    // time, never left to the debounced autosave (which loses the
+                    // edit if the app closes or a server pull lands first).
+                    const prevInv = invoices.find(inv => inv.id === finalCard.id);
+                    const mergedInv = { ...(prevInv || {}), ...finalCard } as Invoice;
+                    setInvoices(prev => prev.map(inv => inv.id === finalCard.id ? mergedInv : inv));
+                    saveNow(COLLECTIONS.invoices, [mergedInv]);
                     setEditingInvoiceCard(null);
                     resetModalState('invoice');
                     setEditingInvLineIdx(null);
