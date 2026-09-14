@@ -17258,6 +17258,8 @@ export default function App() {
                     <input type="date" value={editingInvoiceCard.date || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, date: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
                     <input type="date" value={editingInvoiceCard.dueDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, dueDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipment Date</label>
+                    <input type="date" value={editingInvoiceCard.shipmentDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, shipmentDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Delivery Date</label>
                     <input type="date" value={editingInvoiceCard.deliveryDate || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, deliveryDate: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
@@ -17604,6 +17606,10 @@ export default function App() {
                     <div className="text-sm">{inv.dueDate || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
                     <div className="text-sm">{inv.carrier || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipment Date</label>
+                    <div className="text-sm">{inv.shipmentDate || orderForInvoice(inv)?.shipmentDate || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Delivery Date</label>
+                    <div className="text-sm">{inv.deliveryDate || orderForInvoice(inv)?.deliveryDate || '—'}</div></div>
                 </div>
                 {/* Quantity (MT), Total Weight (KG), Price/MT and Split No. moved
                     out of the header — they live in the Line Items section below. */}
