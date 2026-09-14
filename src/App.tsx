@@ -6533,16 +6533,56 @@ export default function App() {
         const dedupHamilton = dedup(hamilton);
         const dedupVancouver = dedup(vancouver);
         const totalRemoved = (hamilton.length - dedupHamilton.length) + (vancouver.length - dedupVancouver.length);
-        setHamiltonShipments(dedupHamilton);
-        setVancouverShipments(dedupVancouver);
-        const dedupAll = [...dedupHamilton, ...dedupVancouver];
+        // RECONCILE each shipment with its INVOICE (authoritative once billed),
+        // else its ORDER — matched by BOL. Mis-linked rows carried the wrong
+        // customer/product (e.g. a shipment showing FRULACT/GC100 while the
+        // invoice on the same BOL is Pacific Blends totes). Transfer shipments
+        // and blank-BOL drafts are left alone.
+        const invByBol = new Map<string, any>();
+        for (const inv of (data.invoices || [])) {
+          const b = (inv.bolNumber || '').trim().toUpperCase();
+          if (b && !/cancel|credit/i.test(inv.status || '') && !invByBol.has(b)) invByBol.set(b, inv);
+        }
+        const ordByBol = new Map<string, any>();
+        for (const o of (data.orders || [])) {
+          const b = (o.bolNumber || '').trim().toUpperCase();
+          if (b && (o.status || '') !== 'Cancelled' && !ordByBol.has(b)) ordByBol.set(b, o);
+        }
+        let reconciled = 0;
+        const reconcile = (arr: Shipment[]) => arr.map(s => {
+          if ((s.notes || '').startsWith('TRANSFER:')) return s;
+          const b = (s.bol || '').trim().toUpperCase();
+          if (!b) return s;
+          const src = invByBol.get(b) || ordByBol.get(b);
+          if (!src) return s;
+          const lines: any[] = src.lineItems || [];
+          const li = lines.find((l: any) => l.productName === s.product) || lines[0];
+          // Prefer the line item's product — the header product on a mixed load
+          // is a comma-joined display string, not a real product.
+          const product = li?.productName || (src.product && !String(src.product).includes(',') ? src.product : '') || s.product;
+          const patch: Partial<Shipment> = {};
+          if (src.customer && s.customer !== src.customer) patch.customer = src.customer;
+          if (product && s.product !== product) patch.product = product;
+          if (src.po && s.po !== src.po) patch.po = src.po;
+          const cn = li?.contractNumber || src.contractNumber;
+          if (cn && s.contractNumber !== cn) patch.contractNumber = cn;
+          if (!Object.keys(patch).length) return s;
+          reconciled++;
+          return { ...s, ...patch };
+        });
+        const finalHamilton = reconcile(dedupHamilton);
+        const finalVancouver = reconcile(dedupVancouver);
+        setHamiltonShipments(finalHamilton);
+        setVancouverShipments(finalVancouver);
+        const dedupAll = [...finalHamilton, ...finalVancouver];
         // If duplicates were removed, sync cleaned data to Firebase. The synced
         // marker is set ONLY in the .then — recording it before the write settles
         // would make the autosave believe the cleanup already persisted, so a
         // failed/blocked write would leave the duplicates in Firestore forever
         // (re-deduped locally on every load, never actually cleaned up).
-        if (totalRemoved > 0) {
-          console.log(`Removed ${totalRemoved} duplicate shipment(s)`);
+        if (totalRemoved > 0 || reconciled > 0) {
+          if (totalRemoved > 0) console.log(`Removed ${totalRemoved} duplicate shipment(s)`);
+          if (reconciled > 0) console.log(`Reconciled ${reconciled} shipment(s) with their invoice/order`);
           syncCollection(COLLECTIONS.shipments, dedupAll).then(() => {
             lastSyncedData.current.shipments = JSON.stringify(dedupAll);
             setSyncStatus('synced');
