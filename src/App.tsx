@@ -9399,15 +9399,23 @@ export default function App() {
     return undefined;
   };
 
-  // Price/MT for an order: prefer the matching contract's finalPrice, then fall
-  // back to the order's own amount ÷ total weight (MT). Returns 0 when neither
-  // is available so the caller can render an em-dash. Accepts an already-resolved
-  // contract so a caller that also needs the contract doesn't resolve it twice.
+  // Price/MT for an order. The order's OWN line pricing wins: each line's $/MT
+  // was set from its contract LINE (base + product differential) at entry/edit
+  // time, so it reflects edits made in the edit-order menu AND includes
+  // differentials — the contract-level finalPrice (base only) used to shadow
+  // both. Fallbacks: order amount ÷ weight, then the contract's product-line
+  // price (differential included), then contract finalPrice.
   const orderPricePerMt = (ord: Order, contract?: Contract): number => {
-    const c = contract ?? contractForOrder(ord);
-    if (c?.finalPrice) return c.finalPrice;
-    const totalWeight = ord.lineItems.reduce((s, li) => s + li.totalWeight, 0);
+    const lines = ord.lineItems || [];
+    const pricedWeight = lines.reduce((s, li) => s + ((li.mtAmount || 0) > 0 ? (li.totalWeight || 0) : 0), 0);
+    if (pricedWeight > 0) {
+      const lineValue = lines.reduce((s, li) => s + ((li.mtAmount || 0) > 0 ? (li.totalWeight || 0) * (li.mtAmount || 0) : 0), 0);
+      return lineValue / pricedWeight;
+    }
+    const totalWeight = lines.reduce((s, li) => s + (li.totalWeight || 0), 0);
     if (totalWeight > 0 && ord.amount) return ord.amount / totalWeight;
+    const c = contract ?? contractForOrder(ord);
+    if (c) return contractPriceFor(c, lines[0]?.productDisplayName || lines[0]?.productName || ord.product);
     return 0;
   };
 
