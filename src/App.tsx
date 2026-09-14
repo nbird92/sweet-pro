@@ -25461,15 +25461,20 @@ export default function App() {
                           customsEntryNo: orderCustomsEntryNo.trim() || undefined,
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
+                        // Durable at click time — never left to the debounced
+                        // autosave (a reload or server pull would discard the edit,
+                        // e.g. a changed shipment date silently reverting).
+                        saveNow(COLLECTIONS.orders, [updatedOrder]);
                         // Cascade the mirrored fields to the linked shipment row(s)
                         // (matched by the unchanged BOL) so the scheduler and the
-                        // BOL/COA PDFs don't keep stale customer/product/PO/qty.
+                        // BOL/COA PDFs don't keep stale customer/product/PO/qty/date.
                         const cascadeBol = (updatedOrder.bolNumber || '').trim();
                         if (cascadeBol) {
+                          const changedShipments: Shipment[] = [];
                           const cascade = (prev: Shipment[]) => prev.map((s, idx) => {
                             if ((s.bol || '').trim() !== cascadeBol) return s;
                             const li = updatedOrder.lineItems.find(l => l.productName === s.product) ?? updatedOrder.lineItems[idx] ?? updatedOrder.lineItems[0];
-                            return {
+                            const next = {
                               ...s,
                               customer: updatedOrder.customer,
                               po: updatedOrder.po,
@@ -25477,10 +25482,19 @@ export default function App() {
                               product: li ? li.productName : s.product,
                               contractNumber: li ? li.contractNumber : s.contractNumber,
                               qty: li ? li.totalWeight : s.qty,
+                              // The order's shipment date is the pick-up date.
+                              date: updatedOrder.shipmentDate || s.date,
+                              deliveryDate: updatedOrder.deliveryDate || s.deliveryDate,
                             };
+                            changedShipments.push(next);
+                            return next;
                           });
-                          setHamiltonShipments(cascade);
-                          setVancouverShipments(cascade);
+                          // Compute eagerly (not as updater fns): the map has the
+                          // side effect of collecting changed rows, which must run
+                          // exactly once per array.
+                          setHamiltonShipments(cascade(hamiltonShipments));
+                          setVancouverShipments(cascade(vancouverShipments));
+                          if (changedShipments.length) saveNow(COLLECTIONS.shipments, changedShipments);
                         }
                       } else {
                         // Create new order
