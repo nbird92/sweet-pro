@@ -25449,8 +25449,11 @@ export default function App() {
                 {/* Create/Save Order Button */}
                 <div className="flex gap-4">
                   <button
-                    onClick={() => {
-                      if (!orderCustomerId || orderLineItems.length === 0 || !orderPO) {
+                    onClick={() => { try {
+                      // When EDITING, a missing customer selection is not fatal —
+                      // the order's stored customer name may simply have no
+                      // customer record (renamed/deleted); keep it as-is.
+                      if ((!orderCustomerId && !editingOrder) || orderLineItems.length === 0 || !orderPO) {
                         setErrorBox('Please select customer, add line items, and enter PO number');
                         return;
                       }
@@ -25594,7 +25597,12 @@ export default function App() {
                       setOrderScheduleAppt(false);
                       setOrderApptTime('');
                       setOrderApptBay('');
-                    }}
+                    } catch (e: any) {
+                      // A silent exception here looked like "the button does
+                      // nothing" — always surface it.
+                      console.error('Order save failed:', e);
+                      setErrorBox('Saving the order failed: ' + (e?.message || String(e)));
+                    } }}
                     className="flex-1 py-4 bg-emerald-700 text-white font-bold text-xs uppercase hover:bg-emerald-800 transition-colors"
                   >
                     {editingOrder ? 'Save Changes' : 'Create Order'}
