@@ -8333,18 +8333,24 @@ export default function App() {
 
     if (!shipment) return;
 
-    // Update the shipment status in the appropriate list
+    // Update the shipment status in the appropriate list — durable at click.
     const updateFn = (prev: Shipment[]) => prev.map(s => s.id === id ? { ...s, status } : s);
     setHamiltonShipments(updateFn);
     setVancouverShipments(updateFn);
+    saveNow(COLLECTIONS.shipments, [{ ...shipment, status }]);
 
     // If status changed to Completed, update the linked order status, create an invoice and deduct contract volume
     if (status === 'Completed' && shipment.status !== 'Completed') {
+      // The whole completed-branch must not repeat once invoiced (the in-updater
+      // dedup only guards the invoice list, not the drawdown/saves).
+      const alreadyInvoiced = invoices.some(inv => inv.shipmentId === id);
       // Update the linked order status to Completed
       const completedOrder = orders.find(o => o.bolNumber === shipment.bol);
       if (completedOrder) {
         setOrders(prev => prev.map(o => o.id === completedOrder.id ? { ...o, status: 'Completed' } : o));
+        saveNow(COLLECTIONS.orders, [{ ...completedOrder, status: 'Completed' }]);
       }
+      if (alreadyInvoiced) return;
       // Find the contract for this shipment to use contract pricing
       const contract = contracts.find(c => c.contractNumber === shipment.contractNumber);
       const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
@@ -8394,6 +8400,8 @@ export default function App() {
         if (prevInvoices.some(inv => inv.shipmentId === id)) return prevInvoices;
         return [...prevInvoices, newInvoice];
       });
+      // Durable immediately (alreadyInvoiced guard above prevents repeats).
+      saveNow(COLLECTIONS.invoices, [newInvoice]);
 
       // Track CHEP pallet outbound if applicable
       const matchingOrder = orders.find(o => o.bolNumber === shipment.bol);
@@ -8425,17 +8433,13 @@ export default function App() {
 
       // Deduct volume from the contract
       if (contract) {
-        setContracts(prevContracts => prevContracts.map(c => {
-          if (c.contractNumber === shipment.contractNumber) {
-            const newVolumeTaken = c.volumeTaken + billQty;
-            return {
-              ...c,
-              volumeTaken: newVolumeTaken,
-              volumeOutstanding: c.contractVolume - newVolumeTaken
-            };
-          }
-          return c;
-        }));
+        const drawnContract: Contract = {
+          ...contract,
+          volumeTaken: contract.volumeTaken + billQty,
+          volumeOutstanding: contract.contractVolume - (contract.volumeTaken + billQty),
+        };
+        setContracts(prevContracts => prevContracts.map(c => c.contractNumber === shipment.contractNumber ? drawnContract : c));
+        saveNow(COLLECTIONS.contracts, [drawnContract]);
       }
     }
   };
@@ -8461,8 +8465,10 @@ export default function App() {
     // without this early return they would fire again on a suppressed duplicate.
     if (invoices.some(inv => inv.shipmentId === orderId)) return;
 
-    // Set order status to Completed
+    // Set order status to Completed — durable at click time so the billed
+    // order can never resurface as Open after a reload.
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'Completed' } : o));
+    saveNow(COLLECTIONS.orders, [{ ...order, status: 'Completed' }]);
 
     // Find the contract for pricing
     const ordContractNum = order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean)[0] || '';
@@ -8517,6 +8523,9 @@ export default function App() {
       if (prevInvoices.some(inv => inv.shipmentId === orderId)) return prevInvoices;
       return [...prevInvoices, newInvoice];
     });
+    // Durable immediately (the whole-function guard above already ensured this
+    // order isn't invoiced yet).
+    saveNow(COLLECTIONS.invoices, [newInvoice]);
 
     // Track CHEP pallet outbound if applicable
     if (order.palletType === 'CHEP') {
@@ -8547,17 +8556,13 @@ export default function App() {
 
     // Deduct volume from the contract
     if (contract) {
-      setContracts(prevContracts => prevContracts.map(c => {
-        if (c.contractNumber === ordContractNum) {
-          const newVolumeTaken = c.volumeTaken + billQty;
-          return {
-            ...c,
-            volumeTaken: newVolumeTaken,
-            volumeOutstanding: c.contractVolume - newVolumeTaken
-          };
-        }
-        return c;
-      }));
+      const drawnContract: Contract = {
+        ...contract,
+        volumeTaken: contract.volumeTaken + billQty,
+        volumeOutstanding: contract.contractVolume - (contract.volumeTaken + billQty),
+      };
+      setContracts(prevContracts => prevContracts.map(c => c.contractNumber === ordContractNum ? drawnContract : c));
+      saveNow(COLLECTIONS.contracts, [drawnContract]);
     }
 
     // Mark the linked shipment Completed when billed from the scheduler.
@@ -8565,6 +8570,8 @@ export default function App() {
       const sid = opts.shipmentId;
       setHamiltonShipments(prev => prev.map(s => s.id === sid ? { ...s, status: 'Completed' } : s));
       setVancouverShipments(prev => prev.map(s => s.id === sid ? { ...s, status: 'Completed' } : s));
+      const doneShip = [...hamiltonShipments, ...vancouverShipments].find(s => s.id === sid);
+      if (doneShip) saveNow(COLLECTIONS.shipments, [{ ...doneShip, status: 'Completed' }]);
     }
 
     // Auto-send BOL + COA emails when their respective trigger toggles
