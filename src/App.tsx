@@ -1839,11 +1839,20 @@ export default function App() {
     const accepted: Order[] = [];
     const batchPo = new Set<string>();
     const batchBol = new Set<string>();
-    for (const c of candidates) {
+    for (let c of candidates) {
       const pk = poKey(c.po);
-      const b = (c.bolNumber || '').trim().toUpperCase();
-      if ((pk && batchPo.has(pk)) || (b && batchBol.has(b))) continue; // dup within this batch
-      if (orderPoBolConflict(c.po, c.bolNumber)) continue;             // dup vs existing order/invoice
+      let b = (c.bolNumber || '').trim().toUpperCase();
+      if (pk && batchPo.has(pk)) continue; // duplicate PO in batch = same order twice
+      if (pk && orderPoBolConflict(c.po, '') ) continue; // PO already exists = genuine duplicate
+      // A BOL collision with a DIFFERENT PO is not a duplicate order — it's a
+      // numbering clash (stale state / concurrent sessions minted the same
+      // number and distinct orders ended up sharing a BOL, which then made
+      // edits look lost and hid siblings when one was billed). RENUMBER it.
+      if (b && (batchBol.has(b) || orderPoBolConflict('', c.bolNumber))) {
+        const fresh = generateBOLNumber(c.lineItems || [], [...batchBol]);
+        c = { ...c, bolNumber: fresh };
+        b = (fresh || '').trim().toUpperCase();
+      }
       if (pk) batchPo.add(pk);
       if (b) batchBol.add(b);
       accepted.push(c);
@@ -5359,6 +5368,8 @@ export default function App() {
     } else {
       setHamiltonShipments(prev => [...prev, s]);
     }
+    // Durable at click time — same rule as order/invoice saves.
+    saveNow(COLLECTIONS.shipments, [s]);
   };
 
   const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
