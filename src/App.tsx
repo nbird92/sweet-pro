@@ -6678,6 +6678,45 @@ export default function App() {
         // the ARRAY, and deleting completed business records was wrong for
         // data permanency anyway. Memory now matches Firestore ⇒ orders syncs
         // clean.
+        // MULTI-USER SAFETY NET: two sessions creating orders concurrently can
+        // mint the SAME BOL (each numbered off its own local state). Renumber
+        // later-created duplicates to fresh unique BOLs on load — an invoice's
+        // owner (matched by customer), else the earliest-created order, keeps
+        // the original number.
+        {
+          const bolOf = (s?: string) => (s || '').trim().toUpperCase();
+          const createdAt = (id: string) => parseInt((/-(\d{13})/.exec(id) || [])[1] || '0', 10) || 0;
+          const byBol = new Map<string, any[]>();
+          for (const o of mapped) { const b = bolOf(o.bolNumber); if (b) { if (!byBol.has(b)) byBol.set(b, []); byBol.get(b)!.push(o); } }
+          const dupGroups = [...byBol.entries()].filter(([, arr]) => arr.length > 1);
+          if (dupGroups.length) {
+            const invByBol = new Map<string, any>();
+            for (const inv of (data.invoices || [])) { const b = bolOf(inv.bolNumber); if (b && !/cancel|credit/i.test(inv.status || '') && !invByBol.has(b)) invByBol.set(b, inv); }
+            const maxByPrefix = new Map<string, number>();
+            for (const b of [...byBol.keys(), ...((data.invoices || []).map((i: any) => bolOf(i.bolNumber)))]) {
+              const m = /^([A-Z])(\d{6,})$/.exec(b || '');
+              if (m) maxByPrefix.set(m[1], Math.max(maxByPrefix.get(m[1]) || 0, parseInt(m[2], 10)));
+            }
+            const renumbered: any[] = [];
+            for (const [b, arr] of dupGroups) {
+              const inv = invByBol.get(b);
+              const keeper = (inv && arr.find(o => (o.customer || '') === (inv.customer || '')))
+                || arr.slice().sort((x, y) => createdAt(x.id) - createdAt(y.id))[0];
+              const prefix = b[0];
+              for (const o of arr) {
+                if (o === keeper) continue;
+                const next = (maxByPrefix.get(prefix) || 0) + 1;
+                maxByPrefix.set(prefix, next);
+                o.bolNumber = `${prefix}${String(next).padStart(6, '0')}`;
+                renumbered.push(o);
+              }
+            }
+            if (renumbered.length) {
+              console.warn(`[load] Renumbered ${renumbered.length} order(s) sharing a BOL (concurrent-session numbering clash).`);
+              syncCollection(COLLECTIONS.orders, mapped).catch(e => console.error('Dup-BOL renumber sync failed:', e));
+            }
+          }
+        }
         setOrders(mapped);
         lastSyncedData.current.orders = JSON.stringify(mapped);
       }
@@ -7520,6 +7559,36 @@ export default function App() {
     const end = performance.now();
     console.log(`%c[syncNow] waited ${(Math.max(0, pushT0 - waitT0) / 1000).toFixed(1)}s for autosave · push ${(Math.max(0, pullT0 - pushT0) / 1000).toFixed(1)}s · pull ${((end - pullT0) / 1000).toFixed(1)}s`, 'color:#0a7');
   };
+
+  // ── MULTI-USER FRESHNESS ────────────────────────────────────────────────
+  // With several people in the app, each session must periodically pick up the
+  // others' changes (reads are one-shot pulls, not live listeners). Reuse the
+  // Sync Now primitive — push-dirty-first-then-pull, so a refresh can never
+  // clobber this session's own unsaved edits. Refresh runs:
+  //   • when the tab regains focus and the data is >2 min old, and
+  //   • every 5 min while the tab stays visible,
+  // but NEVER while an edit modal is open (a pull mid-edit would remount
+  // inputs under the operator's cursor).
+  const modalBusyRef = useRef(false);
+  const handleSyncNowRef = useRef(handleSyncNow);
+  handleSyncNowRef.current = handleSyncNow;
+  const lastAutoRefreshRef = useRef(Date.now());
+  useEffect(() => {
+    if (!user || !lastSynced) return;
+    const tryRefresh = (minAgeMs: number) => {
+      if (document.visibilityState !== 'visible') return;
+      if (modalBusyRef.current || isSyncing.current) return;
+      if (Date.now() - lastAutoRefreshRef.current < minAgeMs) return;
+      lastAutoRefreshRef.current = Date.now();
+      console.log('[auto-refresh] pulling other users’ changes');
+      handleSyncNowRef.current();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') tryRefresh(2 * 60 * 1000); };
+    const iv = setInterval(() => tryRefresh(5 * 60 * 1000), 60 * 1000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVisible); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, lastSynced]);
 
   // Fast-persist the review queues so a dismissed / approved PO or amendment
   // sticks immediately and never reappears on a quick refresh. The main autosave
@@ -8617,6 +8686,17 @@ export default function App() {
   const [selectedContractDetail, setSelectedContractDetail] = useState<Contract | null>(null);
   const [isAddingCustomer, setIsAddingCustomer] = useState(false);
   const [isAddingSku, setIsAddingSku] = useState(false);
+  // Feed the auto-refresh gate (declared with the sync machinery above): a pull
+  // must never land while an edit modal is open. Runs post-render, so it can
+  // safely read states declared anywhere in the component.
+  useEffect(() => {
+    modalBusyRef.current = !!(
+      editingOrder || isAddingOrder || isAddingBatchOrder
+      || editingInvoiceCard || editingTransfer || isAddingTransfer
+      || editingCustomer || isAddingCustomer || editingShipment || isAddingShipment
+      || editingContract || showContractConfirm
+    );
+  });
   const [isAddingFreightRate, setIsAddingFreightRate] = useState(false);
   const [isAddingCarrier, setIsAddingCarrier] = useState(false);
   const [showPreviousWeeks, setShowPreviousWeeks] = useState(false);
