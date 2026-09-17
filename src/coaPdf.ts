@@ -429,16 +429,19 @@ function generateGranulatedCoaPage(
   // ── Specification | Standards | Results (the template's five fixed rows) ──
   const res = (key: keyof LotCode) => joinVals(key);
   const maxColor = qaProduct?.maxColor != null && qaProduct.maxColor !== 0 ? String(qaProduct.maxColor) : '';
+  // Standards come from the QA product's Specifications table; the template's
+  // wording is only the fallback when a spec field is blank.
+  const specs = qaProduct?.specifications;
   autoTable(doc, {
     startY: y,
     margin: { left: M, right: M },
     head: [['Specification', 'Standards', 'Results']],
     body: [
-      ['Sensorial', 'Typical, Sweet, no off flavor or odor, dry crystalline, white refined sugar with a free flowing capacity', 'Conforms to Standard'],
-      ['Color', `Max. ICUMSA ${maxColor}`.trim(), res('color')],
-      ['Moisture', 'Max. 0.05%', res('moisture')],
-      ['Ash', 'Max. 0.04%', res('ash')],
-      ['Sucrose', 'Min. 99.8%', res('sucrose')],
+      ['Sensorial', specs?.sensorial || 'Typical, Sweet, no off flavor or odor, dry crystalline, white refined sugar with a free flowing capacity', 'Conforms to Standard'],
+      ['Color', specs?.color || `Max. ICUMSA ${maxColor}`.trim(), res('color')],
+      ['Moisture', specs?.moisture || 'Max. 0.05%', res('moisture')],
+      ['Ash', specs?.ash || 'Max. 0.04%', res('ash')],
+      ['Sucrose', specs?.sucrose || 'Min. 99.8%', res('sucrose')],
     ],
     styles: { fontSize: 8.5, cellPadding: 2.5, lineColor: [20, 20, 20], lineWidth: 0.2, textColor: [20, 20, 20] },
     headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', lineColor: [20, 20, 20], lineWidth: 0.2 },
@@ -536,16 +539,18 @@ export function renderCoaInto(doc: jsPDF, {
 
   if (isLiquidSugar(sugarType)) {
     templateSubtitle = 'LIQUID SUGAR';
+    // Every specification value comes from the QA product's Specifications
+    // table (Quality Assurance page) — nothing hardcoded except unit labels.
     parameters = [
       { name: 'Brix', spec: specs?.brix || '', unit: '°Bx', key: 'brix' },
       { name: 'Color (ICUMSA)', spec: specs?.color || '', unit: 'IU', key: 'color' },
-      { name: 'pH', spec: '', unit: '', key: 'ph' },
-      { name: 'Temperature', spec: '', unit: '°C', key: 'temperature' },
-      { name: 'Invert Sugar', spec: '', unit: '%', key: 'invert' },
+      { name: 'pH', spec: specs?.ph || '', unit: '', key: 'ph' },
+      { name: 'Temperature', spec: specs?.temperature || '', unit: '°C', key: 'temperature' },
+      { name: 'Invert Sugar', spec: specs?.invert || '', unit: '%', key: 'invert' },
       { name: 'Ash (Conductivity)', spec: specs?.ash || '', unit: '%', key: 'ash' },
       { name: 'Moisture', spec: specs?.moisture || '', unit: '%', key: 'moisture' },
       { name: 'Turbidity', spec: specs?.turbidity || '', unit: 'NTU', key: null },
-      { name: 'Odour / Flavour', spec: 'Normal', unit: '', key: null },
+      { name: 'Odour / Flavour', spec: specs?.sensorial || 'Normal', unit: '', key: null },
     ];
   } else {
     // GRANULATED uses the customer-approved template layout — see

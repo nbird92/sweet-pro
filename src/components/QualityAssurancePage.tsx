@@ -43,7 +43,7 @@ function SearchInput({ value, onChange, placeholder }: { value: string; onChange
   );
 }
 
-const emptySpecs: QASpecifications = { brix: '', granulation: '', color: '', ash: '', turbidity: '', moisture: '' };
+const emptySpecs: QASpecifications = { brix: '', granulation: '', color: '', ash: '', turbidity: '', moisture: '', ph: '', temperature: '', invert: '', sucrose: '', sensorial: '' };
 
 // Sample values used for formula preview rendering
 const PREVIEW_SAMPLE = {
@@ -2669,7 +2669,7 @@ export default function QualityAssurancePage({
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Specifications</div>
                   <div className="grid grid-cols-3 gap-4">
-                    {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
+                    {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture', 'ph', 'temperature', 'invert', 'sucrose', 'sensorial'] as const).map(spec => (
                       <div key={spec}>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">{spec}</label>
                         <input
@@ -3093,7 +3093,12 @@ export default function QualityAssurancePage({
                           <th className="p-3 border-r border-white/10">Color</th>
                           <th className="p-3 border-r border-white/10">Ash</th>
                           <th className="p-3 border-r border-white/10">Turbidity</th>
-                          <th className="p-3">Moisture</th>
+                          <th className="p-3 border-r border-white/10">Moisture</th>
+                          <th className="p-3 border-r border-white/10">pH</th>
+                          <th className="p-3 border-r border-white/10">Temperature</th>
+                          <th className="p-3 border-r border-white/10">Invert</th>
+                          <th className="p-3 border-r border-white/10">Sucrose</th>
+                          <th className="p-3">Sensorial</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3115,8 +3120,23 @@ export default function QualityAssurancePage({
                               <td className="p-2 border-r border-[#141414]/10">
                                 <input value={editData?.specifications.turbidity || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, turbidity: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 25 NTU" />
                               </td>
-                              <td className="p-2">
+                              <td className="p-2 border-r border-[#141414]/10">
                                 <input value={editData?.specifications.moisture || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, moisture: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 0.04%" />
+                              </td>
+                              <td className="p-2 border-r border-[#141414]/10">
+                                <input value={editData?.specifications.ph || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, ph: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 6.5-8.5" />
+                              </td>
+                              <td className="p-2 border-r border-[#141414]/10">
+                                <input value={editData?.specifications.temperature || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, temperature: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Max 40°C" />
+                              </td>
+                              <td className="p-2 border-r border-[#141414]/10">
+                                <input value={editData?.specifications.invert || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, invert: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Max 0.5%" />
+                              </td>
+                              <td className="p-2 border-r border-[#141414]/10">
+                                <input value={editData?.specifications.sucrose || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, sucrose: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Min. 99.8%" />
+                              </td>
+                              <td className="p-2">
+                                <input value={editData?.specifications.sensorial || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, sensorial: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Typical, sweet, no off odor" />
                               </td>
                             </>
                           ) : (
@@ -3126,7 +3146,12 @@ export default function QualityAssurancePage({
                               <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.color || '-'}</td>
                               <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.ash || '-'}</td>
                               <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.turbidity || '-'}</td>
-                              <td className="p-3 text-xs">{displayData.specifications.moisture || '-'}</td>
+                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.moisture || '-'}</td>
+                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.ph || '-'}</td>
+                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.temperature || '-'}</td>
+                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.invert || '-'}</td>
+                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.sucrose || '-'}</td>
+                              <td className="p-3 text-xs">{displayData.specifications.sensorial || '-'}</td>
                             </>
                           )}
                         </tr>

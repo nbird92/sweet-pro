@@ -899,6 +899,12 @@ export interface QASpecifications {
   ash: string;
   turbidity: string;
   moisture: string;
+  /** COA standards — printed in the Certificate of Analysis spec column. */
+  ph?: string;
+  temperature?: string;
+  invert?: string;
+  sucrose?: string;
+  sensorial?: string;
 }
 
 export interface ArtworkApproval {
