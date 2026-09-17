@@ -3495,6 +3495,30 @@ export default function QualityAssurancePage({
                     )}
                   </div>
 
+                  {/* Bulk sugar feedstock — which BULK product this item is made
+                      from. Options: every catalog product in a Bulk group/format. */}
+                  <div className="flex items-center gap-3">
+                    <label className="text-[10px] uppercase font-bold opacity-50 whitespace-nowrap">Bulk Sugar</label>
+                    {isEditing ? (
+                      <select
+                        value={editData?.bulkSugarQaId || ''}
+                        onChange={(e) => setEditData(prev => prev ? { ...prev, bulkSugarQaId: e.target.value || undefined } : prev)}
+                        className="bg-white border border-[#141414] p-2 text-xs outline-none min-w-[280px] max-w-full"
+                      >
+                        <option value="">— Select bulk sugar —</option>
+                        {qaProducts
+                          .filter(q => /bulk/i.test(q.productGroup || '') || /bulk/i.test(q.productFormat || ''))
+                          .sort((a, b) => shortformFor(a).localeCompare(shortformFor(b)))
+                          .map(q => <option key={q.id} value={q.id}>{shortformFor(q) || q.skuName}{q.sugarType ? ` — ${q.sugarType}` : ''}{q.location ? ` (${q.location})` : ''}</option>)}
+                      </select>
+                    ) : (
+                      <div className="text-xs font-bold">{(() => {
+                        const q = qaProducts.find(x => x.id === displayData.bulkSugarQaId);
+                        return q ? `${shortformFor(q) || q.skuName}${q.sugarType ? ` — ${q.sugarType}` : ''}` : '—';
+                      })()}</div>
+                    )}
+                  </div>
+
                   {/* BOM Table */}
                   {(displayData.billOfMaterials && displayData.billOfMaterials.length > 0) ? (
                     <div className="overflow-x-auto">

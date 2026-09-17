@@ -951,6 +951,9 @@ export interface QAProduct {
   netWeightKg?: number;
   grossWeightKg?: number;
   maxColor: number;
+  /** The bulk sugar this product is made from (a QA product id whose sugar type
+   *  is a bulk product) — set in the Bill of Materials section. */
+  bulkSugarQaId?: string;
   approverQAId?: string;
   approverSalesId?: string;
   approverOperationsId?: string;
