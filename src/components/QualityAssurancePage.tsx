@@ -3139,21 +3139,26 @@ export default function QualityAssurancePage({
                                 <input value={editData?.specifications.sensorial || ''} onChange={(e) => setEditData(prev => prev ? { ...prev, specifications: { ...prev.specifications, sensorial: e.target.value } } : prev)} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. Typical, sweet, no off odor" />
                               </td>
                             </>
-                          ) : (
-                            <>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.brix || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.granulation || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.color || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.ash || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.turbidity || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.moisture || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.ph || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.temperature || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.invert || '-'}</td>
-                              <td className="p-3 text-xs border-r border-[#141414]/10">{displayData.specifications.sucrose || '-'}</td>
-                              <td className="p-3 text-xs">{displayData.specifications.sensorial || '-'}</td>
-                            </>
-                          )}
+                          ) : (() => {
+                            // Blank spec fields INHERIT from the linked Bulk Sugar
+                            // (BOM section) — inherited values render dimmed.
+                            const parentSpecs = qaProducts.find(x => x.id === displayData.bulkSugarQaId)?.specifications;
+                            const cell = (k: keyof QASpecifications, last = false) => {
+                              const own = (displayData.specifications as any)[k] || '';
+                              const inherited = !own && parentSpecs ? ((parentSpecs as any)[k] || '') : '';
+                              return (
+                                <td key={k} className={`p-3 text-xs ${last ? '' : 'border-r border-[#141414]/10'} ${!own && inherited ? 'opacity-60 italic' : ''}`} title={!own && inherited ? 'Inherited from the linked Bulk Sugar' : ''}>
+                                  {own || inherited || '-'}
+                                </td>
+                              );
+                            };
+                            return (
+                              <>
+                                {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture', 'ph', 'temperature', 'invert', 'sucrose'] as const).map(k => cell(k))}
+                                {cell('sensorial', true)}
+                              </>
+                            );
+                          })()}
                         </tr>
                       </tbody>
                     </table>

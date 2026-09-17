@@ -523,9 +523,24 @@ export function renderCoaInto(doc: jsPDF, {
   const displayProductName = order?.product || shipment.product || '';
   const lookupProductName = order?.lineItems?.[0]?.productName || shipment.product || displayProductName;
   const productName = displayProductName;
-  const qaProduct =
+  const qaProductRaw =
     qaProducts.find(p => p.skuName === lookupProductName) ||
     qaProducts.find(p => p.skuName === productName);
+  // Blank specification fields INHERIT from the product's linked BULK SUGAR
+  // (QA card → Bill of Materials): a packaged product's COA standards come
+  // from the bulk sugar it's made of unless overridden on the product itself.
+  const bulkParent = qaProductRaw?.bulkSugarQaId
+    ? qaProducts.find(p => p.id === qaProductRaw.bulkSugarQaId)
+    : undefined;
+  const qaProduct = qaProductRaw && bulkParent?.specifications
+    ? {
+        ...qaProductRaw,
+        specifications: {
+          ...bulkParent.specifications,
+          ...Object.fromEntries(Object.entries(qaProductRaw.specifications || {}).filter(([, v]) => String(v || '').trim() !== '')),
+        } as QAProduct['specifications'],
+      }
+    : qaProductRaw;
   const sugarType = shipmentLotCodes.length > 0
     ? shipmentLotCodes[0].sugarType
     : (qaProduct?.sugarType || '');
