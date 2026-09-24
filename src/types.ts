@@ -892,6 +892,16 @@ export const INITIAL_PEOPLE: Person[] = [
   { id: 'PERSON-005', name: 'David Wilson', email: 'david.wilson@sucrosourcing.com', phone: '555-0105', department: 'customer service' },
 ];
 
+/** Which futures TERMINAL (contract month) applies to each calendar month —
+ *  reference table shown on the Finance page and used by the quote page's
+ *  Contract Start / Contract End dropdowns. */
+export const MONTH_TERMINALS: Record<string, string> = {
+  Jan: 'Mar', Feb: 'Mar', Mar: 'Mar', Apr: 'Mar', May: 'Mar',
+  Jun: 'May', Jul: 'May',
+  Aug: 'Jul', Sep: 'Jul', Oct: 'Jul',
+  Nov: 'Oct', Dec: 'Oct',
+};
+
 export interface QASpecifications {
   brix: string;
   granulation: string;

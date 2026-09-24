@@ -80,7 +80,7 @@ const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
 const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee, MONTH_TERMINALS } from './types';
 const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
 const PeoplePage = lazy(() => import('./components/PeoplePage'));
 const QualityAssurancePage = lazy(() => import('./components/QualityAssurancePage'));
@@ -3208,12 +3208,26 @@ export default function App() {
       setIsFetchingLiveSugar(false);
     }
   };
-  // Load the live board when the market page opens (once per session; the
-  // Refresh Live button re-pulls on demand, server caches ~10 min).
-  useEffect(() => {
-    if (activePage === 'US #11 Market' && !liveSugar && !isFetchingLiveSugar && !liveSugarError) fetchLiveSugar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePage]);
+  // Contract Start/End dropdown options: the market months sorted
+  // CHRONOLOGICALLY, each labeled with the futures TERMINAL that applies to it
+  // (MONTH_TERMINALS reference table — also shown on the Finance page).
+  const contractMonthOptions = useMemo(() => {
+    const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const keyOf = (s: string) => {
+      const parts = s.trim().split(/\s+/);
+      const mi = MO.findIndex(m => s.trim().toLowerCase().startsWith(m.toLowerCase()));
+      const y = parseInt(parts[parts.length - 1]) || 0;
+      return y * 12 + (mi >= 0 ? mi : 0);
+    };
+    const months = Array.from(new Set(marketData.map((d: any) => d.Month || d.month).filter(Boolean))) as string[];
+    return months
+      .sort((a, b) => keyOf(a) - keyOf(b))
+      .map(m => {
+        const term = MONTH_TERMINALS[m.trim().slice(0, 3)] || '';
+        return { value: m, label: term ? `${m} — ${term} terminal` : m };
+      });
+  }, [marketData]);
+
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
   const [hamiltonShipments, setHamiltonShipments] = useState<Shipment[]>([]);
@@ -4402,6 +4416,20 @@ export default function App() {
     event.target.value = '';
   };
   const [user, setUser] = useState<User | null>(null);
+  // Live market data is a SALES-department feature: visible only when the
+  // signed-in user's email matches a Person in the people table whose
+  // department is 'sales'.
+  const isSalesUser = useMemo(() => {
+    const email = (user?.email || '').trim().toLowerCase();
+    if (!email) return false;
+    return people.some(p => (p.email || '').trim().toLowerCase() === email && p.department === 'sales');
+  }, [user, people]);
+  // Refresh when a sales user navigates to the Customer Quote screen OR the
+  // US #11 Market page — no continuous polling (the server also caches ~10 min).
+  useEffect(() => {
+    if ((activePage === 'Customer Quote' || activePage === 'US #11 Market') && isSalesUser && !isFetchingLiveSugar) fetchLiveSugar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage, isSalesUser]);
   const [authLoading, setAuthLoading] = useState(true);
 
   const fetchMarketData = async () => {
@@ -16044,10 +16072,12 @@ export default function App() {
             Last Updated: {lastMarketUpdate ? new Date(lastMarketUpdate).toLocaleString() : 'Never'}
           </div>
 
-          {/* ── LIVE ICE Sugar #11 board (Barchart OnDemand) ── */}
+          {/* ── LIVE ICE Sugar #11 board (Barchart OnDemand) — Sales dept only.
+              Loads when a sales user opens the Customer Quote page; no polling. ── */}
+          {isSalesUser && (
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
             <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><TrendingUp size={14} /> Live ICE Sugar #11 (SB) — Barchart</h3>
+              <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><TrendingUp size={14} /> Live ICE Sugar #11 (SB) — Yahoo Finance (delayed ~15 min)</h3>
               <div className="flex items-center gap-3">
                 {liveSugar?.fx && (
                   <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">USD/CAD <span className="font-mono">{Number(liveSugar.fx.lastPrice || 0).toFixed(4)}</span></span>
@@ -16065,7 +16095,6 @@ export default function App() {
             {liveSugarError ? (
               <div className="p-4 text-xs text-red-700 bg-red-50">
                 Live quotes unavailable: {liveSugarError}
-                {/not configured/i.test(liveSugarError) && <span className="block mt-1 opacity-70">Add your Barchart OnDemand key as BARCHART_API_KEY in the Vercel project's environment variables, then redeploy.</span>}
               </div>
             ) : !liveSugar ? (
               <div className="p-4 text-xs opacity-50 italic">{isFetchingLiveSugar ? 'Loading live quotes…' : 'No live quotes loaded yet.'}</div>
@@ -16110,6 +16139,7 @@ export default function App() {
               </div>
             )}
           </div>
+          )}
 
           {/* Data status indicator */}
           {marketData.length > 0 && !monthKey && (
@@ -16760,21 +16790,21 @@ export default function App() {
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs focus:outline-none"
                   >
                     <option value="">Select Month</option>
-                    {Array.from(new Set(marketData.map(d => d.Month || d.month).filter(Boolean))).map(month => (
-                      <option key={month as string} value={month as string}>{month as string}</option>
+                    {contractMonthOptions.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-60">Contract End</label>
-                  <select 
-                    value={config.contractEndDate} 
+                  <select
+                    value={config.contractEndDate}
                     onChange={(e) => handleInputChange('contractEndDate', e.target.value)}
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs focus:outline-none"
                   >
                     <option value="">Select Month</option>
-                    {Array.from(new Set(marketData.map(d => d.Month || d.month).filter(Boolean))).map(month => (
-                      <option key={month as string} value={month as string}>{month as string}</option>
+                    {contractMonthOptions.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
                 </div>

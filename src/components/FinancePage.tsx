@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiscalYear, FiscalQuarter, FiscalPeriod } from '../types';
+import { FiscalYear, FiscalQuarter, FiscalPeriod, MONTH_TERMINALS } from '../types';
 import { X, Trash2, Plus, ChevronDown, ChevronUp, Save, Calendar, Landmark } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
@@ -222,6 +222,31 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
         emptyMessage="No fiscal years configured. Click “Add Fiscal Year” to create one."
         defaultSortKey="name"
       />
+
+      {/* Month → Terminal reference: which futures terminal (contract month)
+          applies to each calendar month. The quote page's Contract Start/End
+          dropdowns label months with these terminals. */}
+      <div className="mt-6 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden max-w-md">
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3">
+          <h3 className="text-xs font-bold uppercase tracking-widest">Month → Terminal Reference</h3>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+              <th className="p-3 border-r border-[#141414]/10">Month</th>
+              <th className="p-3">Terminal</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#141414]/10">
+            {Object.entries(MONTH_TERMINALS).map(([month, terminal]) => (
+              <tr key={month} className="hover:bg-[#F9F9F9] transition-colors">
+                <td className="p-2.5 text-xs font-bold border-r border-[#141414]/10">{month}</td>
+                <td className="p-2.5 text-xs font-mono">{terminal}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* Modal */}
       <AnimatePresence>
