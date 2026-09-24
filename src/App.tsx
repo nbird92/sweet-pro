@@ -3187,6 +3187,33 @@ export default function App() {
   };
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
+  // Live ICE Sugar #11 board (Barchart OnDemand via /api/sugar11).
+  const [liveSugar, setLiveSugar] = useState<{ contracts: any[]; fx: any | null; lastUpdated: string } | null>(null);
+  const [liveSugarError, setLiveSugarError] = useState<string | null>(null);
+  const [isFetchingLiveSugar, setIsFetchingLiveSugar] = useState(false);
+  const fetchLiveSugar = async () => {
+    setIsFetchingLiveSugar(true);
+    setLiveSugarError(null);
+    try {
+      const headers: Record<string, string> = {};
+      const accessKey = (import.meta as any).env?.VITE_APP_ACCESS_KEY;
+      if (accessKey) headers['x-access-key'] = accessKey;
+      const r = await fetch('/api/sugar11', { headers });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setLiveSugar(j);
+    } catch (e: any) {
+      setLiveSugarError(e?.message || String(e));
+    } finally {
+      setIsFetchingLiveSugar(false);
+    }
+  };
+  // Load the live board when the market page opens (once per session; the
+  // Refresh Live button re-pulls on demand, server caches ~10 min).
+  useEffect(() => {
+    if (activePage === 'US #11 Market' && !liveSugar && !isFetchingLiveSugar && !liveSugarError) fetchLiveSugar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePage]);
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
   const [hamiltonShipments, setHamiltonShipments] = useState<Shipment[]>([]);
@@ -16015,6 +16042,73 @@ export default function App() {
           <div className="flex items-center gap-2 text-[10px] font-bold opacity-50">
             <RefreshCw size={12} className={isFetchingMarket ? 'animate-spin' : ''} />
             Last Updated: {lastMarketUpdate ? new Date(lastMarketUpdate).toLocaleString() : 'Never'}
+          </div>
+
+          {/* ── LIVE ICE Sugar #11 board (Barchart OnDemand) ── */}
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between gap-3">
+              <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><TrendingUp size={14} /> Live ICE Sugar #11 (SB) — Barchart</h3>
+              <div className="flex items-center gap-3">
+                {liveSugar?.fx && (
+                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">USD/CAD <span className="font-mono">{Number(liveSugar.fx.lastPrice || 0).toFixed(4)}</span></span>
+                )}
+                <span className="text-[10px] opacity-60">{liveSugar?.lastUpdated ? `as of ${new Date(liveSugar.lastUpdated).toLocaleTimeString()}` : ''}</span>
+                <button
+                  onClick={fetchLiveSugar}
+                  disabled={isFetchingLiveSugar}
+                  className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={11} className={isFetchingLiveSugar ? 'animate-spin' : ''} /> Refresh Live
+                </button>
+              </div>
+            </div>
+            {liveSugarError ? (
+              <div className="p-4 text-xs text-red-700 bg-red-50">
+                Live quotes unavailable: {liveSugarError}
+                {/not configured/i.test(liveSugarError) && <span className="block mt-1 opacity-70">Add your Barchart OnDemand key as BARCHART_API_KEY in the Vercel project's environment variables, then redeploy.</span>}
+              </div>
+            ) : !liveSugar ? (
+              <div className="p-4 text-xs opacity-50 italic">{isFetchingLiveSugar ? 'Loading live quotes…' : 'No live quotes loaded yet.'}</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                      <th className="p-3 border-r border-[#141414]/10">Contract</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Last (¢/lb)</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Chg</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">%Chg</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Open</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">High</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Low</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Prev Close</th>
+                      <th className="p-3">Trade Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#141414]/10">
+                    {liveSugar.contracts.map((q: any) => {
+                      const chg = Number(q.netChange || 0);
+                      return (
+                        <tr key={q.symbol} className="hover:bg-[#F9F9F9] transition-colors">
+                          <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{q.name || q.symbol} <span className="font-mono opacity-50">{q.symbol}</span></td>
+                          <td className="p-3 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{Number(q.lastPrice ?? 0).toFixed(2)}</td>
+                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{chg > 0 ? '+' : ''}{chg.toFixed(2)}</td>
+                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{q.percentChange != null ? `${Number(q.percentChange).toFixed(2)}%` : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.open != null ? Number(q.open).toFixed(2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.high != null ? Number(q.high).toFixed(2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.low != null ? Number(q.low).toFixed(2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.previousClose != null ? Number(q.previousClose).toFixed(2) : '—'}</td>
+                          <td className="p-3 text-xs">{q.tradeTimestamp ? new Date(q.tradeTimestamp).toLocaleString() : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                    {liveSugar.contracts.length === 0 && (
+                      <tr><td colSpan={9} className="p-4 text-center text-xs opacity-50 italic">Barchart returned no SB contracts.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Data status indicator */}
