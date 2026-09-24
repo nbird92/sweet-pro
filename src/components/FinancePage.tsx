@@ -9,7 +9,12 @@ import type { SheetSpec } from '../utils/exportExcel';
 interface FinancePageProps {
   fiscalYears: FiscalYear[];
   onUpdateFiscalYears: (years: FiscalYear[]) => void;
+  /** Month → futures-terminal reference rows (editable; synced by the app). */
+  monthTerminals?: Array<{ id: string; terminal: string }>;
+  onUpdateMonthTerminals?: (rows: Array<{ id: string; terminal: string }>) => void;
 }
+
+const MONTH_ABBRS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function generateDefaultQuarters(startDate: string, endDate: string): FiscalQuarter[] {
   const start = startDate ? new Date(startDate + 'T00:00:00') : new Date();
@@ -72,8 +77,13 @@ function createBlankFiscalYear(): FiscalYear {
   };
 }
 
-export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: FinancePageProps) {
+export default function FinancePage({ fiscalYears, onUpdateFiscalYears, monthTerminals, onUpdateMonthTerminals }: FinancePageProps) {
   const [showModal, setShowModal] = useState(false);
+  const [editingTerminals, setEditingTerminals] = useState(false);
+  // Every calendar month always shows a row: stored rows first, defaults fill
+  // any missing month so "add" is just editing a blank/default row.
+  const terminalRows = MONTH_ABBRS.map(m =>
+    (monthTerminals || []).find(r => r.id === m) || { id: m, terminal: MONTH_TERMINALS[m] || '' });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<FiscalYear>(createBlankFiscalYear());
 
@@ -227,8 +237,16 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
           applies to each calendar month. The quote page's Contract Start/End
           dropdowns label months with these terminals. */}
       <div className="mt-6 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden max-w-md">
-        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3">
+        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h3 className="text-xs font-bold uppercase tracking-widest">Month → Terminal Reference</h3>
+          {onUpdateMonthTerminals && (
+            <button
+              onClick={() => setEditingTerminals(v => !v)}
+              className="px-3 py-1 bg-white/10 text-[10px] font-bold uppercase hover:bg-white/20 transition-colors"
+            >
+              {editingTerminals ? 'Done' : 'Edit'}
+            </button>
+          )}
         </div>
         <table className="w-full text-left border-collapse">
           <thead>
@@ -238,14 +256,33 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears }: Financ
             </tr>
           </thead>
           <tbody className="divide-y divide-[#141414]/10">
-            {Object.entries(MONTH_TERMINALS).map(([month, terminal]) => (
-              <tr key={month} className="hover:bg-[#F9F9F9] transition-colors">
-                <td className="p-2.5 text-xs font-bold border-r border-[#141414]/10">{month}</td>
-                <td className="p-2.5 text-xs font-mono">{terminal}</td>
+            {terminalRows.map(row => (
+              <tr key={row.id} className="hover:bg-[#F9F9F9] transition-colors">
+                <td className="p-2.5 text-xs font-bold border-r border-[#141414]/10">{row.id}</td>
+                <td className="p-2.5 text-xs font-mono">
+                  {editingTerminals && onUpdateMonthTerminals ? (
+                    <select
+                      value={row.terminal || ''}
+                      onChange={(e) => {
+                        const updated = terminalRows.map(r => r.id === row.id ? { ...r, terminal: e.target.value } : r);
+                        onUpdateMonthTerminals(updated);
+                      }}
+                      className="bg-white border border-[#141414] p-1.5 text-xs font-mono outline-none"
+                    >
+                      <option value="">—</option>
+                      {MONTH_ABBRS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  ) : (row.terminal || '—')}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {editingTerminals && (
+          <div className="px-4 py-2 bg-[#F5F5F5] border-t border-[#141414]/10 text-[10px] opacity-60">
+            Changes save immediately and update the quote page's Contract Start/End month labels.
+          </div>
+        )}
       </div>
 
       {/* Modal */}

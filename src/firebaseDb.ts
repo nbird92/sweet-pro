@@ -521,6 +521,8 @@ export const COLLECTIONS = {
   qaProducts: 'qaProducts',
   fuelSurcharges: 'fuelSurcharges',
   tollingFees: 'tollingFees',
+  // Month → futures-terminal reference (Finance page; quote-month labels).
+  monthTerminals: 'monthTerminals',
   vendors: 'vendors',
   chepPalletMovements: 'chepPalletMovements',
   salesLeads: 'salesLeads',

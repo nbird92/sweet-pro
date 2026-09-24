@@ -3187,6 +3187,15 @@ export default function App() {
   };
   const [repairingSync, setRepairingSync] = useState(false);
   const [marketData, setMarketData] = useState<any[]>([]);
+  // Month → futures-terminal reference (editable on the Finance page, synced).
+  // Defaults from MONTH_TERMINALS until the stored rows load.
+  const [monthTerminalRows, setMonthTerminalRows] = useState<Array<{ id: string; terminal: string }>>(
+    Object.entries(MONTH_TERMINALS).map(([id, terminal]) => ({ id, terminal })));
+  const monthTerminalMap = useMemo(() => {
+    const m: Record<string, string> = { ...MONTH_TERMINALS };
+    for (const r of monthTerminalRows) if (r.id) m[r.id] = r.terminal || '';
+    return m;
+  }, [monthTerminalRows]);
   // Live ICE Sugar #11 board (Barchart OnDemand via /api/sugar11).
   const [liveSugar, setLiveSugar] = useState<{ contracts: any[]; fx: any | null; lastUpdated: string } | null>(null);
   const [liveSugarError, setLiveSugarError] = useState<string | null>(null);
@@ -3208,6 +3217,79 @@ export default function App() {
       setIsFetchingLiveSugar(false);
     }
   };
+  // USD/CAD forward rates (FXEmpire via /api/fx-forwards).
+  const [fxForwards, setFxForwards] = useState<{ forwardRates: Record<string, { Bid: number; Mid: number; Ask: number; SpotRate: number; Points: number }>; lastUpdated: string } | null>(null);
+  const [fxForwardsError, setFxForwardsError] = useState<string | null>(null);
+  const fetchFxForwards = async () => {
+    try {
+      const headers: Record<string, string> = {};
+      const accessKey = (import.meta as any).env?.VITE_APP_ACCESS_KEY;
+      if (accessKey) headers['x-access-key'] = accessKey;
+      const r = await fetch('/api/fx-forwards', { headers });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setFxForwards(j);
+      setFxForwardsError(null);
+    } catch (e: any) {
+      setFxForwardsError(e?.message || String(e));
+    }
+  };
+  /** Forward USD/CAD Mid for a calendar-month row: months-ahead from today →
+   *  the matching FXEmpire tenor (OneMonth … ElevenMonth, OneYear, then the
+   *  nearest of TwoYear…FiveYear). Spot for the current/past months. */
+  const forwardFxForMonth = (monthStr: string): { rate: number; tenor: string } | null => {
+    const fr = fxForwards?.forwardRates;
+    if (!fr) return null;
+    const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const s = (monthStr || '').trim();
+    const mIdx = MO.findIndex(m => s.toLowerCase().startsWith(m.toLowerCase()));
+    const year = parseInt(s.split(/\s+/).pop() || '', 10);
+    if (mIdx < 0 || !year || year < 2000) return null;
+    const now = new Date();
+    const ahead = (year * 12 + mIdx) - (now.getFullYear() * 12 + now.getMonth());
+    const NAMES = ['OneMonth', 'TwoMonth', 'ThreeMonth', 'FourMonth', 'FiveMonth', 'SixMonth', 'SevenMonth', 'EightMonth', 'NineMonth', 'TenMonth', 'ElevenMonth', 'OneYear'];
+    let tenor: string;
+    if (ahead <= 0) {
+      const spot = fr['Overnight']?.SpotRate ?? fr['Overnight']?.Mid;
+      return typeof spot === 'number' ? { rate: spot, tenor: 'Spot' } : null;
+    } else if (ahead <= 12) {
+      tenor = NAMES[ahead - 1];
+    } else {
+      const yearsTenors: Array<[number, string]> = [[24, 'TwoYear'], [36, 'ThreeYear'], [48, 'FourYear'], [60, 'FiveYear']];
+      tenor = 'OneYear';
+      let best = Math.abs(ahead - 12);
+      for (const [m, t] of yearsTenors) { const d2 = Math.abs(ahead - m); if (d2 < best && fr[t]) { best = d2; tenor = t; } }
+    }
+    const q = fr[tenor];
+    return q && typeof q.Mid === 'number' ? { rate: q.Mid, tenor } : null;
+  };
+
+  /** Live #11 raws for a calendar-month row ("Jan 2027"): map the month to its
+   *  futures TERMINAL (Finance page table), resolve that terminal's contract
+   *  (same year while the terminal month hasn't passed, else next year) and
+   *  read the live board's last price. ¢/lb ≡ USD/cwt numerically (100 lb per
+   *  cwt), so no conversion. Null when the board / contract isn't loaded. */
+  const liveRawsForMonth = (monthStr: string): { price: number; symbol: string } | null => {
+    if (!liveSugar?.contracts?.length) return null;
+    const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const s = (monthStr || '').trim();
+    const mIdx = MO.findIndex(m => s.toLowerCase().startsWith(m.toLowerCase()));
+    const year = parseInt(s.split(/\s+/).pop() || '', 10);
+    if (mIdx < 0 || !year || year < 2000) return null;
+    const term = monthTerminalMap[MO[mIdx]];
+    const tIdx = term ? MO.indexOf(term) : -1;
+    if (tIdx < 0) return null;
+    const CODE: Record<string, string> = { Jan: 'F', Feb: 'G', Mar: 'H', Apr: 'J', May: 'K', Jun: 'M', Jul: 'N', Aug: 'Q', Sep: 'U', Oct: 'V', Nov: 'X', Dec: 'Z' };
+    const code = CODE[term];
+    if (!code) return null;
+    const termYear = tIdx >= mIdx ? year : year + 1;
+    const target = `SB${code}${String(termYear % 100).padStart(2, '0')}`;
+    const q = liveSugar.contracts.find((c: any) => String(c.symbol || '').toUpperCase().startsWith(target))
+      // Terminal contract not on the 8-deep board (too far out / expired) —
+      // use the nearest listed contract of that terminal month.
+      || liveSugar.contracts.find((c: any) => String(c.symbol || '').toUpperCase().startsWith(`SB${code}`));
+    return q && typeof q.lastPrice === 'number' ? { price: q.lastPrice, symbol: q.symbol } : null;
+  };
   // Contract Start/End dropdown options: the market months sorted
   // CHRONOLOGICALLY, each labeled with the futures TERMINAL that applies to it
   // (MONTH_TERMINALS reference table — also shown on the Finance page).
@@ -3223,10 +3305,10 @@ export default function App() {
     return months
       .sort((a, b) => keyOf(a) - keyOf(b))
       .map(m => {
-        const term = MONTH_TERMINALS[m.trim().slice(0, 3)] || '';
+        const term = monthTerminalMap[m.trim().slice(0, 3)] || '';
         return { value: m, label: term ? `${m} — ${term} terminal` : m };
       });
-  }, [marketData]);
+  }, [marketData, monthTerminalMap]);
 
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
@@ -4427,7 +4509,10 @@ export default function App() {
   // Refresh when a sales user navigates to the Customer Quote screen OR the
   // US #11 Market page — no continuous polling (the server also caches ~10 min).
   useEffect(() => {
-    if ((activePage === 'Customer Quote' || activePage === 'US #11 Market') && isSalesUser && !isFetchingLiveSugar) fetchLiveSugar();
+    if ((activePage === 'Customer Quote' || activePage === 'US #11 Market') && isSalesUser && !isFetchingLiveSugar) {
+      fetchLiveSugar();
+      fetchFxForwards();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, isSalesUser]);
   const [authLoading, setAuthLoading] = useState(true);
@@ -6815,6 +6900,10 @@ export default function App() {
         setTollingFees(data.tollingFees as TollingFee[]);
         lastSyncedData.current.tollingfees = JSON.stringify(data.tollingFees);
       }
+      if (data.monthTerminals?.length) {
+        setMonthTerminalRows(data.monthTerminals as Array<{ id: string; terminal: string }>);
+        lastSyncedData.current.monthterminals = JSON.stringify(data.monthTerminals);
+      }
       if (data.vendors?.length) {
         setVendors(data.vendors);
         lastSyncedData.current.vendors = JSON.stringify(data.vendors);
@@ -7051,6 +7140,7 @@ export default function App() {
         { collection: COLLECTIONS.qaProducts, key: 'qaproducts', data: qaProducts },
         { collection: COLLECTIONS.fuelSurcharges, key: 'fuelsurcharges', data: fuelSurcharges },
         { collection: COLLECTIONS.tollingFees, key: 'tollingfees', data: tollingFees },
+        { collection: COLLECTIONS.monthTerminals, key: 'monthterminals', data: monthTerminalRows },
         { collection: COLLECTIONS.vendors, key: 'vendors', data: vendors },
         { collection: COLLECTIONS.demurrageInvoices, key: 'demurrageInvoices', data: demurrageInvoices },
         { collection: COLLECTIONS.chepPalletMovements, key: 'cheppalletmovements', data: chepPalletMovements },
@@ -8060,12 +8150,22 @@ export default function App() {
     if (!fxKey && nonSystemKeys.length >= 2) fxKey = nonSystemKeys[1];
 
     if (rawKey && fxKey) {
+      // LIVE values win per month: each row's #11 raws come from its terminal's
+      // live contract when the board is loaded; the stored sheet value is the
+      // fallback. FX prefers the live USD/CAD outright.
       const avgRaw = range.reduce((acc, curr) => {
+        const live = monthKeyCalc ? liveRawsForMonth(String(curr[monthKeyCalc] || '')) : null;
+        if (live) return acc + live.price;
         const val = typeof curr[rawKey] === 'string' ? parseFloat(curr[rawKey].replace(/[^0-9.]/g, '')) : parseFloat(curr[rawKey]);
         return acc + (val || 0);
       }, 0) / range.length;
-      
+
+      // FX per month: forward mid for the month's tenor → live spot → stored.
+      const liveFxSpot = typeof liveSugar?.fx?.lastPrice === 'number' ? liveSugar.fx.lastPrice : null;
       const avgFx = range.reduce((acc, curr) => {
+        const fwd = monthKeyCalc ? forwardFxForMonth(String(curr[monthKeyCalc] || '')) : null;
+        if (fwd) return acc + fwd.rate;
+        if (liveFxSpot != null) return acc + liveFxSpot;
         const val = typeof curr[fxKey] === 'string' ? parseFloat(curr[fxKey].replace(/[^0-9.]/g, '')) : parseFloat(curr[fxKey]);
         return acc + (val || 0);
       }, 0) / range.length;
@@ -8081,7 +8181,8 @@ export default function App() {
         }));
       }
     }
-  }, [config.contractStartDate, config.contractEndDate, marketData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.contractStartDate, config.contractEndDate, marketData, liveSugar, fxForwards, monthTerminalMap]);
 
   // Default the quote tool to the Bulk Granulated SKU (zero product differential)
   // so users start from the simplest baseline. Falls back to the first SKU if
@@ -13611,6 +13712,12 @@ export default function App() {
         <FinancePage
           fiscalYears={fiscalYears}
           onUpdateFiscalYears={withDeleteTracking(COLLECTIONS.fiscalYears, fiscalYears, setFiscalYears)}
+          monthTerminals={monthTerminalRows}
+          onUpdateMonthTerminals={(rows) => {
+            setMonthTerminalRows(rows);
+            // Durable at click — the terminals feed the quote-month labels.
+            saveNow(COLLECTIONS.monthTerminals, rows);
+          }}
         />
       );
     }
@@ -16132,8 +16239,48 @@ export default function App() {
                       );
                     })}
                     {liveSugar.contracts.length === 0 && (
-                      <tr><td colSpan={9} className="p-4 text-center text-xs opacity-50 italic">Barchart returned no SB contracts.</td></tr>
+                      <tr><td colSpan={9} className="p-4 text-center text-xs opacity-50 italic">No SB contracts returned.</td></tr>
                     )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* ── USD/CAD forward rates (FXEmpire) — Sales dept only ── */}
+          {isSalesUser && (
+          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
+            <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between gap-3">
+              <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><DollarSign size={14} /> USD/CAD Forward Rates — FXEmpire</h3>
+              <span className="text-[10px] opacity-60">{fxForwards?.lastUpdated ? `as of ${new Date(fxForwards.lastUpdated).toLocaleTimeString()}` : ''}</span>
+            </div>
+            {fxForwardsError ? (
+              <div className="p-4 text-xs text-red-700 bg-red-50">Forward rates unavailable: {fxForwardsError}</div>
+            ) : !fxForwards ? (
+              <div className="p-4 text-xs opacity-50 italic">No forward rates loaded yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+                      <th className="p-3 border-r border-[#141414]/10">Expiration</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Bid</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Mid</th>
+                      <th className="p-3 border-r border-[#141414]/10 text-right">Ask</th>
+                      <th className="p-3 text-right">Points</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#141414]/10">
+                    {(Object.entries(fxForwards.forwardRates) as Array<[string, { Bid: number; Mid: number; Ask: number; SpotRate: number; Points: number }]>).map(([tenor, q]) => (
+                      <tr key={tenor} className="hover:bg-[#F9F9F9] transition-colors">
+                        <td className="p-2.5 text-xs font-bold border-r border-[#141414]/10">{tenor.replace(/([a-z])([A-Z])/g, '$1 $2')}</td>
+                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{Number(q.Bid).toFixed(5)}</td>
+                        <td className="p-2.5 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{Number(q.Mid).toFixed(5)}</td>
+                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{Number(q.Ask).toFixed(5)}</td>
+                        <td className={`p-2.5 text-xs font-mono text-right ${q.Points < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{Number(q.Points).toFixed(2)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -16163,11 +16310,27 @@ export default function App() {
                     const month = monthKey ? row[monthKey] : '-';
                     const raws = rawsKey ? row[rawsKey] : '-';
                     const fx = fxKey ? row[fxKey] : '-';
+                    // LIVE link: replace the stored value with the live price of
+                    // the month's TERMINAL contract (Finance page mapping) when
+                    // the live board is loaded; live FX likewise.
+                    const live = liveRawsForMonth(String(month || ''));
+                    // FX per month: the FORWARD mid for that month's tenor wins,
+                    // then the live spot, then the stored sheet value.
+                    const fwd = forwardFxForMonth(String(month || ''));
+                    const liveFx = fwd ? fwd.rate : (typeof liveSugar?.fx?.lastPrice === 'number' ? liveSugar.fx.lastPrice : null);
                     return (
                       <tr key={idx} className="hover:bg-[#F9F9F9] transition-colors">
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{month}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{typeof raws === 'number' ? raws.toFixed(2) : raws}</td>
-                        <td className="p-4 text-xs">{typeof fx === 'number' ? fx.toFixed(4) : fx}</td>
+                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{month}{live && <span className="ml-2 text-[9px] font-mono opacity-40">{live.symbol.replace('.NYB', '')}</span>}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">
+                          {live
+                            ? <span className="text-emerald-700 font-bold" title={`Live ${live.symbol} (terminal contract)`}>{live.price.toFixed(2)}</span>
+                            : (typeof raws === 'number' ? raws.toFixed(2) : raws)}
+                        </td>
+                        <td className="p-4 text-xs">
+                          {liveFx != null
+                            ? <span className="text-emerald-700 font-bold" title={fwd ? `USD/CAD forward (${fwd.tenor})` : 'Live USD/CAD spot'}>{liveFx.toFixed(4)}</span>
+                            : (typeof fx === 'number' ? fx.toFixed(4) : fx)}
+                        </td>
                       </tr>
                     );
                   }) : (
