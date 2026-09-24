@@ -551,31 +551,55 @@ export default function SalesForecastPage({
   //    (the granularity tolling fees are set at). ──────────────────────────────
   const tollingForecastRows = useMemo(() => {
     const norm = (s?: string) => (s || '').trim().toLowerCase();
-    const feeFor = (group: string, location: string): TollingFee | undefined =>
-      tollingFees.find(t => norm(t.productGroup) === norm(group) && norm(t.location) === norm(location))
-      || tollingFees.find(t => norm(t.productGroup) === norm(group));
-    const map = new Map<string, { group: string; location: string; mt: number }>();
+    // EXACT group+location match ONLY — a group-only fallback used to invent
+    // tolling rows for combos that have no fee configured (e.g. Refined Totes
+    // at Vancouver (Pacific Blends)). No fee in the Tolling Fees table means
+    // the volume is NOT tolled here and must not appear in the forecast.
+    const feeFor = (group?: string, location?: string): TollingFee | undefined =>
+      tollingFees.find(t => norm(t.productGroup) === norm(group) && norm(t.location) === norm(location));
+    const map = new Map<string, { group: string; location: string; mt: number; fee: TollingFee }>();
     for (const cf of mergedForecasts) {
       const fromIdx = futurePeriodFrom((cf.viewMode || 'Monthly') === 'Weekly');
       for (const line of cf.lines) {
-        if (!catalogEntry(line.productName)) continue;
+        const hit = catalogEntry(line.productName);
+        if (!hit) continue;
         if (isInactiveLoc(line.location)) continue; // no tolling forecast at closed plants
+        // Fee resolution, in order:
+        //   1. the product's own group at the line's location;
+        //   2. via the BOM: the product's linked BULK SUGAR's group — first at
+        //      the line's location, then at the bulk sugar's own plant (a
+        //      packaged tote is tolled as the bulk granulated it's made from).
+        // No matching fee anywhere → the line is excluded entirely.
         const g = groupOf(line.productName);
-        const key = `${g}|${line.location}`;
+        const qa = hit.qa || (hit.sku ? qaProducts.find(q => q.skuId === hit.sku!.id) : null);
+        const bulkParent = qa?.bulkSugarQaId ? qaProducts.find(p => p.id === qa.bulkSugarQaId) : undefined;
+        const candidates: Array<{ g: string; loc: string }> = [
+          { g, loc: line.location },
+          ...(bulkParent ? [
+            { g: bulkParent.productGroup, loc: line.location },
+            ...(bulkParent.location ? [{ g: bulkParent.productGroup, loc: bulkParent.location }] : []),
+          ] : []),
+        ];
+        let fee: TollingFee | undefined; let feeG = g; let feeLoc = line.location;
+        for (const c of candidates) {
+          const f = feeFor(c.g, c.loc);
+          if (f) { fee = f; feeG = c.g; feeLoc = c.loc; break; }
+        }
+        if (!fee) continue;
+        const key = `${norm(feeG)}|${norm(feeLoc)}`;
         // Forward-looking only — elapsed periods are history, not forecast.
         const mt = line.entries.reduce((s, e) => s + (e.periodIndex >= fromIdx ? e.value : 0), 0);
-        const cur = map.get(key) || { group: g, location: line.location, mt: 0 };
+        const cur = map.get(key) || { group: fee.productGroup, location: fee.location, mt: 0, fee };
         cur.mt += mt;
         map.set(key, cur);
       }
     }
     return Array.from(map.values()).map(r => {
-      const fee = feeFor(r.group, r.location);
-      const rate = fee?.amountPerMt || 0;
-      const taxRate = fee?.taxRate || 0;
+      const rate = r.fee.amountPerMt || 0;
+      const taxRate = r.fee.taxRate || 0;
       const net = r.mt * rate;
       const tax = net * (taxRate / 100);
-      return { ...r, rate, net, tax, total: net + tax, currency: fee?.currency || '' };
+      return { group: r.group, location: r.location, mt: r.mt, rate, net, tax, total: net + tax, currency: r.fee.currency || '' };
     }).sort((a, b) => b.total - a.total);
   }, [mergedForecasts, skus, qaProducts, tollingFees, catalogEntry, groupOf, isInactiveLoc, futurePeriodFrom]);
 
