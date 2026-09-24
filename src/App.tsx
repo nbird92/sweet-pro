@@ -4515,6 +4515,43 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePage, isSalesUser]);
+
+  // ── AUTO-POPULATE the MarketData table from the live sources ────────────
+  // Once the live #11 board AND the FX forward curve are loaded, rebuild the
+  // market table the Contract Start/End dropdowns pull from: one row per month
+  // starting at the CURRENT month, 18 months out — #11 raws from the month's
+  // terminal contract, FX from the month's forward tenor. Persisted so every
+  // user (and the quote calculators) share the same refreshed table.
+  useEffect(() => {
+    if (!liveSugar?.contracts?.length || !fxForwards?.forwardRates) return;
+    if (!user || !lastSynced) return; // durability gate — no writes before the authoritative load
+    const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const rows: any[] = [];
+    for (let i = 0; i < 18; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const label = `${MO[d.getMonth()]} ${d.getFullYear()}`;
+      const raws = liveRawsForMonth(label)?.price;
+      const fx = forwardFxForMonth(label)?.rate;
+      if (raws == null && fx == null) continue;
+      rows.push({
+        id: `MKT-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        Month: label,
+        Raws: raws != null ? Math.round(raws * 100) / 100 : 0,
+        FX: fx != null ? Math.round(fx * 10000) / 10000 : 0,
+      });
+    }
+    if (rows.length === 0) return;
+    const fingerprint = (list: any[]) => JSON.stringify(list.map((r: any) => [r.id, r.Raws, r.FX]));
+    if (fingerprint(rows) === fingerprint(marketData)) return; // already current
+    const staleIds = marketData.map((r: any) => r.id).filter((id: string) => id && !rows.some(r => r.id === id));
+    setMarketData(rows);
+    setLastMarketUpdate(new Date().toISOString());
+    saveNow(COLLECTIONS.marketData, rows);
+    if (staleIds.length) deleteDocs(COLLECTIONS.marketData, staleIds).catch(e => console.error('Market table cleanup failed:', e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSugar, fxForwards, user, lastSynced]);
+
   const [authLoading, setAuthLoading] = useState(true);
 
   const fetchMarketData = async () => {
