@@ -17232,7 +17232,7 @@ export default function App() {
             </div>
             
             <div className="divide-y divide-[#141414]">
-              <DataRow label={`Raw Sugar (USD/MT)`} value={`${calculations.rawMtUsd.toFixed(2)}`} />
+              <DataRow label={`Raw Sugar (USD/CWT)`} value={`${config.rawPriceUsdCwt.toFixed(2)}`} />
               <DataRow label={`Ocean Freight (USD/MT)`} value={`${calculations.oceanFreightUsd.toFixed(2)}`} />
               <DataRow label={`Total USD`} value={`${calculations.totalUsd.toFixed(2)}`} highlight />
               <DataRow label={`Yield Multiplier`} value={`${calculations.yieldLoss.toFixed(2)}x`} />
@@ -19631,8 +19631,8 @@ export default function App() {
                       <tr>
                         <td className="px-4 py-2 opacity-70">Raw Price (USD/CWT)</td>
                         <td className="px-4 py-2 text-right font-bold">USD ${config.rawPriceUsdCwt.toFixed(2)}</td>
-                        <td className="px-4 py-2 opacity-70">Raw Price (USD/MT)</td>
-                        <td className="px-4 py-2 text-right font-bold">USD ${calculations.rawMtUsd.toFixed(2)}</td>
+                        <td className="px-4 py-2 opacity-70"></td>
+                        <td className="px-4 py-2 text-right font-bold"></td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">Ocean Freight (USD/MT)</td>
@@ -19728,7 +19728,7 @@ export default function App() {
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
             lines.push(`Volume: ${config.volumeMt} MT`);
             lines.push(`Currency: ${config.currency}`);
-            lines.push(`Raw Sugar (USD/MT): $${calculations.rawMtUsd.toFixed(2)}`);
+            lines.push(`Raw Sugar (USD/CWT): $${config.rawPriceUsdCwt.toFixed(2)}`);
             lines.push(`Ocean Freight (USD/MT): $${calculations.oceanFreightUsd.toFixed(2)}`);
             if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
             const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
