@@ -8425,6 +8425,14 @@ export default function App() {
     if (productName) {
       const g = groupFromRecord(skus.find(s => s.name === productName)) || groupFromRecord(qaProducts.find(q => q.skuName === productName));
       if (g) return g;
+      // Full resolver: shortform codes ("GC100"), naming-formula renderings and
+      // long descriptions all resolve to the catalog record, whose stored (or
+      // format-derived) group is authoritative — a bulk product must never fall
+      // through to the keyword guess / default 'P' prefix just because the line
+      // stores its shortform name.
+      const r = resolveProduct(productName);
+      const rg = groupFromRecord(r.qa || undefined) || groupFromRecord(r.sku || undefined);
+      if (rg) return rg;
     }
     // Keyword fallback: infer the group from words in the product name/description
     // itself, so an emailed PO line like "Bulk Liquid Sucrose" still gets the right
