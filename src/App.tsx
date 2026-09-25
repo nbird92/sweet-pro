@@ -10974,6 +10974,7 @@ export default function App() {
     { name: 'Vendors', icon: Briefcase },
     { name: 'Finance', icon: Landmark },
     { name: 'Sales Forecast', icon: BarChart3 },
+    { name: 'Production Forecast', icon: Boxes },
   ];
 
   // Apply saved page order (any new pages not in saved order appear at the end)
@@ -13759,9 +13760,10 @@ export default function App() {
       );
     }
 
-    if (activePage === 'Sales Forecast') {
+    if (activePage === 'Sales Forecast' || activePage === 'Production Forecast') {
       return (
         <SalesForecastPage
+          view={activePage === 'Production Forecast' ? 'production' : 'sales'}
           fiscalYears={fiscalYears}
           customers={customers}
           customerForecasts={customerForecasts}

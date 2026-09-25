@@ -59,6 +59,10 @@ interface SalesForecastPageProps {
    *  raw SKU names are just the format ("Bulk"/"Bag"/"Tote"), so name equality
    *  alone can never identify a product. */
   resolveCatalogProduct?: (name: string) => { sku: SKU | null; qa: QAProduct | null };
+  /** 'sales' (default) shows the customer forecast, tolling and period views;
+   *  'production' shows the product forecast, product-group rollup and
+   *  packaging material requirements (the Production Forecast page). */
+  view?: 'sales' | 'production';
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -156,7 +160,9 @@ export default function SalesForecastPage({
   resolveCatalogProduct,
   tollingFees,
   productToShortform,
+  view = 'sales',
 }: SalesForecastPageProps) {
+  const isProduction = view === 'production';
   // ── Top Controls ────────────────────────────────────────────────────────
   const [selectedFiscalYearId, setSelectedFiscalYearId] = useState<string>(
     fiscalYears.length > 0 ? fiscalYears[0].id : ''
@@ -1439,10 +1445,10 @@ export default function SalesForecastPage({
     <div>
       <PageBanner
         icon={<TrendingUp size={18} />}
-        title="Sales Forecast & Budget"
-        count={mergedForecasts.length}
+        title={isProduction ? 'Production Forecast' : 'Sales Forecast & Budget'}
+        count={isProduction ? sortedProductForecasts.length : mergedForecasts.length}
         exportSheets={forecastExportSheets}
-        exportFileName="Sales_Forecast"
+        exportFileName={isProduction ? 'Production_Forecast' : 'Sales_Forecast'}
       />
     <div className="p-6 space-y-6">
       {/* ── Top Controls ──────────────────────────────────────────────────── */}
@@ -1494,6 +1500,7 @@ export default function SalesForecastPage({
         )}
 
         {/* Auto-Populate + Clear All */}
+        {!isProduction && (
         <div className="mt-5 ml-auto flex items-center gap-2">
           <button
             onClick={() => {
@@ -1518,12 +1525,14 @@ export default function SalesForecastPage({
             Auto-Populate {typeLabel}
           </button>
         </div>
+        )}
       </div>
 
       {/* ── Customer Forecast — standardized DataTable. Row click opens the
           forecast-entry modal; the Edit/Delete Actions column is gone (Delete
           now lives in that modal's header). The customer search box is kept
           above the table. ── */}
+      {!isProduction && (
       <div className="space-y-2">
         <div className="flex items-center gap-2 bg-white border border-[#141414] px-3 py-2">
           <Search size={12} className="opacity-50" />
@@ -1581,8 +1590,10 @@ export default function SalesForecastPage({
           emptyMessage="No customers found."
         />
       </div>
+      )}
 
       {/* ── Product Forecast Table ────────────────────────────────────────── */}
+      {isProduction && (
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">
@@ -1644,8 +1655,10 @@ export default function SalesForecastPage({
           </table>
         </div>
       </div>
+      )}
 
       {/* ── Forecast by Product Group ─────────────────────────────────────── */}
+      {isProduction && (
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">
@@ -1690,8 +1703,10 @@ export default function SalesForecastPage({
           </table>
         </div>
       </div>
+      )}
 
       {/* ── Tolling Forecast ──────────────────────────────────────────────── */}
+      {!isProduction && (
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">Tolling Forecast</h2>
@@ -1747,8 +1762,10 @@ export default function SalesForecastPage({
           </table>
         </div>
       </div>
+      )}
 
       {/* ── Packaging Material Requirements (from forecast BOM) ───────────── */}
+      {isProduction && (
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">Packaging Material Requirements</h2>
@@ -1787,8 +1804,10 @@ export default function SalesForecastPage({
           <p className="text-[10px] opacity-50 italic mt-1">{packagingNeeds.skippedNoWeight} forecast product(s) have a BOM but no net weight set, so they can't be converted to units — set net weight on those QA products to include them.</p>
         )}
       </div>
+      )}
 
       {/* ── Forecast by Period View ───────────────────────────────────────── */}
+      {!isProduction && (
       <div>
         <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-widest">
@@ -1920,6 +1939,7 @@ export default function SalesForecastPage({
           </table>
         </div>
       </div>
+      )}
 
       {/* ── Customer Forecast Modal ───────────────────────────────────────── */}
       <AnimatePresence>
