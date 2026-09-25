@@ -1172,7 +1172,11 @@ export default function ReportsPage({
     const byCurrency = new Map<string, Map<string, Row>>();
     for (const inv of demurrageInvoices) {
       const carrier = (inv.carrier || '').trim() || '—';
-      const currency = (inv.currency || '').trim().toUpperCase() || 'CAD';
+      // Normalize free-text currency spellings ("CDN$", "CDN", "USD$", "US") so
+      // each doesn't report as its own currency group.
+      const curRaw = (inv.currency || '').toUpperCase().replace(/[^A-Z]/g, '');
+      const currency = ['CDN', 'CND', 'CA'].includes(curRaw) || curRaw.startsWith('CANADIAN') ? 'CAD'
+        : (['US', 'USA'].includes(curRaw) || curRaw.startsWith('USFUND') ? 'USD' : curRaw || 'CAD');
       const amt = typeof inv.amount === 'number' && Number.isFinite(inv.amount) ? inv.amount : 0;
       const dt = parseDemDate(inv.shipmentDate) || parseDemDate(inv.invoiceDate);
       const p = dt ? periodOf(dt) : { key: UNDATED, label: 'Undated' };

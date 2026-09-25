@@ -204,6 +204,17 @@ function rawPriceUsdCwt(rawPriceUsdMt?: number): number | null {
   return v < 100 ? v : v / MT_TO_CWT;
 }
 
+/** Normalize a free-text currency ("CDN$", "CDN", "CAD $", "USD$", "US funds")
+ *  to a plain ISO code — demurrage invoices print it every which way, and each
+ *  spelling otherwise shows up as its own "currency" in the table. */
+function normalizeCurrencyCode(c?: string): string | undefined {
+  const t = (c || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (!t) return undefined;
+  if (t === 'CAD' || t === 'CDN' || t === 'CND' || t === 'CA' || t.startsWith('CANADIAN')) return 'CAD';
+  if (t === 'USD' || t === 'US' || t === 'USA' || t.startsWith('USFUND') || t.startsWith('USDOLLAR')) return 'USD';
+  return t;
+}
+
 /** True for a "runaway" identifier the AI extractor sometimes emits — absurdly
  *  long, or one character dominating (≥90%) a long-ish value. Catches both
  *  "0000000…" and "1000000…000" degenerations. */
@@ -1373,7 +1384,9 @@ export default function App() {
       || (refBol ? arr.find(x => (x.bolNumber || '').trim().toUpperCase() === refBol) : undefined);
     const matched = findMatch(orders as any) || findMatch(invoices as any);
     const carrierRec = resolveCarrierRecord(po.carrier, po.carrierDomain);
-    const carrierName = carrierRec?.name || (po.carrier || '').trim() || '—';
+    // Only an EXISTING carrier's name goes in the carrier field; an unmatched
+    // extracted name would create a phantom carrier, so it stays blank.
+    const carrierName = carrierRec?.name || '';
     // Re-scan edits in place ONLY when the SAME carrier's invoice number matches.
     // Carriers assign invoice numbers independently, so a bare invoice-number match
     // could let one carrier's re-used number (e.g. "1001") silently overwrite a
@@ -1391,7 +1404,7 @@ export default function App() {
       customer: (matched?.customer || '').trim() || existing?.customer || undefined,
       shipmentDate: po.shipmentDate || (matched as any)?.shipmentDate || existing?.shipmentDate || undefined,
       amount: typeof po.totalAmount === 'number' ? po.totalAmount : (existing?.amount || 0),
-      currency: po.currency || existing?.currency || undefined,
+      currency: normalizeCurrencyCode(po.currency) || existing?.currency || undefined,
       description: (po.notes || '').trim() || existing?.description || undefined,
       location: (matched?.location || '').trim() || existing?.location || undefined,
       status: existing?.status || 'New',
@@ -2757,14 +2770,14 @@ export default function App() {
             const carrierRec = resolveCarrierRecord(po.carrier, po.carrierDomain);
             const dem: DemurrageInvoice = {
               id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              carrier: carrierRec?.name || (po.carrier || '').trim() || '—',
+              carrier: carrierRec?.name || '',
               invoiceNumber: invNo,
               po: refPo,
               bolNumber: (po.bolNumber || '').trim(),
               customer: (matched?.customer || '').trim() || undefined,
               shipmentDate: po.shipmentDate || (matched as any)?.shipmentDate || undefined,
               amount: typeof po.totalAmount === 'number' ? po.totalAmount : 0,
-              currency: po.currency || undefined,
+              currency: normalizeCurrencyCode(po.currency),
               description: (po.notes || '').trim() || undefined,
               location: (matched?.location || '').trim() || undefined,
               status: 'New',
@@ -6949,8 +6962,26 @@ export default function App() {
         // Heal degenerate invoice numbers ("1000000…" runaways stored before the
         // extractor guard existed). Blanking here makes the state differ from the
         // baseline, so the autosave persists the healed doc back to Firestore.
-        const healed = (data.demurrageInvoices as DemurrageInvoice[]).map(d =>
-          isDegenerateIdentifier(d.invoiceNumber || '') ? { ...d, invoiceNumber: '' } : d);
+        // Also normalize currencies (CDN$/CDN/USD$ → CAD/USD) and snap the carrier
+        // to an existing Carriers-table record — an unmatched name goes blank.
+        const demCarriers = ((data.carriers as Carrier[] | undefined)?.length ? data.carriers as Carrier[] : carriers);
+        const demCarrierFor = (name?: string): string => {
+          const nm = (name || '').trim().toLowerCase();
+          if (!nm || nm === '—') return '';
+          const exact = demCarriers.find(c => (c.name || '').trim().toLowerCase() === nm);
+          if (exact) return exact.name;
+          const partial = demCarriers.find(c => {
+            const cn = (c.name || '').trim().toLowerCase();
+            return !!cn && (nm.includes(cn) || cn.includes(nm));
+          });
+          return partial?.name || '';
+        };
+        const healed = (data.demurrageInvoices as DemurrageInvoice[]).map(d => ({
+          ...d,
+          invoiceNumber: isDegenerateIdentifier(d.invoiceNumber || '') ? '' : d.invoiceNumber,
+          currency: normalizeCurrencyCode(d.currency),
+          carrier: demCarrierFor(d.carrier),
+        }));
         setDemurrageInvoices(healed);
         lastSyncedData.current.demurrageInvoices = JSON.stringify(data.demurrageInvoices);
       }
@@ -15033,7 +15064,7 @@ export default function App() {
               ? demurrageInvoices
               : demurrageInvoices.filter(d => (d.location || '').trim().toLowerCase() === demurrageLocFilter.toLowerCase());
             const fmtAmt = (d: DemurrageInvoice) => d.amount
-              ? `${d.currency ? d.currency + ' ' : '$'}${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              ? `${normalizeCurrencyCode(d.currency) ? normalizeCurrencyCode(d.currency) + ' ' : ''}${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
               : '—';
             return (
               <div>
@@ -15218,7 +15249,7 @@ export default function App() {
                     ) : <span />}
                     <div className="flex gap-2">
                       <button onClick={() => closeDemurrageDraft()} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-gray-100 transition-colors">{demurrageScanQueue.length ? 'Skip' : 'Cancel'}</button>
-                      <button onClick={() => { setDemurrageInvoices(prev => exists ? prev.map(x => x.id === d.id ? d : x) : [...prev, d]); closeDemurrageDraft(); }}
+                      <button onClick={() => { const saved = { ...d, currency: normalizeCurrencyCode(d.currency) }; setDemurrageInvoices(prev => exists ? prev.map(x => x.id === saved.id ? saved : x) : [...prev, saved]); closeDemurrageDraft(); }}
                         className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors flex items-center gap-1"><Save size={12} /> Save</button>
                     </div>
                   </div>
