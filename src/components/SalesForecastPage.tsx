@@ -748,10 +748,33 @@ export default function SalesForecastPage({
       setModalViewMode(cf.viewMode || 'Monthly');
       // Collapse any pre-existing duplicate rows the moment the modal opens, so the
       // operator sees one row per product+location even for legacy data.
-      setModalLines(dedupeLines(cf.lines));
+      const lines = dedupeLines(cf.lines);
+      // Surface ALL historical sales — including at inactive locations: any
+      // product+location this customer invoiced in the fiscal year that has no
+      // forecast row yet gets an empty line, so its actual cells render in the
+      // grid instead of the history being invisible.
+      if (selectedFY) {
+        const covered = new Set(lines.map((l) => `${canonProduct(l.productName)}||${locCanon(l.location)}`));
+        for (const inv of invoices) {
+          if (!isCountableInvoice(inv)) continue;
+          if (custKey(inv.customer) !== custKey(cf.customerName)) continue;
+          if (!inv.date || inv.date < selectedFY.startDate || inv.date > selectedFY.endDate) continue;
+          const items = inv.lineItems?.length
+            ? inv.lineItems.filter((li) => li.productName && li.totalWeight > 0).map((li) => li.productName)
+            : (inv.qty > 0 && inv.product && !inv.product.includes(',') ? [inv.product] : []);
+          for (const productName of items) {
+            const location = actualsLocation(inv.customer, productName, inv.location);
+            const key = `${canonProduct(productName)}||${locCanon(location)}`;
+            if (covered.has(key)) continue;
+            covered.add(key);
+            lines.push({ id: generateId('CFL'), productName, location, entries: [] });
+          }
+        }
+      }
+      setModalLines(lines);
       setCustomerModalOpen(true);
     },
-    [mergedForecasts, dedupeLines]
+    [mergedForecasts, dedupeLines, selectedFY, invoices, isCountableInvoice, custKey, canonProduct, locCanon, actualsLocation]
   );
 
   const handleDeleteForecast = useCallback(
