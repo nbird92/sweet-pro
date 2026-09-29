@@ -896,6 +896,51 @@ export default function SalesForecastPage({
     [canonProduct, locCanon, isInactiveLoc]
   );
 
+  /** Which fiscal PERIOD (month, 0-11) a week index (0-51) falls in. */
+  const weekMonthIdx = useCallback((w: number): number => {
+    if (!selectedFY) return -1;
+    const start = new Date(selectedFY.startDate);
+    const d = new Date(start.getTime() + w * 7 * 24 * 60 * 60 * 1000);
+    return periodIndexForDate(d.toISOString().slice(0, 10), selectedFY.periods);
+  }, [selectedFY]);
+
+  /** Switch the modal's Monthly ⇄ Weekly view, CONVERTING the entered values so
+   *  the other granularity isn't blank: each month's forecast divides evenly
+   *  across its weeks, and weekly values sum back into their month. */
+  const switchModalViewMode = useCallback((mode: 'Monthly' | 'Weekly') => {
+    setModalViewMode((prevMode) => {
+      if (mode === prevMode) return prevMode;
+      setModalLines((prev) => prev.map((line) => {
+        if (mode === 'Weekly') {
+          const weeksByMonth: number[][] = Array.from({ length: 12 }, () => []);
+          for (let w = 0; w < 52; w++) {
+            const m = weekMonthIdx(w);
+            if (m >= 0 && m < 12) weeksByMonth[m].push(w);
+          }
+          const entries: ForecastEntry[] = [];
+          for (let m = 0; m < 12; m++) {
+            const v = line.entries.find((e) => e.periodIndex === m)?.value ?? 0;
+            const wks = weeksByMonth[m];
+            if (!v || !wks.length) continue;
+            const per = Math.round((v / wks.length) * 100) / 100;
+            wks.forEach((w) => entries.push({ periodIndex: w, value: per }));
+          }
+          return { ...line, entries };
+        }
+        const totals = new Array(12).fill(0) as number[];
+        for (const e of line.entries) {
+          const m = weekMonthIdx(e.periodIndex);
+          if (m >= 0 && m < 12) totals[m] += e.value || 0;
+        }
+        const entries: ForecastEntry[] = totals
+          .map((v, m) => ({ periodIndex: m, value: Math.round(v * 100) / 100 }))
+          .filter((e) => e.value !== 0);
+        return { ...line, entries };
+      }));
+      return mode;
+    });
+  }, [weekMonthIdx]);
+
   const handleRemoveProductLine = useCallback((lineId: string) => {
     setModalLines((prev) => prev.filter((l) => l.id !== lineId));
   }, []);
@@ -2053,7 +2098,7 @@ export default function SalesForecastPage({
                   <div className="relative">
                     <select
                       value={modalViewMode}
-                      onChange={(e) => setModalViewMode(e.target.value as 'Monthly' | 'Weekly')}
+                      onChange={(e) => switchModalViewMode(e.target.value as 'Monthly' | 'Weekly')}
                       className="appearance-none px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
                     >
                       <option value="Monthly">Monthly</option>
