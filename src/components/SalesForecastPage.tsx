@@ -1515,6 +1515,66 @@ export default function SalesForecastPage({
   const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
   const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
 
+  /** Sales + Forecast matrix for export: per customer (or product@location),
+   *  per period, the BLENDED value — past periods use invoiced actuals, the
+   *  current month blends MTD sales with the remaining forecast, future
+   *  periods use forecast (all via getCellValue). Each forecast's stored
+   *  granularity is converted to the requested one (months divide evenly
+   *  across their weeks; weeks sum into their month). */
+  const buildSalesForecastMatrix = (wantWeekly: boolean, by: 'Customer' | 'Product') => {
+    const count = wantWeekly ? 52 : 12;
+    const weeksByMonth: number[][] = Array.from({ length: 12 }, () => []);
+    for (let w = 0; w < 52; w++) {
+      const m = weekMonthIdx(w);
+      if (m >= 0 && m < 12) weeksByMonth[m].push(w);
+    }
+    const map = new Map<string, number[]>();
+    for (const cf of mergedForecasts) {
+      const cfWeekly = (cf.viewMode || 'Monthly') === 'Weekly';
+      for (const line of cf.lines) {
+        const fv = new Array(count).fill(0) as number[];
+        if (cfWeekly === wantWeekly) {
+          for (const e of line.entries) if (e.periodIndex >= 0 && e.periodIndex < count) fv[e.periodIndex] += e.value;
+        } else if (!cfWeekly && wantWeekly) {
+          for (const e of line.entries) {
+            const wks = weeksByMonth[e.periodIndex] || [];
+            if (wks.length) { const per = e.value / wks.length; wks.forEach((w) => { fv[w] += per; }); }
+          }
+        } else {
+          for (const e of line.entries) {
+            const m = weekMonthIdx(e.periodIndex);
+            if (m >= 0 && m < 12) fv[m] += e.value;
+          }
+        }
+        const key = by === 'Customer' ? cf.customerName : `${displayProduct(line.productName)} @ ${locationName(line.location)}`;
+        let arr = map.get(key);
+        if (!arr) { arr = new Array(count).fill(0) as number[]; map.set(key, arr); }
+        for (let i = 0; i < count; i++) {
+          arr[i] += getCellValue(cf.customerName, line.productName, line.location, i, wantWeekly, fv[i]).value;
+        }
+      }
+    }
+    return [...map.entries()]
+      .map(([name, values]) => ({ name, values, total: values.reduce((s, v) => s + v, 0) }))
+      .filter((r) => r.total !== 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+  const salesForecastMatrixSheet = (sheetName: string, by: 'Customer' | 'Product', wantWeekly: boolean): SheetSpec => {
+    const labels = wantWeekly ? WEEK_LABELS : MONTH_NAMES;
+    const rows = buildSalesForecastMatrix(wantWeekly, by);
+    return {
+      sheetName,
+      title: `Sales + ${typeLabel} (MT) by ${by} — ${selectedFY?.name || ''} (${wantWeekly ? 'Weekly' : 'Monthly'})`,
+      subtitle: `Past periods = invoiced actuals; current month = MTD sales + remaining ${typeLabel.toLowerCase()} | ${rows.length} rows`,
+      columns: [
+        { header: by === 'Customer' ? 'Customer' : 'Product @ Location', key: 'name' },
+        ...labels.map((label, i) => ({ header: label, key: `p${i}`, format: 'number' as const })),
+        { header: 'Total (MT)', key: 'total', format: 'number' as const },
+      ],
+      rows: rows.map((r) => ({ name: r.name, total: r.total, ...Object.fromEntries(r.values.map((v, i) => [`p${i}`, v])) })),
+    };
+  };
+
   const forecastExportSheets = (): SheetSpec[] => [
     {
       sheetName: 'Customer Forecasts',
@@ -1604,6 +1664,10 @@ export default function SalesForecastPage({
         ...Object.fromEntries(r.values.map((v, i) => [`p${i}`, v])),
       })),
     },
+    salesForecastMatrixSheet('Product S+F Monthly', 'Product', false),
+    salesForecastMatrixSheet('Product S+F Weekly', 'Product', true),
+    salesForecastMatrixSheet('Customer S+F Monthly', 'Customer', false),
+    salesForecastMatrixSheet('Customer S+F Weekly', 'Customer', true),
   ];
   return (
     <div>
