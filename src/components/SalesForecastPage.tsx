@@ -1294,23 +1294,34 @@ export default function SalesForecastPage({
     [rowLocations, locationName]
   );
 
-  // ── Annual forecast with actuals incorporated ───────────────────────────
-  const getAnnualWithActuals = useCallback(
-    (cf: CustomerForecast): number => {
-      if (!selectedFY) return cf.annualForecast;
-      let total = 0;
+  // ── Annual totals with actuals incorporated ─────────────────────────────
+  // Split into invoiced actuals (past periods) and remaining forecast (current
+  // + future periods): `sales` + `forecast` = the year total.
+  const getSalesAndForecast = useCallback(
+    (cf: CustomerForecast): { sales: number; forecast: number } => {
+      if (!selectedFY) return { sales: 0, forecast: cf.annualForecast };
+      let sales = 0;
+      let forecast = 0;
       for (const line of cf.lines) {
         const count = cf.viewMode === 'Weekly' ? 52 : 12;
         for (let i = 0; i < count; i++) {
           const entry = line.entries.find((e) => e.periodIndex === i);
           const forecastVal = entry?.value ?? 0;
-          const { value } = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
-          total += value;
+          const { value, isActual } = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
+          if (isActual) sales += value;
+          else forecast += value;
         }
       }
-      return total;
+      return { sales, forecast };
     },
     [selectedFY, getCellValue]
+  );
+  const getAnnualWithActuals = useCallback(
+    (cf: CustomerForecast): number => {
+      const { sales, forecast } = getSalesAndForecast(cf);
+      return sales + forecast;
+    },
+    [getSalesAndForecast]
   );
 
   // ── Sorted & filtered customer forecasts ────────────────────────────────
@@ -1567,7 +1578,17 @@ export default function SalesForecastPage({
             // All of the customer's forecast sites, not just their default one.
             { key: 'location', label: 'Location', render: (cf) => rowLocationLabel(cf), sortValue: (cf) => rowLocationLabel(cf) },
             {
-              key: 'annual', label: `Annual ${typeLabel} (MT)`, align: 'right', mono: true, bold: true,
+              key: 'sales', label: 'Sales (MT)', align: 'right', mono: true,
+              sortValue: (cf) => getSalesAndForecast(cf).sales,
+              render: (cf) => getSalesAndForecast(cf).sales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+            {
+              key: 'forecast', label: `${typeLabel} (MT)`, align: 'right', mono: true,
+              sortValue: (cf) => getSalesAndForecast(cf).forecast,
+              render: (cf) => getSalesAndForecast(cf).forecast.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+            {
+              key: 'annual', label: `Sales + ${typeLabel} Total (MT)`, align: 'right', mono: true, bold: true,
               sortValue: (cf) => getAnnualWithActuals(cf),
               render: (cf) => getAnnualWithActuals(cf).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             },
