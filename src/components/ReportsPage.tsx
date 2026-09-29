@@ -1262,31 +1262,62 @@ export default function ReportsPage({
   // Customer sales volume broken out BY MONTH (invoiced MT bucketed on invoice
   // date). Declared here — ahead of the per-customer workbook builders below —
   // because those builders depend on it.
-  const customerMonthlySales = useMemo(() => {
+  // ── Invoice → customer-name index ────────────────────────────────────────
+  // The customer report and the monthly matrix both used to scan EVERY invoice
+  // per customer, resolving the invoice's customer name each time — O(customers
+  // × invoices × resolve), millions of string ops that made the whole page lag.
+  // Resolve each invoice ONCE here and bucket its index under both its raw and
+  // resolved customer keys; customers then just union their buckets.
+  const invoiceCustIndex = useMemo(() => {
     const norm = (s?: string) => (s || '').trim().toLowerCase();
     const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
       ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
       : (inv.qty || 0);
+    const byKey = new Map<string, number[]>();
+    const mts: number[] = [];
+    const monthOf: string[] = [];
+    invoices.forEach((i, idx) => {
+      mts.push(invMt(i));
+      const mk = (i.date || '').slice(0, 7);
+      monthOf.push(/^\d{4}-\d{2}$/.test(mk) ? mk : '');
+      const keys = new Set([norm(i.customer), norm(resolveCustomerName(i.customer || ''))]);
+      keys.forEach(k => {
+        if (!k) return;
+        const arr = byKey.get(k);
+        if (arr) arr.push(idx); else byKey.set(k, [idx]);
+      });
+    });
+    /** Distinct invoice indices matching any of the given (normalized) names. */
+    const indicesFor = (names: Set<string>): Set<number> => {
+      const out = new Set<number>();
+      names.forEach(n => (byKey.get(n) || []).forEach(idx => out.add(idx)));
+      return out;
+    };
+    return { indicesFor, mts, monthOf, norm };
+  }, [invoices, resolveCustomerName]);
+
+  const customerMonthlySales = useMemo(() => {
+    const { indicesFor, mts, monthOf, norm } = invoiceCustIndex;
     const monthKeys = new Set<string>();
     const rows = customers.map(cust => {
-      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
-      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
+      const names = new Set<string>();
+      for (const raw of [cust.name, cust.itasCustomerName]) { const n = norm(raw); if (n) names.add(n); }
       const byMonth: Record<string, number> = {};
       let total = 0;
-      invoices.filter(i => nameHit(i.customer)).forEach(i => {
+      indicesFor(names).forEach(idx => {
         // total counts ALL matched invoices (matching the main report's Sales
         // Volume); only validly-dated ones are bucketed into a month column.
-        const mt = invMt(i);
+        const mt = mts[idx];
         total += mt;
-        const mk = (i.date || '').slice(0, 7); // YYYY-MM
-        if (!/^\d{4}-\d{2}$/.test(mk)) return;
+        const mk = monthOf[idx];
+        if (!mk) return;
         byMonth[mk] = (byMonth[mk] || 0) + mt;
         monthKeys.add(mk);
       });
       return { id: cust.id, customer: cust.name || '(unnamed)', byMonth, total };
     }).filter(r => r.total > 0);
     return { rows: rows.sort((a, b) => b.total - a.total), months: [...monthKeys].sort() };
-  }, [customers, invoices, resolveCustomerName]);
+  }, [customers, invoiceCustIndex]);
 
   const monthLabel = (mk: string) => {
     const [y, m] = mk.split('-').map(Number);
@@ -1294,45 +1325,34 @@ export default function ReportsPage({
     return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'short', year: '2-digit' });
   };
 
-  // ── Customer report: per-customer workbook (all three sections) ──────────
-  /** Populate a workbook with the selected customer's report — all three sections
-   *  stacked on ONE worksheet, separated by a labelled band and a blank row.
-   *  Shared by the Export to Excel button and Send to Customer so the emailed file
-   *  is identical to the downloaded one. */
+  // ── Customer report: per-customer workbook (three worksheets) ────────────
+  /** Populate a workbook with the selected customer's report as THREE separate
+   *  worksheets — Summary, Sales by Month and Contracts. Shared by the Export
+   *  to Excel button and Send to Customer so the emailed file is identical to
+   *  the downloaded one. */
   const buildCustomerReportSheet = useCallback((
     wb: ExcelJS.Workbook,
     row: typeof customerReport[number],
   ) => {
     const dateStr = new Date().toLocaleDateString();
-    const ws = wb.addWorksheet('Customer Report');
     const months = customerMonthlySales.months;
     const monthly = customerMonthlySales.rows.find(m => m.id === row.id);
 
-    // Widest section decides the sheet's column widths: contracts needs 6, the
-    // monthly matrix needs months + 2.
-    const maxCols = Math.max(6, months.length + 2);
-
-    addTitleRows(ws, `Customer Report — ${row.customer}`, `Generated ${dateStr}`);
-
-    /** Dark band naming the section that follows. */
-    const sectionBand = (label: string) => {
-      const r = ws.addRow([label]);
-      r.getCell(1).font = { bold: true, size: 11, color: { argb: 'FFE4E3E0' } };
-      for (let i = 1; i <= maxCols; i++) {
-        r.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF141414' } };
-      }
-      return r;
-    };
     const rightAlign = (r: ExcelJS.Row, from: number, to: number, fmt = NUMBER_FMT) => {
       for (let i = from; i <= to; i++) {
         r.getCell(i).numFmt = fmt;
         r.getCell(i).alignment = { horizontal: 'right' };
       }
     };
+    const setWidths = (ws: ExcelJS.Worksheet, cols: number) => {
+      ws.getColumn(1).width = 38;
+      for (let i = 2; i <= cols; i++) ws.getColumn(i).width = 22;
+    };
 
-    // ── Section 1: summary ────────────────────────────────────────────────
-    sectionBand('SUMMARY');
+    // ── Sheet 1: Summary ──────────────────────────────────────────────────
     {
+      const ws = wb.addWorksheet('Summary');
+      addTitleRows(ws, `Customer Report — ${row.customer}`, `Summary | Generated ${dateStr}`);
       const h = ws.rowCount + 1;
       ws.addRow(['Customer', 'Sales Volume (MT)', 'Qty on Order (MT)', 'Contracts', 'Remaining Contract Balance (MT)']);
       applyHeaderRow(ws, h);
@@ -1342,13 +1362,13 @@ export default function ReportsPage({
       r.getCell(4).numFmt = INT_FMT;
       r.getCell(4).alignment = { horizontal: 'right' };
       rightAlign(r, 5, 5);
+      setWidths(ws, 5);
     }
 
-    ws.addRow([]);
-
-    // ── Section 2: sales volume by month ──────────────────────────────────
-    sectionBand('SALES VOLUME BY MONTH (MT)');
+    // ── Sheet 2: Sales by Month ───────────────────────────────────────────
     {
+      const ws = wb.addWorksheet('Sales by Month');
+      addTitleRows(ws, `Customer Report — ${row.customer}`, `Sales Volume by Month (MT) | Generated ${dateStr}`);
       const h = ws.rowCount + 1;
       ws.addRow(['Customer', ...months.map(monthLabel), 'Total']);
       applyHeaderRow(ws, h);
@@ -1360,13 +1380,13 @@ export default function ReportsPage({
       ]);
       rightAlign(r, 2, months.length + 2);
       if (months.length === 0) ws.addRow(['No dated invoices for this customer.']);
+      setWidths(ws, months.length + 2);
     }
 
-    ws.addRow([]);
-
-    // ── Section 3: contracts ──────────────────────────────────────────────
-    sectionBand('CONTRACTS');
+    // ── Sheet 3: Contracts ────────────────────────────────────────────────
     {
+      const ws = wb.addWorksheet('Contracts');
+      addTitleRows(ws, `Customer Report — ${row.customer}`, `Contract Balances | Generated ${dateStr}`);
       const h = ws.rowCount + 1;
       ws.addRow(['Contract #', 'Product', 'Contract Vol (MT)', 'Volume Taken (MT)', 'Remaining Contract Balance (MT)', 'Qty on Order (MT)']);
       applyHeaderRow(ws, h);
@@ -1394,10 +1414,8 @@ export default function ReportsPage({
       } else {
         ws.addRow(['No active contracts for this customer.']);
       }
+      setWidths(ws, 6);
     }
-
-    ws.getColumn(1).width = 38;
-    for (let i = 2; i <= maxCols; i++) ws.getColumn(i).width = 22;
   }, [customerMonthlySales]);
 
   /** The selected customer's report as an .xlsx Blob — one source for both the
@@ -1486,38 +1504,64 @@ export default function ReportsPage({
   // REPORT: Customer report — sales volume, qty on order, contracts & balances
   // ═══════════════════════════════════════════════════════════════════════════
   const customerReport = useMemo(() => {
-    const norm = (s?: string) => (s || '').trim().toLowerCase();
-    const invMt = (inv: Invoice) => (inv.lineItems && inv.lineItems.length)
-      ? inv.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
-      : (inv.qty || 0);
+    const { indicesFor, mts, norm } = invoiceCustIndex;
     const ordMt = (o: Order) => (o.lineItems && o.lineItems.length)
       ? o.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
       : 0;
     // "On order" = confirmed demand not yet invoiced (Open / Confirmed).
     const onOrder = (o: Order) => o.status === 'Open' || o.status === 'Confirmed';
 
-    const rows = customers.map(cust => {
-      const names = new Set([cust.name, cust.itasCustomerName].map(norm).filter(Boolean));
-      const num = norm(cust.customerNumber);
-      const nameHit = (raw?: string) => names.has(norm(raw)) || names.has(norm(resolveCustomerName(raw || '')));
+    // ONE pass over orders: bucket on-order indices per customer key (raw +
+    // resolved, deduped on read) and MT per contract number, instead of
+    // rescanning all orders per customer and again per contract row.
+    const orderMtByContract = new Map<string, number>();
+    const ordersByKey = new Map<string, number[]>();
+    orders.forEach((o, idx) => {
+      if (!onOrder(o)) return;
+      const cn = norm(o.contractNumber);
+      if (cn) orderMtByContract.set(cn, (orderMtByContract.get(cn) ?? 0) + ordMt(o));
+      const keys = new Set([norm(o.customer), norm(resolveCustomerName(o.customer || ''))]);
+      keys.forEach(k => {
+        if (!k) return;
+        const arr = ordersByKey.get(k);
+        if (arr) arr.push(idx); else ordersByKey.set(k, [idx]);
+      });
+    });
 
-      const salesMt = invoices.filter(i => nameHit(i.customer)).reduce((s, i) => s + invMt(i), 0);
-      const custOrders = orders.filter(o => onOrder(o) && nameHit(o.customer));
-      const onOrderMt = custOrders.reduce((s, o) => s + ordMt(o), 0);
+    // Volume Taken per contract computed once per contract number (shared
+    // implementation with the Contracts table so the two can't diverge).
+    const takenCache = new Map<string, number>();
+    const takenOf = (contractNumber?: string): number => {
+      const k = norm(contractNumber);
+      const hit = takenCache.get(k);
+      if (hit !== undefined) return hit;
+      const v = computeVolumeTaken(contractNumber, invoices);
+      takenCache.set(k, v);
+      return v;
+    };
+
+    const rows = customers.map(cust => {
+      const names = new Set<string>();
+      for (const raw of [cust.name, cust.itasCustomerName]) { const n = norm(raw); if (n) names.add(n); }
+      const num = norm(cust.customerNumber);
+
+      let salesMt = 0;
+      indicesFor(names).forEach(idx => { salesMt += mts[idx]; });
+      const orderIdx = new Set<number>();
+      names.forEach(n => (ordersByKey.get(n) || []).forEach(i => orderIdx.add(i)));
+      let onOrderMt = 0;
+      orderIdx.forEach(i => { onOrderMt += ordMt(orders[i]); });
 
       const custContracts = contracts.filter(ct => ct.active !== false
         && ((num && norm(ct.customerNumber) === num) || names.has(norm(ct.customerName))));
       const contractRows = custContracts.map(ct => {
         const cn = norm(ct.contractNumber);
-        const qtyOnOrder = cn
-          ? orders.filter(o => onOrder(o) && norm(o.contractNumber) === cn).reduce((s, o) => s + ordMt(o), 0)
-          : 0;
+        const qtyOnOrder = cn ? (orderMtByContract.get(cn) ?? 0) : 0;
         const contractVol = ct.contractVolume || 0;
         // Volume Taken must MATCH the Contracts table, which deliberately ignores
         // the persisted Contract.volumeTaken (it drifts when invoices are added or
         // removed without touching the contract row) and recomputes from invoices.
-        // Shared implementation so the two can't diverge again.
-        const taken = computeVolumeTaken(ct.contractNumber, invoices);
+        const taken = takenOf(ct.contractNumber);
         // Outstanding follows the same rule as the Contracts table: always
         // Contract Volume − Volume Taken, never the persisted volumeOutstanding.
         const remaining = contractVol - taken;
@@ -1529,7 +1573,7 @@ export default function ReportsPage({
     }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0);
 
     return rows.sort((a, b) => b.salesMt - a.salesMt);
-  }, [customers, invoices, orders, contracts, resolveCustomerName]);
+  }, [customers, invoiceCustIndex, orders, contracts, invoices, resolveCustomerName]);
 
   const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
   const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
