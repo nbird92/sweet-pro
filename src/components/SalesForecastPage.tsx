@@ -1542,7 +1542,67 @@ export default function SalesForecastPage({
         { header: 'Location', key: 'location' },
         { header: 'Annual Total (MT)', key: 'annual', format: 'number' },
       ],
-      rows: productForecastRows,
+      rows: productForecastRows.map(r => ({ ...r, productName: displayProduct(r.productName), location: locationName(r.location) })),
+    },
+    {
+      sheetName: 'By Product Group',
+      title: `${typeLabel} by Product Group — ${selectedFY?.name || ''}`,
+      subtitle: `${productGroupForecastRows.length} group/location rollups`,
+      columns: [
+        { header: 'Product Group', key: 'group' },
+        { header: 'Product', key: 'product' },
+        { header: 'Location', key: 'location' },
+        { header: 'Annual (MT)', key: 'annual', format: 'number' },
+      ],
+      rows: productGroupForecastRows.flatMap(g => [
+        { group: g.group, product: '(group total)', location: locationName(g.location), annual: g.annual },
+        ...g.products.map(p => ({ group: g.group, product: displayProduct(p.productName), location: locationName(g.location), annual: p.annual })),
+      ]),
+    },
+    {
+      sheetName: 'Tolling Forecast',
+      title: `Tolling Forecast — ${selectedFY?.name || ''}`,
+      subtitle: `Forecast MT × tolling fee (+ tax) | ${tollingForecastRows.length} rows`,
+      columns: [
+        { header: 'Product Group', key: 'group' },
+        { header: 'Location', key: 'locationLabel' },
+        { header: 'Forecast (MT)', key: 'mt', format: 'number' },
+        { header: 'Fee / MT', key: 'rate', format: 'number' },
+        { header: 'Net Amount', key: 'net', format: 'number' },
+        { header: 'Tax', key: 'tax', format: 'number' },
+        { header: 'Total Tolling', key: 'total', format: 'number' },
+        { header: 'Currency', key: 'currency' },
+      ],
+      rows: tollingForecastRows.map(r => ({ ...r, locationLabel: locationName(r.location) })),
+    },
+    {
+      sheetName: 'Packaging Materials',
+      title: `Packaging Material Requirements — ${selectedFY?.name || ''}`,
+      subtitle: `Forecast units × Bill of Materials (+ shrinkage) | ${packagingNeeds.rows.length} materials`,
+      columns: [
+        { header: 'Material', key: 'materialName' },
+        { header: 'Code', key: 'materialCode' },
+        { header: 'Category', key: 'category' },
+        { header: 'Supplier', key: 'supplier' },
+        { header: 'Required Qty', key: 'qty', format: 'integer' },
+        { header: 'Unit', key: 'unit' },
+      ],
+      rows: packagingNeeds.rows,
+    },
+    {
+      sheetName: 'By Period',
+      title: `${typeLabel} by Period — ${selectedFY?.name || ''} (by ${periodAggregateMode}, ${periodViewMode})`,
+      subtitle: `${periodAggregateData.length} ${periodAggregateMode.toLowerCase()} rows`,
+      columns: [
+        { header: periodAggregateMode, key: 'name' },
+        ...(periodViewMode === 'Weekly' ? WEEK_LABELS : MONTH_NAMES).map((label, i) => ({ header: label, key: `p${i}`, format: 'number' as const })),
+        { header: 'Total (MT)', key: 'total', format: 'number' },
+      ],
+      rows: periodAggregateData.map(r => ({
+        name: periodAggregateMode === 'Product' ? displayProduct(r.name) : r.name,
+        total: r.total,
+        ...Object.fromEntries(r.values.map((v, i) => [`p${i}`, v])),
+      })),
     },
   ];
   return (
