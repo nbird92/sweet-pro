@@ -9639,6 +9639,11 @@ export default function App() {
       const weightT = q?.netWeightKg ?? s.netWeightKg ?? s.netWeight;
       const formatT = (q?.productFormat || s.productFormat || '').toLowerCase();
       let score = 0;
+      // Molasses is NEVER a fuzzy guess: a generic name like "Bulk" ties across
+      // every bulk SKU and array order used to let MOL win, planting molasses
+      // history/forecast rows for customers who never bought any. Only an
+      // explicit mention resolves to it.
+      if (sugarT === 'Molasses' && !/\bmol/i.test(productName)) return 0;
       if (detectedSugar && sugarT === detectedSugar) score += 5;
       if (detectedGroup && groupT === detectedGroup) score += 4;
       if (catT === detectedCategory) score += 1;

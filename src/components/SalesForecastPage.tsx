@@ -763,6 +763,9 @@ export default function SalesForecastPage({
             ? inv.lineItems.filter((li) => li.productName && li.totalWeight > 0).map((li) => li.productName)
             : (inv.qty > 0 && inv.product && !inv.product.includes(',') ? [inv.product] : []);
           for (const productName of items) {
+            // Guard against fuzzy misresolution: a generic line name must not
+            // seed a molasses row unless it actually says so.
+            if (canonProduct(productName).toUpperCase() === 'MOL' && !/\bmol/i.test(productName)) continue;
             const location = actualsLocation(inv.customer, productName, inv.location);
             const key = `${canonProduct(productName)}||${locCanon(location)}`;
             if (covered.has(key)) continue;
@@ -2321,6 +2324,38 @@ export default function SalesForecastPage({
                             </tr>
                           );
                         })}
+                        {/* ── Total row: per-period sum across every product line
+                            (actuals for past periods, forecast forward) ── */}
+                        {modalLines.length > 0 && (() => {
+                          const periodTotals = Array.from({ length: modalColumnCount }, (_, i) =>
+                            modalLines.reduce((sum, line) => {
+                              const fv = line.entries.find((e) => e.periodIndex === i)?.value ?? 0;
+                              const { value } = getCellValue(
+                                editingCf.customerName,
+                                line.productName,
+                                line.location,
+                                i,
+                                modalViewMode === 'Weekly',
+                                fv
+                              );
+                              return sum + value;
+                            }, 0)
+                          );
+                          const grand = periodTotals.reduce((s, v) => s + v, 0);
+                          const fmt1 = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                          return (
+                            <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                              <td className="sticky left-0 z-10 bg-[#141414] px-3 py-1.5 uppercase tracking-widest border border-[#141414]">Total</td>
+                              {periodTotals.map((v, i) => (
+                                <td key={i} className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">
+                                  {v > 0 ? fmt1(v) : '—'}
+                                </td>
+                              ))}
+                              <td className="px-3 py-1.5 text-center font-mono border border-[#141414]/50">{fmt1(grand)}</td>
+                              <td className="border border-[#141414]/50" />
+                            </tr>
+                          );
+                        })()}
                       </tbody>
                     </table>
                   </div>
