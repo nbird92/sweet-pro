@@ -1325,9 +1325,31 @@ export default function SalesForecastPage({
         const actual = map.get(key) ?? 0;
         return { value: actual, isActual: true };
       }
+      // CURRENT month (monthly view): blend MTD invoiced sales with the
+      // remaining forecast for a truer month picture — the weeks already
+      // invoiced contribute their ACTUALS, and only the weeks still ahead
+      // contribute their even share of the month's forecast.
+      const p = !isWeekly ? selectedFY.periods[periodIndex] : undefined;
+      if (p && TODAY_ISO >= p.startDate && TODAY_ISO <= p.endDate) {
+        const weeks: number[] = [];
+        for (let w = 0; w < 52; w++) if (weekMonthIdx(w) === periodIndex) weeks.push(w);
+        if (weeks.length) {
+          const fyStart = new Date(selectedFY.startDate).getTime();
+          let mtd = 0;
+          let futureWeeks = 0;
+          for (const w of weeks) {
+            const key = `${custKey(customerName)}|${canonProduct(productName)}|${locCanon(location)}|${w}`;
+            mtd += weeklyActualsMap.get(key) ?? 0;
+            const weekStartIso = new Date(fyStart + w * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            if (weekStartIso > TODAY_ISO) futureWeeks++;
+          }
+          const perWeek = forecastValue / weeks.length;
+          return { value: mtd + perWeek * futureWeeks, isActual: false };
+        }
+      }
       return { value: forecastValue, isActual: false };
     },
-    [selectedFY, actualsMap, weeklyActualsMap, locCanon, canonProduct, custKey]
+    [selectedFY, actualsMap, weeklyActualsMap, locCanon, canonProduct, custKey, weekMonthIdx]
   );
 
   // ── Location name lookup ────────────────────────────────────────────────
