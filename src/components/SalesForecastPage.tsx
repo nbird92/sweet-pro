@@ -1425,6 +1425,34 @@ export default function SalesForecastPage({
     [getSalesAndForecast]
   );
 
+  // ── Orders on hand (not yet invoiced) per customer ──────────────────────
+  // The live order book: confirmed orders still in the Orders table whose BOL
+  // hasn't been invoiced. Cancelled orders never count.
+  const ordersOnHandByCustomer = useMemo(() => {
+    const invoicedBols = new Set(invoices.map((i) => (i.bolNumber || '').trim()).filter(Boolean));
+    const map = new Map<string, number>();
+    for (const o of orders) {
+      if (!o.customer) continue;
+      const st = (o.status || '').trim().toLowerCase();
+      if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
+      const bol = (o.bolNumber || '').trim();
+      if (bol && invoicedBols.has(bol)) continue;
+      let mt = 0;
+      for (const li of o.lineItems || []) {
+        if (li.productName && li.totalWeight > 0) mt += li.totalWeight;
+      }
+      if (mt > 0) {
+        const ck = custKey(o.customer);
+        map.set(ck, (map.get(ck) ?? 0) + mt);
+      }
+    }
+    return map;
+  }, [orders, invoices, custKey]);
+  const ordersOnHandFor = useCallback(
+    (cf: CustomerForecast): number => ordersOnHandByCustomer.get(custKey(cf.customerName)) ?? 0,
+    [ordersOnHandByCustomer, custKey]
+  );
+
   // ── Sorted & filtered customer forecasts ────────────────────────────────
   const sortedCustomerForecasts = useMemo(() => {
     // Only customers with forecast DATA are listed — deleting a customer's
@@ -1806,6 +1834,11 @@ export default function SalesForecastPage({
               key: 'sales', label: 'Sales (MT)', align: 'right', mono: true,
               sortValue: (cf) => getSalesAndForecast(cf).sales,
               render: (cf) => getSalesAndForecast(cf).sales.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+            {
+              key: 'orders', label: 'Orders (MT)', align: 'right', mono: true,
+              sortValue: (cf) => ordersOnHandFor(cf),
+              render: (cf) => ordersOnHandFor(cf).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
             },
             {
               key: 'forecast', label: `${typeLabel} (MT)`, align: 'right', mono: true,
