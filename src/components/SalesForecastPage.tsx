@@ -1307,7 +1307,7 @@ export default function SalesForecastPage({
       periodIndex: number,
       isWeekly: boolean,
       forecastValue: number
-    ): { value: number; isActual: boolean } => {
+    ): { value: number; isActual: boolean; mtdSales?: number; remainingForecast?: number } => {
       if (!selectedFY) return { value: forecastValue, isActual: false };
       const isPast = isWeekly
         ? isWeekPast(periodIndex, selectedFY.startDate)
@@ -1344,7 +1344,10 @@ export default function SalesForecastPage({
             if (weekStartIso > TODAY_ISO) futureWeeks++;
           }
           const perWeek = forecastValue / weeks.length;
-          return { value: mtd + perWeek * futureWeeks, isActual: false };
+          const remaining = perWeek * futureWeeks;
+          // Split reported so Sales/Forecast columns can classify the month's
+          // MTD sales as SALES and only the still-ahead weeks as forecast.
+          return { value: mtd + remaining, isActual: false, mtdSales: mtd, remainingForecast: remaining };
         }
       }
       return { value: forecastValue, isActual: false };
@@ -1400,9 +1403,14 @@ export default function SalesForecastPage({
         for (let i = 0; i < count; i++) {
           const entry = line.entries.find((e) => e.periodIndex === i);
           const forecastVal = entry?.value ?? 0;
-          const { value, isActual } = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
-          if (isActual) sales += value;
-          else forecast += value;
+          const res = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
+          if (res.isActual) sales += res.value;
+          else if (res.mtdSales !== undefined) {
+            // Current month: MTD invoiced sales count as SALES, only the
+            // remaining weeks' forecast share stays under forecast.
+            sales += res.mtdSales;
+            forecast += res.remainingForecast ?? 0;
+          } else forecast += res.value;
         }
       }
       return { sales, forecast };
