@@ -7825,6 +7825,42 @@ export default function App() {
     return () => clearTimeout(t);
   }, [poPendingImports, poAmendments, user, lastSynced]);
 
+  // AUTO-DISMISS pending PO imports that already exist as an order or invoice
+  // (matched by numeric PO value) — the operator shouldn't have to dismiss a PO
+  // that was already entered. Logged to the import history like a manual dismiss,
+  // and deleted durably so it disappears for every user, not just this screen.
+  useEffect(() => {
+    if (!user || !lastSynced) return;
+    if (!poPendingImports.length || (!orders.length && !invoices.length)) return;
+    const known = new Set([
+      ...orders.map(o => poKey(o.po)),
+      ...invoices.map(i => poKey(i.po)),
+    ].filter(Boolean));
+    const stale = poPendingImports.filter(p => {
+      const k = poKey(p.poNumber);
+      return !!k && known.has(k);
+    });
+    if (!stale.length) return;
+    const staleIds = new Set(stale.map(s => s.id));
+    setPoPendingImports(prev => prev.filter(p => !staleIds.has(p.id)));
+    deleteDocs(COLLECTIONS.poPendingImports, stale.map(s => s.id)).catch((e) => console.warn('[auto-dismiss] pending-queue delete will retry via autosave:', e));
+    setPoImportLog(prev => [
+      ...stale.map(s => ({
+        id: `POLOG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        importedAt: new Date().toISOString(),
+        receivedAt: s.receivedAt,
+        fromEmail: s.fromEmail,
+        subject: s.subject,
+        sourceFile: s.sourceFile,
+        poNumber: s.poNumber,
+        customer: s.customer,
+        result: 'duplicate' as const,
+        note: 'Auto-dismissed — PO already exists in the orders/invoices table',
+      })),
+      ...prev,
+    ].slice(0, 500));
+  }, [poPendingImports, orders, invoices, user, lastSynced]);
+
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
   useEffect(() => {
