@@ -11342,7 +11342,7 @@ export default function App() {
                     // Scheduler rows often carry a format placeholder ("Bulk") as
                     // the product — show the real SHORTFORM name from the
                     // BOL-linked order/invoice line items instead.
-                    const byBol = new Map<string, { lineItems?: OrderLineItem[]; product?: string }>();
+                    const byBol = new Map<string, { lineItems?: OrderLineItem[]; product?: string; qty?: number }>();
                     invoices.forEach(i => { const b = (i.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, i); });
                     orders.forEach(o => { const b = (o.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, o); });
                     const fmtOnlyRe = /^(bulk|bag|bagged|tote|totes|liquid)$/i;
@@ -11371,6 +11371,17 @@ export default function App() {
                       // name a product that may not be on the truck.
                       return fmtOnly ? raw : (productToShortform(raw) || raw);
                     };
+                    // Scheduler rows book bulk loads as qty 1 (a truck count, not
+                    // tonnage) — show the real MT from the BOL-linked document.
+                    const mtLabel = (s: Shipment): string | number => {
+                      const rec = byBol.get((s.bol || '').trim().toUpperCase());
+                      if (rec) {
+                        const mt = (rec.lineItems || []).reduce((sum, li) => sum + (li.totalWeight > 0 ? li.totalWeight : 0), 0)
+                          || (typeof rec.qty === 'number' && rec.qty > 0 ? rec.qty : 0);
+                        if (mt > 0) return mt.toLocaleString(undefined, { maximumFractionDigits: 1 });
+                      }
+                      return s.qty;
+                    };
                     if (allShipments.length === 0) return (
                       <tr>
                         <td colSpan={5} className="p-6 text-center text-xs opacity-50 italic">No upcoming shipments.</td>
@@ -11381,7 +11392,7 @@ export default function App() {
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.date || '—'}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">{prodLabel(s)}</td>
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.qty}</td>
+                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{mtLabel(s)}</td>
                         <td className="p-4 text-xs">{s.time || '—'}</td>
                       </tr>
                     ));
