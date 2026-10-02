@@ -11334,6 +11334,29 @@ export default function App() {
                     const allShipments = [...hamiltonShipments, ...vancouverShipments]
                       .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled' && (s.date || '') >= today)
                       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                    // Scheduler rows often carry a format placeholder ("Bulk") as
+                    // the product — show the real SHORTFORM name from the
+                    // BOL-linked order/invoice line items instead.
+                    const byBol = new Map<string, { lineItems?: OrderLineItem[]; product?: string }>();
+                    invoices.forEach(i => { const b = (i.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, i); });
+                    orders.forEach(o => { const b = (o.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, o); });
+                    const prodLabel = (s: Shipment): string => {
+                      const raw = (s.product || '').trim();
+                      const fmtOnly = /^(bulk|bag|bagged|tote|totes|liquid)$/i.test(raw);
+                      if (fmtOnly || !raw) {
+                        const rec = byBol.get((s.bol || '').trim().toUpperCase());
+                        if (rec) {
+                          const names = Array.from(new Set((rec.lineItems || []).map(li => productToShortform(li.productName)).filter(Boolean)));
+                          if (names.length) return names.join(', ');
+                          if (rec.product) return productToShortform(rec.product) || rec.product;
+                        }
+                      }
+                      if (!raw) return '—';
+                      // A bare format word with no linked order stays as-is — a
+                      // fuzzy shortform guess would name a product that may not
+                      // be on the truck.
+                      return fmtOnly ? raw : (productToShortform(raw) || raw);
+                    };
                     if (allShipments.length === 0) return (
                       <tr>
                         <td colSpan={5} className="p-6 text-center text-xs opacity-50 italic">No upcoming shipments.</td>
@@ -11343,7 +11366,7 @@ export default function App() {
                       <tr key={s.id} className="hover:bg-[#F9F9F9]">
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.date || '—'}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.product || '—'}</td>
+                        <td className="p-4 text-xs border-r border-[#141414]/10">{prodLabel(s)}</td>
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.qty}</td>
                         <td className="p-4 text-xs">{s.time || '—'}</td>
                       </tr>
