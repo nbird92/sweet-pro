@@ -9600,8 +9600,13 @@ export default function App() {
     }
 
     // 4. Match by Packaging Format on its own (e.g. order saved with just the format)
+    //    — but NEVER to a Molasses product unless the name says so: "Bulk" format-
+    //    matching whatever bulk SKU happens to sit first in the catalog (often MOL)
+    //    stamped molasses onto every bulk record.
+    const mentionsMol = /\bmol/i.test(productName);
     const fmtMatch = skus.find(s => {
       const q = qaProducts.find(p => p.skuId === s.id);
+      if (!mentionsMol && (q?.sugarType || s.sugarType) === 'Molasses') return false;
       const fmt = (q?.productFormat || s.productFormat || '').trim().toLowerCase();
       return fmt && fmt === normalized;
     });
@@ -11340,21 +11345,30 @@ export default function App() {
                     const byBol = new Map<string, { lineItems?: OrderLineItem[]; product?: string }>();
                     invoices.forEach(i => { const b = (i.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, i); });
                     orders.forEach(o => { const b = (o.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, o); });
+                    const fmtOnlyRe = /^(bulk|bag|bagged|tote|totes|liquid)$/i;
+                    // A format word is NOT a product name — resolving it would
+                    // guess a catalog product (it used to format-match the MOL
+                    // SKU, stamping molasses on every bulk granulated shipment).
+                    const safeShort = (name?: string): string => {
+                      const n = (name || '').trim();
+                      if (!n || fmtOnlyRe.test(n)) return '';
+                      return productToShortform(n) || n;
+                    };
                     const prodLabel = (s: Shipment): string => {
                       const raw = (s.product || '').trim();
-                      const fmtOnly = /^(bulk|bag|bagged|tote|totes|liquid)$/i.test(raw);
+                      const fmtOnly = fmtOnlyRe.test(raw);
                       if (fmtOnly || !raw) {
                         const rec = byBol.get((s.bol || '').trim().toUpperCase());
                         if (rec) {
-                          const names = Array.from(new Set((rec.lineItems || []).map(li => productToShortform(li.productName)).filter(Boolean)));
+                          const names = Array.from(new Set((rec.lineItems || []).map(li => safeShort(li.productName)).filter(Boolean)));
                           if (names.length) return names.join(', ');
-                          if (rec.product) return productToShortform(rec.product) || rec.product;
+                          const headline = safeShort(rec.product);
+                          if (headline) return headline;
                         }
                       }
                       if (!raw) return '—';
-                      // A bare format word with no linked order stays as-is — a
-                      // fuzzy shortform guess would name a product that may not
-                      // be on the truck.
+                      // A bare format word stays as-is — a shortform guess would
+                      // name a product that may not be on the truck.
                       return fmtOnly ? raw : (productToShortform(raw) || raw);
                     };
                     if (allShipments.length === 0) return (
