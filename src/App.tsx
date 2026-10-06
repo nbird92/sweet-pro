@@ -6907,8 +6907,20 @@ export default function App() {
             }
           }
         }
-        setOrders(mapped);
-        lastSyncedData.current.orders = JSON.stringify(mapped);
+        // Never resurrect an order the USER deleted this session: the pull can
+        // race the (async) server delete, and re-adding the doc to memory also
+        // stops the autosave from ever pushing the delete (present-in-memory ==
+        // nothing to delete). Rows still on the server but in the ledger are
+        // filtered out here; the ledger + autosave finish the server delete.
+        {
+          const ledger = userDeletedIds.current[COLLECTIONS.orders];
+          const visible = ledger && ledger.size ? mapped.filter((o: any) => !ledger.has(o.id)) : mapped;
+          setOrders(visible);
+          // Baseline stays the SERVER truth (incl. the still-deleting doc), so
+          // the next autosave diff sees baseline-has / memory-lacks + ledger and
+          // pushes the delete to completion.
+          lastSyncedData.current.orders = JSON.stringify(mapped);
+        }
       }
       if (data.conferences?.length) {
         // Normalize conference meetings to ensure customerAttendeeDetails is always an array
@@ -7796,8 +7808,10 @@ export default function App() {
       console.log('[auto-refresh] pulling other users’ changes');
       handleSyncNowRef.current();
     };
-    const onVisible = () => { if (document.visibilityState === 'visible') tryRefresh(2 * 60 * 1000); };
-    const iv = setInterval(() => tryRefresh(5 * 60 * 1000), 60 * 1000);
+    // Tight cadence so other users' edits/deletions show up near-live: pull
+    // when the tab regains focus after ~45s, and every ~90s while visible.
+    const onVisible = () => { if (document.visibilityState === 'visible') tryRefresh(45 * 1000); };
+    const iv = setInterval(() => tryRefresh(90 * 1000), 30 * 1000);
     document.addEventListener('visibilitychange', onVisible);
     return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVisible); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
