@@ -10848,8 +10848,10 @@ export default function App() {
     const totalCadMtBase = totalUsdMtAfterYield * fx;
     const totalCadMtRefined = totalCadMtBase + config.refiningMarginCadMt;
     
-    // FCA Hamilton Bulk is just the refined cost (no freight, no supply chain)
-    const fcaHamiltonBulk = totalCadMtRefined;
+    // FCA Hamilton Bulk is the refined cost (no freight, no supply chain) with
+    // the Sugar Loss % multiplied in HERE — additional charges (differentials,
+    // freight, pallets, duty, supply chain) are added on AFTER the loss uplift.
+    const fcaHamiltonBulk = totalCadMtRefined * (1 + ((config.sugarLossPct || 0) / 100));
 
     // Vancouver Supply Chain Logic
     const totalSupplyChainCostPerMt = supplyChain.reduce((sum, item) => sum + (item.totalCostCad / (item.weightPerLoadMt || 1)), 0);
@@ -10905,11 +10907,8 @@ export default function App() {
     const convert = (valCad: number) => isUsd ? valCad / fx : valCad;
     const convertUsd = (valUsd: number) => isUsd ? valUsd : valUsd * fx;
 
-    // Apply Sugar Loss % — uplifts the final price by (1 + pct/100)
-    if (config.sugarLossPct) {
-      finalCadMt *= 1 + (config.sugarLossPct / 100);
-    }
-
+    // (Sugar Loss % is already baked into fcaHamiltonBulk above, so freight,
+    // differentials, pallets etc. are NOT inflated by it.)
     const displayFinalMt = convert(finalCadMt);
     
     let cadPerUnit = 0;
