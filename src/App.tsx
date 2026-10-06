@@ -13258,7 +13258,7 @@ export default function App() {
                             <Truck size={14} />
                           </button>
                           {ord.status === 'Confirmed' || ord.status === 'Cancelled' ? (
-                            <button onClick={() => ord.hidden ? setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)) : setOrderHideConfirmId(ord.id)} className="p-1 hover:bg-amber-500 hover:text-white transition-colors" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
+                            <button onClick={() => { if (ord.hidden) { setOrders(orders.map(o => o.id === ord.id ? { ...o, hidden: false } : o)); saveNow(COLLECTIONS.orders, [{ ...ord, hidden: false }]); } else setOrderHideConfirmId(ord.id); }} className="p-1 hover:bg-amber-500 hover:text-white transition-colors" title={ord.hidden ? 'Show order' : 'Hide order (BOL reserved)'}>
                               {ord.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
                             </button>
                           ) : (
@@ -27370,6 +27370,11 @@ export default function App() {
                     onClick={() => {
                       recordUserDeletes(COLLECTIONS.orders, [orderDeleteConfirmId]);
                       setOrders(orders.filter(o => o.id !== orderDeleteConfirmId));
+                      // Durable at click via REST (the SDK write channel never acks
+                      // on some machines) — the ledgered autosave remains the retry.
+                      restSyncCollection(COLLECTIONS.orders, [], [orderDeleteConfirmId])
+                        .then(res => { if (!res.ok) console.warn('[delete order] server delete not confirmed yet; autosave will retry:', res.firstError); })
+                        .catch(e => console.warn('[delete order] server delete failed; autosave will retry:', e));
                       setOrderDeleteConfirmId(null);
                     }}
                     className="flex-1 py-3 bg-red-600 text-white text-xs font-bold uppercase hover:bg-red-700 transition-colors"
@@ -27406,7 +27411,9 @@ export default function App() {
                 <div className="flex gap-4">
                   <button
                     onClick={() => {
+                      const hidden = orders.find(o => o.id === orderHideConfirmId);
                       setOrders(orders.map(o => o.id === orderHideConfirmId ? { ...o, hidden: true } : o));
+                      if (hidden) saveNow(COLLECTIONS.orders, [{ ...hidden, hidden: true }]);
                       setOrderHideConfirmId(null);
                     }}
                     className="flex-1 py-3 bg-amber-600 text-white text-xs font-bold uppercase hover:bg-amber-700 transition-colors"
