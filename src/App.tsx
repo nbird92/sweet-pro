@@ -22309,13 +22309,35 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
-                    <input 
-                      type="text" 
-                      value={newFreightRate.destination} 
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
+                      <label className="flex items-center gap-1.5 text-[10px] uppercase font-bold opacity-70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!newFreightRate.internalTransfer}
+                          onChange={(e) => setNewFreightRate({ ...newFreightRate, internalTransfer: e.target.checked, destination: '' })}
+                          className="accent-[#141414]"
+                        />
+                        Internal Transfer
+                      </label>
+                    </div>
+                    {newFreightRate.internalTransfer ? (
+                      <select
+                        value={newFreightRate.destination}
+                        onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      >
+                        <option value="">Select Location</option>
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={newFreightRate.destination}
+                        onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
@@ -23121,13 +23143,35 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
-                    <input 
-                      type="text" 
-                      value={editingFreightRate.destination} 
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
+                      <label className="flex items-center gap-1.5 text-[10px] uppercase font-bold opacity-70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!editingFreightRate.internalTransfer}
+                          onChange={(e) => setEditingFreightRate({ ...editingFreightRate, internalTransfer: e.target.checked, destination: '' })}
+                          className="accent-[#141414]"
+                        />
+                        Internal Transfer
+                      </label>
+                    </div>
+                    {editingFreightRate.internalTransfer ? (
+                      <select
+                        value={editingFreightRate.destination}
+                        onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      >
+                        <option value="">Select Location</option>
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={editingFreightRate.destination}
+                        onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
@@ -24660,13 +24704,35 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
-                    <input 
-                      type="text" 
-                      value={newFreightRate.destination} 
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
+                      <label className="flex items-center gap-1.5 text-[10px] uppercase font-bold opacity-70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!newFreightRate.internalTransfer}
+                          onChange={(e) => setNewFreightRate({ ...newFreightRate, internalTransfer: e.target.checked, destination: '' })}
+                          className="accent-[#141414]"
+                        />
+                        Internal Transfer
+                      </label>
+                    </div>
+                    {newFreightRate.internalTransfer ? (
+                      <select
+                        value={newFreightRate.destination}
+                        onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      >
+                        <option value="">Select Location</option>
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={newFreightRate.destination}
+                        onChange={(e) => setNewFreightRate({ ...newFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>
@@ -24766,13 +24832,35 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
-                    <input 
-                      type="text" 
-                      value={editingFreightRate.destination} 
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
+                      <label className="flex items-center gap-1.5 text-[10px] uppercase font-bold opacity-70 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!!editingFreightRate.internalTransfer}
+                          onChange={(e) => setEditingFreightRate({ ...editingFreightRate, internalTransfer: e.target.checked, destination: '' })}
+                          className="accent-[#141414]"
+                        />
+                        Internal Transfer
+                      </label>
+                    </div>
+                    {editingFreightRate.internalTransfer ? (
+                      <select
+                        value={editingFreightRate.destination}
+                        onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      >
+                        <option value="">Select Location</option>
+                        {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={editingFreightRate.destination}
+                        onChange={(e) => setEditingFreightRate({ ...editingFreightRate, destination: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Carrier</label>

@@ -195,6 +195,9 @@ export interface FreightRate {
   provider: string;
   cost: number;
   freightType: 'Dry Van' | 'Bulk' | 'Liquid' | 'Bulk Rail' | 'Intermodal' | 'Transload';
+  /** True when this rate covers an INTERNAL transfer between Sucro locations
+   *  (destination is a QA location) rather than a customer destination. */
+  internalTransfer?: boolean;
   mtPerLoad: number;
   startDate?: string;
   endDate?: string;
