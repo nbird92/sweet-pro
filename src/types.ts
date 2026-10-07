@@ -393,9 +393,10 @@ export interface TransferLeg {
   from: string;
   to: string;
   carrier: string;
+  carrierBol?: string;  // the carrier's own BOL number for this transload
   amount: number; // MT for this leg
   shipmentDate?: string;
-  arrivalDate?: string;
+  arrivalDate?: string; // delivery date
   status?: string;
   notes?: string;
 }

@@ -28398,18 +28398,18 @@ export default function App() {
                   {/* Transfer Legs Section */}
                   <div className="border-t border-[#141414]/10 pt-4 space-y-3">
                     <div className="flex justify-between items-center">
-                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
+                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Transload</h4>
                       <button type="button" onClick={addLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1">
-                        <Plus size={10} /> Add Leg
+                        <Plus size={10} /> Add Transload
                       </button>
                     </div>
                     {newTransferLegs.length === 0 && (
-                      <div className="text-xs italic opacity-40 text-center py-2">No legs — this is a direct transfer. Add legs to split into multiple segments.</div>
+                      <div className="text-xs italic opacity-40 text-center py-2">No transloads — this is a direct transfer. Add transloads to split into multiple segments.</div>
                     )}
                     {newTransferLegs.map((leg) => (
                       <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
                         <div className="flex justify-between items-center">
-                          <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
+                          <span className="text-[10px] font-bold uppercase opacity-60">Transload {leg.legNumber}</span>
                           <button type="button" onClick={() => removeLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors rounded">
                             <Trash2 size={12} />
                           </button>
@@ -28439,6 +28439,20 @@ export default function App() {
                           <div className="space-y-0.5">
                             <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
                             <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">Carrier BOL #</label>
+                            <input type="text" value={leg.carrierBol || ''} onChange={(e) => updateLeg(leg.id, 'carrierBol', e.target.value)} placeholder="Carrier's BOL" className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">Shipment Date</label>
+                            <input type="date" value={leg.shipmentDate || ''} onChange={(e) => updateLeg(leg.id, 'shipmentDate', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[9px] uppercase font-bold opacity-50">Delivery Date</label>
+                            <input type="date" value={leg.arrivalDate || ''} onChange={(e) => updateLeg(leg.id, 'arrivalDate', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                           </div>
                         </div>
                       </div>
@@ -28662,18 +28676,18 @@ export default function App() {
                 {/* Transfer Legs Section */}
                 <div className="border-t border-[#141414]/10 pt-4 space-y-3">
                   <div className="flex justify-between items-center">
-                    <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Legs</h4>
+                    <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Transfer Transload</h4>
                     <button type="button" onClick={addEditLeg} className="px-3 py-1 bg-[#141414] text-[#E4E3E0] text-[9px] font-bold uppercase hover:bg-opacity-80 transition-colors flex items-center gap-1">
-                      <Plus size={10} /> Add Leg
+                      <Plus size={10} /> Add Transload
                     </button>
                   </div>
                   {editLegs.length === 0 && (
-                    <div className="text-xs italic opacity-40 text-center py-2">No legs — this is a direct transfer. Add legs to split into multiple segments.</div>
+                    <div className="text-xs italic opacity-40 text-center py-2">No transloads — this is a direct transfer. Add transloads to split into multiple segments.</div>
                   )}
                   {editLegs.map((leg) => (
                     <div key={leg.id} className="bg-[#F5F5F5] border border-[#141414]/10 p-3 space-y-2">
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-bold uppercase opacity-60">Leg {leg.legNumber}</span>
+                        <span className="text-[10px] font-bold uppercase opacity-60">Transload {leg.legNumber}</span>
                         <button type="button" onClick={() => removeEditLeg(leg.id)} className="p-0.5 hover:bg-red-500 hover:text-white transition-colors rounded">
                           <Trash2 size={12} />
                         </button>
@@ -28703,6 +28717,20 @@ export default function App() {
                         <div className="space-y-0.5">
                           <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
                           <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateEditLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Carrier BOL #</label>
+                          <input type="text" value={leg.carrierBol || ''} onChange={(e) => updateEditLeg(leg.id, 'carrierBol', e.target.value)} placeholder="Carrier's BOL" className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Shipment Date</label>
+                          <input type="date" value={leg.shipmentDate || ''} onChange={(e) => updateEditLeg(leg.id, 'shipmentDate', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[9px] uppercase font-bold opacity-50">Delivery Date</label>
+                          <input type="date" value={leg.arrivalDate || ''} onChange={(e) => updateEditLeg(leg.id, 'arrivalDate', e.target.value)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                         </div>
                       </div>
                     </div>
