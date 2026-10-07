@@ -256,9 +256,12 @@ function toDateInputValue(v?: string): string {
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
 // ============================
-function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp }: {
+function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform }: {
   lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string;
   qaProducts: QAProduct[]; skus: SKU[]; locations: Location[]; salesPeople: Person[];
+  /** App's shortform renderer — raw SKU/QA names are format-only ("Bulk"/"Tote"),
+   *  so dropdown labels render through this (values stay the stored names). */
+  toShortform?: (name: string | undefined) => string;
   newLeadFollowUp: Record<string, { date: string; description: string; infoSent: string }>;
   setNewLeadFollowUp: React.Dispatch<React.SetStateAction<Record<string, { date: string; description: string; infoSent: string }>>>;
 }) {
@@ -305,13 +308,19 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
               <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
                 <option value="">Select product</option>
-                {leadQaProducts.map(qp => <option key={qp.id} value={qp.skuName}>{qp.skuName}</option>)}
-                {leadSkus.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                {(() => {
+                  const label = (n: string) => (toShortform ? (toShortform(n) || n) : n);
+                  const opts = [
+                    ...leadQaProducts.map(qp => ({ key: qp.id, value: qp.skuName, label: label(qp.skuName) })),
+                    ...leadSkus.map(s => ({ key: s.id, value: s.name, label: label(s.name) })),
+                  ].sort((a, b) => a.label.localeCompare(b.label));
+                  return opts.map(o => <option key={o.key} value={o.value}>{o.label}</option>);
+                })()}
                 {/* Keep an already-saved product visible when editing an old lead. */}
                 {lead.product
                   && !leadQaProducts.some(qp => qp.skuName === lead.product)
                   && !leadSkus.some(s => s.name === lead.product) && (
-                  <option value={lead.product}>{lead.product} (inactive)</option>
+                  <option value={lead.product}>{(toShortform ? (toShortform(lead.product) || lead.product) : lead.product)} (inactive)</option>
                 )}
               </select></div>
           </div>
@@ -14235,7 +14244,7 @@ export default function App() {
           <AnimatePresence>
             {showAddLeadModal && (
                 <SalesLeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
-                  qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople}
+                  qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople} toShortform={productToShortform}
                   newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                   onSubmit={() => {
                     if (!newLeadData.customerName) { alert('Please enter a customer name'); return; }
@@ -14249,7 +14258,7 @@ export default function App() {
           <AnimatePresence>
             {editingLeadCard && (
               <SalesLeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
-                qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople}
+                qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople} toShortform={productToShortform}
                 newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                 onSubmit={() => {
                   setSalesLeads(salesLeads.map(l => l.id === editingLeadCard.id ? editingLeadCard : l));
