@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   X,
   Edit2,
@@ -13,6 +13,8 @@ import {
   Search,
   ArrowUpDown,
   TrendingUp,
+  Download,
+  Upload,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
@@ -1551,6 +1553,111 @@ export default function SalesForecastPage({
   const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
   const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
 
+  // ── CSV template download + import (annual forecast by customer/product/month) ──
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const downloadForecastTemplate = () => {
+    const esc = (v: string | number) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const rows: string[] = [['Customer', 'Product', 'Location', ...MONTH_NAMES].join(',')];
+    for (const cf of mergedForecasts) {
+      if (!cf.lines.length) { rows.push([esc(cf.customerName), '', '', ...Array(12).fill('')].join(',')); continue; }
+      const weekly = (cf.viewMode || 'Monthly') === 'Weekly';
+      for (const line of cf.lines) {
+        const monthly = new Array(12).fill(0) as number[];
+        for (const e of line.entries) {
+          const m = weekly ? weekMonthIdx(e.periodIndex) : e.periodIndex;
+          if (m >= 0 && m < 12) monthly[m] += e.value || 0;
+        }
+        rows.push([
+          esc(cf.customerName), esc(displayProduct(line.productName)), esc(locationName(line.location)),
+          ...monthly.map(v => (v ? Math.round(v * 100) / 100 : '')),
+        ].join(','));
+      }
+    }
+    const blob = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${typeLabel}_Template_${(selectedFY?.name || 'FY').replace(/[^a-zA-Z0-9]/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  /** Minimal CSV parser with quoted-field support. */
+  const parseCsv = (text: string): string[][] => {
+    const out: string[][] = [];
+    let row: string[] = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQ) {
+        if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+        else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === ',') { row.push(cur); cur = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); out.push(row); row = []; cur = '';
+      } else cur += ch;
+    }
+    if (cur !== '' || row.length) { row.push(cur); out.push(row); }
+    return out;
+  };
+  const handleImportForecastCsv = async (file: File) => {
+    if (!selectedFY) return;
+    const rows = parseCsv(await file.text()).filter(r => r.some(c => (c || '').trim()));
+    if (rows.length < 2) { alert('The file has no data rows — download the template to see the expected layout.'); return; }
+    const header = rows[0].map(h => (h || '').trim().toLowerCase());
+    const cCust = header.indexOf('customer');
+    const cProd = header.indexOf('product');
+    const cLoc = header.indexOf('location');
+    const monthCols = MONTH_NAMES.map(m => header.indexOf(m.toLowerCase()));
+    if (cCust < 0 || cProd < 0 || monthCols.some(i => i < 0)) {
+      alert('Header must be: Customer, Product, Location, Jan … Dec — download the template to get it exactly right.');
+      return;
+    }
+    const custByKey = new Map<string, Customer>();
+    for (const c of customers) {
+      for (const k of [custKey(c.name), custKey(c.itasCustomerName), (c.customerNumber || '').trim().toLowerCase()]) {
+        if (k && !custByKey.has(k)) custByKey.set(k, c);
+      }
+    }
+    const errors: string[] = [];
+    const parsed = new Map<string, { cust: Customer; lines: CustomerForecastLine[] }>();
+    rows.slice(1).forEach((r, i) => {
+      const rowNo = i + 2;
+      const custName = (r[cCust] || '').trim();
+      if (!custName) return;
+      const cust = custByKey.get(custKey(custName)) || custByKey.get(custName.toLowerCase());
+      if (!cust) { errors.push(`Row ${rowNo}: unknown customer "${custName}"`); return; }
+      const prod = (r[cProd] || '').trim();
+      const entries: ForecastEntry[] = [];
+      monthCols.forEach((col, m) => { const v = parseFloat(r[col]); if (isFinite(v) && v > 0) entries.push({ periodIndex: m, value: v }); });
+      if (!prod) { if (entries.length) errors.push(`Row ${rowNo}: monthly values but no product — skipped`); return; }
+      if (!catalogEntry(prod)) { errors.push(`Row ${rowNo}: unknown product "${prod}"`); return; }
+      const loc = cLoc >= 0 ? (r[cLoc] || '').trim() : '';
+      let g = parsed.get(cust.id);
+      if (!g) { g = { cust, lines: [] }; parsed.set(cust.id, g); }
+      g.lines.push({ id: generateId('CFL'), productName: prod, location: loc, entries });
+    });
+    if (!parsed.size) { alert('No importable rows found.' + (errors.length ? `\n\n${errors.slice(0, 15).join('\n')}` : '')); return; }
+    // REPLACE each imported customer's lines for the selected FY/type (the
+    // template is a full round-trip of that customer's forecast). Customers not
+    // in the file are untouched.
+    const updated = [...customerForecasts];
+    for (const { cust, lines } of parsed.values()) {
+      const dLines = dedupeLines(lines);
+      const annual = dLines.reduce((s, l) => s + l.entries.reduce((a, e) => a + e.value, 0), 0);
+      const idx = updated.findIndex(cf => cf.customerId === cust.id && cf.fiscalYearId === selectedFY.id && cf.type === forecastType);
+      const base: CustomerForecast = idx >= 0 ? updated[idx] : {
+        id: generateId('CF'), customerId: cust.id, customerNumber: cust.customerNumber ?? '',
+        customerName: cust.name ?? '', location: cust.defaultLocation ?? '',
+        fiscalYearId: selectedFY.id, type: forecastType, viewMode: 'Monthly', lines: [], annualForecast: 0,
+      };
+      const next: CustomerForecast = { ...base, viewMode: 'Monthly', lines: dLines, annualForecast: annual };
+      if (idx >= 0) updated[idx] = next; else updated.push(next);
+    }
+    onUpdateCustomerForecasts(updated);
+    alert(`Imported ${parsed.size} customer ${typeLabel.toLowerCase()}${parsed.size === 1 ? '' : 's'} into ${selectedFY.name}.`
+      + (errors.length ? `\n\nSkipped ${errors.length} row(s):\n${errors.slice(0, 15).join('\n')}${errors.length > 15 ? '\n…' : ''}` : ''));
+  };
+
   /** Sales + Forecast matrix for export: per customer (or product@location),
    *  per period, the BLENDED value — past periods use invoiced actuals, the
    *  current month blends MTD sales with the remaining forecast, future
@@ -1763,9 +1870,32 @@ export default function SalesForecastPage({
           </div>
         )}
 
-        {/* Auto-Populate + Clear All */}
+        {/* Auto-Populate + Clear All + CSV template/import */}
         {!isProduction && (
         <div className="mt-5 ml-auto flex items-center gap-2">
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleImportForecastCsv(f); }}
+          />
+          <button
+            onClick={downloadForecastTemplate}
+            className="flex items-center gap-1.5 px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title={`Download a CSV template (Customer, Product, Location, Jan–Dec) pre-filled with the current ${typeLabel.toLowerCase()} data`}
+          >
+            <Download size={14} />
+            Template
+          </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            className="flex items-center gap-1.5 px-4 py-2 border border-[#141414] text-xs font-bold uppercase tracking-widest hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+            title={`Import an annual ${typeLabel.toLowerCase()} by customer / product / month from the CSV template (replaces each imported customer's ${typeLabel.toLowerCase()})`}
+          >
+            <Upload size={14} />
+            Import CSV
+          </button>
           <button
             onClick={() => {
               if (!selectedFY) return;
