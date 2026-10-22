@@ -647,6 +647,7 @@ export default function App() {
   const [orderCurrency, setOrderCurrency] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
   const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
+  const [orderIncludeTolling, setOrderIncludeTolling] = useState(true); // "Tolling Fees" tick box
   const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
   // Add-order inline shipment scheduler (mirrors the PO-review importer scheduler):
   // when enabled, a shipment appointment is booked for the new order at save time.
@@ -8763,6 +8764,7 @@ export default function App() {
         location: linkedOrder?.location || '',
         contractNumber: linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
         splitNo: shipment.splitNumber || linkedOrder?.splitNumber || undefined,
+        excludeFromTolling: linkedOrder?.excludeFromTolling || undefined,
         lotCode: ((shipment.lotNumbers && shipment.lotNumbers.length > 0) ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : [])).filter(Boolean).join(', ') || undefined,
       };
 
@@ -8886,6 +8888,7 @@ export default function App() {
       location: order.location || '',
       contractNumber: order.contractNumber || order.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '',
       splitNo: order.splitNumber || undefined,
+      excludeFromTolling: order.excludeFromTolling || undefined,
       lotCode: lotCodeFromShipment({ shipmentId: opts?.shipmentId, bol: order.bolNumber }) || undefined,
     };
 
@@ -11171,7 +11174,7 @@ export default function App() {
         if (!weeklyTotals[wk]) weeklyTotals[wk] = { volume: 0, tolling: 0 };
         const qty = i.qty || 0;
         weeklyTotals[wk].volume += qty;
-        weeklyTotals[wk].tolling += qty * config.refiningMarginCadMt;
+        if (!i.excludeFromTolling) weeklyTotals[wk].tolling += qty * config.refiningMarginCadMt;
       });
 
       // Volume by Product — invoiced weight per product SHORTFORM per week. Sum the
@@ -13266,7 +13269,7 @@ export default function App() {
                               setOrderShipToId(ord.shipToLocationId || '');
                               setOrderLocation(ord.location || '');
                               setOrderCurrency(ord.currency || '');
-                              setOrderPapsNo(ord.papsNo || '');
+                              setOrderPapsNo(ord.papsNo || ''); setOrderIncludeTolling(!ord.excludeFromTolling);
                               setOrderCustomsEntryNo(ord.customsEntryNo || '');
                               setOrderLineItems(ord.lineItems);
                               setEditingLineItemIdx(null);
@@ -14693,6 +14696,7 @@ export default function App() {
         for (const inv of invoices) {
           const st = (inv.status || '').toLowerCase();
           if (st === 'cancelled' || st === 'credit' || (inv.id || '').startsWith('INV-RTN-') || !inv.date) continue;
+          if (inv.excludeFromTolling) continue; // "Tolling Fees" box unticked on the invoice
           const d = new Date(inv.date + 'T12:00:00');
           if (isNaN(d.getTime())) continue;
           const g = getGroup(d);
@@ -17867,6 +17871,10 @@ export default function App() {
                     <input type="number" step="0.01" value={editingInvoiceCard.amount || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, amount: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
                     <input type="text" value={editingInvoiceCard.papsNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, papsNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
+                  <div className="flex items-end pb-1.5"><label className="flex items-center gap-2 text-[10px] uppercase font-bold opacity-80 cursor-pointer select-none" title="Unticked: this invoice is left out of tolling fee calculations and reports">
+                    <input type="checkbox" checked={!editingInvoiceCard.excludeFromTolling} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, excludeFromTolling: e.target.checked ? undefined : true })} className="accent-[#141414] w-4 h-4" />
+                    Tolling Fees
+                  </label></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
                     <input type="text" value={editingInvoiceCard.customsEntryNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, customsEntryNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
@@ -18678,7 +18686,7 @@ export default function App() {
                         setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
                         setOrderCurrency(viewingOrderCard.currency || '');
-                        setOrderPapsNo(viewingOrderCard.papsNo || '');
+                        setOrderPapsNo(viewingOrderCard.papsNo || ''); setOrderIncludeTolling(!viewingOrderCard.excludeFromTolling);
                         setOrderCustomsEntryNo(viewingOrderCard.customsEntryNo || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
                         if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
@@ -25500,7 +25508,7 @@ export default function App() {
                   setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
                   setOrderCurrency(ord.currency || '');
-                  setOrderPapsNo(ord.papsNo || '');
+                  setOrderPapsNo(ord.papsNo || ''); setOrderIncludeTolling(!ord.excludeFromTolling);
                   setOrderCustomsEntryNo(ord.customsEntryNo || '');
                   setOrderLineItems(ord.lineItems);
                   setEditingLineItemIdx(null);
@@ -25602,7 +25610,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setOrderPapsNo(''); setOrderCustomsEntryNo(''); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setOrderPapsNo(''); setOrderCustomsEntryNo(''); setOrderIncludeTolling(true); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -25767,6 +25775,10 @@ export default function App() {
                       </select>
                     </div>
                   </div>
+                  <label className="flex items-center gap-2 text-[10px] uppercase font-bold opacity-80 cursor-pointer select-none" title="Unticked: this order's invoice is left out of tolling fee calculations and reports">
+                    <input type="checkbox" checked={orderIncludeTolling} onChange={(e) => setOrderIncludeTolling(e.target.checked)} className="accent-[#141414] w-4 h-4" />
+                    Tolling Fees
+                  </label>
                   {/* Customs references — only surfaced when editing an existing
                       order (PAPS / entry numbers are assigned after the order is
                       created and the shipment clears the border). */}
@@ -26186,6 +26198,7 @@ export default function App() {
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
                           papsNo: orderPapsNo.trim() || undefined,
+                          excludeFromTolling: orderIncludeTolling ? undefined : true,
                           customsEntryNo: orderCustomsEntryNo.trim() || undefined,
                         };
                         setOrders(orders.map(o => o.id === editingOrder.id ? updatedOrder : o));
@@ -26246,6 +26259,7 @@ export default function App() {
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
+                          excludeFromTolling: orderIncludeTolling ? undefined : true,
                         };
                         {
                           const conflict = orderPoBolConflict(newOrder.po, newOrder.bolNumber);
@@ -26271,6 +26285,7 @@ export default function App() {
                       setOrderCurrency('');
                       setOrderShipToId('');
                       setOrderPapsNo('');
+                      setOrderIncludeTolling(true);
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
                       setOrderScheduleAppt(false);
@@ -26324,6 +26339,7 @@ export default function App() {
                           shipToLocationId: orderShipToId || undefined,
                           palletType: firstContract?.palletType || '',
                           splitNumber: orderSplitNumber.trim() || undefined,
+                          excludeFromTolling: orderIncludeTolling ? undefined : true,
                         };
                         {
                           const conflict = orderPoBolConflict(newOrder.po, newOrder.bolNumber);
@@ -26371,6 +26387,7 @@ export default function App() {
                       setOrderCurrency('');
                       setOrderShipToId('');
                       setOrderPapsNo('');
+                      setOrderIncludeTolling(true);
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
                       setOrderScheduleAppt(false);

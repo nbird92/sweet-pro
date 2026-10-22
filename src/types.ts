@@ -458,6 +458,7 @@ export interface Invoice {
   location?: string;
   contractNumber?: string;
   papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
+  excludeFromTolling?: boolean; // unticked "Tolling Fees" box — omit from tolling fee calculations/reports
   customsEntryNo?: string;  // Customs entry number
   reversals?: string;       // Reversal/credit reference or amount, from the sync sheet
   lotCode?: string;         // Lot code(s) from the matching shipment (by BOL), captured at Complete & Bill
@@ -526,6 +527,7 @@ export interface Order {
   hidden?: boolean;        // hide instead of delete for confirmed orders (BOL permanently reserved)
   shipToLocationId?: string; // references ShipToLocation.id under the order's customer
   papsNo?: string;          // PAPS number (cross-border customs pre-arrival)
+  excludeFromTolling?: boolean; // unticked "Tolling Fees" box — omit from tolling fee calculations/reports
   customsEntryNo?: string;  // Customs entry number
   lotCode?: string;         // Lot code(s) — e.g. mapped from an order-sheet-sync column
 }
