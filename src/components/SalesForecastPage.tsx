@@ -421,12 +421,36 @@ export default function SalesForecastPage({
    *  at several plants (e.g. Hamilton Ferguson AND Hamilton Sherman). Without it,
    *  every location row for that product showed the SAME actuals — the identical
    *  sales appeared under both plants, which is physically impossible. */
+  /** The REAL product name of a transaction line item. Catalog SKU/QA names are
+   *  format-only ("Bulk", "Bag", "Tote") and shared by many products — the
+   *  molasses SKU is literally named "Bulk" — so resolving the bare productName
+   *  picked whichever "Bulk" record came first (MOL) and planted phantom molasses
+   *  sales/forecasts on customers who never bought any. Lines record the actual
+   *  pick as productDisplayName (e.g. "Conventional Bulk Granulated 100") with
+   *  productKey (the QA id); prefer those. A bare format word with nothing better
+   *  returns '' — it is unidentifiable, and guessing invents a product. */
+  const lineProductName = (li: { productName?: string; productDisplayName?: string; productKey?: string }): string => {
+    const name = (li.productName || '').trim();
+    const disp = (li.productDisplayName || '').trim();
+    const formatOnly = (s: string) => /^(bulk|bag|bags|bagged|tote|totes|liquid|packaged)$/i.test(s);
+    if (disp && !formatOnly(disp)) return disp;
+    if (name && !formatOnly(name)) return name;
+    if (li.productKey) {
+      const qa = qaProducts.find(q => q.id === li.productKey);
+      const sku = qa ? skus.find(s => s.id === qa.skuId) : skus.find(s => s.id === li.productKey);
+      const longForm = ((qa as any)?.productLongForm || (sku as any)?.productLongForm || '').trim();
+      if (longForm && !formatOnly(longForm)) return longForm;
+    }
+    return '';
+  };
+
   const addInvoiceActuals = (map: Map<string, number>, inv: Invoice, idx: number) => {
     if (inv.lineItems?.length) {
       for (const li of inv.lineItems) {
-        if (!li.productName || !(li.totalWeight > 0)) continue; // ignore zero/negative lines
-        const loc = locCanon(actualsLocation(inv.customer, li.productName, inv.location));
-        const k = `${custKey(inv.customer)}|${canonProduct(li.productName)}|${loc}|${idx}`;
+        const pn = lineProductName(li);
+        if (!pn || !(li.totalWeight > 0)) continue; // ignore zero/negative/unidentifiable lines
+        const loc = locCanon(actualsLocation(inv.customer, pn, inv.location));
+        const k = `${custKey(inv.customer)}|${canonProduct(pn)}|${loc}|${idx}`;
         map.set(k, (map.get(k) ?? 0) + li.totalWeight);
       }
     } else if (inv.qty > 0 && inv.product && !inv.product.includes(',')) {
@@ -762,7 +786,7 @@ export default function SalesForecastPage({
           if (custKey(inv.customer) !== custKey(cf.customerName)) continue;
           if (!inv.date || inv.date < selectedFY.startDate || inv.date > selectedFY.endDate) continue;
           const items = inv.lineItems?.length
-            ? inv.lineItems.filter((li) => li.productName && li.totalWeight > 0).map((li) => li.productName)
+            ? inv.lineItems.filter((li) => li.totalWeight > 0).map((li) => lineProductName(li)).filter(Boolean)
             : (inv.qty > 0 && inv.product && !inv.product.includes(',') ? [inv.product] : []);
           for (const productName of items) {
             // Guard against fuzzy misresolution: a generic line name must not
@@ -1008,6 +1032,9 @@ export default function SalesForecastPage({
       if (!salesMap.has(ck)) salesMap.set(ck, new Map());
       const prodMap = salesMap.get(ck)!;
       const cName = canonProduct(productName);
+      // Blank location → same catalog/default fallback the order book uses, so a
+      // product's history and its open orders always land on ONE row.
+      location = location || actualsLocation(customerName, productName, '');
       const key = `${cName}||${locCanon(location)}`;
       const cur = prodMap.get(key);
       if (cur) cur.qty += qty;
@@ -1032,8 +1059,9 @@ export default function SalesForecastPage({
       if (!isCountableInvoice(inv)) continue;
       if (inv.lineItems?.length) {
         for (const li of inv.lineItems) {
-          if (li.productName && li.totalWeight && li.totalWeight > 0) {
-            addToMap(inv.customer, li.productName, inv.location || '', li.totalWeight);
+          const pn = lineProductName(li);
+          if (pn && li.totalWeight && li.totalWeight > 0) {
+            addToMap(inv.customer, pn, inv.location || '', li.totalWeight);
           }
         }
       } else if (inv.qty && inv.qty > 0 && inv.product && !inv.product.includes(',')) {
@@ -1052,20 +1080,50 @@ export default function SalesForecastPage({
     //    Shipments are deliberately NOT ingested: scheduler rows carry
     //    placeholder products ('Bulk', pre-booked slots) that seeded forecast
     //    lines for products the customer never bought.
+    //    Two roles:
+    //      • PAST-dated (in the trailing window) → part of the run-rate baseline,
+    //        like invoices.
+    //      • CURRENT/FUTURE-dated inside the selected FY → the ORDER BOOK: firm
+    //        demand for that specific month. A month's forecast is never below
+    //        what is already on order for it, and a product the customer has only
+    //        just started ordering gets a line from its orders alone.
+    //    Invoiced BOLs are checked against ALL invoices (not just the window), so
+    //    an order already billed is never counted twice.
+    for (const inv of invoices) { const b = (inv.bolNumber || '').trim(); if (b) invoicedBols.add(b); }
+    type BookAgg = { productName: string; location: string; byMonth: number[] };
+    const orderBook = new Map<string, Map<string, BookAgg>>();
+    const currentPeriodIdx = TODAY_ISO < selectedFY.startDate ? 0
+      : TODAY_ISO > selectedFY.endDate ? 12
+      : Math.max(0, periodIndexForDate(TODAY_ISO, selectedFY.periods));
     for (const o of orders) {
       if (!o.customer) continue;
       const oDate = o.shipmentDate || o.date;
-      if (!inWindow(oDate)) continue;
+      if (!oDate) continue;
       const st = (o.status || '').trim().toLowerCase();
       if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
       const bol = (o.bolNumber || '').trim();
       if (bol && invoicedBols.has(bol)) continue;
+      const fyIdx = oDate >= selectedFY.startDate && oDate <= selectedFY.endDate
+        ? periodIndexForDate(oDate, selectedFY.periods) : -1;
+      const isBook = fyIdx >= 0 && fyIdx >= currentPeriodIdx;
+      const isBaseline = inWindow(oDate) && !isBook;
+      if (!isBook && !isBaseline) continue;
       // Orders carry their real per-product weights on line items; an order
       // without any has no weight to seed.
       for (const li of o.lineItems || []) {
-        if (li.productName && li.totalWeight > 0) {
-          addToMap(o.customer, li.productName, o.location || '', li.totalWeight);
-        }
+        const pn = lineProductName(li);
+        if (!pn || !(li.totalWeight > 0)) continue;
+        if (isBaseline) { addToMap(o.customer, pn, o.location || '', li.totalWeight); continue; }
+        const ck = custKey(o.customer);
+        if (!ck) continue;
+        const cName = canonProduct(pn);
+        const oLoc = o.location || actualsLocation(o.customer, pn, '');
+        const key = `${cName}||${locCanon(oLoc)}`;
+        if (!orderBook.has(ck)) orderBook.set(ck, new Map());
+        const book = orderBook.get(ck)!;
+        let agg = book.get(key);
+        if (!agg) { agg = { productName: cName, location: resolveLocName(oLoc), byMonth: new Array(12).fill(0) }; book.set(key, agg); }
+        agg.byMonth[fyIdx] += li.totalWeight;
       }
     }
 
@@ -1094,7 +1152,7 @@ export default function SalesForecastPage({
         if (!fyPairs.get(ck)!.has(key)) fyPairs.get(ck)!.set(key, { productName: cName, location: loc });
       };
       if (inv.lineItems?.length) {
-        for (const li of inv.lineItems) if (li.productName && li.totalWeight > 0) push(li.productName);
+        for (const li of inv.lineItems) { const pn = lineProductName(li); if (pn && li.totalWeight > 0) push(pn); }
       } else if (inv.qty > 0 && inv.product && !inv.product.includes(',')) {
         push(inv.product);
       }
@@ -1109,7 +1167,11 @@ export default function SalesForecastPage({
     const updatedForecasts = [...customerForecasts];
 
     for (const cust of customers) {
-      const prodMap = salesMap.get(custKey(cust.name)) || new Map<string, { productName: string; location: string; qty: number }>();
+      const prodMap = new Map(salesMap.get(custKey(cust.name)) || new Map<string, { productName: string; location: string; qty: number }>());
+      const book = orderBook.get(custKey(cust.name)) || new Map<string, BookAgg>();
+      // A product the customer has ONLY on the order book (no trailing history)
+      // still earns a line — seeded with zero baseline, filled from its orders.
+      for (const [k, b] of book) if (!prodMap.has(k)) prodMap.set(k, { productName: b.productName, location: b.location, qty: 0 });
       const historyPairs = fyPairs.get(custKey(cust.name));
       if (prodMap.size === 0 && !(historyPairs && historyPairs.size > 0)) continue;
 
@@ -1119,7 +1181,8 @@ export default function SalesForecastPage({
 
       const lines: CustomerForecastLine[] = [];
 
-      for (const { productName, location, qty } of prodMap.values()) {
+      for (const [pairKey, { productName, location, qty }] of prodMap) {
+        const booked = book.get(pairKey)?.byMonth;
         const monthlyAvg = qty / numMonths;
         // Forecasts are whole MT — round the monthly average to the nearest integer.
         const rounded = Math.round(monthlyAvg);
@@ -1139,12 +1202,17 @@ export default function SalesForecastPage({
         // A pair whose monthly average rounds to 0 has no meaningful recent
         // demand — emit no line at all rather than a row of zeros (unless the
         // row exists purely to carry inactive-location history).
-        if (rounded <= 0 && !inactive) continue;
+        const hasBook = !!booked && booked.some(v => v > 0);
+        if (rounded <= 0 && !inactive && !hasBook) continue;
         const perMonth = inactive ? 0 : rounded;
 
+        // Run-rate baseline per month, raised to the firm order book wherever
+        // orders on hand already exceed it (never lowered — the baseline still
+        // covers demand not yet ordered). Closed plants forecast nothing.
         const entries: ForecastEntry[] = [];
         for (let m = 0; m < 12; m++) {
-          entries.push({ periodIndex: m, value: perMonth });
+          const onOrder = !inactive && booked ? Math.round(booked[m]) : 0;
+          entries.push({ periodIndex: m, value: Math.max(perMonth, onOrder) });
         }
 
         lines.push({
@@ -1250,13 +1318,13 @@ export default function SalesForecastPage({
     // comma-joined mixed-load strings, which are not real products).
     for (const inv of invoices) {
       if (inv.lineItems?.length) {
-        for (const li of inv.lineItems) if (li.productName) add(li.productName, inv.location || '');
+        for (const li of inv.lineItems) { const pn = lineProductName(li); if (pn) add(pn, inv.location || ''); }
       } else if (inv.product && !inv.product.includes(',')) {
         add(inv.product, inv.location || '');
       }
     }
     for (const o of orders) {
-      for (const li of o.lineItems || []) if (li.productName) add(li.productName, o.location || '');
+      for (const li of o.lineItems || []) { const pn = lineProductName(li); if (pn) add(pn, o.location || ''); }
     }
     return prods.sort((a, b) => a.name.localeCompare(b.name) || a.location.localeCompare(b.location));
   }, [qaProducts, skus, invoices, orders, canonProduct, resolveLocName, locCanon, isInactiveLoc]);

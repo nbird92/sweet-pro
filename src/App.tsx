@@ -9545,11 +9545,20 @@ export default function App() {
       qa: qaProducts.find(q => q.skuId === s.id) || null,
     });
 
+    // SKU/QA names are format-only and SHARED ("Bulk" names the molasses SKU
+    // AND every bulk granulated/liquid SKU), so a name-equality match must never
+    // land on Molasses unless the name actually says so — the molasses SKU sits
+    // first in the catalog and used to win every "Bulk" lookup (phantom MOL on
+    // the dashboard, forecasts and reports).
+    const mentionsMolasses = /mol/i.test(productName);
+    const notStrayMol = (s?: SKU | null, q?: QAProduct | null) =>
+      mentionsMolasses || ((q?.sugarType || s?.sugarType) !== 'Molasses');
+
     // 1. Direct exact match on SKU.name or QA.skuName
-    let sku = skus.find(s => s.name === productName) || null;
+    let sku = skus.find(s => s.name === productName && notStrayMol(s, qaProducts.find(q => q.skuId === s.id))) || null;
     let qa: QAProduct | null = sku
       ? (qaProducts.find(q => q.skuId === sku!.id) || null)
-      : (qaProducts.find(q => q.skuName === productName) || null);
+      : (qaProducts.find(q => q.skuName === productName && notStrayMol(skus.find(s => s.id === q.skuId), q)) || null);
     if (qa && !sku) sku = skus.find(s => s.id === qa!.skuId) || null;
     if (sku) return { sku, qa };
 
@@ -9557,9 +9566,9 @@ export default function App() {
     if (!normalized) return { sku: null, qa: null };
 
     // 2. Case-insensitive / trimmed direct match
-    const ciSku = skus.find(s => s.name?.trim().toLowerCase() === normalized);
+    const ciSku = skus.find(s => s.name?.trim().toLowerCase() === normalized && notStrayMol(s, qaProducts.find(q => q.skuId === s.id)));
     if (ciSku) return findPairBySku(ciSku);
-    const ciQa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === normalized);
+    const ciQa = qaProducts.find(q => q.skuName?.trim().toLowerCase() === normalized && notStrayMol(skus.find(s => s.id === q.skuId), q));
     if (ciQa) {
       const ciQaSku = skus.find(s => s.id === ciQa.skuId);
       if (ciQaSku) return findPairBySku(ciQaSku);
