@@ -40,10 +40,10 @@ type OrderTab = typeof ORDER_TABS[number];
 // the order has been invoiced — that's our "invoiced" marker, not column S.
 const COL_BV_INDEX = 73;
 
-/** Single-order cap. One truckload ≈ 100 MT / 100,000 kg; anything larger is
+/** Single-order cap: 200 MT / 200,000 kg; anything larger is
  *  almost certainly a unit mix-up in the sheet (e.g. kg pasted into the MT
  *  column) and gets surfaced in the preview's Skipped list. */
-export const MAX_ORDER_MT = 100;
+export const MAX_ORDER_MT = 200;
 
 // Molasses tab column layout (0-indexed):
 //   A=0 WEEK, B=1 BOL DATE, C=2 DAY, D=3 CLIENT, E=4 PO NUMBER,
@@ -788,8 +788,8 @@ export function parsedRowsToOrders(
         });
         continue;
       }
-      // A single order can't be more than one full truckload (100 MT /
-      // 100,000 kg). Larger values are almost always a unit mix-up in the
+      // A single order cannot exceed MAX_ORDER_MT (200 MT /
+      // 200,000 kg). Larger values are almost always a unit mix-up in the
       // sheet (e.g. kg pasted into the MT column) and would import as
       // nonsensical multi-truckload orders.
       if (r.quantityMT > MAX_ORDER_MT) {
@@ -2548,7 +2548,7 @@ export function parsedRowsToTransfersConfigured(
         continue;
       }
       // No per-transfer MT cap: rail transfers routinely exceed one truckload
-      // (the 100 MT MAX_ORDER_MT rule applies to customer orders only).
+      // (the MAX_ORDER_MT rule applies to customer orders only).
 
       const numU = (r.transferNumber || '').trim().toUpperCase();
 
