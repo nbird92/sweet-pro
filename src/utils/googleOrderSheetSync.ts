@@ -2547,10 +2547,8 @@ export function parsedRowsToTransfersConfigured(
         result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: 'Amount is blank or not a positive number' });
         continue;
       }
-      if (r.quantityMT > MAX_ORDER_MT) {
-        result.skipped.push({ tab: r.tab, transferNumber: r.transferNumber, reason: `Amount ${r.quantityMT} MT exceeds the ${MAX_ORDER_MT} MT maximum` });
-        continue;
-      }
+      // No per-transfer MT cap: rail transfers routinely exceed one truckload
+      // (the 100 MT MAX_ORDER_MT rule applies to customer orders only).
 
       const numU = (r.transferNumber || '').trim().toUpperCase();
 
