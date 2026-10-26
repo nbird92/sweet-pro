@@ -106,6 +106,7 @@ import {
   syncShipmentScheduleFromConfig,
   DEFAULT_SHIPMENT_SCHEDULE_CONFIG,
   syncTransfersFromConfig,
+  isAutoBolPlaceholder,
   syncLotCodesFromConfig,
   collapseLotCodeDuplicates,
   fetchTabPreview,
@@ -9274,7 +9275,38 @@ export default function App() {
     return merged;
   };
 
-  const applyTransferSyncResult = (preview: TransferSyncResult, current: Transfer[]): Transfer[] => {
+  const applyTransferSyncResult = (preview: TransferSyncResult, current: Transfer[], liveInvoices?: Invoice[]): Transfer[] => {
+    // Customer shipments found on the transfer sheet → Orders / Invoices, with
+    // REAL auto-assigned BOLs replacing the importer's placeholders. Orders go
+    // first; an invoice whose PO is already an order reuses that order's BOL so
+    // the order is billed out (removeOrdersInvoicedBy) instead of duplicated.
+    if (preview.rerouted) {
+      const { orders: oRes, invoices: iRes } = preview.rerouted;
+      const reserved: string[] = [];
+      const bolForPo = new Map<string, string>();
+      for (const o of ordersRef.current) { const k = poKey(o.po); if (k && o.bolNumber && !bolForPo.has(k)) bolForPo.set(k, o.bolNumber); }
+      const newOrders = oRes.newOrders.map(o => {
+        if (!isAutoBolPlaceholder(o.bolNumber)) return o;
+        const bol = generateBOLNumber(o.lineItems || [], reserved);
+        reserved.push(bol);
+        const k = poKey(o.po); if (k && !bolForPo.has(k)) bolForPo.set(k, bol);
+        return { ...o, bolNumber: bol };
+      });
+      const newInvoices = iRes.newInvoices.map(i => {
+        if (!isAutoBolPlaceholder(i.bolNumber)) return i;
+        const existing = bolForPo.get(poKey(i.po));
+        if (existing) return { ...i, bolNumber: existing };
+        const bol = generateBOLNumber(i.lineItems || [], reserved);
+        reserved.push(bol);
+        return { ...i, bolNumber: bol };
+      });
+      if (newOrders.length || (oRes.updatedOrders || []).length) {
+        applyOrderSyncResult({ ...oRes, newOrders }, ordersRef.current);
+      }
+      if (newInvoices.length || iRes.updatedInvoices.length) {
+        applyInvoiceSyncResult({ ...iRes, newInvoices }, liveInvoices || invoicesRef.current);
+      }
+    }
     const upById = new Map((preview.updatedTransfers || []).map((t): [string, Transfer] => [t.id, t]));
     const merged = [...current.map(t => upById.get(t.id) || t), ...preview.newTransfers];
     setTransfers(merged);
@@ -9408,9 +9440,10 @@ export default function App() {
       try {
         const r = await syncTransfersFromConfig(transfersCfg, {
           existingTransfers: curTransfers, skus, qaProducts, carriers,
+          existingOrders: ordersRef.current, existingInvoices: curInvoices, customers,
         });
-        curTransfers = applyTransferSyncResult(r, curTransfers);
-        notes.push(`Transfers — ${r.newTransfers.length} new, ${(r.updatedTransfers || []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+        curTransfers = applyTransferSyncResult(r, curTransfers, curInvoices);
+        notes.push(`Transfers — ${r.newTransfers.length} new, ${(r.updatedTransfers || []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}${r.rerouted ? ` · customer shipments rerouted: ${r.rerouted.orders.newOrders.length} to Orders, ${r.rerouted.invoices.newInvoices.length} to Invoices` : ''}`);
       } catch (e: any) {
         notes.push(`Transfers — failed: ${e?.message || String(e)}`);
       }
@@ -20498,6 +20531,7 @@ export default function App() {
                 const preview = await syncTransfersFromConfig(toRun, {
                   existingTransfers: transfers,
                   skus, qaProducts, carriers,
+                  existingOrders: orders, existingInvoices: invoices, customers,
                 });
                 setTransferSyncPreview(preview);
                 setSyncMode(null);
@@ -21363,6 +21397,49 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Customer shipments found on the transfer sheet (customer-style
+                    PO reference or an invoice number) — imported to Orders /
+                    Invoices with auto-assigned BOLs, never as transfers. */}
+                {transferSyncPreview.rerouted && (transferSyncPreview.rerouted.orders.newOrders.length + transferSyncPreview.rerouted.invoices.newInvoices.length) > 0 && (
+                  <div className="border border-indigo-500/40 bg-indigo-50 p-3 space-y-2">
+                    <div className="text-[10px] uppercase font-bold tracking-widest text-indigo-900">
+                      Customer shipments — not transfers ({transferSyncPreview.rerouted.orders.newOrders.length} to Orders · {transferSyncPreview.rerouted.invoices.newInvoices.length} to Invoices)
+                    </div>
+                    <p className="text-[11px] opacity-70">Rows whose BOL is a customer PO (e.g. 4582349502) or that carry an invoice number. The BOL column becomes the PO; BOL numbers are auto-assigned on import.</p>
+                    <div className="max-h-48 overflow-y-auto border border-indigo-500/20 bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="bg-[#F5F5F5] sticky top-0"><tr>
+                          <th className="p-2 text-left font-bold">Goes to</th>
+                          <th className="p-2 text-left font-bold">Customer</th>
+                          <th className="p-2 text-left font-bold">PO</th>
+                          <th className="p-2 text-left font-bold">Invoice #</th>
+                          <th className="p-2 text-left font-bold">Product</th>
+                          <th className="p-2 text-right font-bold">MT</th>
+                          <th className="p-2 text-left font-bold">Date</th>
+                        </tr></thead>
+                        <tbody>
+                          {transferSyncPreview.rerouted.orders.newOrders.map(o => (
+                            <tr key={o.id} className="border-t border-[#141414]/5">
+                              <td className="p-2 font-bold">Order</td><td className="p-2">{o.customer || '—'}</td><td className="p-2 font-mono">{o.po || '—'}</td><td className="p-2">—</td>
+                              <td className="p-2">{productToShortform(o.product) || o.product || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(o.lineItems || []).reduce((s2, li) => s2 + (li.totalWeight || 0), 0).toFixed(1)}</td>
+                              <td className="p-2">{o.shipmentDate || o.date || '—'}</td>
+                            </tr>
+                          ))}
+                          {transferSyncPreview.rerouted.invoices.newInvoices.map(i => (
+                            <tr key={i.id} className="border-t border-[#141414]/5">
+                              <td className="p-2 font-bold">Invoice</td><td className="p-2">{i.customer || '—'}</td><td className="p-2 font-mono">{i.po || '—'}</td><td className="p-2 font-mono">{i.invoiceNumber || '—'}</td>
+                              <td className="p-2">{productToShortform(i.product) || i.product || '—'}</td>
+                              <td className="p-2 text-right font-mono">{(i.qty || 0).toFixed(1)}</td>
+                              <td className="p-2">{i.date || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* New transfers table */}
                 {transferSyncPreview.newTransfers.length > 0 && (
                   <div>
@@ -21444,7 +21521,9 @@ export default function App() {
               <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
                 <button onClick={() => setTransferSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
                 <button
-                  disabled={transferSyncPreview.newTransfers.length === 0 && (transferSyncPreview.updatedTransfers?.length || 0) === 0}
+                  disabled={transferSyncPreview.newTransfers.length === 0 && (transferSyncPreview.updatedTransfers?.length || 0) === 0
+                    && !(transferSyncPreview.rerouted && (transferSyncPreview.rerouted.orders.newOrders.length + transferSyncPreview.rerouted.invoices.newInvoices.length
+                      + (transferSyncPreview.rerouted.orders.updatedOrders || []).length + transferSyncPreview.rerouted.invoices.updatedInvoices.length) > 0)}
                   onClick={() => {
                     // Shared with Sync All so the two paths can't drift.
                     applyTransferSyncResult(transferSyncPreview, transfers);
@@ -21452,7 +21531,7 @@ export default function App() {
                   }}
                   className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
                 >
-                  Import {transferSyncPreview.newTransfers.length} new{(transferSyncPreview.updatedTransfers?.length || 0) > 0 ? ` · Update ${transferSyncPreview.updatedTransfers.length}` : ''}
+                  Import {transferSyncPreview.newTransfers.length} new{(transferSyncPreview.updatedTransfers?.length || 0) > 0 ? ` · Update ${transferSyncPreview.updatedTransfers.length}` : ''}{transferSyncPreview.rerouted && (transferSyncPreview.rerouted.orders.newOrders.length + transferSyncPreview.rerouted.invoices.newInvoices.length) > 0 ? ` · ${transferSyncPreview.rerouted.orders.newOrders.length + transferSyncPreview.rerouted.invoices.newInvoices.length} customer` : ''}
                 </button>
               </div>
             </motion.div>

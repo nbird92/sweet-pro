@@ -2477,6 +2477,36 @@ export interface TransferSyncResult {
   updatedTransfers: Transfer[];
   skipped: Array<{ tab: string; transferNumber: string; reason: string }>;
   errors: Array<{ tab: string; rowIdx: number; message: string }>;
+  /** Rows on the transfer sheet that are really CUSTOMER shipments (customer-
+   *  style PO reference, or an invoice number) — routed to the orders / invoices
+   *  importers instead. Their BOLs are AUTO_BOL_PREFIX placeholders that the app
+   *  replaces with real auto-assigned BOL numbers before applying. */
+  rerouted?: { orders: OrderSyncResult; invoices: InvoiceSyncResult };
+}
+
+/** Placeholder BOL stamped on transfer-sheet rows rerouted to orders/invoices;
+ *  the app swaps it for a real product-group BOL (generateBOLNumber) on apply. */
+export const AUTO_BOL_PREFIX = '__AUTOBOL__';
+export const isAutoBolPlaceholder = (bol?: string) => (bol || '').startsWith(AUTO_BOL_PREFIX);
+
+/** True for an INTERNAL transfer reference — two or more letter groups joined by
+ *  hyphens (SHER-GRAN-WTC-4, SHER-REFBB-SL-160, SHER-REFMEXBB-WS-161). Anything
+ *  else on the BOL/PO column (e.g. 4582349502, PO-12345) is a customer's PO,
+ *  meaning the row is a regular customer shipment, not a transfer. */
+export function isTransferReference(ref?: string): boolean {
+  return /^[A-Z]{2,}-[A-Z]{2,}(?:-[A-Z0-9]+)*$/i.test((ref || '').trim());
+}
+
+/** Classify one transfer-sheet row. Invoice number present → customer INVOICE;
+ *  customer-style reference → customer ORDER; otherwise a real transfer. The
+ *  reference is the row's PO/BOL column (a purely numeric Transfer Number is
+ *  treated the same way, in case the sheet's BOL column was mapped there). */
+function classifyTransferRow(r: ParsedOrderRow): { kind: 'transfer' | 'order' | 'invoice'; ref: string } {
+  const tn = (r.transferNumber || '').trim();
+  const ref = ((r.poNumber || '').trim() || (r.bolNumber || '').trim() || (/^\d{6,}$/.test(tn) ? tn : ''));
+  if (isInvoicedValue(r.invoiceNumber)) return { kind: 'invoice', ref };
+  if (ref && !isTransferReference(ref)) return { kind: 'order', ref };
+  return { kind: 'transfer', ref };
 }
 
 export function parsedRowsToTransfersConfigured(
@@ -2681,6 +2711,9 @@ export async function syncTransfersFromConfig(
     skus: SKU[];
     qaProducts: QAProduct[];
     carriers: Carrier[];
+    existingOrders?: Order[];
+    existingInvoices?: Invoice[];
+    customers?: Customer[];
   },
 ): Promise<TransferSyncResult> {
   const allParsed: ParsedOrderRow[] = [];
@@ -2700,11 +2733,58 @@ export async function syncTransfersFromConfig(
     }
   }
 
+  // Split the sheet: real transfers vs customer shipments that were entered on
+  // the transfer sheet. A customer row's BOL/PO column is the CUSTOMER'S PO, and
+  // its BOL is auto-assigned by the app (placeholder here, real number on apply).
+  const transferRows: ParsedOrderRow[] = [];
+  const orderRows: ParsedOrderRow[] = [];
+  const invoiceRows: ParsedOrderRow[] = [];
+  const fromByPlaceholder = new Map<string, string>();
+  let autoSeq = 0;
+  for (const r of allParsed) {
+    const { kind, ref } = classifyTransferRow(r);
+    if (kind === 'transfer') { transferRows.push(r); continue; }
+    const placeholder = `${AUTO_BOL_PREFIX}${++autoSeq}`;
+    const from = (r.fromLocation || '').trim() || (config.tabs.find(t => t.tabName === r.tab)?.defaultLocation || '').trim();
+    fromByPlaceholder.set(placeholder, from);
+    const routed: ParsedOrderRow = {
+      ...r,
+      poNumber: ref || r.poNumber,
+      bolNumber: placeholder,
+      shipToName: r.shipToName || r.toLocation || '',
+    };
+    (kind === 'invoice' ? invoiceRows : orderRows).push(routed);
+  }
+
   const result = parsedRowsToTransfersConfigured(
-    allParsed, config.tabs,
+    transferRows, config.tabs,
     ctx.existingTransfers, ctx.skus, ctx.qaProducts, ctx.carriers,
   );
   result.errors.unshift(...fetchErrors);
+
+  if (orderRows.length || invoiceRows.length) {
+    const existingOrders = ctx.existingOrders || [];
+    const existingInvoices = ctx.existingInvoices || [];
+    const customers = ctx.customers || [];
+    const orders = parsedRowsToOrdersConfigured(orderRows, config.tabs, existingOrders, customers, ctx.skus, ctx.qaProducts, ctx.carriers, existingInvoices);
+    const invoices = parsedRowsToInvoicesConfigured(invoiceRows, config.tabs, existingInvoices, existingOrders, customers, ctx.skus, ctx.qaProducts, ctx.carriers);
+    // Origin = the transfer row's From location (the tab default otherwise).
+    const withOrigin = <T extends { bolNumber?: string; location?: string }>(rec: T): T => {
+      const from = fromByPlaceholder.get(rec.bolNumber || '');
+      return from && !(rec.location || '').trim() ? { ...rec, location: from } : rec;
+    };
+    orders.newOrders = orders.newOrders.map(withOrigin);
+    invoices.newInvoices = invoices.newInvoices.map(withOrigin);
+    // An UPDATE (matched by PO / invoice number) must never adopt a placeholder
+    // BOL — restore the existing record's real BOL.
+    const ordById = new Map(existingOrders.map(o => [o.id, o]));
+    orders.updatedOrders = (orders.updatedOrders || []).map(o =>
+      isAutoBolPlaceholder(o.bolNumber) ? { ...o, bolNumber: ordById.get(o.id)?.bolNumber || '' } : o);
+    const invById = new Map(existingInvoices.map(i => [i.id, i]));
+    invoices.updatedInvoices = invoices.updatedInvoices.map(i =>
+      isAutoBolPlaceholder(i.bolNumber) ? { ...i, bolNumber: invById.get(i.id)?.bolNumber || '' } : i);
+    result.rerouted = { orders, invoices };
+  }
   return result;
 }
 
@@ -2737,6 +2817,7 @@ export const TRANSFER_FIELDS: Array<{ key: keyof ColumnMap; label: string; requi
   { key: 'shipmentDate', label: 'Shipment Date', required: true },
   { key: 'deliveryDate', label: 'Arrival Date' },
   { key: 'poNumber', label: 'PO Number' },
+  { key: 'invoiceNumber', label: 'Invoice Number' },
   { key: 'contractNumber', label: 'Contract #' },
   { key: 'splitNumber', label: 'Split #' },
   { key: 'lotCode', label: 'Lot Code' },
