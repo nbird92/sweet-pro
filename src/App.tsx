@@ -1873,7 +1873,7 @@ export default function App() {
       // number and distinct orders ended up sharing a BOL, which then made
       // edits look lost and hid siblings when one was billed). RENUMBER it.
       if (b && (batchBol.has(b) || orderPoBolConflict('', c.bolNumber))) {
-        const fresh = generateBOLNumber(c.lineItems || [], [...batchBol]);
+        const fresh = generateBOLNumber(c.lineItems || [], [...batchBol], c.product);
         c = { ...c, bolNumber: fresh };
         b = (fresh || '').trim().toUpperCase();
       }
@@ -8489,34 +8489,68 @@ export default function App() {
   const deriveProductGroup = (...texts: (string | undefined)[]): string | null => {
     const t = texts.filter(Boolean).join(' ').toLowerCase();
     if (!t.trim()) return null;
-    const rules: Array<[string, RegExp]> = [
-      ['Liquid', /liquid/],
-      ['Tote', /tote/],
-      ['Bagged', /\bbag/],
-      ['Bulk', /\bbulk\b/],
+    // Group names in the Product Groups table are descriptive ("Bulk Granulated",
+    // "Bulk Liquid", "Refined Totes", "Packaged", "Molasses"), so match by the
+    // words they CONTAIN — exact-name lookups for "Bulk"/"Liquid"/"Bagged" found
+    // nothing and every unresolved bulk record fell to the default 'P' BOL prefix.
+    const group = (...needles: string[]) =>
+      productGroups.find(pg => needles.every(n => (pg.name || '').toLowerCase().includes(n)))?.name || null;
+    // Most specific first: packaging weight / format words beat the bulk default.
+    // Shortform codes count too: "1000kg GC100" = tote, "20kg GC45" = bag,
+    // "LC100" = bulk liquid, "GC350" = bulk granulated.
+    const rules: Array<[RegExp, () => string | null]> = [
+      [/\bmol(asses)?\b/, () => group('molasses')],
+      [/tote|\b1000\s*kg\b/, () => group('tote')],
+      [/\bbag|packaged|\b\d+(\.\d+)?\s*kg\b/, () => group('packag') || group('bag')],
+      [/liquid|sucrose|\bl[cb]?\s?\d{2,3}\b/, () => group('bulk', 'liquid') || group('liquid')],
+      [/\bbulk\b|granulated|\bg[cb]?\s?\d{2,3}\b/, () => group('bulk', 'gran') || group('bulk')],
     ];
-    for (const [name, re] of rules) {
+    for (const [re, pick] of rules) {
       if (re.test(t)) {
-        const match = productGroups.find(pg => pg.name.trim().toLowerCase() === name.toLowerCase());
-        if (match) return match.name;
+        const g = pick();
+        if (g) return g;
       }
     }
     return null;
   };
-  const groupFromRecord = (rec?: { productGroup?: string; productFormat?: string; name?: string; skuName?: string }): string | null => {
+  const groupFromRecord = (rec?: { productGroup?: string; productFormat?: string; name?: string; skuName?: string; sugarType?: string }): string | null => {
     if (!rec) return null;
     if (rec.productGroup && rec.productGroup.trim()) return rec.productGroup;
     // No explicit group — derive it from the format/name (covers "Bag"→Bagged etc.)
-    return deriveProductGroup(rec.productFormat, rec.name, rec.skuName);
+    return deriveProductGroup(rec.productFormat, rec.sugarType, rec.name, rec.skuName);
   };
   const productGroupOf = (productName?: string, productKey?: string): string | null => {
     if (productKey) {
       const g = groupFromRecord(qaProducts.find(q => q.id === productKey)) || groupFromRecord(skus.find(s => s.id === productKey));
       if (g) return g;
     }
+    // A bare format word ("Bulk", "Bag", "Tote") is shared by many catalog
+    // records — the molasses SKU is literally named "Bulk" — so it can never
+    // identify a record; derive the group from the word itself instead.
+    const formatOnly = /^(bulk|bag|bags|bagged|tote|totes|liquid|packaged)$/i.test((productName || '').trim());
+    if (productName && formatOnly) return deriveProductGroup(productName);
     if (productName) {
-      const g = groupFromRecord(skus.find(s => s.name === productName)) || groupFromRecord(qaProducts.find(q => q.skuName === productName));
+      const sameNameSkus = skus.filter(s => s.name === productName);
+      const sameNameQas = qaProducts.filter(q => q.skuName === productName);
+      const g = (sameNameSkus.length === 1 ? groupFromRecord(sameNameSkus[0]) : null)
+        || (sameNameQas.length === 1 ? groupFromRecord(sameNameQas[0]) : null);
       if (g) return g;
+      // QA-only products (no paired SKU, e.g. a GC350) never render in the
+      // SKU-based resolver below — match their rendered shortform directly.
+      const want = productName.replace(/\s+/g, '').toLowerCase();
+      for (const q of qaProducts) {
+        const sk = skus.find(x => x.id === q.skuId);
+        const sf = resolveShortFormRule(namingFormulas, {
+          productFormat: q.productFormat || sk?.productFormat, productGroup: q.productGroup || sk?.productGroup,
+          category: q.category || sk?.category, sugarType: q.sugarType || sk?.sugarType, location: q.location || sk?.location,
+          netWeightKg: q.netWeightKg ?? sk?.netWeightKg ?? sk?.netWeight, grossWeightKg: q.grossWeightKg ?? sk?.grossWeightKg,
+          maxColor: q.maxColor ?? sk?.maxColor,
+        }, { sugarTypes, productGroups });
+        if (sf && sf.replace(/\s+/g, '').toLowerCase() === want) {
+          const qg = groupFromRecord(q);
+          if (qg) return qg;
+        }
+      }
       // Full resolver: shortform codes ("GC100"), naming-formula renderings and
       // long descriptions all resolve to the catalog record, whose stored (or
       // format-derived) group is authoritative — a bulk product must never fall
@@ -8537,7 +8571,7 @@ export default function App() {
         .sort((a, b) => b.name.trim().length - a.name.trim().length)[0];
       if (hit) return hit.name;
     }
-    return null;
+    return productName ? deriveProductGroup(productName) : null;
   };
 
   // The BOL prefix (first character) for a Product Group, taken from the BOL
@@ -8575,12 +8609,12 @@ export default function App() {
 
     const qaFix = new Map<string, string>();
     qaProducts.forEach(q => {
-      const derived = deriveProductGroup(q.productFormat, q.skuName);
+      const derived = deriveProductGroup(q.productFormat, q.sugarType, q.skuName);
       if (derived && needsFix(q.productGroup, derived)) qaFix.set(q.id, derived);
     });
     const skuFix = new Map<string, string>();
     skus.forEach(s => {
-      const derived = deriveProductGroup(s.productFormat, s.name);
+      const derived = deriveProductGroup(s.productFormat, s.sugarType, s.name);
       if (derived && needsFix(s.productGroup, derived)) skuFix.set(s.id, derived);
     });
 
@@ -8593,27 +8627,31 @@ export default function App() {
   // `extraBols` lets a caller that builds several orders in one synchronous
   // pass (before any state commit) reserve the BOLs it has already assigned, so
   // they don't all collide on the same next-number from the stale `orders` state.
-  const generateBOLNumber = (lineItems: OrderLineItem[], extraBols: string[] = []): string => {
-    // Determine prefix based on bolCode from product groups
-    const itemGroups = lineItems.map(item =>
-      productGroupOf(item.productName, item.productKey) || 'Other'
-    );
+  const generateBOLNumber = (lineItems: OrderLineItem[], extraBols: string[] = [], fallbackProduct?: string): string => {
+    // Prefix = the product group's BOL Code (Product Groups table). Each line is
+    // resolved by its catalog key, then its recorded display name, then its raw
+    // name; a record with no resolvable lines (e.g. an invoice imported without
+    // line items) falls back to its headline product. The first line's group
+    // wins on a mixed load. Only a truly unidentifiable product defaults to 'P'.
+    const groupOfLine = (li: OrderLineItem): string | null =>
+      (li.productKey ? productGroupOf(undefined, li.productKey) : null)
+      || (li.productDisplayName ? productGroupOf(li.productDisplayName) : null)
+      || productGroupOf(li.productName);
+    const lineGroup = lineItems.map(groupOfLine).find(Boolean) || null;
+    const headline = (fallbackProduct || '').split(',')[0].trim();
+    const group = lineGroup || (headline ? productGroupOf(headline) : null);
+    const prefix = group ? bolPrefixForGroup(group) : 'P';
 
-    // Prefix is the product group's BOL Code. Single-group order → that code;
-    // mixed-group order → the first line item's group code; empty → default.
-    const uniqueGroups = new Set(itemGroups);
-    let prefix = 'P';
-    if (uniqueGroups.size === 1) {
-      prefix = bolPrefixForGroup([...uniqueGroups][0]);
-    } else if (lineItems.length > 0) {
-      prefix = bolPrefixForGroup(productGroupOf(lineItems[0].productName, lineItems[0].productKey));
-    }
-
-    // Consider BOLs from BOTH orders AND invoices so sequences never collide,
-    // plus any BOLs reserved earlier in the same batch (extraBols).
+    // Consider BOLs from orders, invoices AND the shipment schedule so sequences
+    // never collide (a scheduler row keeps its BOL even when no order/invoice
+    // does, and a reused number gets cross-linked to the wrong load by the
+    // shipment<->invoice reconciliation), plus any BOLs reserved earlier in the
+    // same batch (extraBols).
     const allBols = [
       ...orders.map(o => o.bolNumber || ''),
       ...invoices.map(inv => inv.bolNumber || ''),
+      ...hamiltonShipments.map(s => s.bol || ''),
+      ...vancouverShipments.map(s => s.bol || ''),
       ...extraBols,
     ];
 
@@ -8657,7 +8695,7 @@ export default function App() {
         if (current) reserved.push(current);
         return o;
       }
-      const candidate = generateBOLNumber(o.lineItems, reserved);
+      const candidate = generateBOLNumber(o.lineItems, reserved, o.product);
       if (current[0] === candidate[0]) { reserved.push(current); return o; }
       reserved.push(candidate);
       remap[current] = candidate;
@@ -8683,6 +8721,8 @@ export default function App() {
     const allBols = [
       ...orders.map(o => o.bolNumber || ''),
       ...invoices.map(inv => inv.bolNumber || ''),
+      ...hamiltonShipments.map(s => s.bol || ''),
+      ...vancouverShipments.map(s => s.bol || ''),
     ];
     let maxCounter = 0;
     for (const bol of allBols) {
@@ -9287,7 +9327,7 @@ export default function App() {
       for (const o of ordersRef.current) { const k = poKey(o.po); if (k && o.bolNumber && !bolForPo.has(k)) bolForPo.set(k, o.bolNumber); }
       const newOrders = oRes.newOrders.map(o => {
         if (!isAutoBolPlaceholder(o.bolNumber)) return o;
-        const bol = generateBOLNumber(o.lineItems || [], reserved);
+        const bol = generateBOLNumber(o.lineItems || [], reserved, o.product);
         reserved.push(bol);
         const k = poKey(o.po); if (k && !bolForPo.has(k)) bolForPo.set(k, bol);
         return { ...o, bolNumber: bol };
@@ -9296,7 +9336,7 @@ export default function App() {
         if (!isAutoBolPlaceholder(i.bolNumber)) return i;
         const existing = bolForPo.get(poKey(i.po));
         if (existing) return { ...i, bolNumber: existing };
-        const bol = generateBOLNumber(i.lineItems || [], reserved);
+        const bol = generateBOLNumber(i.lineItems || [], reserved, i.product);
         reserved.push(bol);
         return { ...i, bolNumber: bol };
       });
