@@ -15875,7 +15875,60 @@ export default function App() {
 
     if (activePage === 'Contracts') {
       const activeOnlyContracts = showInactiveContracts ? contracts : contracts.filter(c => c.active !== false);
-      const filteredContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
+      const searchedContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
+      // Sort on the value each column DISPLAYS. The generic sorter compared raw
+      // stored fields with < / >, so: the volume columns sorted by stale stored
+      // volumeTaken/On-Order/Outstanding (the cells show values recomputed from
+      // invoices + orders), Raws sorted by a stored USD/MT field mixing per-MT and
+      // legacy per-cwt values, imported numbers stored as text sorted
+      // lexicographically ("100" < "20"), and blanks ('' vs numbers) landed in
+      // arbitrary places. Blanks now always sort LAST, in either direction.
+      const contractSortValue = (c: Contract, key: string): number | string | null => {
+        const st = contractVolumeStats.get(c.id);
+        const num = (v: unknown): number | null => {
+          if (v === undefined || v === null || v === '') return null;
+          const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+          return Number.isFinite(n) ? n : null;
+        };
+        switch (key) {
+          case 'volumeTaken': return st ? st.taken : 0;
+          case 'volumeOnOrder': return st ? st.onOrder : 0;
+          case 'volumeOutstanding': return st ? st.outstanding : num(c.contractVolume);
+          case 'rawPriceUsdMt': return rawPriceUsdCwt(c.rawPriceUsdMt);
+          case 'finalPrice': case 'margin': case 'contractVolume': {
+            const n = num((c as any)[key]);
+            return n === 0 && key !== 'contractVolume' ? null : n; // cells show "—" for 0
+          }
+          case 'active': return c.active === false ? 0 : 1;
+          case 'contractDate': case 'startDate': case 'endDate': {
+            // ISO YYYY-MM-DD compares chronologically as text; M/D/YYYY is
+            // normalised to ISO; anything else (e.g. an import misalignment
+            // leaving "0" or a customer code in a date field) counts as blank.
+            const v = String((c as any)[key] || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+            const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(v);
+            return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : null;
+          }
+          default: {
+            const v = (c as any)[key];
+            if (v === undefined || v === null || String(v).trim() === '') return null;
+            return String(v).trim();
+          }
+        }
+      };
+      const filteredContracts = sortConfig
+        ? [...searchedContracts].sort((a, b) => {
+            const va = contractSortValue(a, sortConfig.key);
+            const vb = contractSortValue(b, sortConfig.key);
+            if (va === null && vb === null) return 0;
+            if (va === null) return 1;
+            if (vb === null) return -1;
+            const cmp = typeof va === 'number' && typeof vb === 'number'
+              ? va - vb
+              : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' });
+            return sortConfig.direction === 'asc' ? cmp : -cmp;
+          })
+        : searchedContracts;
       // Progressive rendering — same pattern as Orders/Invoices. 18 columns per
       // row makes an uncapped contracts table one of the heaviest DOM commits in
       // the app; the footer's Show more/Show all covers the tail.
