@@ -2551,6 +2551,14 @@ export function parsedRowsToTransfersConfigured(
     const k = (t.transferNumber || '').trim().toUpperCase();
     if (k && !existingByNum.has(k)) existingByNum.set(k, t);
   }
+  // Also index by the internal transfer REFERENCE (the sheet's BOL, stored in
+  // po — e.g. SHER-GRAN-WTC-6). A transfer created by hand in the app gets a
+  // TRF-… number, so matching on transfer number alone never recognised it and
+  // the sync imported the same railcar a second time.
+  for (const t of existingTransfers) {
+    const ref = (t.po || '').trim().toUpperCase();
+    if (ref && isTransferReference(ref) && !existingByNum.has(ref)) existingByNum.set(ref, t);
+  }
   const existingNums = new Set(existingByNum.keys());
   // Track which existing transfers we've already updated this run (and hold the
   // running merged copy so several sheet rows can each fill different gaps).
@@ -2601,7 +2609,12 @@ export function parsedRowsToTransfersConfigured(
       // No per-transfer MT cap: rail transfers routinely exceed one truckload
       // (the MAX_ORDER_MT rule applies to customer orders only).
 
-      const numU = (r.transferNumber || '').trim().toUpperCase();
+      const refU = (r.poNumber || '').trim().toUpperCase();
+      const numU = ((r.transferNumber || '').trim() || (isTransferReference(refU) ? refU : '')).toUpperCase();
+      // A sheet row numbered by transfer number may still be a railcar already
+      // entered by hand under its reference — merge into that record instead.
+      const refMatch = !existingByNum.has(numU) && refU && isTransferReference(refU) ? existingByNum.get(refU) : undefined;
+      if (refMatch && numU) { existingByNum.set(numU, refMatch); existingNums.add(numU); }
 
       // Per-tab defaults: explicit config > built-in tabDefaults — same as the
       // orders path. The format hint steers resolveProduct to the right QA

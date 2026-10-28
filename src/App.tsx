@@ -9348,10 +9348,25 @@ export default function App() {
       }
     }
     const upById = new Map((preview.updatedTransfers || []).map((t): [string, Transfer] => [t.id, t]));
-    const merged = [...current.map(t => upById.get(t.id) || t), ...preview.newTransfers];
+    // Never append a transfer whose number or internal reference (SHER-GRAN-
+    // WTC-…) is already in the live list — the preview's snapshot can be stale
+    // (another session or an earlier Sync All step), which imported the same
+    // railcar twice.
+    const keysOf = (t: Transfer) => [
+      (t.transferNumber || '').trim().toUpperCase(),
+      /^[A-Z]{2,}-[A-Z]{2,}(?:-[A-Z0-9]+)*$/i.test((t.po || '').trim()) ? (t.po || '').trim().toUpperCase() : '',
+    ].filter(Boolean);
+    const seenTransfer = new Set(current.flatMap(keysOf));
+    const freshTransfers = preview.newTransfers.filter(t => {
+      const ks = keysOf(t);
+      if (ks.some(k => seenTransfer.has(k))) return false;
+      ks.forEach(k => seenTransfer.add(k));
+      return true;
+    });
+    const merged = [...current.map(t => upById.get(t.id) || t), ...freshTransfers];
     setTransfers(merged);
     // Durable immediately (same rationale as the invoice/order applies).
-    const toPersist = [...(preview.updatedTransfers || []), ...preview.newTransfers];
+    const toPersist = [...(preview.updatedTransfers || []), ...freshTransfers];
     if (toPersist.length) saveNow(COLLECTIONS.transfers, toPersist);
     return merged;
   };
