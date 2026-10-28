@@ -1937,9 +1937,26 @@ export function parsedRowsToInvoicesConfigured(
       const pricePerMt = Number.isFinite(r.pricePerMt) ? r.pricePerMt : 0;
       const amount = Math.round(pricePerMt * r.quantityMT * 100) / 100;
 
-      // Try to inherit line items from a matching order (by BOL).
+      // Line items: inherit from a matching order (by BOL); otherwise build ONE
+      // line from the resolved catalog product. A line-less invoice carried only
+      // a bare product string ("GC350"), so tolling, forecasts and BOL numbering
+      // had to guess its product group from the name; the line's productKey
+      // pins it to the exact catalog record instead.
       const linkedOrder = ordersByBol.get(bolU);
-      const lineItems = linkedOrder ? linkedOrder.lineItems : undefined;
+      const builtLine: OrderLineItem | undefined = (productRefs.productKey || productRefs.productName) ? {
+        id: `LI-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        productName: productRefs.productName,
+        qty: r.quantityMT,
+        contractNumber: r.contractNumber || '',
+        netWeightPerUnit: 1,
+        totalWeight: r.quantityMT,
+        unitAmount: pricePerMt,
+        mtAmount: pricePerMt,
+        lineAmount: amount,
+        ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
+        ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
+      } : undefined;
+      const lineItems = linkedOrder?.lineItems?.length ? linkedOrder.lineItems : (builtLine ? [builtLine] : undefined);
 
       // 6. Existing invoice (matched by invoice NUMBER only)? Backfill its BLANK
       //    fields from the sheet — never overwrite a value already present.
@@ -2504,8 +2521,12 @@ export function isTransferReference(ref?: string): boolean {
 function classifyTransferRow(r: ParsedOrderRow): { kind: 'transfer' | 'order' | 'invoice'; ref: string } {
   const tn = (r.transferNumber || '').trim();
   const ref = ((r.poNumber || '').trim() || (r.bolNumber || '').trim() || (/^\d{6,}$/.test(tn) ? tn : ''));
+  // An internal-transfer reference (SHER-GRAN-WTC-…) is ALWAYS a transfer —
+  // internal transfers belong only in the Transfers table, never as invoices,
+  // even when the sheet row carries an invoice number.
+  if (isTransferReference(ref)) return { kind: 'transfer', ref };
   if (isInvoicedValue(r.invoiceNumber)) return { kind: 'invoice', ref };
-  if (ref && !isTransferReference(ref)) return { kind: 'order', ref };
+  if (ref) return { kind: 'order', ref };
   return { kind: 'transfer', ref };
 }
 
