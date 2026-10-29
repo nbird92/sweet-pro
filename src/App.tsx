@@ -11036,8 +11036,6 @@ export default function App() {
     // Add SKU Premium (Differential)
     finalCadMt += selectedSku.premiumCadMt;
 
-    // Add Customer Differential
-    finalCadMt += config.customerDifferentialCadMt;
 
     // Add Freight ONLY if Delivered toggle is selected
     if (config.isDelivered) {
@@ -11095,7 +11093,7 @@ export default function App() {
       fcaVancouverBulk: convert(fcaVancouverBulk),
       vancouverSupplyChainCost: convert(totalSupplyChainCostPerMt),
       differential: convert(selectedSku.premiumCadMt),
-      customerDifferential: convert(config.customerDifferentialCadMt),
+      customerDifferential: 0, // field removed — use contract-line differentials
       deliveredFreight: config.isDelivered ? convert(freightCost / (config.volumePerLoadMt || 1)) : 0,
       exportDuty: convertUsd(config.exportDutyUsdMt),
       palletCharge: config.isPalletCharge ? convert(config.palletCostCadMt) : 0,
@@ -17292,24 +17290,6 @@ export default function App() {
             </select>
           </section>
 
-          <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-            <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
-              <Package size={14} /> Sugar Type
-            </h2>
-            <select
-              value={selectedSugarTypeId}
-              onChange={(e) => setSelectedSugarTypeId(e.target.value)}
-              className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
-            >
-              <option value="">— Select Sugar Type —</option>
-              {sugarTypes.map(st => <option key={st.id} value={st.id}>{st.name.toUpperCase()}</option>)}
-            </select>
-            {selectedSugarTypeId && (
-              <div className="mt-2 text-[10px] italic opacity-50">
-                Abbreviation: {sugarTypes.find(st => st.id === selectedSugarTypeId)?.abbreviation || '—'}
-              </div>
-            )}
-          </section>
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
@@ -17408,7 +17388,6 @@ export default function App() {
               <InputField label="USD/CAD FX Rate" value={config.fxRate} onChange={(v) => handleInputChange('fxRate', v)} step="0.0001" />
               <InputField label="Contract Volume (MT)" value={config.volumeMt} onChange={(v) => handleInputChange('volumeMt', v)} />
               <InputField label="Refining Margin (CAD/MT)" value={config.refiningMarginCadMt} onChange={(v) => handleInputChange('refiningMarginCadMt', v)} />
-              <InputField label="Customer Differential (CAD/MT)" value={config.customerDifferentialCadMt} onChange={(v) => handleInputChange('customerDifferentialCadMt', v)} />
               <InputField label="Sugar Loss %" value={config.sugarLossPct || 0} onChange={(v) => handleInputChange('sugarLossPct', v)} step="0.1" />
 
               <div className="pt-4 border-t border-[#141414]/10 space-y-3">
@@ -17597,9 +17576,6 @@ export default function App() {
 
               {calculations.differential !== 0 && (
                 <DataRow label={`Product Differential — ${calculations.selectedSku.name} (${calculations.currencySymbol}/MT)`} value={`${calculations.differential.toFixed(2)}`} />
-              )}
-              {calculations.customerDifferential !== 0 && (
-                <DataRow label={`Customer Differential (${calculations.currencySymbol}/MT)`} value={`${calculations.customerDifferential.toFixed(2)}`} />
               )}
               
               {config.isDelivered && (
@@ -20004,8 +19980,8 @@ export default function App() {
                         <td className="px-4 py-2 text-right font-bold">{calculations.differential !== 0 ? `${calculations.currencySymbol} $${calculations.differential.toFixed(2)}/MT` : '—'}</td>
                       </tr>
                       <tr>
-                        <td className="px-4 py-2 opacity-70">Customer Differential</td>
-                        <td className="px-4 py-2 text-right font-bold">{config.customerDifferentialCadMt !== 0 ? `${calculations.currencySymbol} $${calculations.customerDifferential.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70"></td>
+                        <td className="px-4 py-2"></td>
                         <td className="px-4 py-2 opacity-70">Delivered Freight</td>
                         <td className="px-4 py-2 text-right font-bold">{config.isDelivered ? `${calculations.currencySymbol} $${calculations.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
                       </tr>
