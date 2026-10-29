@@ -189,6 +189,7 @@ export default function SalesForecastPage({
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [productViewModalOpen, setProductViewModalOpen] = useState(false);
   const [viewingProduct, setViewingProduct] = useState<{ productName: string; location: string } | null>(null);
+  const [viewingMaterial, setViewingMaterial] = useState<{ key: string; materialName: string; unit: string } | null>(null);
   const [productViewMode, setProductViewMode] = useState<'Monthly' | 'Weekly'>('Monthly');
 
   // ── Modal state for customer forecast editing ───────────────────────────
@@ -675,10 +676,9 @@ export default function SalesForecastPage({
   // For each forecast product, convert forecast MT → selling units via the QA
   // product's net weight, then multiply each Bill-of-Materials line's per-unit
   // quantity (grossed up by its shrinkage %). Aggregated by material.
-  const packagingNeeds = useMemo(() => {
-    const map = new Map<string, { materialName: string; materialCode: string; category: string; unit: string; supplier: string; qty: number }>();
-    let skippedNoWeight = 0;
-    for (const row of productForecastRows) {
+  // Resolve a forecast product to the QA product carrying its Bill of Materials.
+  const bomQaFor = useCallback((productName: string): QAProduct | null => {
+    const row = { productName };
       // Resolve the forecast product (a shortform like "GC20B") through the app's
       // catalog resolver; raw QA names are format-only ("Bag"/"Tote"), so name
       // matching never found the BOM. Fall back to any BOM-bearing QA product
@@ -689,6 +689,14 @@ export default function SalesForecastPage({
       const qa = (hit?.qa && (hit.qa.billOfMaterials || []).length ? hit.qa : null)
         || qaProducts.find(q => (q.billOfMaterials || []).length && (q.id === hit?.qa?.id || sfOf(q) === pn))
         || hit?.qa || null;
+    return qa;
+  }, [catalogEntry, qaProducts]);
+
+  const packagingNeeds = useMemo(() => {
+    const map = new Map<string, { materialName: string; materialCode: string; category: string; unit: string; supplier: string; qty: number }>();
+    let skippedNoWeight = 0;
+    for (const row of productForecastRows) {
+      const qa = bomQaFor(row.productName);
       const bom = qa?.billOfMaterials || [];
       const netKg = qa?.netWeightKg || 0;
       if (!bom.length) continue;
@@ -704,7 +712,42 @@ export default function SalesForecastPage({
       }
     }
     return { rows: Array.from(map.values()).sort((a, b) => b.qty - a.qty), skippedNoWeight };
-  }, [productForecastRows, qaProducts, catalogEntry]);
+  }, [productForecastRows, bomQaFor]);
+
+  // ── Packaging material view modal data (per product, per period) ──
+  const materialViewData = useMemo(() => {
+    if (!viewingMaterial || !selectedFY) return [] as { customerName: string; values: number[] }[];
+    const count = productViewMode === 'Monthly' ? 12 : 52;
+    const byProduct = new Map<string, number[]>();
+    for (const cf of mergedForecasts) {
+      const lineWeekly = (cf.viewMode || 'Monthly') === 'Weekly';
+      for (const line of cf.lines) {
+        if (isInactiveLoc(line.location)) continue;
+        const qa = bomQaFor(line.productName);
+        const netKg = qa?.netWeightKg || 0;
+        if (!qa || netKg <= 0) continue;
+        const per = (qa.billOfMaterials || [])
+          .filter(it => `${(it.materialName || '').trim().toLowerCase()}|${(it.unit || '').trim().toLowerCase()}` === viewingMaterial.key)
+          .reduce((t, it) => t + (it.quantity || 0) * (1 + (it.shrinkage || 0) / 100), 0);
+        if (per <= 0) continue;
+        const label = `${canonProduct(line.productName)} (${line.location})`;
+        const values = byProduct.get(label) || new Array(count).fill(0) as number[];
+        for (const e of line.entries) {
+          // Map the line's own period grid onto the selected view.
+          let idx = e.periodIndex;
+          if (lineWeekly && count === 12) idx = Math.min(11, Math.floor(e.periodIndex * 12 / 52));
+          else if (!lineWeekly && count === 52) {
+            const q = (e.value * 1000 / netKg) * per * 12 / 52;
+            for (let w = Math.floor(e.periodIndex * 52 / 12); w < Math.floor((e.periodIndex + 1) * 52 / 12); w++) values[w] += q;
+            continue;
+          }
+          if (idx >= 0 && idx < count) values[idx] += (e.value * 1000 / netKg) * per;
+        }
+        byProduct.set(label, values);
+      }
+    }
+    return Array.from(byProduct.entries()).map(([customerName, values]) => ({ customerName, values })).sort((a, b) => a.customerName.localeCompare(b.customerName));
+  }, [viewingMaterial, selectedFY, productViewMode, mergedForecasts, isInactiveLoc, bomQaFor, canonProduct]);
 
   // ── Product view modal data ─────────────────────────────────────────────
   const productViewData = useMemo(() => {
@@ -2327,7 +2370,7 @@ export default function SalesForecastPage({
             </thead>
             <tbody>
               {packagingNeeds.rows.map((m) => (
-                <tr key={`${m.materialName}|${m.unit}`} className="border-b border-gray-200 hover:bg-gray-50">
+                <tr key={`${m.materialName}|${m.unit}`} onClick={() => { setViewingMaterial({ key: `${(m.materialName || '').trim().toLowerCase()}|${(m.unit || '').trim().toLowerCase()}`, materialName: m.materialName, unit: m.unit }); setProductViewMode('Monthly'); }} className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer">
                   <td className="px-4 py-2 font-medium">{m.materialName}</td>
                   <td className="px-4 py-2 font-mono">{m.materialCode || '—'}</td>
                   <td className="px-4 py-2">{m.category || '—'}</td>
@@ -2936,7 +2979,7 @@ export default function SalesForecastPage({
 
       {/* ── Product View Modal (read-only) ────────────────────────────────── */}
       <AnimatePresence>
-        {productViewModalOpen && viewingProduct && selectedFY && (
+        {((productViewModalOpen && viewingProduct) || viewingMaterial) && selectedFY && (() => { const viewRows = viewingMaterial ? materialViewData : productViewData; return (
           <div
             className="fixed inset-0 z-[200] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto"
           >
@@ -2951,12 +2994,13 @@ export default function SalesForecastPage({
               <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   <Eye size={14} className="inline mr-2" />
-                  Product {typeLabel} &mdash; {viewingProduct.productName} ({viewingProduct.location})
+                  {viewingMaterial ? <>Packaging {typeLabel} &mdash; {viewingMaterial.materialName}{viewingMaterial.unit ? ` (${viewingMaterial.unit})` : ''}</> : <>Product {typeLabel} &mdash; {viewingProduct!.productName} ({viewingProduct!.location})</>}
                 </h3>
                 <button
                   onClick={() => {
                     setProductViewModalOpen(false);
                     setViewingProduct(null);
+                    setViewingMaterial(null);
                   }}
                   className="p-1 hover:bg-white/20 transition-colors"
                 >
@@ -2992,7 +3036,7 @@ export default function SalesForecastPage({
                     <thead>
                       <tr className="bg-gray-50">
                         <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[180px]">
-                          Customer
+                          {viewingMaterial ? 'Product' : 'Customer'}
                         </th>
                         {(productViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS).map(
                           (h, i) => {
@@ -3020,7 +3064,7 @@ export default function SalesForecastPage({
                       </tr>
                     </thead>
                     <tbody>
-                      {productViewData.map((row, idx) => {
+                      {viewRows.map((row, idx) => {
                         const total = row.values.reduce((s, v) => s + v, 0);
                         return (
                           <tr key={idx} className="border-b border-gray-200">
@@ -3059,18 +3103,18 @@ export default function SalesForecastPage({
                           </tr>
                         );
                       })}
-                      {productViewData.length === 0 && (
+                      {viewRows.length === 0 && (
                         <tr>
                           <td
                             colSpan={(productViewMode === 'Monthly' ? 12 : 52) + 2}
                             className="px-4 py-8 text-center text-gray-400"
                           >
-                            No {typeLabel.toLowerCase()} data for this product.
+                            No {typeLabel.toLowerCase()} data for this {viewingMaterial ? 'material' : 'product'}.
                           </td>
                         </tr>
                       )}
                       {/* Totals Row */}
-                      {productViewData.length > 0 && (
+                      {viewRows.length > 0 && (
                         <tr className="bg-gray-50 font-bold">
                           <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 border border-gray-200 text-[10px] uppercase tracking-widest">
                             Total
@@ -3078,7 +3122,7 @@ export default function SalesForecastPage({
                           {Array.from(
                             { length: productViewMode === 'Monthly' ? 12 : 52 },
                             (_, i) => {
-                              const colTotal = productViewData.reduce(
+                              const colTotal = viewRows.reduce(
                                 (s, row) => s + row.values[i],
                                 0
                               );
@@ -3098,7 +3142,7 @@ export default function SalesForecastPage({
                             }
                           )}
                           <td className="px-3 py-2 text-center border border-gray-200 font-mono">
-                            {productViewData
+                            {viewRows
                               .reduce(
                                 (s, row) => s + row.values.reduce((a, v) => a + v, 0),
                                 0
@@ -3116,7 +3160,7 @@ export default function SalesForecastPage({
               </div>
             </motion.div>
           </div>
-        )}
+        ); })()}
       </AnimatePresence>
     </div>
     </div>
