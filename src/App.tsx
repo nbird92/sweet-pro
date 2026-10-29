@@ -17288,7 +17288,7 @@ export default function App() {
               }}
               className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
             >
-              {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              {[...customers].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
           </section>
 
