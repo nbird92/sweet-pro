@@ -482,6 +482,42 @@ export default function SalesForecastPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoices, selectedFY, locCanon, canonProduct, custKey, isCountableInvoice, qaProducts, skus, customers]);
 
+  /** The current fiscal month's index (0-11) in the selected FY, or -1. */
+  const currentPeriodIdx = useMemo(() => {
+    if (!selectedFY) return -1;
+    return selectedFY.periods.findIndex(p => TODAY_ISO >= p.startDate && TODAY_ISO <= p.endDate);
+  }, [selectedFY]);
+
+  /** Open ORDERS (not cancelled, not yet invoiced) shipping in the current
+   *  fiscal month: `${customer}|${product}|${location}` -> MT. Shown as the
+   *  current month's Orders column in the forecast editor. */
+  const currentMonthOrdersMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!selectedFY || currentPeriodIdx < 0) return map;
+    const period = selectedFY.periods[currentPeriodIdx];
+    const invoicedBols = new Set(invoices
+      .filter(i => i.status !== 'Cancelled' && i.status !== 'Credit')
+      .map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+    for (const o of orders) {
+      if (!o.customer) continue;
+      const st = (o.status || '').trim().toLowerCase();
+      if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
+      const bol = (o.bolNumber || '').trim().toUpperCase();
+      if (bol && invoicedBols.has(bol)) continue;
+      const d = o.shipmentDate || o.date;
+      if (!d || d < period.startDate || d > period.endDate) continue;
+      for (const li of o.lineItems || []) {
+        const pn = lineProductName(li);
+        if (!pn || !(li.totalWeight > 0)) continue;
+        const loc = locCanon(actualsLocation(o.customer, pn, o.location));
+        const k = `${custKey(o.customer)}|${canonProduct(pn)}|${loc}`;
+        map.set(k, (map.get(k) ?? 0) + li.totalWeight);
+      }
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, invoices, selectedFY, currentPeriodIdx, locCanon, canonProduct, custKey, qaProducts, skus, customers]);
+
   /** Same for weekly */
   const weeklyActualsMap = useMemo(() => {
     if (!selectedFY) return new Map<string, number>();
@@ -1377,7 +1413,7 @@ export default function SalesForecastPage({
       periodIndex: number,
       isWeekly: boolean,
       forecastValue: number
-    ): { value: number; isActual: boolean; mtdSales?: number; remainingForecast?: number } => {
+    ): { value: number; isActual: boolean; mtdSales?: number; ordersMt?: number; remainingForecast?: number } => {
       if (!selectedFY) return { value: forecastValue, isActual: false };
       const isPast = isWeekly
         ? isWeekPast(periodIndex, selectedFY.startDate)
@@ -1415,15 +1451,34 @@ export default function SalesForecastPage({
           }
           const perWeek = forecastValue / weeks.length;
           const remaining = perWeek * futureWeeks;
-          // Split reported so Sales/Forecast columns can classify the month's
-          // MTD sales as SALES and only the still-ahead weeks as forecast.
-          return { value: mtd + remaining, isActual: false, mtdSales: mtd, remainingForecast: remaining };
+          // Open orders shipping this month (not yet invoiced) — firm demand on
+          // top of what's sold; the forecast covers the rest of the month.
+          const ordersMt = currentMonthOrdersMap.get(`${custKey(customerName)}|${canonProduct(productName)}|${locCanon(location)}`) ?? 0;
+          // Split reported so the editor can show Sales | Orders | Forecast and
+          // the Sales/Forecast table columns classify each part correctly.
+          return { value: mtd + ordersMt + remaining, isActual: false, mtdSales: mtd, ordersMt, remainingForecast: remaining };
         }
       }
       return { value: forecastValue, isActual: false };
     },
-    [selectedFY, actualsMap, weeklyActualsMap, locCanon, canonProduct, custKey, weekMonthIdx]
+    [selectedFY, actualsMap, weeklyActualsMap, locCanon, canonProduct, custKey, weekMonthIdx, currentMonthOrdersMap]
   );
+
+  /** For the current month: how many fiscal weeks it spans and how many are
+   *  still ahead — converts between the stored MONTHLY forecast and the
+   *  remaining-weeks forecast typed in the editor. */
+  const currentMonthWeekSplit = useMemo(() => {
+    if (!selectedFY || currentPeriodIdx < 0) return { weeks: 0, futureWeeks: 0 };
+    const fyStart = new Date(selectedFY.startDate).getTime();
+    let weeks = 0, futureWeeks = 0;
+    for (let w = 0; w < 52; w++) {
+      if (weekMonthIdx(w) !== currentPeriodIdx) continue;
+      weeks++;
+      const ws = new Date(fyStart + w * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (ws > TODAY_ISO) futureWeeks++;
+    }
+    return { weeks, futureWeeks };
+  }, [selectedFY, currentPeriodIdx, weekMonthIdx]);
 
   // ── Location name lookup ────────────────────────────────────────────────
   // Exact name, then id, then locationCode, then a trimmed/case-insensitive name.
@@ -1479,7 +1534,7 @@ export default function SalesForecastPage({
             // Current month: MTD invoiced sales count as SALES, only the
             // remaining weeks' forecast share stays under forecast.
             sales += res.mtdSales;
-            forecast += res.remainingForecast ?? 0;
+            forecast += (res.remainingForecast ?? 0) + (res.ordersMt ?? 0);
           } else forecast += res.value;
         }
       }
@@ -1620,6 +1675,8 @@ export default function SalesForecastPage({
 
   const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
   const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
+  // The current month is split into Sales | Orders | Forecast (Monthly view only).
+  const splitIdx = modalViewMode === 'Monthly' ? currentPeriodIdx : -1;
 
   // ── CSV template download + import (annual forecast by customer/product/month) ──
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -2581,10 +2638,17 @@ export default function SalesForecastPage({
                     <table className="w-full text-xs border-collapse">
                       <thead>
                         <tr className="bg-gray-50">
-                          <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[180px]">
+                          <th rowSpan={splitIdx >= 0 ? 2 : 1} className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[180px]">
                             Product
                           </th>
                           {modalHeaders.map((h, i) => {
+                            if (i === splitIdx) {
+                              return (
+                                <th key={i} colSpan={3} className="text-center px-2 py-1.5 text-[10px] uppercase tracking-widest font-bold border border-gray-200 bg-emerald-50 text-emerald-900">
+                                  {h} <span className="normal-case tracking-normal font-normal opacity-70">(current month)</span>
+                                </th>
+                              );
+                            }
                             const editable = isCellEditable(i, modalViewMode === 'Weekly');
                             const locked =
                               forecastType === 'Budget' &&
@@ -2594,6 +2658,7 @@ export default function SalesForecastPage({
                             return (
                               <th
                                 key={i}
+                                rowSpan={splitIdx >= 0 ? 2 : 1}
                                 className={`text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold border border-gray-200 min-w-[72px] ${
                                   !editable ? 'bg-gray-100 text-gray-500' : 'opacity-60'
                                 }`}
@@ -2605,13 +2670,20 @@ export default function SalesForecastPage({
                               </th>
                             );
                           })}
-                          <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">
+                          <th rowSpan={splitIdx >= 0 ? 2 : 1} className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">
                             Total
                           </th>
-                          <th className="text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 w-10">
+                          <th rowSpan={splitIdx >= 0 ? 2 : 1} className="text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 w-10">
                             {/* Delete column */}
                           </th>
                         </tr>
+                        {splitIdx >= 0 && (
+                          <tr className="bg-emerald-50 text-emerald-900">
+                            <th className="text-center px-2 py-1 text-[9px] uppercase tracking-widest font-bold border border-gray-200 min-w-[64px]" title="Invoiced so far this month">Sales</th>
+                            <th className="text-center px-2 py-1 text-[9px] uppercase tracking-widest font-bold border border-gray-200 min-w-[64px]" title="Open orders shipping this month, not yet invoiced">Orders</th>
+                            <th className="text-center px-2 py-1 text-[9px] uppercase tracking-widest font-bold border border-gray-200 min-w-[72px]" title="Additional forecast for the rest of the month, on top of orders on hand">Forecast</th>
+                          </tr>
+                        )}
                       </thead>
                       <tbody>
                         {modalLines.map((line) => {
@@ -2642,7 +2714,7 @@ export default function SalesForecastPage({
                               {Array.from({ length: modalColumnCount }, (_, i) => {
                                 const entry = line.entries.find((e) => e.periodIndex === i);
                                 const forecastVal = entry?.value ?? 0;
-                                const { value: cellVal, isActual, mtdSales, remainingForecast } = getCellValue(
+                                const { value: cellVal, isActual, mtdSales, ordersMt, remainingForecast } = getCellValue(
                                   editingCf.customerName,
                                   line.productName,
                                   line.location,
@@ -2651,13 +2723,41 @@ export default function SalesForecastPage({
                                   forecastVal
                                 );
                                 const editable = isCellEditable(i, modalViewMode === 'Weekly');
-                                // CURRENT month: the value that feeds the line and
-                                // Total row is MTD invoiced sales + the remaining
-                                // weeks' forecast — show THAT figure (with its parts),
-                                // not just the typed forecast, so the column visibly
-                                // adds up to the total. The forecast stays editable.
-                                const isBlended = mtdSales !== undefined && !isActual && editable;
-                                const f1 = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                                const f1 = (v: number) => (v > 0 ? v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—');
+                                // CURRENT month → three cells: Sales (invoiced so far),
+                                // Orders (open, not yet invoiced) and Forecast (the rest
+                                // of the month, on top of orders). They add up to the
+                                // month's figure in the line and Total row. The
+                                // Forecast cell edits the REMAINING amount; it's stored
+                                // as the monthly figure that prorates back to it.
+                                if (i === splitIdx) {
+                                  const { weeks, futureWeeks } = currentMonthWeekSplit;
+                                  const remainingShown = Math.round(remainingForecast || 0);
+                                  return (
+                                    <React.Fragment key={i}>
+                                      <td className="px-1 py-1 border border-gray-200 text-center bg-emerald-50/60 font-mono text-xs" title="Invoiced so far this month">{f1(mtdSales || 0)}</td>
+                                      <td className="px-1 py-1 border border-gray-200 text-center bg-emerald-50/60 font-mono text-xs" title="Open orders shipping this month, not yet invoiced">{f1(ordersMt || 0)}</td>
+                                      <td className="px-1 py-1 border border-gray-200 text-center">
+                                        {editable && futureWeeks > 0 ? (
+                                          <input
+                                            type="number"
+                                            step="1"
+                                            min="0"
+                                            value={remainingShown || ''}
+                                            onChange={(e) => {
+                                              const typed = parseFloat(e.target.value) || 0;
+                                              handleCellChange(line.id, i, weeks > 0 ? (typed * weeks) / futureWeeks : typed);
+                                            }}
+                                            title="Additional forecast for the rest of this month, on top of orders on hand"
+                                            className="w-full px-1 py-0.5 text-center text-xs border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-[#141414]"
+                                          />
+                                        ) : (
+                                          <span className="text-xs text-gray-500">{f1(remainingForecast || 0)}</span>
+                                        )}
+                                      </td>
+                                    </React.Fragment>
+                                  );
+                                }
 
                                 return (
                                   <td
@@ -2665,18 +2765,9 @@ export default function SalesForecastPage({
                                     className={`px-1 py-1 border border-gray-200 text-center ${
                                       isActual || !editable
                                         ? 'bg-gray-100 text-gray-500'
-                                        : isBlended ? 'bg-emerald-50' : ''
+                                        : ''
                                     }`}
                                   >
-                                    {isBlended && (
-                                      <div
-                                        className="leading-tight mb-0.5"
-                                        title={`Month to date: ${f1(mtdSales || 0)} MT invoiced + ${f1(remainingForecast || 0)} MT forecast for the remaining weeks (of ${f1(forecastVal)} MT entered for the month)`}
-                                      >
-                                        <div className="text-xs font-bold text-emerald-900">{cellVal > 0 ? f1(cellVal) : '—'}</div>
-                                        <div className="text-[9px] text-gray-500 whitespace-nowrap">{f1(mtdSales || 0)} sold + {f1(remainingForecast || 0)} fcst</div>
-                                      </div>
-                                    )}
                                     {editable && !isActual ? (
                                       <input
                                         type="number"
@@ -2690,9 +2781,7 @@ export default function SalesForecastPage({
                                             parseFloat(e.target.value) || 0
                                           )
                                         }
-                                        placeholder={isBlended ? 'fcst' : undefined}
-                                        title={isBlended ? 'Monthly forecast entry — the remaining weeks get their share of this' : undefined}
-                                        className={`w-full px-1 py-0.5 text-center text-xs border-0 focus:outline-none focus:ring-1 focus:ring-[#141414] ${isBlended ? 'bg-white/70 border-t border-emerald-200 text-gray-600' : 'bg-transparent'}`}
+                                        className="w-full px-1 py-0.5 text-center text-xs border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-[#141414]"
                                       />
                                     ) : (
                                       <span className="text-xs">
@@ -2746,10 +2835,26 @@ export default function SalesForecastPage({
                           );
                           const grand = periodTotals.reduce((s, v) => s + v, 0);
                           const fmt1 = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+                          const splitTotals = { sales: 0, orders: 0, forecast: 0 };
+                          if (splitIdx >= 0) {
+                            for (const line of modalLines) {
+                              const fv = line.entries.find((e) => e.periodIndex === splitIdx)?.value ?? 0;
+                              const r = getCellValue(editingCf.customerName, line.productName, line.location, splitIdx, false, fv);
+                              splitTotals.sales += r.mtdSales || 0;
+                              splitTotals.orders += r.ordersMt || 0;
+                              splitTotals.forecast += r.remainingForecast || 0;
+                            }
+                          }
                           return (
                             <tr className="bg-[#141414] text-[#E4E3E0] font-black">
                               <td className="sticky left-0 z-10 bg-[#141414] px-3 py-1.5 uppercase tracking-widest border border-[#141414]">Total</td>
-                              {periodTotals.map((v, i) => (
+                              {periodTotals.map((v, i) => i === splitIdx ? (
+                                <React.Fragment key={i}>
+                                  <td className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">{splitTotals.sales > 0 ? fmt1(splitTotals.sales) : '—'}</td>
+                                  <td className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">{splitTotals.orders > 0 ? fmt1(splitTotals.orders) : '—'}</td>
+                                  <td className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">{splitTotals.forecast > 0 ? fmt1(splitTotals.forecast) : '—'}</td>
+                                </React.Fragment>
+                              ) : (
                                 <td key={i} className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">
                                   {v > 0 ? fmt1(v) : '—'}
                                 </td>
