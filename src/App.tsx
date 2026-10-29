@@ -80,6 +80,7 @@ const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
 const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
+import CustomerSummaryModal from './components/CustomerSummaryModal';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee, MONTH_TERMINALS } from './types';
 const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
 const PeoplePage = lazy(() => import('./components/PeoplePage'));
@@ -9011,6 +9012,7 @@ export default function App() {
   const [contractOrdersPopup, setContractOrdersPopup] = useState<string | null>(null); // contract number for orders popup
   const [showInactiveContracts, setShowInactiveContracts] = useState(false); // toggles inactive contracts on/off in the contracts table
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [summaryCustomer, setSummaryCustomer] = useState<Customer | null>(null);
   // Ship-To Location editor state — scoped to the open Edit Customer modal
   const [editingShipTo, setEditingShipTo] = useState<ShipToLocation | null>(null);
   const [shipToForm, setShipToForm] = useState<Omit<ShipToLocation, 'id'>>({ locationCode: '', name: '', addressLine1: '', addressLine2: '', city: '', province: '', country: '', postalCode: '', phone: '', email: '', coaEmail: '', orderConfirmationEmail: '', customerServiceEmail: '', logisticsEmail: '', notes: '' });
@@ -12082,7 +12084,7 @@ export default function App() {
             ]}
             rows={filteredCustomers}
             getRowKey={(c) => c.id}
-            onRowClick={(c) => setEditingCustomer(c)}
+            onRowClick={(c) => setSummaryCustomer(c)}
             emptyMessage="No customers found."
             defaultSortKey="customerNumber"
           />
@@ -24190,6 +24192,22 @@ export default function App() {
           </div>
         )}
 
+        {summaryCustomer && (
+          <CustomerSummaryModal
+            customer={customers.find(c => c.id === summaryCustomer.id) || summaryCustomer}
+            contracts={contracts}
+            invoices={invoices}
+            orders={orders}
+            customerForecasts={customerForecasts}
+            fiscalYears={fiscalYears}
+            people={people}
+            customerGroups={customerGroups}
+            contractStats={contractVolumeStats}
+            toShortform={productToShortform}
+            onEdit={() => { const c = customers.find(x => x.id === summaryCustomer.id) || summaryCustomer; setSummaryCustomer(null); setEditingCustomer(c); }}
+            onClose={() => setSummaryCustomer(null)}
+          />
+        )}
         {editingCustomer && (
           <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
             <motion.div
