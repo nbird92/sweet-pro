@@ -679,11 +679,16 @@ export default function SalesForecastPage({
     const map = new Map<string, { materialName: string; materialCode: string; category: string; unit: string; supplier: string; qty: number }>();
     let skippedNoWeight = 0;
     for (const row of productForecastRows) {
-      // Match the forecast product to its QA record — by short/long form first
-      // (catalog names are format-only, e.g. "Bulk"), then SKU name.
+      // Resolve the forecast product (a shortform like "GC20B") through the app's
+      // catalog resolver; raw QA names are format-only ("Bag"/"Tote"), so name
+      // matching never found the BOM. Fall back to any BOM-bearing QA product
+      // that shares the same shortform.
       const pn = (row.productName || '').trim().toLowerCase();
-      const qa = qaProducts.find(q => (q.billOfMaterials || []).length && [(q as any).shortForm, (q as any).productLongForm, q.skuName].some(n => (n || '').trim().toLowerCase() === pn))
-        || (() => { const sku = skus.find(s => s.name === row.productName || (s.shortForm || '').toLowerCase() === pn); return qaProducts.find(q => q.skuName === row.productName || (sku && q.skuId === sku.id)); })();
+      const hit = catalogEntry(row.productName);
+      const sfOf = (q: QAProduct) => (q.productCode && hit?.sku?.productCode && q.productCode === hit.sku.productCode) || (!!hit?.sku && q.skuId === hit.sku.id) ? pn : '';
+      const qa = (hit?.qa && (hit.qa.billOfMaterials || []).length ? hit.qa : null)
+        || qaProducts.find(q => (q.billOfMaterials || []).length && (q.id === hit?.qa?.id || sfOf(q) === pn))
+        || hit?.qa || null;
       const bom = qa?.billOfMaterials || [];
       const netKg = qa?.netWeightKg || 0;
       if (!bom.length) continue;
@@ -699,7 +704,7 @@ export default function SalesForecastPage({
       }
     }
     return { rows: Array.from(map.values()).sort((a, b) => b.qty - a.qty), skippedNoWeight };
-  }, [productForecastRows, skus, qaProducts]);
+  }, [productForecastRows, qaProducts, catalogEntry]);
 
   // ── Product view modal data ─────────────────────────────────────────────
   const productViewData = useMemo(() => {
