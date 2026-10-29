@@ -510,6 +510,7 @@ export default function App() {
   // Read-only detail modal for the standardized Products (SKUs) table.
   // Products are edited on the QA page, so this is view-only.
   const [skuDetail, setSkuDetail] = useState<SKU | null>(null);
+  const [skuDiffDraft, setSkuDiffDraft] = useState<string | null>(null);
   // Detail modal for the standardized Locations table (Supply Chain page).
   // Core fields are read-only (edited on QA), but bays stay editable here.
   const [locationDetail, setLocationDetail] = useState<Location | null>(null);
@@ -13591,6 +13592,7 @@ export default function App() {
               { key: 'location', label: 'Location' },
               { key: 'netWeightKg', label: 'Net Weight (KG)', bold: true, align: 'right', sortValue: (s) => s._netWt || 0, render: (s) => s._netWt },
               { key: 'grossWeightKg', label: 'Gross Weight (KG)', align: 'right', render: (s) => s.grossWeightKg || '-' },
+              { key: 'premiumCadMt', label: 'Differential (CAD/MT)', align: 'right', mono: true, sortValue: (s) => s.premiumCadMt || 0, render: (s) => s.premiumCadMt ? s.premiumCadMt.toFixed(2) : '—' },
             ]}
             rows={enrichedSkus}
             getRowKey={(s) => s.id}
@@ -13605,7 +13607,7 @@ export default function App() {
             icon={<Package size={14} />}
             isOpen={!!skuDetail}
             mode="view"
-            onClose={() => setSkuDetail(null)}
+            onClose={() => { setSkuDetail(null); setSkuDiffDraft(null); }}
           >
             {skuDetail && (() => {
               const s = skuDetail;
@@ -13634,8 +13636,30 @@ export default function App() {
                         </div>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                        <div className="text-xs font-bold">${s.premiumCadMt}</div>
+                        <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT) <span className="normal-case font-normal opacity-70">— editable</span></label>
+                        {(() => {
+                          const stored = skus.find(x => x.id === s.id)?.premiumCadMt ?? s.premiumCadMt ?? 0;
+                          const draft = skuDiffDraft ?? String(stored);
+                          const dirty = parseFloat(draft || '0') !== stored;
+                          return (
+                            <div className="flex items-center gap-2">
+                              <input type="number" step="0.01" value={draft} onFocus={(e) => e.target.select()}
+                                onChange={(e) => setSkuDiffDraft(e.target.value)}
+                                className="w-32 bg-white border border-[#141414] px-2 py-1.5 text-xs font-bold font-mono outline-none focus:ring-2 focus:ring-[#141414]/10" />
+                              <button disabled={!dirty} onClick={() => {
+                                const v = parseFloat(draft) || 0;
+                                const base = skus.find(x => x.id === s.id);
+                                if (!base) return;
+                                const updated = { ...base, premiumCadMt: v };
+                                setSkus(prev => prev.map(x => x.id === s.id ? updated : x));
+                                saveNow(COLLECTIONS.products, [updated]);
+                                setSkuDetail({ ...s, premiumCadMt: v });
+                                setSkuDiffDraft(null);
+                              }} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase disabled:opacity-30">Save</button>
+                              {!dirty && <span className="text-[10px] opacity-50">Used as the product differential in quotes</span>}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div className="space-y-1">
