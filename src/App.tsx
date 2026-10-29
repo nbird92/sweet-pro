@@ -24224,8 +24224,13 @@ export default function App() {
                   <button onClick={() => { setEditingCustomer(null); resetModalState('customer'); }} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-6">
+              <div className="p-6 space-y-5 bg-[#E4E3E0]">
+                <section className="border border-[#141414] bg-white">
+                  <div className="px-4 py-2 border-b border-[#141414] bg-[#F5F5F3] flex items-baseline gap-3">
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Company</h4>
+                    <span className="text-[10px] opacity-50">Identity and grouping</span>
+                  </div>
+                  <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer No.</label>
                     <input type="text" value={editingCustomer.customerNumber || ''} readOnly className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm opacity-50 outline-none" />
@@ -24281,22 +24286,15 @@ export default function App() {
                       <option value="__new__">＋ New Group</option>
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
-                    <select
-                      value={editingCustomer.defaultLocation}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultLocation: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="">Select…</option>
-                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                      {/* If the saved location is no longer in the active list, render it so editingCustomer doesn't show blank */}
-                      {editingCustomer.defaultLocation && !activeLocations.some(l => l.name === editingCustomer.defaultLocation) && (
-                        <option value={editingCustomer.defaultLocation}>{editingCustomer.defaultLocation} (inactive)</option>
-                      )}
-                    </select>
                   </div>
-                  <div className="space-y-1">
+                </section>
+                <section className="border border-[#141414] bg-white">
+                  <div className="px-4 py-2 border-b border-[#141414] bg-[#F5F5F3] flex items-baseline gap-3">
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Corporate Address</h4>
+                    <span className="text-[10px] opacity-50">Head-office / billing address</span>
+                  </div>
+                  <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1 md:col-span-3">
                     <label className="text-[10px] uppercase font-bold opacity-50">Corporate Address</label>
                     <input
                       type="text"
@@ -24332,15 +24330,28 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
+                  </div>
+                </section>
+                <section className="border border-[#141414] bg-white">
+                  <div className="px-4 py-2 border-b border-[#141414] bg-[#F5F5F3] flex items-baseline gap-3">
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Sales & Commercial Defaults</h4>
+                    <span className="text-[10px] opacity-50">Applied to new quotes, orders and invoices</span>
+                  </div>
+                  <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={editingCustomer.defaultMargin || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Location</label>
+                    <select
+                      value={editingCustomer.defaultLocation}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultLocation: e.target.value })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
+                    >
+                      <option value="">Select…</option>
+                      {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                      {/* If the saved location is no longer in the active list, render it so editingCustomer doesn't show blank */}
+                      {editingCustomer.defaultLocation && !activeLocations.some(l => l.name === editingCustomer.defaultLocation) && (
+                        <option value={editingCustomer.defaultLocation}>{editingCustomer.defaultLocation} (inactive)</option>
+                      )}
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
@@ -24358,6 +24369,16 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
+                    <input
+                      type="text" inputMode="decimal"
+                        value={editingCustomer.defaultMargin || ""}
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Payment Terms</label>
                     <select
                       value={editingCustomer.defaultPaymentTerms || ''}
@@ -24370,6 +24391,18 @@ export default function App() {
                       <option value="Net 45">Net 45</option>
                       <option value="Net 90">Net 90</option>
                       <option value="2% / Net 15">2% / Net 15</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Default Currency</label>
+                    <select
+                      value={editingCustomer.defaultCurrency || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultCurrency: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select...</option>
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -24397,18 +24430,14 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none font-mono"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Default Currency</label>
-                    <select
-                      value={editingCustomer.defaultCurrency || ''}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultCurrency: e.target.value || undefined })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="">Select...</option>
-                      <option value="CAD">CAD</option>
-                      <option value="USD">USD</option>
-                    </select>
                   </div>
+                </section>
+                <section className="border border-[#141414] bg-white">
+                  <div className="px-4 py-2 border-b border-[#141414] bg-[#F5F5F3] flex items-baseline gap-3">
+                    <h4 className="text-[11px] font-bold uppercase tracking-widest">Contacts</h4>
+                    <span className="text-[10px] opacity-50">Where documents and correspondence go</span>
+                  </div>
+                  <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contact Email</label>
                     <input
@@ -24457,7 +24486,8 @@ export default function App() {
                       placeholder="service@customer.com"
                     />
                   </div>
-                </div>
+                  </div>
+                </section>
 
                 {/* Ship-To Locations */}
                 <div className="border border-[#141414] overflow-hidden">
@@ -24738,8 +24768,8 @@ export default function App() {
 
                 {/* Customer-level email import rules removed — rules live on each ship-to location (see the Ship-To Locations table above). */}
 
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-50">Internal Notes</label>
+                <div className="space-y-1 border border-[#141414] bg-white p-4">
+                  <label className="text-[11px] uppercase font-bold tracking-widest">Internal Notes</label>
                   <textarea
                     value={editingCustomer.notes || ''}
                     onChange={(e) => setEditingCustomer({ ...editingCustomer, notes: e.target.value })}
