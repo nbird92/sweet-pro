@@ -15304,84 +15304,6 @@ export default function App() {
           />
           <div className="p-6 space-y-8">
 
-          {/* ── Demurrage / wait-time invoices from carriers ─────────────────
-              Carrier invoices (Tandet, Denali, …) for demurrage / detention /
-              layover / cancellation charges. Auto-populated from the PO inbox
-              (documentType 'demurrage'), matched to the customer + location by
-              the referenced PO or Sucro BOL. Also add/edit manually. */}
-          {(() => {
-            const demLocations = Array.from(new Set(demurrageInvoices.map(d => (d.location || '').trim()).filter(Boolean)));
-            const locOptions = Array.from(new Set([...locations.map(l => l.name), ...demLocations])).filter(Boolean).sort();
-            const filteredDem = demurrageLocFilter === 'all'
-              ? demurrageInvoices
-              : demurrageInvoices.filter(d => (d.location || '').trim().toLowerCase() === demurrageLocFilter.toLowerCase());
-            const fmtAmt = (d: DemurrageInvoice) => d.amount
-              ? `${normalizeCurrencyCode(d.currency) ? normalizeCurrencyCode(d.currency) + ' ' : ''}${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-              : '—';
-            return (
-              <div>
-                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Location</label>
-                    <select
-                      value={demurrageLocFilter}
-                      onChange={(e) => setDemurrageLocFilter(e.target.value)}
-                      className="bg-white text-[#141414] border border-[#141414] px-3 py-1.5 text-xs font-bold focus:outline-none"
-                    >
-                      <option value="all">All Locations</option>
-                      {locOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {demurrageScanError && <span className="text-[10px] text-red-600 font-bold max-w-[320px] truncate" title={demurrageScanError}>{demurrageScanError}</span>}
-                    <input
-                      ref={demurrageFileInputRef}
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => { const fs = Array.from(e.target.files || []) as File[]; e.target.value = ''; if (fs.length) runDemurrageScan(fs); }}
-                    />
-                    <button
-                      onClick={() => { setDemurrageScanError(null); demurrageFileInputRef.current?.click(); }}
-                      disabled={demurrageScanning}
-                      title="Read demurrage invoice file(s) with AI and open each for review"
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors disabled:opacity-50"
-                    >
-                      <ScanLine size={12} className={demurrageScanning ? 'animate-pulse' : ''} /> {demurrageScanning ? 'Reading…' : 'Scan Demurrage'}
-                    </button>
-                  </div>
-                </div>
-                <DataTable<DemurrageInvoice>
-                  title="Demurrage"
-                  icon={<Clock size={14} />}
-                  storageKey="demurrage"
-                  columns={[
-                    { key: 'carrier', label: 'Carrier', bold: true, render: (d) => d.carrier || '—' },
-                    { key: 'invoiceNumber', label: 'Invoice #', mono: true, render: (d) => d.invoiceNumber || '—' },
-                    { key: 'po', label: 'PO #', mono: true, render: (d) => d.po || '—' },
-                    { key: 'bolNumber', label: 'BOL #', mono: true, render: (d) => d.bolNumber || '—' },
-                    { key: 'customer', label: 'Customer', render: (d) => d.customer || '—' },
-                    { key: 'shipmentDate', label: 'Shipment Date', render: (d) => d.shipmentDate || '—' },
-                    { key: 'amount', label: 'Amount', align: 'right', mono: true, sortValue: (d) => d.amount || 0, render: (d) => fmtAmt(d) },
-                    { key: 'description', label: 'Description', render: (d) => <span className="truncate block max-w-[220px]" title={d.description || ''}>{d.description || '—'}</span> },
-                    { key: 'location', label: 'Location', render: (d) => d.location || '—' },
-                    { key: 'status', label: 'Status', render: (d) => d.status || 'New' },
-                  ]}
-                  rows={filteredDem}
-                  getRowKey={(d) => d.id}
-                  onRowClick={(d) => setDemurrageDraft({ ...d })}
-                  onAdd={() => setDemurrageDraft({ id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, carrier: '', invoiceNumber: '', po: '', bolNumber: '', amount: 0, status: 'New', createdAt: new Date().toISOString() })}
-                  addLabel="Add Demurrage"
-                  emptyMessage={demurrageInvoices.length > 0 && demurrageLocFilter !== 'all'
-                    ? `No demurrage invoices at "${demurrageLocFilter}". ${demurrageInvoices.length} exist at other locations — choose "All Locations" above to see them.`
-                    : 'No demurrage invoices yet. Add one with "Add Demurrage", or carrier demurrage/wait-time invoices from the PO inbox appear here automatically.'}
-                  defaultSortKey="shipmentDate"
-                  defaultSortDir="desc"
-                />
-              </div>
-            );
-          })()}
 
           {/* Demurrage add / edit modal */}
           {demurrageDraft && (() => {
@@ -15922,6 +15844,85 @@ export default function App() {
               defaultSortDir="desc"
             />
           </div>
+
+          {/* ── Demurrage / wait-time invoices from carriers ─────────────────
+              Carrier invoices (Tandet, Denali, …) for demurrage / detention /
+              layover / cancellation charges. Auto-populated from the PO inbox
+              (documentType 'demurrage'), matched to the customer + location by
+              the referenced PO or Sucro BOL. Also add/edit manually. */}
+          {(() => {
+            const demLocations = Array.from(new Set(demurrageInvoices.map(d => (d.location || '').trim()).filter(Boolean)));
+            const locOptions = Array.from(new Set([...locations.map(l => l.name), ...demLocations])).filter(Boolean).sort();
+            const filteredDem = demurrageLocFilter === 'all'
+              ? demurrageInvoices
+              : demurrageInvoices.filter(d => (d.location || '').trim().toLowerCase() === demurrageLocFilter.toLowerCase());
+            const fmtAmt = (d: DemurrageInvoice) => d.amount
+              ? `${normalizeCurrencyCode(d.currency) ? normalizeCurrencyCode(d.currency) + ' ' : ''}${d.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+              : '—';
+            return (
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Location</label>
+                    <select
+                      value={demurrageLocFilter}
+                      onChange={(e) => setDemurrageLocFilter(e.target.value)}
+                      className="bg-white text-[#141414] border border-[#141414] px-3 py-1.5 text-xs font-bold focus:outline-none"
+                    >
+                      <option value="all">All Locations</option>
+                      {locOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {demurrageScanError && <span className="text-[10px] text-red-600 font-bold max-w-[320px] truncate" title={demurrageScanError}>{demurrageScanError}</span>}
+                    <input
+                      ref={demurrageFileInputRef}
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => { const fs = Array.from(e.target.files || []) as File[]; e.target.value = ''; if (fs.length) runDemurrageScan(fs); }}
+                    />
+                    <button
+                      onClick={() => { setDemurrageScanError(null); demurrageFileInputRef.current?.click(); }}
+                      disabled={demurrageScanning}
+                      title="Read demurrage invoice file(s) with AI and open each for review"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-widest hover:bg-[#2a2a2a] transition-colors disabled:opacity-50"
+                    >
+                      <ScanLine size={12} className={demurrageScanning ? 'animate-pulse' : ''} /> {demurrageScanning ? 'Reading…' : 'Scan Demurrage'}
+                    </button>
+                  </div>
+                </div>
+                <DataTable<DemurrageInvoice>
+                  title="Demurrage"
+                  icon={<Clock size={14} />}
+                  storageKey="demurrage"
+                  columns={[
+                    { key: 'carrier', label: 'Carrier', bold: true, render: (d) => d.carrier || '—' },
+                    { key: 'invoiceNumber', label: 'Invoice #', mono: true, render: (d) => d.invoiceNumber || '—' },
+                    { key: 'po', label: 'PO #', mono: true, render: (d) => d.po || '—' },
+                    { key: 'bolNumber', label: 'BOL #', mono: true, render: (d) => d.bolNumber || '—' },
+                    { key: 'customer', label: 'Customer', render: (d) => d.customer || '—' },
+                    { key: 'shipmentDate', label: 'Shipment Date', render: (d) => d.shipmentDate || '—' },
+                    { key: 'amount', label: 'Amount', align: 'right', mono: true, sortValue: (d) => d.amount || 0, render: (d) => fmtAmt(d) },
+                    { key: 'description', label: 'Description', render: (d) => <span className="truncate block max-w-[220px]" title={d.description || ''}>{d.description || '—'}</span> },
+                    { key: 'location', label: 'Location', render: (d) => d.location || '—' },
+                    { key: 'status', label: 'Status', render: (d) => d.status || 'New' },
+                  ]}
+                  rows={filteredDem}
+                  getRowKey={(d) => d.id}
+                  onRowClick={(d) => setDemurrageDraft({ ...d })}
+                  onAdd={() => setDemurrageDraft({ id: `DEM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, carrier: '', invoiceNumber: '', po: '', bolNumber: '', amount: 0, status: 'New', createdAt: new Date().toISOString() })}
+                  addLabel="Add Demurrage"
+                  emptyMessage={demurrageInvoices.length > 0 && demurrageLocFilter !== 'all'
+                    ? `No demurrage invoices at "${demurrageLocFilter}". ${demurrageInvoices.length} exist at other locations — choose "All Locations" above to see them.`
+                    : 'No demurrage invoices yet. Add one with "Add Demurrage", or carrier demurrage/wait-time invoices from the PO inbox appear here automatically.'}
+                  defaultSortKey="shipmentDate"
+                  defaultSortDir="desc"
+                />
+              </div>
+            );
+          })()}
 
           </div>
         </div>
