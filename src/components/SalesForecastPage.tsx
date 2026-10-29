@@ -2642,7 +2642,7 @@ export default function SalesForecastPage({
                               {Array.from({ length: modalColumnCount }, (_, i) => {
                                 const entry = line.entries.find((e) => e.periodIndex === i);
                                 const forecastVal = entry?.value ?? 0;
-                                const { value: cellVal, isActual } = getCellValue(
+                                const { value: cellVal, isActual, mtdSales, remainingForecast } = getCellValue(
                                   editingCf.customerName,
                                   line.productName,
                                   line.location,
@@ -2651,6 +2651,13 @@ export default function SalesForecastPage({
                                   forecastVal
                                 );
                                 const editable = isCellEditable(i, modalViewMode === 'Weekly');
+                                // CURRENT month: the value that feeds the line and
+                                // Total row is MTD invoiced sales + the remaining
+                                // weeks' forecast — show THAT figure (with its parts),
+                                // not just the typed forecast, so the column visibly
+                                // adds up to the total. The forecast stays editable.
+                                const isBlended = mtdSales !== undefined && !isActual && editable;
+                                const f1 = (v: number) => v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
                                 return (
                                   <td
@@ -2658,9 +2665,18 @@ export default function SalesForecastPage({
                                     className={`px-1 py-1 border border-gray-200 text-center ${
                                       isActual || !editable
                                         ? 'bg-gray-100 text-gray-500'
-                                        : ''
+                                        : isBlended ? 'bg-emerald-50' : ''
                                     }`}
                                   >
+                                    {isBlended && (
+                                      <div
+                                        className="leading-tight mb-0.5"
+                                        title={`Month to date: ${f1(mtdSales || 0)} MT invoiced + ${f1(remainingForecast || 0)} MT forecast for the remaining weeks (of ${f1(forecastVal)} MT entered for the month)`}
+                                      >
+                                        <div className="text-xs font-bold text-emerald-900">{cellVal > 0 ? f1(cellVal) : '—'}</div>
+                                        <div className="text-[9px] text-gray-500 whitespace-nowrap">{f1(mtdSales || 0)} sold + {f1(remainingForecast || 0)} fcst</div>
+                                      </div>
+                                    )}
                                     {editable && !isActual ? (
                                       <input
                                         type="number"
@@ -2674,7 +2690,9 @@ export default function SalesForecastPage({
                                             parseFloat(e.target.value) || 0
                                           )
                                         }
-                                        className="w-full px-1 py-0.5 text-center text-xs border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-[#141414]"
+                                        placeholder={isBlended ? 'fcst' : undefined}
+                                        title={isBlended ? 'Monthly forecast entry — the remaining weeks get their share of this' : undefined}
+                                        className={`w-full px-1 py-0.5 text-center text-xs border-0 focus:outline-none focus:ring-1 focus:ring-[#141414] ${isBlended ? 'bg-white/70 border-t border-emerald-200 text-gray-600' : 'bg-transparent'}`}
                                       />
                                     ) : (
                                       <span className="text-xs">
