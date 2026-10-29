@@ -946,9 +946,10 @@ export interface BOMItem {
   id: string;
   materialName: string;
   materialCode?: string;
-  category: 'Raw Material' | 'Packaging' | 'Label' | 'Additive' | 'Other';
+  category: 'Raw Material' | 'Packaging' | 'Label' | 'Additive' | 'Labour' | 'Other';
   quantity: number;
-  unit: 'kg' | 'g' | 'pcs' | 'rolls' | 'sheets' | 'liters' | 'ml';
+  unit: 'kg' | 'g' | 'pcs' | 'rolls' | 'sheets' | 'liters' | 'ml' | 'hours';
+  /** Material units used per selling unit (Quantity Used per Unit). */
   supplier?: string;
   costPerUnit?: number;
   currency?: 'CAD' | 'USD';

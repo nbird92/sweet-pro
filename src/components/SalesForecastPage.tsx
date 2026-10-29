@@ -679,8 +679,11 @@ export default function SalesForecastPage({
     const map = new Map<string, { materialName: string; materialCode: string; category: string; unit: string; supplier: string; qty: number }>();
     let skippedNoWeight = 0;
     for (const row of productForecastRows) {
-      const sku = skus.find(s => s.name === row.productName);
-      const qa = qaProducts.find(q => q.skuName === row.productName || (sku && q.skuId === sku.id));
+      // Match the forecast product to its QA record — by short/long form first
+      // (catalog names are format-only, e.g. "Bulk"), then SKU name.
+      const pn = (row.productName || '').trim().toLowerCase();
+      const qa = qaProducts.find(q => (q.billOfMaterials || []).length && [(q as any).shortForm, (q as any).productLongForm, q.skuName].some(n => (n || '').trim().toLowerCase() === pn))
+        || (() => { const sku = skus.find(s => s.name === row.productName || (s.shortForm || '').toLowerCase() === pn); return qaProducts.find(q => q.skuName === row.productName || (sku && q.skuId === sku.id)); })();
       const bom = qa?.billOfMaterials || [];
       const netKg = qa?.netWeightKg || 0;
       if (!bom.length) continue;

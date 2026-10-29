@@ -3533,8 +3533,9 @@ export default function QualityAssurancePage({
                             <th className="p-2">Material</th>
                             <th className="p-2">Code</th>
                             <th className="p-2">Category</th>
-                            <th className="p-2">Qty</th>
-                            <th className="p-2">Unit</th>
+                            <th className="p-2">Qty Used per Unit</th>
+                            <th className="p-2">Material Units</th>
+                            <th className="p-2">Product Net Wt (kg)</th>
                             <th className="p-2">Supplier</th>
                             <th className="p-2">Cost/Unit</th>
                             <th className="p-2">Shrinkage</th>
@@ -3553,11 +3554,13 @@ export default function QualityAssurancePage({
                                   item.category === 'Packaging' ? 'bg-amber-50 text-amber-700 border-amber-200' :
                                   item.category === 'Label' ? 'bg-purple-50 text-purple-700 border-purple-200' :
                                   item.category === 'Additive' ? 'bg-green-50 text-green-700 border-green-200' :
+                                  item.category === 'Labour' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                                   'bg-gray-50 text-gray-700 border-gray-200'
                                 }`}>{item.category}</span>
                               </td>
                               <td className="p-2 text-xs font-mono">{item.quantity}</td>
                               <td className="p-2 text-xs">{item.unit}</td>
+                              <td className="p-2 text-xs font-mono opacity-70">{(isEditing ? editData?.netWeightKg : displayData.netWeightKg) || '—'}</td>
                               <td className="p-2 text-xs">{item.supplier || '—'}</td>
                               <td className="p-2 text-xs font-mono">{item.costPerUnit ? `${item.currency || 'CAD'} $${item.costPerUnit.toFixed(2)}` : '—'}</td>
                               <td className="p-2 text-xs font-mono">{item.shrinkage != null && item.shrinkage !== 0 ? `${item.shrinkage}%` : '—'}</td>
@@ -3580,7 +3583,7 @@ export default function QualityAssurancePage({
                         {displayData.billOfMaterials.some(b => b.costPerUnit) && (
                           <tfoot>
                             <tr className="bg-[#E4E3E0] font-bold">
-                              <td colSpan={6} className="p-2 text-xs text-right uppercase">Total Cost per Unit:</td>
+                              <td colSpan={7} className="p-2 text-xs text-right uppercase">Total Cost per Unit:</td>
                               <td className="p-2 text-xs font-mono">
                                 CAD ${displayData.billOfMaterials.reduce((sum, b) => sum + (b.costPerUnit || 0) * b.quantity, 0).toFixed(2)}
                               </td>
@@ -3616,15 +3619,16 @@ export default function QualityAssurancePage({
                             <option value="Packaging">Packaging</option>
                             <option value="Label">Label</option>
                             <option value="Additive">Additive</option>
+                            <option value="Labour">Labour</option>
                             <option value="Other">Other</option>
                           </select>
                         </div>
                         <div>
-                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Quantity *</label>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Quantity Used per Unit *</label>
                           <input type="number" value={editingBomItem.quantity || ''} onChange={(e) => setEditingBomItem({ ...editingBomItem, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" placeholder="0" />
                         </div>
                         <div>
-                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Unit</label>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Material Units</label>
                           <select value={editingBomItem.unit} onChange={(e) => setEditingBomItem({ ...editingBomItem, unit: e.target.value as BOMItem['unit'] })} className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none">
                             <option value="kg">kg</option>
                             <option value="g">g</option>
@@ -3633,7 +3637,12 @@ export default function QualityAssurancePage({
                             <option value="sheets">sheets</option>
                             <option value="liters">liters</option>
                             <option value="ml">ml</option>
+                            <option value="hours">hours</option>
                           </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Product Net Weight (KG)</label>
+                          <input readOnly disabled value={editData?.netWeightKg || ''} placeholder="Set in Product Details" title="From the Net Weight field in Product Details" className="w-full bg-[#E4E3E0] border border-[#141414]/30 p-2 text-xs outline-none cursor-not-allowed opacity-70" />
                         </div>
                         <div>
                           <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Supplier</label>
