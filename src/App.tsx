@@ -81,7 +81,7 @@ const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
 import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import CustomerSummaryModal from './components/CustomerSummaryModal';
-import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee, MONTH_TERMINALS } from './types';
+import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, SavedQuote, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee, MONTH_TERMINALS } from './types';
 const ConferencesPage = lazy(() => import('./components/ConferencesPage'));
 const PeoplePage = lazy(() => import('./components/PeoplePage'));
 const QualityAssurancePage = lazy(() => import('./components/QualityAssurancePage'));
@@ -10853,6 +10853,44 @@ export default function App() {
     setActivePage('Contracts');
   };
 
+  // Save Quote (Customer Quote page) — stored on the customer record so it shows
+  // in the Quotes tab of the customer summary.
+  const [quoteSavedFlash, setQuoteSavedFlash] = useState(false);
+  const handleSaveQuote = () => {
+    if (!user || !lastSynced) {
+      setErrorBox("The app hasn't finished syncing with the server yet, so this quote could NOT be saved. Wait for the sync to complete and try again.");
+      return;
+    }
+    const cust = customers.find(c => c.name === customer);
+    const sku = skus.find(s => s.id === selectedSkuId) || skus[0];
+    if (!cust || !sku) { setErrorBox('Select a customer and product before saving the quote.'); return; }
+    const quote: SavedQuote = {
+      id: `QUOTE-${Date.now()}`,
+      savedAt: new Date().toISOString(),
+      savedBy: user?.displayName || user?.email || undefined,
+      product: sku.shortForm || sku.productLongForm || sku.name,
+      origin: config.origin,
+      destination: config.isDelivered ? config.destination : undefined,
+      shippingTerms: config.shippingTerms || undefined,
+      isDelivered: !!config.isDelivered,
+      volumeMt: config.volumeMt,
+      currency: calculations.currencySymbol,
+      finalPriceMt: calculations.finalMt,
+      totalValue: calculations.totalQuoteValue,
+      rawPriceUsdCwt: config.rawPriceUsdCwt,
+      fxRate: config.fxRate,
+      marginCadMt: config.refiningMarginCadMt,
+      paymentTerms: config.paymentTerms || cust.defaultPaymentTerms || undefined,
+      startDate: config.contractStartDate || undefined,
+      endDate: config.contractEndDate || undefined,
+    };
+    const updated: Customer = { ...cust, savedQuotes: [quote, ...(cust.savedQuotes || [])] };
+    setCustomers(prev => prev.map(c => c.id === cust.id ? updated : c));
+    saveNow(COLLECTIONS.customers, [updated]);
+    setQuoteSavedFlash(true);
+    window.setTimeout(() => setQuoteSavedFlash(false), 2500);
+  };
+
   // Per-contract volume roll-ups, computed ONCE per data change instead of inside
   // the table's row loop. The Contracts table used to rebuild a Set over EVERY
   // invoice and re-scan all invoices + orders + customers for EVERY row, so it
@@ -17846,8 +17884,8 @@ export default function App() {
                 <button onClick={() => setShowContractConfirm(true)} className="px-4 py-2 border border-[#141414] hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors text-xs font-bold flex items-center gap-2">
                   <FileText size={14} /> CREATE CONTRACT
                 </button>
-                <button className="px-4 py-2 bg-[#141414] text-[#E4E3E0] hover:bg-opacity-80 transition-colors text-xs font-bold flex items-center gap-2">
-                  <Save size={14} /> SAVE QUOTE
+                <button onClick={handleSaveQuote} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] hover:bg-opacity-80 transition-colors text-xs font-bold flex items-center gap-2">
+                  <Save size={14} /> {quoteSavedFlash ? 'QUOTE SAVED ✓' : 'SAVE QUOTE'}
                 </button>
               </>
             )}
@@ -24205,6 +24243,14 @@ export default function App() {
             contractStats={contractVolumeStats}
             toShortform={productToShortform}
             onEdit={() => { const c = customers.find(x => x.id === summaryCustomer.id) || summaryCustomer; setSummaryCustomer(null); setEditingCustomer(c); }}
+            onOpenContract={(ct) => { setSummaryCustomer(null); setActivePage('Contracts'); setSelectedContractDetail(ct); }}
+            onDeleteQuote={(qid) => {
+              const c = customers.find(x => x.id === summaryCustomer.id);
+              if (!c) return;
+              const updated: Customer = { ...c, savedQuotes: (c.savedQuotes || []).filter(q => q.id !== qid) };
+              setCustomers(prev => prev.map(x => x.id === c.id ? updated : x));
+              saveNow(COLLECTIONS.customers, [updated]);
+            }}
             onClose={() => setSummaryCustomer(null)}
           />
         )}

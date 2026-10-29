@@ -105,6 +105,8 @@ export interface Customer {
   itasCustomerName?: string;
   customerGroupId?: string;
   shipToLocations?: ShipToLocation[];
+  /** Quotes saved from the Customer Quote page (Save Quote). */
+  savedQuotes?: SavedQuote[];
   /** Explicit, operator-edited defaults the email PO importer applies for this
    *  customer — most customers order the same product to the same location on
    *  nearly every PO, so a stored rule beats fuzzy text matching. */
@@ -115,6 +117,27 @@ export interface Customer {
  *  form DETECTED in the PO line's description ('' = any / no form detected)
  *  because liquid-vs-granulated is the one recurring ambiguity; a customer that
  *  only ever orders one product gets a single '' entry. */
+export interface SavedQuote {
+  id: string;
+  savedAt: string;        // ISO timestamp
+  savedBy?: string;
+  product: string;
+  origin: string;
+  destination?: string;
+  shippingTerms?: string;
+  isDelivered?: boolean;
+  volumeMt: number;
+  currency: string;
+  finalPriceMt: number;
+  totalValue: number;
+  rawPriceUsdCwt?: number;
+  fxRate?: number;
+  marginCadMt?: number;
+  paymentTerms?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 export interface CustomerImportRules {
   defaultProducts?: Array<{
     sugarForm: '' | 'liquid' | 'brown' | 'yellow' | 'granulated' | 'icing' | 'molasses';

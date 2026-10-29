@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { X, Pencil, Building2, FileText, BarChart3, TrendingUp } from 'lucide-react';
+import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2 } from 'lucide-react';
 import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup } from '../types';
 
-type Tab = 'details' | 'contracts' | 'sales' | 'forecast';
+type Tab = 'details' | 'contracts' | 'sales' | 'forecast' | 'quotes';
 
 interface Props {
   customer: Customer;
@@ -16,6 +16,8 @@ interface Props {
   contractStats: Map<string, { taken: number; onOrder: number; outstanding: number }>;
   toShortform: (name: string | undefined) => string;
   onEdit: () => void;
+  onOpenContract: (c: Contract) => void;
+  onDeleteQuote: (quoteId: string) => void;
   onClose: () => void;
 }
 
@@ -44,7 +46,7 @@ const Stat = ({ label, value, sub }: { label: string; value: string; sub?: strin
 );
 
 /** Product × month matrix with row and column totals. */
-const MonthMatrix = ({ rows, months, empty }: { rows: { name: string; values: number[] }[]; months: string[]; empty: string }) => {
+const MonthMatrix = ({ rows, months, empty, shade }: { rows: { name: string; values: number[] }[]; months: string[]; empty: string; shade?: (i: number) => boolean }) => {
   const colTotals = months.map((_, i) => rows.reduce((s, r) => s + r.values[i], 0));
   const grand = colTotals.reduce((a, b) => a + b, 0);
   return (
@@ -53,7 +55,7 @@ const MonthMatrix = ({ rows, months, empty }: { rows: { name: string; values: nu
         <thead>
           <tr className="bg-gray-50">
             <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[140px]">Product</th>
-            {months.map((m, i) => <th key={i} className="text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[64px]">{m}</th>)}
+            {months.map((m, i) => <th key={i} className={`text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold border border-gray-200 min-w-[64px] ${shade?.(i) ? 'bg-gray-100 text-gray-500' : 'opacity-60'}`}>{m}{shade && <div className="text-[8px] font-normal normal-case tracking-normal">{shade(i) ? 'actual' : 'forecast'}</div>}</th>)}
             <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">Total (MT)</th>
           </tr>
         </thead>
@@ -61,7 +63,7 @@ const MonthMatrix = ({ rows, months, empty }: { rows: { name: string; values: nu
           {rows.map(r => (
             <tr key={r.name} className="border-b border-gray-200 hover:bg-gray-50">
               <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium border border-gray-200">{r.name}</td>
-              {r.values.map((v, i) => <td key={i} className="px-2 py-1.5 text-center border border-gray-200 font-mono">{fmt(v)}</td>)}
+              {r.values.map((v, i) => <td key={i} className={`px-2 py-1.5 text-center border border-gray-200 font-mono ${shade?.(i) ? 'bg-gray-100 text-gray-600' : ''}`}>{fmt(v)}</td>)}
               <td className="px-3 py-1.5 text-center font-mono font-bold border border-gray-200">{fmt(r.values.reduce((a, b) => a + b, 0))}</td>
             </tr>
           ))}
@@ -79,7 +81,7 @@ const MonthMatrix = ({ rows, months, empty }: { rows: { name: string; values: nu
   );
 };
 
-export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onClose }: Props) {
+export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('details');
   const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
   const label = (n?: string) => (toShortform(n) || n || '(unknown)').trim();
@@ -164,6 +166,21 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
   const forecastRows = useMemo(() => {
     if (!fy) return [];
     const m = new Map<string, number[]>();
+    // Past fiscal months show ACTUAL invoiced sales; current/future months show forecast.
+    const periodBounds = (fy.periods || []).slice(0, 12).map(p => ({ start: p.startDate, end: p.endDate }));
+    const isPast = (i: number) => !!periodBounds[i] && periodBounds[i].end < today;
+    const periodOf = (d: string) => periodBounds.findIndex(b => d >= b.start && d <= b.end);
+    for (const inv of custInvoices) {
+      const d = (inv.date || '').slice(0, 10);
+      const idx = periodOf(d);
+      if (idx < 0 || !isPast(idx)) continue;
+      const loc = inv.location || customer.defaultLocation || '';
+      for (const { product, mt } of invoiceProductMt(inv)) {
+        const name = `${product}${loc ? ` · ${loc}` : ''}`;
+        const v = m.get(name) || new Array(12).fill(0);
+        v[idx] += mt; m.set(name, v);
+      }
+    }
     for (const f of custForecasts.filter(x => x.fiscalYearId === fy.id)) {
       const weekly = f.viewMode === 'Weekly';
       for (const line of f.lines || []) {
@@ -171,13 +188,13 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
         const v = m.get(name) || new Array(12).fill(0);
         for (const e of line.entries || []) {
           const idx = weekly ? Math.min(11, Math.floor(e.periodIndex * 12 / 52)) : e.periodIndex;
-          if (idx >= 0 && idx < 12) v[idx] += e.value || 0;
+          if (idx >= 0 && idx < 12 && !isPast(idx)) v[idx] += e.value || 0;
         }
         m.set(name, v);
       }
     }
     return Array.from(m.entries()).filter(([, v]) => v.some(x => x)).map(([name, values]) => ({ name, values })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [custForecasts, fy]);
+  }, [custForecasts, custInvoices, fy, today, customer]);
 
   const salesperson = people.find(p => p.id === customer.salespersonId);
   const group = customerGroups.find(g => g.id === customer.customerGroupId);
@@ -188,6 +205,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
     { id: 'contracts', label: `Contracts (${custContracts.length})`, icon: <FileText size={13} /> },
     { id: 'sales', label: 'Sales Data', icon: <BarChart3 size={13} /> },
     { id: 'forecast', label: 'Forecast', icon: <TrendingUp size={13} /> },
+    { id: 'quotes', label: `Quotes (${customer.savedQuotes?.length || 0})`, icon: <Receipt size={13} /> },
   ];
   const selectCls = 'px-3 py-1.5 border border-[#141414] bg-white text-xs focus:outline-none';
 
@@ -312,8 +330,8 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                       const pct = c.contractVolume ? Math.min(100, (s.taken / c.contractVolume) * 100) : 0;
                       const pctOrd = c.contractVolume ? Math.min(100 - pct, (s.onOrder / c.contractVolume) * 100) : 0;
                       return (
-                        <tr key={c.id} className={`border-b border-gray-200 hover:bg-gray-50 ${act ? '' : 'opacity-50'}`}>
-                          <td className="p-2 font-mono font-bold">{c.contractNumber}</td>
+                        <tr key={c.id} onClick={() => onOpenContract(c)} title="Open this contract on the Contracts page" className={`border-b border-gray-200 hover:bg-amber-50 cursor-pointer group ${act ? '' : 'opacity-50'}`}>
+                          <td className="p-2 font-mono font-bold text-blue-700 underline decoration-dotted underline-offset-2 group-hover:decoration-solid whitespace-nowrap">{c.contractNumber || '(no number)'} <ExternalLink size={10} className="inline opacity-50" /></td>
                           <td className="p-2"><span className={`px-2 py-0.5 text-[9px] font-bold uppercase border ${act ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>{act ? 'Active' : 'Closed'}</span></td>
                           <td className="p-2">{(c.contractLines?.length ? c.contractLines.map(l => label(l.productName)) : [label(c.skuName)]).join(', ')}</td>
                           <td className="p-2">{c.origin || '—'}</td>
@@ -352,10 +370,43 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
             </div>
           )}
 
+          {tab === 'quotes' && (
+            <div className="bg-white border border-[#141414] overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
+                    {['Saved', 'By', 'Product', 'Origin', 'Destination / Terms', 'Volume (MT)', 'Raw (USD/CWT)', 'FX', 'Margin (CAD/MT)', 'Price / MT', 'Total Value', 'Period', ''].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(customer.savedQuotes || []).map(q => (
+                    <tr key={q.id} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="p-2 whitespace-nowrap">{fmtDate(q.savedAt)}<div className="text-[9px] opacity-50">{new Date(q.savedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div></td>
+                      <td className="p-2">{q.savedBy || '—'}</td>
+                      <td className="p-2 font-bold">{q.product}</td>
+                      <td className="p-2">{q.origin || '—'}</td>
+                      <td className="p-2">{q.isDelivered ? (q.destination || 'Delivered') : 'FCA'}{q.shippingTerms && <div className="text-[9px] opacity-50">{q.shippingTerms}</div>}</td>
+                      <td className="p-2 font-mono text-right">{fmt(q.volumeMt || 0)}</td>
+                      <td className="p-2 font-mono text-right">{q.rawPriceUsdCwt != null ? q.rawPriceUsdCwt.toFixed(2) : '—'}</td>
+                      <td className="p-2 font-mono text-right">{q.fxRate != null ? q.fxRate.toFixed(4) : '—'}</td>
+                      <td className="p-2 font-mono text-right">{q.marginCadMt != null ? q.marginCadMt.toFixed(2) : '—'}</td>
+                      <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {(q.finalPriceMt || 0).toFixed(2)}</td>
+                      <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${fmtDate(q.startDate)} – ${fmtDate(q.endDate)}` : '—'}</td>
+                      <td className="p-2"><button onClick={() => { if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button></td>
+                    </tr>
+                  ))}
+                  {!(customer.savedQuotes || []).length && <tr><td colSpan={13} className="p-8 text-center text-gray-400">No saved quotes. Use Save Quote on the Customer Quote page to add one.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {tab === 'forecast' && (
             <div className="bg-white border border-[#141414] p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-[11px] uppercase font-bold tracking-widest">Forecast by Product (MT)</div>
+                <div className="text-[11px] uppercase font-bold tracking-widest">Sales + Forecast by Product (MT)</div>
+                <div className="text-[10px] opacity-50 w-full -mt-2 order-last">Past months show actual invoiced sales (shaded); current and future months show forecast.</div>
                 <div className="flex items-center gap-2">
                   <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Fiscal Year</label>
                   <select value={fy?.id || ''} onChange={e => setFyId(e.target.value)} className={selectCls}>
@@ -364,7 +415,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                   </select>
                 </div>
               </div>
-              <MonthMatrix rows={forecastRows} months={fyMonths} empty={fy ? `No forecast entered for ${fy.name}.` : 'No current or future fiscal years set up.'} />
+              <MonthMatrix rows={forecastRows} months={fyMonths} shade={(i) => !!fy?.periods?.[i] && fy.periods[i].endDate < today} empty={fy ? `No forecast entered for ${fy.name}.` : 'No current or future fiscal years set up.'} />
             </div>
           )}
         </div>
