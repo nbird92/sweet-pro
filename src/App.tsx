@@ -926,7 +926,10 @@ export default function App() {
         && (t.includes(l.productName.toUpperCase()) || l.productName.toUpperCase().includes(t)));
       if (m) return m.finalPriceMt;
     }
-    if (typeof c.finalPrice === 'number' && c.finalPrice > 0) return c.finalPrice;
+    if (typeof c.finalPrice === 'number' && c.finalPrice > 0) {
+      // No custom line for this product: apply its default differential.
+      return t ? contractPriceForProduct(c, productText) : c.finalPrice;
+    }
     return lines[0]?.finalPriceMt || 0;
   };
 
@@ -1607,7 +1610,7 @@ export default function App() {
       const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
       const baseTotalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
       const baseWeightPerUnit = item.netWeightPerUnit || (item.qty ? baseTotalWeight / item.qty : skuNetKg / 1000);
-      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || (useScaled ? (inv.pricePerMt || 0) : 0);
+      const mtAmount = item.mtAmount || (contract ? contractPriceForProduct(contract, item.productName, item.productKey) : 0) || (useScaled ? (inv.pricePerMt || 0) : 0);
       const singleImported = useScaled && items.length === 1;
       const qtyUnits = singleImported ? scaledMt : item.qty;
       const totalWeight = singleImported ? scaledMt : baseTotalWeight;
@@ -1722,9 +1725,7 @@ export default function App() {
     let mtAmount = card.pricePerMt || 0;
     if (item.contractNumber) {
       const contract = contracts.find(c => c.contractNumber === item.contractNumber);
-      const cl = contract?.contractLines?.find(l => l.productName === item.productName);
-      if (cl) mtAmount = cl.finalPriceMt;
-      else if (contract) mtAmount = contract.finalPrice;
+      if (contract) mtAmount = contractPriceForProduct(contract, item.productName, item.productKey);
     }
     return {
       id: existing?.id || `LI-INV-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -9631,6 +9632,33 @@ export default function App() {
   //   4. Match against the SKU's Packaging Format
   //   5. Fuzzy keyword match (sugar type, group, color, weight, category)
   // Returns { sku, qa } or { sku: null, qa: null } if no match.
+  /** $/MT for a product drawn on a contract. A contract line for the product wins
+   *  (its own custom differential). Otherwise the contract's base price is
+   *  re-based onto this product's DEFAULT differential (Products table): the
+   *  contract price already carries its own product's differential, so swap it
+   *  for the ordered product's. CAD/MT differentials convert at the contract FX
+   *  for USD contracts. */
+  const contractPriceForProduct = (contract: Contract, productName?: string, productKey?: string): number => {
+    const line = contract.contractLines?.find(cl => cl.productName === productName);
+    if (line) return line.finalPriceMt;
+    const skuOf = (name?: string, key?: string): SKU | null => {
+      if (key) {
+        const byId = skus.find(x => x.id === key);
+        if (byId) return byId;
+        const qa = qaProducts.find(q => q.id === key);
+        const viaQa = qa ? skus.find(x => x.id === qa.skuId) : null;
+        if (viaQa) return viaQa;
+      }
+      return name ? resolveProduct(name).sku : null;
+    };
+    const diffOf = (sku: SKU | null) => sku?.premiumCadMt || 0;
+    const productDiff = diffOf(skuOf(productName, productKey));
+    const contractDiff = diffOf(skuOf(contract.skuName));
+    const fx = (contract.currency || '').toUpperCase() === 'USD' ? (contract.fxRate || 0) : 1;
+    if (!fx) return contract.finalPrice;
+    return (contract.finalPrice || 0) + (productDiff - contractDiff) / fx;
+  };
+
   const resolveProduct = (productName: string | undefined, opts?: { exact?: boolean }): { sku: SKU | null; qa: QAProduct | null } => {
     if (!productName) return { sku: null, qa: null };
 
@@ -10542,8 +10570,7 @@ export default function App() {
         return;
       }
       // Use contract line price if available, otherwise use contract finalPrice
-      const contractLine = contract.contractLines?.find(cl => cl.productName === newLineItem.productName);
-      mtAmount = contractLine ? contractLine.finalPriceMt : contract.finalPrice;
+      mtAmount = contractPriceForProduct(contract, newLineItem.productName, newLineItem.productKey);
       unitAmount = hasUnitWeight ? mtAmount * effNetKg / 1000 : mtAmount;
       lineAmount = totalWeight * mtAmount;
     } else if (existingLine && (existingLine.mtAmount || 0) > 0 && existingLine.productName === newLineItem.productName) {
@@ -18642,7 +18669,7 @@ export default function App() {
                       const skuNetKg = resolved.sku?.netWeightKg || resolved.sku?.netWeight || resolved.qa?.netWeightKg || 0;
                       const totalWeight = item.totalWeight || (item.qty * (skuNetKg / 1000));
                       const weightPerUnit = item.netWeightPerUnit || (item.qty ? totalWeight / item.qty : skuNetKg / 1000);
-                      const mtAmount = item.mtAmount || contractLine?.finalPriceMt || contract?.finalPrice || 0;
+                      const mtAmount = item.mtAmount || (contract ? contractPriceForProduct(contract, item.productName, item.productKey) : 0);
                       const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);
                       const lineAmount = item.lineAmount || (totalWeight * mtAmount);
                       const contractNumber = item.contractNumber || contract?.contractNumber || viewingOrderCard.contractNumber || '';
@@ -27136,7 +27163,7 @@ export default function App() {
                   const batchNetWeightKg = product ? (product.netWeightKg || product.netWeight) : 0;
                   const totalWeightKg = totalUnits * batchNetWeightKg;
                   const totalWeightMT = totalWeightKg / 1000;
-                  const mtRate = selectedContract ? selectedContract.finalPrice : 0;
+                  const mtRate = selectedContract ? contractPriceForProduct(selectedContract, batchOrder.product, product?.id) : 0;
                   const totalAmount = totalWeightMT * mtRate;
                   // Next-in-sequence BOL number per entry (one order per entry),
                   // based on the selected product. Shown live in the table and
