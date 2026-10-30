@@ -3220,7 +3220,10 @@ export default function App() {
   // known-bad machine is REST-first from its very first save each session. (REST
   // works everywhere, so a false positive only costs a negligibly-redundant write
   // path; clear localStorage 'sweetpro.restFirst' to re-test the SDK.)
-  const restFirstRef = useRef<boolean>((() => { try { return localStorage.getItem('sweetpro.restFirst') === '1'; } catch { return false; } })());
+  // REST-first for EVERY browser and every write path (autosave included): an
+  // SDK write that sits unacked let the next pull revert the user's edit in any
+  // table. REST resolves only on a real server ack.
+  const restFirstRef = useRef<boolean>(true);
   const markRestFirst = () => {
     if (restFirstRef.current) return;
     restFirstRef.current = true;
