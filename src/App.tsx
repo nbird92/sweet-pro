@@ -64,7 +64,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
@@ -7352,6 +7352,8 @@ export default function App() {
     // over real records (saveDocsNow uses batch.set — a full overwrite). The app
     // is interactive while the load is in flight, so this gate is load-bearing.
     if (!user || !lastSynced) return;
+    // An explicit save is intentional — lift any delete-tombstone on these ids.
+    clearTombstones(collection, docs.map(d => d.id));
     const recordWritten = () => {
       const m = writeThroughDocs.current[collection] || new Map<string, string>();
       for (const d of docs) if (d && d.id) m.set(d.id, JSON.stringify(d));
@@ -7488,6 +7490,13 @@ export default function App() {
       // write ahead of it in the list was failing. A failure here now costs only
       // its own collection: its baseline is NOT advanced, so it is retried on the
       // next cycle, and the healthy collections still get written.
+      // Docs NEW to this session's baseline are user creations — lift any
+      // delete-tombstone on their ids (reused ids like FR-005). Edits of docs
+      // already in the baseline stay subject to tombstones (stale re-push).
+      {
+        const created = upserts.filter(d => !baseline.has(d.id)).map(d => d.id);
+        if (created.length) clearTombstones(task.collection, created);
+      }
       try {
         if (upserts.length || deleteIds.length) {
           passUpserts += upserts.length;

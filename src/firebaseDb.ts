@@ -359,9 +359,26 @@ async function restPatchDoc(base: string, collectionName: string, token: string,
 // (b) refuse to upsert them from any write path. Deletion is therefore final
 // across every session, not just the one that clicked Delete.
 export const TOMBSTONE_COLLECTION = 'deletedRecords';
-const TOMBSTONED = new Set<string>(['orders']);
+// Every user-editable table. Excluded: review queues / logs / auto-managed data,
+// where clearing and re-creating the same id is normal.
+const TOMBSTONE_EXEMPT = new Set<string>([
+  'deletedRecords', 'emailLog', 'emailSettings', 'poImportLog', 'poAmendments', 'poPendingImports',
+  'inboxFeed', 'inboxTriage', 'poFieldMappings', 'incomingPoOrders', 'marketData',
+]);
+const TOMBSTONED = { has: (c: string) => !TOMBSTONE_EXEMPT.has(c) };
 const tombstones = new Map<string, Set<string>>();
 const tombKey = (collectionName: string, id: string) => `${collectionName}__${id}`.replace(/\//g, '_');
+/** An EXPLICIT user save of these ids (create or edit) — lift any tombstone so
+ *  a legitimately re-created record (ids like FR-005 / CG-12 can be reused)
+ *  is not blocked. Only stale background re-pushes stay blocked. */
+export function clearTombstones(collectionName: string, ids: string[]) {
+  const set = tombstones.get(collectionName);
+  if (!set) return;
+  const hit = ids.filter(id => set.has(id));
+  if (!hit.length) return;
+  hit.forEach(id => set.delete(id));
+  restSyncCollection(TOMBSTONE_COLLECTION, [], hit.map(id => tombKey(collectionName, id))).catch(() => {});
+}
 export function isTombstoned(collectionName: string, id: string): boolean {
   return !!tombstones.get(collectionName)?.has(id);
 }
@@ -772,8 +789,11 @@ function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
   const marks = data[TOMBSTONE_COLLECTION] || [];
   delete data[TOMBSTONE_COLLECTION];
   const byCol = new Map<string, string[]>();
+  const cutoff = new Date(Date.now() - 120 * 86400000).toISOString();
+  const expired = marks.filter(m => m?.deletedAt && m.deletedAt < cutoff).map(m => String(m.id));
+  if (expired.length) restSyncCollection(TOMBSTONE_COLLECTION, [], expired).catch(() => {});
   for (const m of marks) {
-    if (!m?.collection || !m?.docId) continue;
+    if (!m?.collection || !m?.docId || (m.deletedAt && m.deletedAt < cutoff)) continue;
     byCol.set(m.collection, [...(byCol.get(m.collection) || []), String(m.docId)]);
   }
   for (const [col, ids] of byCol) {
