@@ -7904,6 +7904,36 @@ export default function App() {
     ].slice(0, 500));
   }, [poPendingImports, orders, invoices, user, lastSynced]);
 
+  // REMOVE BILLED ORDERS: an order whose BOL + customer match an active
+  // (non-Cancelled/Credit) invoice has been billed — the invoice is now the record,
+  // so the order is deleted for real (ledgered + REST delete, the same durable
+  // path as a manual delete). Customer must match too, so a BOL collision between
+  // two customers never deletes the wrong order.
+  const billedOrderSweepRef = useRef('');
+  useEffect(() => {
+    if (!user || !lastSynced) return;
+    if (!orders.length || !invoices.length) return;
+    const norm = (v?: string) => (v || '').trim().toUpperCase();
+    const billed = new Set(
+      invoices
+        .filter(i => i.status !== 'Cancelled' && i.status !== 'Credit' && norm(i.bolNumber))
+        .map(i => `${norm(i.bolNumber)}|${norm(i.customer)}`)
+    );
+    const ids = orders
+      .filter(o => norm(o.bolNumber) && billed.has(`${norm(o.bolNumber)}|${norm(o.customer)}`))
+      .map(o => o.id);
+    if (!ids.length) return;
+    const key = ids.slice().sort().join(',');
+    if (billedOrderSweepRef.current === key) return;
+    billedOrderSweepRef.current = key;
+    recordUserDeletes(COLLECTIONS.orders, ids);
+    const gone = new Set(ids);
+    setOrders(prev => prev.filter(o => !gone.has(o.id)));
+    restSyncCollection(COLLECTIONS.orders, [], ids)
+      .then(res => { if (!res.ok) console.warn('[billed-order sweep] server delete not confirmed yet; autosave will retry:', res.firstError); })
+      .catch(e => console.warn('[billed-order sweep] server delete failed; autosave will retry:', e));
+  }, [orders, invoices, user, lastSynced]);
+
   // Poll the incomingPoOrders queue (filled by the Gmail PO scan cron) and
   // ingest any new POs as Open orders: shortly after login, then every 5 min.
   useEffect(() => {
