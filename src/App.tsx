@@ -5128,6 +5128,88 @@ export default function App() {
     if (changed) setInvoices(next);
   }, [invoices, lotCodes]);
 
+  // LINK LOT CODES ↔ SHIPMENTS. For each lot code:
+  //   1. a shipment already listing the lot number → fill the lot's blank
+  //      BOL / Customer PO from that shipment;
+  //   2. otherwise match the lot's Customer PO to an order or invoice PO (or its
+  //      BOL to an order/invoice BOL) → fill the lot's blank BOL / PO from it, and
+  //      add the lot number to the shipment with that BOL (or PO).
+  // Fill-blanks / append-only, so it self-converges and never overwrites edits.
+  useEffect(() => {
+    if (!user || !lastSynced || !lotCodes.length) return;
+    const allShip = [...hamiltonShipments, ...vancouverShipments];
+    if (!allShip.length && !orders.length && !invoices.length) return;
+    const U = (v?: string) => (v || '').trim().toUpperCase();
+    const lotsOf = (s: Shipment) => (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers : (s.lotNumber ? [s.lotNumber] : []));
+    const shipByLot = new Map<string, Shipment>();
+    const shipByBol = new Map<string, Shipment>();
+    const shipByPo = new Map<string, Shipment>();
+    for (const sh of allShip) {
+      for (const l of lotsOf(sh)) { const k = lotKey(l); if (k && !shipByLot.has(k)) shipByLot.set(k, sh); }
+      if (U(sh.bol) && !shipByBol.has(U(sh.bol))) shipByBol.set(U(sh.bol), sh);
+      const pk = poKey(sh.po); if (pk && !shipByPo.has(pk)) shipByPo.set(pk, sh);
+    }
+    const docByPo = new Map<string, { bol: string; po: string }>();
+    const docByBol = new Map<string, { bol: string; po: string }>();
+    for (const d of [...invoices.filter(i => i.status !== 'Cancelled'), ...orders.filter(o => o.status !== 'Cancelled')]) {
+      const rec = { bol: (d.bolNumber || '').trim(), po: (d.po || '').trim() };
+      const pk = poKey(d.po); if (pk && !docByPo.has(pk)) docByPo.set(pk, rec);
+      if (U(d.bolNumber) && !docByBol.has(U(d.bolNumber))) docByBol.set(U(d.bolNumber), rec);
+    }
+    const lotPatched: LotCode[] = [];
+    const shipAdds = new Map<string, string[]>(); // shipment id → lots to append
+    for (const lc of lotCodes) {
+      const lot = (lc.lotNumber || '').trim();
+      if (!lot || lot === '-') continue;
+      let bol = (lc.bolNumber || '').trim();
+      let po = (lc.customerPo || '').trim();
+      let ship = shipByLot.get(lotKey(lot));
+      if (ship) {
+        if (!bol && ship.bol) bol = ship.bol.trim();
+        if (!po && ship.po) po = ship.po.trim();
+      } else {
+        const doc = (po && docByPo.get(poKey(po))) || (bol && docByBol.get(U(bol))) || null;
+        if (doc) {
+          if (!bol && doc.bol) bol = doc.bol;
+          if (!po && doc.po) po = doc.po;
+        }
+        ship = (bol && shipByBol.get(U(bol))) || (po && shipByPo.get(poKey(po))) || undefined;
+        if (ship && !lotsOf(ship).some(l => sameLotCode(l, lot))) {
+          const a = shipAdds.get(ship.id) || [];
+          if (!a.some(l => sameLotCode(l, lot))) a.push(lot);
+          shipAdds.set(ship.id, a);
+        }
+      }
+      if (bol !== (lc.bolNumber || '').trim() || po !== (lc.customerPo || '').trim()) {
+        lotPatched.push({ ...lc, bolNumber: bol, customerPo: po });
+      }
+    }
+    if (lotPatched.length) {
+      const byId = new Map(lotPatched.map(l => [l.id, l]));
+      setLotCodes(prev => prev.map(l => byId.get(l.id) || l));
+      saveNow(COLLECTIONS.lotCodes, lotPatched);
+    }
+    if (shipAdds.size) {
+      const patch = (arr: Shipment[]) => arr.map(sh => {
+        const add = shipAdds.get(sh.id);
+        if (!add) return sh;
+        const lots = [...lotsOf(sh), ...add];
+        const next = { ...sh, lotNumbers: lots, lotNumber: lots[0] || '' };
+        return next;
+      });
+      setHamiltonShipments(prev => patch(prev));
+      setVancouverShipments(prev => patch(prev));
+      // Persist from the current arrays (same patch), independent of updater timing.
+      const now = [...hamiltonShipments, ...vancouverShipments].filter(sh => shipAdds.has(sh.id)).map(sh => {
+        const lots = [...lotsOf(sh), ...shipAdds.get(sh.id)!];
+        return { ...sh, lotNumbers: lots, lotNumber: lots[0] || '' };
+      });
+      if (now.length) saveNow(COLLECTIONS.shipments, now);
+      if (lotPatched.length || now.length) console.log(`[lot link] linked ${lotPatched.length} lot code(s), added lots to ${now.length} shipment(s).`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lotCodes, hamiltonShipments, vancouverShipments, orders, invoices, user, lastSynced]);
+
   const handleGoogleSignIn = async () => {
     try {
       setSyncError(null);
