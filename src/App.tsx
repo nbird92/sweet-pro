@@ -18449,11 +18449,13 @@ export default function App() {
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
                 {/* Invoice-level fields */}
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice #</label>
                     <div className="text-sm font-bold font-mono">{inv.invoiceNumber || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
                     <div className="text-sm font-bold">{inv.bolNumber || '—'}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
+                    <div className="text-sm font-bold font-mono">{inv.splitNo || orderForInvoice(inv)?.splitNumber || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
                     <div className="text-sm font-bold">{inv.customer || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
