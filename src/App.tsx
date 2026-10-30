@@ -1639,6 +1639,21 @@ export default function App() {
     return { rows, totalMt, totalLineAmt, headerAmount, derivedPricePerMt };
   };
 
+  // Display amount for an invoice: the stored amount, or — when that was saved
+  // as 0 (e.g. created from an order line without pricing) — the line-item value,
+  // then qty × the invoice's price/MT or its contract price for the product.
+  const effectiveInvoiceAmount = (inv: Invoice): number => {
+    if ((inv.amount || 0) > 0) return inv.amount;
+    const { headerAmount, totalMt } = resolveInvoiceRows(inv);
+    if (headerAmount > 0) return headerAmount;
+    const mt = inv.qty || totalMt || 0;
+    if (inv.pricePerMt) return mt * inv.pricePerMt;
+    const cn = (inv.contractNumber || inv.lineItems?.find(li => li.contractNumber)?.contractNumber || '').split(',')[0].trim();
+    const contract = cn ? contracts.find(c => c.contractNumber === cn) : null;
+    const li = inv.lineItems?.[0];
+    return contract ? mt * contractPriceForProduct(contract, li?.productName || inv.product, li?.productKey) : 0;
+  };
+
   // Open an invoice in the EDIT modal with its line items normalised to the SAME
   // effective figures the details view shows, so the units/weights don't jump to
   // the raw (order-inherited, unscaled) values when you switch from view to edit.
@@ -19088,7 +19103,7 @@ export default function App() {
                                 <td className="p-2">{inv.product}</td>
                                 <td className="p-2 font-mono">{inv.po || '—'}</td>
                                 <td className="p-2"><span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold uppercase rounded">Invoice</span></td>
-                                <td className="p-2 text-right font-mono">${(inv.amount || 0).toFixed(2)}</td>
+                                <td className="p-2 text-right font-mono">${effectiveInvoiceAmount(inv).toFixed(2)}</td>
                                 <td className="p-2">
                                   <button
                                     onClick={() => useSource(buildReturnOrderDraftFromInvoice(inv))}
@@ -21216,7 +21231,7 @@ export default function App() {
                               <td className="p-2 font-mono">{inv.po || '—'}</td>
                               <td className="p-2 text-right font-mono">{(inv.qty || 0).toFixed(3)}</td>
                               <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
-                              <td className="p-2 text-right font-mono font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 text-right font-mono font-bold">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                               <td className="p-2">{inv.date}</td>
                             </tr>
                           ))}
@@ -21252,7 +21267,7 @@ export default function App() {
                               <td className="p-2 font-mono">{inv.po || '—'}</td>
                               <td className="p-2 font-mono">{inv.contractNumber || '—'}</td>
                               <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
-                              <td className="p-2 text-right font-mono font-bold">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="p-2 text-right font-mono font-bold">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -25729,7 +25744,7 @@ export default function App() {
                     return <div className="p-8 text-center text-xs opacity-50 italic">No invoices on this contract.</div>;
                   }
                   const invQty = contractInvoices.reduce((s, inv) => s + (inv.qty || 0), 0);
-                  const invAmount = contractInvoices.reduce((s, inv) => s + (inv.amount || 0), 0);
+                  const invAmount = contractInvoices.reduce((s, inv) => s + effectiveInvoiceAmount(inv), 0);
                   return (
                     <table className="w-full text-xs">
                       <thead className="bg-[#F5F5F5] border-b border-[#141414] text-[10px] uppercase tracking-widest">
@@ -25755,7 +25770,7 @@ export default function App() {
                             <td className="px-3 py-2">{inv.po}</td>
                             <td className="px-3 py-2">{inv.date}</td>
                             <td className="px-3 py-2 text-right font-mono">{(inv.qty || 0).toFixed(2)}</td>
-                            <td className="px-3 py-2 text-right font-mono">${(inv.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-3 py-2 text-right font-mono">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="px-3 py-2">{inv.status}</td>
                           </tr>
                         ))}
