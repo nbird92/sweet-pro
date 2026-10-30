@@ -351,11 +351,46 @@ async function restPatchDoc(base: string, collectionName: string, token: string,
  *  in-memory baseline stays valid and the SDK's still-queued duplicate is a
  *  harmless no-op. Runs in small concurrent chunks for speed without hammering.
  *  Returns ok=true only if EVERY write/delete succeeded. */
+// ── DELETE TOMBSTONES ────────────────────────────────────────────────────
+// A deleted order kept coming back: another open session (or any full-array
+// import/sync path) still held it in memory and re-upserted it. Every delete in
+// a tombstoned collection now also writes a small marker to `deletedRecords`;
+// all sessions load those markers and (a) drop the ids from what they load and
+// (b) refuse to upsert them from any write path. Deletion is therefore final
+// across every session, not just the one that clicked Delete.
+export const TOMBSTONE_COLLECTION = 'deletedRecords';
+const TOMBSTONED = new Set<string>(['orders']);
+const tombstones = new Map<string, Set<string>>();
+const tombKey = (collectionName: string, id: string) => `${collectionName}__${id}`.replace(/\//g, '_');
+export function isTombstoned(collectionName: string, id: string): boolean {
+  return !!tombstones.get(collectionName)?.has(id);
+}
+function addTombstones(collectionName: string, ids: string[]) {
+  const set = tombstones.get(collectionName) || new Set<string>();
+  ids.forEach(id => id && set.add(id));
+  tombstones.set(collectionName, set);
+}
+function dropTombstoned<T extends { id: string }>(collectionName: string, docs: T[]): T[] {
+  if (!TOMBSTONED.has(collectionName)) return docs;
+  const set = tombstones.get(collectionName);
+  if (!set || !set.size) return docs;
+  const kept = docs.filter(d => !set.has(String(d.id)));
+  if (kept.length !== docs.length) console.warn(`[tombstone] blocked ${docs.length - kept.length} write(s) re-creating deleted "${collectionName}" doc(s).`);
+  return kept;
+}
+
 export async function restSyncCollection(
   collectionName: string,
-  upserts: Array<{ id: string } & Record<string, unknown>>,
+  upsertsIn: Array<{ id: string } & Record<string, unknown>>,
   deleteIds: string[] = [],
 ): Promise<{ ok: boolean; upserted: number; deleted: number; failed: number; firstError?: string }> {
+  if (TOMBSTONED.has(collectionName) && deleteIds.length) {
+    addTombstones(collectionName, deleteIds);
+    const at = new Date().toISOString();
+    restSyncCollection(TOMBSTONE_COLLECTION, deleteIds.map(id => ({ id: tombKey(collectionName, id), collection: collectionName, docId: id, deletedAt: at })))
+      .catch(e => console.warn('[tombstone] marker write failed:', e));
+  }
+  const upserts = dropTombstoned(collectionName, upsertsIn);
   const { getAuth } = await import('firebase/auth');
   const u = getAuth(app).currentUser;
   if (!u) return { ok: false, upserted: 0, deleted: 0, failed: upserts.length + deleteIds.length, firstError: 'not signed in' };
@@ -588,7 +623,7 @@ export async function saveDocsNow<T extends { id: string }>(
   collectionName: string,
   docs: T[],
 ): Promise<void> {
-  const valid = docs.filter(d => d && d.id !== undefined && d.id !== null);
+  const valid = dropTombstoned(collectionName, docs.filter(d => d && d.id !== undefined && d.id !== null));
   if (valid.length === 0) return;
   // Capped by ops AND bytes, same reasoning as syncCollectionDiff: an oversized
   // commit request never settles cleanly when offline persistence is on.
@@ -730,8 +765,33 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
 // — so cached data can be read but can never be written back over newer server
 // records. That keeps the anti-clobber invariant while degrading to read-only
 // instead of degrading to nothing.
+/** Load the tombstone markers and strip tombstoned docs from the loaded data.
+ *  A doc still present on the server (another session re-wrote it) is deleted
+ *  again in the background. */
+function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
+  const marks = data[TOMBSTONE_COLLECTION] || [];
+  delete data[TOMBSTONE_COLLECTION];
+  const byCol = new Map<string, string[]>();
+  for (const m of marks) {
+    if (!m?.collection || !m?.docId) continue;
+    byCol.set(m.collection, [...(byCol.get(m.collection) || []), String(m.docId)]);
+  }
+  for (const [col, ids] of byCol) {
+    addTombstones(col, ids);
+    const set = tombstones.get(col)!;
+    const rows = data[col] || [];
+    const zombies = rows.filter(d => set.has(String(d.id))).map(d => String(d.id));
+    if (zombies.length) {
+      data[col] = rows.filter(d => !set.has(String(d.id)));
+      console.warn(`[tombstone] ${zombies.length} deleted "${col}" doc(s) were re-created by another session — deleting again.`);
+      restSyncCollection(col, [], zombies).catch(() => {});
+    }
+  }
+  return data;
+}
+
 export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fromCache: boolean }> {
-  const names = Object.values(COLLECTIONS);
+  const names = [...Object.values(COLLECTIONS), TOMBSTONE_COLLECTION];
   // Every doc is written with doc(collection, item.id) and carries `id` in its
   // data too, so the Firestore document id IS the record id. Fall back to it when
   // the `id` FIELD is missing — which self-heals any doc whose id field got
@@ -785,7 +845,7 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
     );
     const totalMs = Math.round(performance.now() - t0);
     console.log(`%c[load] server pull (REST): ${names.length} collections in ${(totalMs / 1000).toFixed(1)}s${slow.length ? ` — slowest/biggest: ${slow.join(' · ')}` : ''}`, 'color:#0a7');
-    return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: false };
+    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>), fromCache: false };
   } catch (serverErr) {
     console.warn('[fetchAllData] Server read failed — falling back to the local cache (READ-ONLY).', serverErr);
     // getDocs prefers the cache when the server is unreachable. If even this
@@ -797,7 +857,7 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
         return [name, snapshot.docs.map(withId)] as const;
       })
     );
-    return { data: Object.fromEntries(results) as Record<string, any[]>, fromCache: true };
+    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>), fromCache: true };
   }
 }
 
@@ -840,6 +900,7 @@ export async function syncCollection<T extends { id: string }>(
   data: T[],
   opts?: { allowMassDelete?: boolean }
 ): Promise<void> {
+  data = dropTombstoned(collectionName, data);
   const existing = await getDocs(collection(db, collectionName));
   const existingCount = existing.docs.length;
   const incomingIds = new Set(data.map(it => it.id));
@@ -979,6 +1040,13 @@ export async function syncCollectionDiff<T extends { id: string }>(
   //     a collection; deliberate clears go through deleteDocs(), which bypasses
   //     this function entirely.
   //  2. BULK DELETE beyond the proportional threshold, as before.
+  upserts = dropTombstoned(collectionName, upserts);
+  if (TOMBSTONED.has(collectionName) && deleteIds.length) {
+    addTombstones(collectionName, deleteIds);
+    const at = new Date().toISOString();
+    restSyncCollection(TOMBSTONE_COLLECTION, deleteIds.map(id => ({ id: tombKey(collectionName, id), collection: collectionName, docId: id, deletedAt: at })))
+      .catch(e => console.warn('[tombstone] marker write failed:', e));
+  }
   const wipingAll = baselineCount > 0 && deleteIds.length >= baselineCount && upserts.length === 0;
   const massDelete = !opts?.allowMassDelete &&
     (wipingAll || deleteIds.length > Math.max(20, baselineCount * 0.5));
