@@ -408,6 +408,25 @@ export async function restSyncCollection(
       .catch(e => console.warn('[tombstone] marker write failed:', e));
   }
   const upserts = dropTombstoned(collectionName, upsertsIn);
+  // Track in-flight writes so a pull that lands before the server ack can't
+  // replace the user's just-saved record with the older server copy.
+  const pend = pendingWrites.get(collectionName) || new Map<string, { id: string }>();
+  for (const d of upserts) pend.set(String(d.id), d);
+  pendingWrites.set(collectionName, pend);
+  const settle = () => { for (const d of upserts) if (pend.get(String(d.id)) === d) pend.delete(String(d.id)); };
+  // Failed writes stay overlaid until a later write of the same doc succeeds.
+  const res = await restSyncCollectionInner(collectionName, upserts, deleteIds);
+  if (res.ok) settle();
+  return res;
+}
+
+const pendingWrites = new Map<string, Map<string, { id: string }>>();
+
+async function restSyncCollectionInner(
+  collectionName: string,
+  upserts: Array<{ id: string } & Record<string, unknown>>,
+  deleteIds: string[],
+): Promise<{ ok: boolean; upserted: number; deleted: number; failed: number; firstError?: string }> {
   const { getAuth } = await import('firebase/auth');
   const u = getAuth(app).currentUser;
   if (!u) return { ok: false, upserted: 0, deleted: 0, failed: upserts.length + deleteIds.length, firstError: 'not signed in' };
@@ -788,6 +807,15 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
 function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
   const marks = data[TOMBSTONE_COLLECTION] || [];
   delete data[TOMBSTONE_COLLECTION];
+  // Overlay writes still awaiting their server ack (newer than the server copy).
+  for (const [col, pend] of pendingWrites) {
+    if (!pend.size || !data[col]) continue;
+    const idx = new Map(data[col].map((d, i) => [String(d.id), i]));
+    for (const [id, doc] of pend) {
+      const i = idx.get(id);
+      if (i !== undefined) data[col][i] = doc; else data[col].push(doc);
+    }
+  }
   const byCol = new Map<string, string[]>();
   const cutoff = new Date(Date.now() - 120 * 86400000).toISOString();
   const expired = marks.filter(m => m?.deletedAt && m.deletedAt < cutoff).map(m => String(m.id));

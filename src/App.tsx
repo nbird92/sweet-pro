@@ -7362,7 +7362,10 @@ export default function App() {
     // REST-FIRST: on a browser where the SDK write stream is known-dead, skip the
     // 15s SDK timeout and persist this explicit save straight to the server via
     // REST (~2s), so a create/edit is durable almost immediately.
-    if (restFirstRef.current) {
+    // ALWAYS REST for explicit user saves: the SDK channel can sit unacked, and
+    // the periodic pull then reloaded the server copy over the user's edit
+    // ("Save Changes didn't stick"). REST resolves only on a real server ack.
+    if (true) {
       restSyncCollection(collection, docs as Array<{ id: string } & Record<string, unknown>>, [])
         .then((res) => {
           if (res.ok) { recordWritten(); setSyncStatus('synced'); setLastSynced(new Date()); setSyncError(null); }
