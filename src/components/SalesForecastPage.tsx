@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   X,
   Edit2,
@@ -198,6 +198,10 @@ export default function SalesForecastPage({
   const [addProductDropdownOpen, setAddProductDropdownOpen] = useState(false);
   const [addProductSearch, setAddProductSearch] = useState('');
   const [addProductLocation, setAddProductLocation] = useState('');
+  // Year switcher inside the editor: lines as loaded (to detect unsaved edits)
+  // and the customer to reopen once the newly picked fiscal year is active.
+  const modalLoadedLinesRef = useRef<string>('[]');
+  const [reopenCustomerId, setReopenCustomerId] = useState<string | null>(null);
 
   // ── Period aggregation view state ────────────────────────────────────────
   const [periodAggregateMode, setPeriodAggregateMode] = useState<'Customer' | 'Product'>('Customer');
@@ -888,10 +892,27 @@ export default function SalesForecastPage({
         }
       }
       setModalLines(lines);
+      modalLoadedLinesRef.current = JSON.stringify(lines);
       setCustomerModalOpen(true);
     },
     [mergedForecasts, dedupeLines, selectedFY, invoices, isCountableInvoice, custKey, canonProduct, locCanon, actualsLocation]
   );
+
+  // Year dropdown in the editor: switch the page's fiscal year, then reopen the
+  // SAME customer once that year's forecasts are active. Unsaved edits to the
+  // current year are confirmed first (switching discards them).
+  const switchModalYear = (fyId: string) => {
+    if (!editingCustomerId || fyId === selectedFiscalYearId) return;
+    if (JSON.stringify(modalLines) !== modalLoadedLinesRef.current
+      && !confirm(`Discard unsaved ${typeLabel.toLowerCase()} changes for ${selectedFY?.name || 'this year'}?`)) return;
+    setReopenCustomerId(editingCustomerId);
+    setSelectedFiscalYearId(fyId);
+  };
+  useEffect(() => {
+    if (!reopenCustomerId || selectedFY?.id !== selectedFiscalYearId) return;
+    openCustomerModal(reopenCustomerId);
+    setReopenCustomerId(null);
+  }, [reopenCustomerId, selectedFY, selectedFiscalYearId, openCustomerModal]);
 
   const handleDeleteForecast = useCallback(
     (customerId: string) => {
@@ -2599,6 +2620,30 @@ export default function SalesForecastPage({
                     >
                       <option value="Monthly">Monthly</option>
                       <option value="Weekly">Weekly</option>
+                    </select>
+                    <ChevronDown
+                      size={12}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Year — view this customer's forecast for another fiscal year */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">
+                    Year
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedFiscalYearId}
+                      onChange={(e) => switchModalYear(e.target.value)}
+                      className="appearance-none px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                    >
+                      {fiscalYears.map((fy) => (
+                        <option key={fy.id} value={fy.id}>
+                          {fy.name}
+                        </option>
+                      ))}
                     </select>
                     <ChevronDown
                       size={12}
