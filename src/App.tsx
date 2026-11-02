@@ -5996,12 +5996,58 @@ export default function App() {
     setPdfPreview(null);
   };
 
-  const handleGenerateBol = (shipment: Shipment, orderOverride?: Order) => {
+  /** Find a Location by name or code — exact first, then a loose name match so
+   *  "Hamilton (Sherman)" on a shipment still finds its record. */
+  const findDocLocation = (ref?: string): Location | undefined => {
+    const n = (ref || '').trim().toLowerCase();
+    if (!n) return undefined;
+    return locations.find(l => l.name.trim().toLowerCase() === n || (l.locationCode || '').trim().toLowerCase() === n)
+      || locations.find(l => { const ln = l.name.trim().toLowerCase(); return !!ln && (ln.includes(n) || n.includes(ln)); });
+  };
+
+  /** Resolve everything a shipment document (BOL / document package) draws from,
+   *  so a document opened from the SHIPMENT SCHEDULE carries the same data as one
+   *  opened from the invoice table: the order linked by BOL (else the invoice's
+   *  own line items via orderForInvoice), the ship-from location (order →
+   *  shipment → invoice), lot codes seeded from the invoice, and the scaled
+   *  weight (shipment's Scaled Qty, else the invoiced MT for the BOL) with the
+   *  order lines rescaled to it. Non-destructive: only fills gaps. */
+  const resolveShipmentDocSources = (shipment: Shipment, orderOverride?: Order): { shipment: Shipment; order?: Order; shipFromLoc?: Location } => {
+    const bolKey = (shipment.bol || '').trim().toUpperCase();
+    const bolInvoices = bolKey ? invoices.filter(i => (i.bolNumber || '').trim().toUpperCase() === bolKey) : [];
+    const inv = bolInvoices[0];
+    let order = orderOverride
+      || (bolKey ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey) : undefined)
+      || (inv ? orderForInvoice(inv) : undefined);
+    const locRef = (order?.location || '').trim() || (shipment.location || '').trim() || (inv?.location || '').trim();
+    const shipFromLoc = findDocLocation(order?.location) || findDocLocation(shipment.location) || findDocLocation(inv?.location);
+    if (order && !(order.location || '').trim() && locRef) order = { ...order, location: shipFromLoc?.name || locRef };
+
+    let ship: Shipment = shipment;
+    // Lot codes: seed from the invoice when the shipment carries none.
+    const hasLots = (ship.lotNumbers && ship.lotNumbers.length > 0) || !!ship.lotNumber;
+    if (!hasLots && inv) {
+      const lots = ((inv.lotCode || '').trim() || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }))
+        .split(/[,;]+/).map(x => x.trim()).filter(Boolean);
+      if (lots.length) ship = { ...ship, lotNumbers: lots };
+    }
+    // Scaled weight: the shipment's own Scaled Qty wins; else the invoiced MT
+    // (split invoices share a BOL, so their qty sums).
+    const invoicedMt = bolInvoices.reduce((sum, i) => sum + (typeof i.qty === 'number' && i.qty > 0 ? i.qty : 0), 0);
+    const scaledMt = (typeof ship.scaledQty === 'number' && ship.scaledQty > 0) ? ship.scaledQty : invoicedMt;
+    if (scaledMt > 0) {
+      ship = { ...ship, qty: scaledMt, scaledQty: scaledMt };
+      if (order) order = { ...order, lineItems: rescaleLineItemsToMt(order.lineItems || [], scaledMt) };
+    }
+    if (!(ship.location || '').trim() && (shipFromLoc?.name || locRef)) ship = { ...ship, location: shipFromLoc?.name || locRef };
+    return { shipment: ship, order, shipFromLoc };
+  };
+
+  const handleGenerateBol = (rawShipment: Shipment, orderOverride?: Order) => {
     try {
-      const linkedOrder = orderOverride || orders.find(o => o.bolNumber === shipment.bol);
+      const { shipment, order: linkedOrder, shipFromLoc } = resolveShipmentDocSources(rawShipment, orderOverride);
       const cust = customers.find(c => c.name === shipment.customer);
       const carr = carriers.find(c => c.name === shipment.carrier);
-      const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
       // Resolve ship-to location: order's selection wins; otherwise leave undefined so
       // the BOL falls back to the customer's default address.
       const shipToLoc = linkedOrder?.shipToLocationId
@@ -6190,12 +6236,11 @@ export default function App() {
   /** Build the full shipping document package (BOL + COA + Packing List + [Bag ID
    *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
    *  ID Report is included only for packaged / tote shipments. */
-  const handleGenerateDocumentPackage = (shipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order) => {
+  const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order) => {
     try {
-      const linkedOrder = orderOverride || orders.find(o => o.bolNumber === shipment.bol);
+      const { shipment, order: linkedOrder, shipFromLoc } = resolveShipmentDocSources(rawShipment, orderOverride);
       const cust = customers.find(c => c.name === shipment.customer);
       const carr = carriers.find(c => c.name === shipment.carrier);
-      const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
       const shipToLoc = linkedOrder?.shipToLocationId
         ? cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)
         : undefined;
