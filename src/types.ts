@@ -162,6 +162,9 @@ export interface Person {
   department: 'sales' | 'operations' | 'logistics' | 'customer service' | 'QA' | 'trading';
   salespersonNumber?: string;
   position?: string;        // job title, e.g. "Logistics Coordinator"
+  /** Location.name — the user's home site: default Shipment Schedule location
+   *  and Customer Quote origin when this person is signed in. */
+  defaultLocation?: string;
   /** Permission group — will gate which pages the user can open. */
   permission?: PermissionGroup | '';   // '' = none (Firestore rejects undefined fields)
   notes?: string;

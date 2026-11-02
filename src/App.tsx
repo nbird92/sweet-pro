@@ -10393,6 +10393,44 @@ export default function App() {
     [locations]
   );
 
+  /** Resolve a stored location reference (name or code) to an ACTIVE location's
+   *  name, or '' when it names nothing active. */
+  const activeLocationName = (ref?: string): string => {
+    const n = (ref || '').trim().toLowerCase();
+    if (!n) return '';
+    const hit = activeLocations.find(l => l.name.trim().toLowerCase() === n)
+      || activeLocations.find(l => (l.locationCode || '').trim().toLowerCase() === n);
+    return hit?.name || '';
+  };
+
+  /** New-order customer pick: the customer card's Default Location fills
+   *  Location (Origin) and its Default Currency fills Currency. A customer with
+   *  no default leaves the field as it is. */
+  const applyCustomerOrderDefaults = (cust: Customer) => {
+    const loc = activeLocationName(cust.defaultLocation);
+    if (loc) setOrderLocation(loc);
+    const cur = (cust.defaultCurrency || '').trim().toUpperCase();
+    if (cur === 'CAD' || cur === 'USD') setOrderCurrency(cur);
+  };
+
+  // Signed-in user's Person record (matched by email) and their Default Location.
+  // Applied ONCE per session as the starting Shipment Schedule location and
+  // Customer Quote origin; the user can still change either afterwards.
+  const userDefaultLocation = useMemo(() => {
+    const email = (user?.email || '').trim().toLowerCase();
+    if (!email) return '';
+    const me = people.find(pp => (pp.email || '').trim().toLowerCase() === email);
+    return activeLocationName(me?.defaultLocation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, people, activeLocations]);
+  const userDefaultLocationApplied = useRef(false);
+  useEffect(() => {
+    if (!userDefaultLocation || userDefaultLocationApplied.current) return;
+    userDefaultLocationApplied.current = true;
+    setScheduleLocation(userDefaultLocation);
+    setConfig(prev => ({ ...prev, origin: userDefaultLocation as any }));
+  }, [userDefaultLocation]);
+
   /** Set of INACTIVE location identifiers (name + code, normalised). Kept as the
    *  inactive set rather than the active one so the rule can FAIL OPEN: a product
    *  whose location is blank, or names a site that isn't in the Locations table at
@@ -14264,6 +14302,7 @@ export default function App() {
       return (
         <PeoplePage
           people={people}
+          locations={activeLocations}
           onAddPerson={(newPerson) => setPeople([...people, newPerson])}
           onUpdatePerson={(updated) => setPeople(people.map(p => p.id === updated.id ? updated : p))}
           onDeletePerson={(id) => { recordUserDeletes(COLLECTIONS.people, [id]); setPeople(people.filter(p => p.id !== id)); }}
@@ -26291,6 +26330,7 @@ export default function App() {
                           if (customer) {
                             const filtered = contractsForCustomer(customer);
                             setFilteredOrderContracts(filtered);
+                            applyCustomerOrderDefaults(customer);
                             // Auto-fill carrier from customer default
                             if (customer.defaultCarrierCode) {
                               const defaultCarrier = carriers.find(c => c.carrierNumber === customer.defaultCarrierCode || c.name === customer.defaultCarrierCode);
@@ -26320,6 +26360,7 @@ export default function App() {
                             setOrderCustomerId(match.id);
                             setOrderShipToId(''); // reset on customer change
                             setFilteredOrderContracts(contractsForCustomer(match));
+                            applyCustomerOrderDefaults(match);
                             if (match.defaultCarrierCode) {
                               const defaultCarrier = carriers.find(c => c.carrierNumber === match.defaultCarrierCode || c.name === match.defaultCarrierCode);
                               if (defaultCarrier) setOrderCarrier(defaultCarrier.name);

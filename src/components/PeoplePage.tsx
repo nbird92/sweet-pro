@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Person, PERMISSION_GROUPS } from '../types';
+import { Person, Location, PERMISSION_GROUPS } from '../types';
 import { Plus, Users } from 'lucide-react';
 import PageBanner from './PageBanner';
 import DataTable from './DataTable';
@@ -8,6 +8,8 @@ import type { SheetSpec } from '../utils/exportExcel';
 
 interface PeoplePageProps {
   people: Person[];
+  /** Active locations — options for a person's Default Location. */
+  locations: Location[];
   onAddPerson: (person: Person) => void;
   onUpdatePerson: (person: Person) => void;
   onDeletePerson: (personId: string) => void;
@@ -41,11 +43,13 @@ const emptyPerson = (): Person => ({
   department: 'operations',
   salespersonNumber: '',
   position: '',
+  defaultLocation: '',
   notes: '',
 });
 
 export default function PeoplePage({
   people,
+  locations,
   onAddPerson,
   onUpdatePerson,
   onDeletePerson,
@@ -77,6 +81,7 @@ export default function PeoplePage({
       { header: 'Position', key: 'position' },
       { header: 'Department', key: 'department' },
       { header: 'Permission', key: 'permission' },
+      { header: 'Default Location', key: 'defaultLocation' },
       { header: 'Sales #', key: 'salespersonNumber' },
       { header: 'Notes', key: 'notes' },
     ],
@@ -119,6 +124,7 @@ export default function PeoplePage({
             { key: 'position', label: 'Position', render: (p) => p.position || '-' },
             { key: 'department', label: 'Department', render: (p) => <span className="uppercase">{p.department}</span> },
             { key: 'permission', label: 'Permission', render: (p) => p.permission || '-' },
+            { key: 'defaultLocation', label: 'Default Location', render: (p) => p.defaultLocation || '-' },
             { key: 'salespersonNumber', label: 'Sales #', render: (p) => p.salespersonNumber || '-' },
           ]}
           rows={filteredPeople}
@@ -162,6 +168,7 @@ export default function PeoplePage({
               <DetailRow label="Position" value={personDraft.position} />
               <DetailRow label="Department" value={<span className="uppercase">{personDraft.department}</span>} />
               <DetailRow label="Permission" value={personDraft.permission} />
+              <DetailRow label="Default Location" value={personDraft.defaultLocation} />
               {personDraft.department === 'sales' && <DetailRow label="Sales Person Number" value={personDraft.salespersonNumber} />}
               <DetailRow label="Notes" value={personDraft.notes} />
             </>
@@ -212,6 +219,20 @@ export default function PeoplePage({
                   >
                     <option value="">— None —</option>
                     {PERMISSION_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </DetailField>
+                <DetailField label="Default Location">
+                  <select
+                    value={personDraft.defaultLocation || ''}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, defaultLocation: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  >
+                    <option value="">— None —</option>
+                    {locations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+                    {/* Keep a since-retired location visible so it isn't silently dropped. */}
+                    {personDraft.defaultLocation && !locations.some(l => l.name === personDraft.defaultLocation) && (
+                      <option value={personDraft.defaultLocation}>{personDraft.defaultLocation} (inactive)</option>
+                    )}
                   </select>
                 </DetailField>
                 <DetailField label="Department" required>

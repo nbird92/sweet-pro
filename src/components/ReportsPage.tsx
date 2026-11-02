@@ -40,6 +40,7 @@ import type {
 import { resolveShortForm } from '../utils/namingFormulaResolver';
 import { computeVolumeTaken } from '../utils/contractMatch';
 import { sendEmail } from '../utils/sendEmail';
+import CustomerContractsTable, { isContractActive } from './CustomerContractsTable';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
@@ -1489,7 +1490,9 @@ export default function ReportsPage({
         // Contract Volume − Volume Taken, never the persisted volumeOutstanding.
         const remaining = contractVol - taken;
         return {
+          contract: ct,
           contractNumber: ct.contractNumber || '—', product: ct.skuName || '—',
+          origin: ct.origin || '', active: isContractActive(ct),
           price: typeof ct.finalPrice === 'number' ? ct.finalPrice : 0, currency: (ct.currency || '').trim().toUpperCase(),
           startDate: ct.startDate || '', endDate: ct.endDate || '',
           contractVol, taken, remaining, qtyOnOrder,
@@ -1639,57 +1642,16 @@ export default function ReportsPage({
               </div>
 
               {/* Contracts */}
-              <div className={card}>
-                <div className={cardHead}>
+              <div className="space-y-2">
+                <div className="text-[10px] font-bold uppercase tracking-widest flex items-center justify-between">
                   <span>Contracts</span>
                   <span className="font-mono normal-case tracking-normal opacity-60">{row.contractRows.length} active</span>
                 </div>
-                {row.contractRows.length === 0 ? (
-                  <div className="p-6 text-center text-xs opacity-50 italic">No active contracts for this customer.</div>
-                ) : (
-                  <div className="p-4 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-                    {row.contractRows.map((c, i) => {
-                      const pct = c.contractVol > 0 ? Math.min(100, Math.max(0, (c.taken / c.contractVol) * 100)) : 0;
-                      return (
-                        <div key={`${c.contractNumber}-${i}`} className="border border-[#141414]/15 bg-[#FAFAF8] p-3 space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <div className="font-mono font-bold text-sm">{c.contractNumber}</div>
-                              <div className="text-[11px] opacity-70">{c.product}</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-mono font-bold text-sm">{c.price ? `$${c.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div>
-                              <div className="text-[10px] opacity-60">{c.currency ? `${c.currency} / MT` : 'per MT'}</div>
-                            </div>
-                          </div>
-                          <div className="text-[11px] flex items-center gap-1.5">
-                            <Calendar size={11} className="opacity-50" />
-                            <span>{c.startDate ? fmtDate(c.startDate) : '—'}</span>
-                            <span className="opacity-40">→</span>
-                            <span>{c.endDate ? fmtDate(c.endDate) : '—'}</span>
-                          </div>
-                          <div>
-                            <div className="h-1.5 bg-[#141414]/10"><div className="h-full bg-emerald-600" style={{ width: `${pct}%` }} /></div>
-                            <div className="mt-1 text-[10px] opacity-60">{pct.toFixed(0)}% taken</div>
-                          </div>
-                          <div className="grid grid-cols-4 gap-1 text-center">
-                            {[
-                              { l: 'Volume', v: c.contractVol },
-                              { l: 'Taken', v: c.taken },
-                              { l: 'Remaining', v: c.remaining },
-                              { l: 'On Order', v: c.qtyOnOrder },
-                            ].map(x => (
-                              <div key={x.l} className="bg-white border border-[#141414]/10 py-1">
-                                <div className="text-[9px] uppercase tracking-wider opacity-50">{x.l}</div>
-                                <div className="font-mono text-[11px] font-bold">{formatNum(x.v)}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <CustomerContractsTable
+                  rows={row.contractRows.map(c => ({ contract: c.contract, taken: c.taken, onOrder: c.qtyOnOrder, outstanding: c.remaining }))}
+                  label={(n) => (toShortform(n) || n || '(unknown)').trim()}
+                  emptyMessage="No active contracts for this customer."
+                />
               </div>
             </div>
           );

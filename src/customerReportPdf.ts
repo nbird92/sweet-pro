@@ -8,6 +8,8 @@ import autoTable from 'jspdf-autotable';
 export interface CustomerReportContract {
   contractNumber: string;
   product: string;
+  origin: string;
+  active: boolean;
   price: number;        // final price per MT
   currency: string;
   startDate: string;
@@ -174,32 +176,39 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
   const maxRows = Math.max(1, Math.floor((footerY - 8 - y - 8) / rowH));
   const rows = data.contracts.slice(0, maxRows);
   const hidden = data.contracts.length - rows.length;
+  // Same columns as the customer card's Contracts table.
   const body = rows.map(c => [
     c.contractNumber,
+    c.active ? 'Active' : 'Closed',
     c.product,
-    c.price ? `${c.currency ? c.currency + ' ' : ''}$${num(c.price, 2)}` : '—',
-    c.startDate ? fmtDate(c.startDate) : '—',
-    c.endDate ? fmtDate(c.endDate) : '—',
+    c.origin || '—',
+    `${c.startDate ? fmtDate(c.startDate) : '—'} – ${c.endDate ? fmtDate(c.endDate) : '—'}`,
+    c.price ? `${c.currency ? c.currency + ' ' : ''}${num(c.price, 2)}` : '—',
     num(c.contractVol),
     num(c.taken),
-    num(c.remaining),
     num(c.qtyOnOrder),
+    num(c.remaining),
   ]);
-  if (body.length === 0) body.push(['No active contracts', '', '', '', '', '', '', '', '']);
+  if (body.length === 0) body.push(['No active contracts', '', '', '', '', '', '', '', '', '']);
   autoTable(doc, {
     startY: y,
     margin: { left: M, right: M },
-    head: [['Contract #', 'Product', 'Price / MT', 'Start', 'End', 'Volume (MT)', 'Taken', 'Remaining', 'On Order']],
+    head: [['Contract #', 'Status', 'Product', 'Origin', 'Term', 'Price', 'Volume (MT)', 'Taken', 'On Order', 'Balance']],
     body,
     styles: { fontSize: 7, cellPadding: 1.6, textColor: INK, lineColor: [225, 225, 220], lineWidth: 0.2 },
     headStyles: { fillColor: INK, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5 },
     alternateRowStyles: { fillColor: PANEL },
     columnStyles: {
       0: { fontStyle: 'bold' },
-      2: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right', fontStyle: 'bold' }, 8: { halign: 'right' },
+      6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { halign: 'right', fontStyle: 'bold' },
     },
     didParseCell: (d: any) => {
-      if (d.section === 'head' && [2, 5, 6, 7, 8].includes(d.column.index)) d.cell.styles.halign = 'right';
+      if (d.section === 'head' && [6, 7, 8, 9].includes(d.column.index)) d.cell.styles.halign = 'right';
+      // Status pill colour, matching the card table's Active / Closed badge.
+      if (d.section === 'body' && d.column.index === 1) {
+        d.cell.styles.fontStyle = 'bold';
+        d.cell.styles.textColor = d.cell.raw === 'Active' ? GREEN : MUTED;
+      }
     },
   });
   if (hidden > 0) {
