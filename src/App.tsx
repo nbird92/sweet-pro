@@ -6236,7 +6236,7 @@ export default function App() {
   /** Build the full shipping document package (BOL + COA + Packing List + [Bag ID
    *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
    *  ID Report is included only for packaged / tote shipments. */
-  const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order) => {
+  const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order, scaleTicketDirection?: 'shipping' | 'receiving') => {
     try {
       const { shipment, order: linkedOrder, shipFromLoc } = resolveShipmentDocSources(rawShipment, orderOverride);
       const cust = customers.find(c => c.name === shipment.customer);
@@ -6255,6 +6255,7 @@ export default function App() {
         lotCodes,
         qaProducts,
         includeBagIdReport: includeBag,
+        scaleTicketDirection,
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, title: 'Document Package Preview' });
@@ -6325,7 +6326,8 @@ export default function App() {
     // All package documents show the invoice's scaled Qty (MT) — the official
     // weighed quantity — not the ordered quantity.
     const scaled = scaleDocSourcesToInvoice(inv, shipment, orderOverride);
-    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order);
+    // Invoiced loads are outbound — the Scale Ticket's Shipping box is marked.
+    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping');
   };
 
   /** Transfer-table action: build the document package (BOL, COA, Packing List,

@@ -8,6 +8,8 @@ export interface GenerateScaleTicketParams {
   customer?: Customer;
   carrier?: Carrier;
   shipFromLocation?: Location;
+  /** Which template checkbox to mark with an "X" — outbound loads are 'shipping'. */
+  direction?: 'shipping' | 'receiving';
 }
 
 /** Draw a Scale (weigh) Ticket matching the customer-provided Google Sheets
@@ -22,6 +24,7 @@ export function renderScaleTicketInto(doc: jsPDF, {
   customer: _customer,
   carrier,
   shipFromLocation: _shipFromLocation,
+  direction,
 }: GenerateScaleTicketParams): void {
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 18;
@@ -34,16 +37,22 @@ export function renderScaleTicketInto(doc: jsPDF, {
 
   // ── Shipping / Receiving checkboxes (template row) ──
   let y = 36;
-  const checkbox = (x: number, label: string) => {
+  const checkbox = (x: number, label: string, checked: boolean) => {
     doc.setDrawColor(BLACK);
     doc.setLineWidth(0.4);
     doc.rect(x, y - 4, 5, 5);
+    if (checked) {
+      // "X" drawn corner to corner, inset so it sits inside the box.
+      doc.setLineWidth(0.5);
+      doc.line(x + 1, y - 3, x + 4, y);
+      doc.line(x + 4, y - 3, x + 1, y);
+    }
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
     doc.text(label, x + 8, y);
   };
-  checkbox(M, 'Shipping');
-  checkbox(M + 70, 'Receiving');
+  checkbox(M, 'Shipping', direction === 'shipping');
+  checkbox(M + 70, 'Receiving', direction === 'receiving');
   y += 12;
 
   // ── Label / value rows (template order; underlined value area) ──

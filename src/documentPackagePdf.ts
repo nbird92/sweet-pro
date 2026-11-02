@@ -18,6 +18,8 @@ export interface GenerateDocumentPackageParams {
   /** Include the Bag ID Report page. Only true when the invoice/order carries
    *  packaged or tote products (bulk/liquid loads have no bag IDs). */
   includeBagIdReport: boolean;
+  /** Scale Ticket Shipping/Receiving box to mark (invoice-table packages: 'shipping'). */
+  scaleTicketDirection?: 'shipping' | 'receiving';
 }
 
 /**
@@ -31,7 +33,7 @@ export interface GenerateDocumentPackageParams {
  * Each document type mirrors a template type in the QA Templates table.
  */
 export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams): { blobUrl: string; filename: string } {
-  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport } = params;
+  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
 
   // One render step per document; each draws onto the current page. addPage()
@@ -45,7 +47,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
   if (includeBagIdReport) {
     steps.push(() => renderBagIdReportInto(doc, { shipment, order, customer, lotCodes, qaProducts }));
   }
-  steps.push(() => renderScaleTicketInto(doc, { shipment, order, customer, carrier, shipFromLocation }));
+  steps.push(() => renderScaleTicketInto(doc, { shipment, order, customer, carrier, shipFromLocation, direction: scaleTicketDirection }));
 
   steps.forEach((step, i) => {
     if (i > 0) doc.addPage();
