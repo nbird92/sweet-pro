@@ -41,7 +41,7 @@ import { resolveShortForm } from '../utils/namingFormulaResolver';
 import { computeVolumeTaken } from '../utils/contractMatch';
 import { sendEmail } from '../utils/sendEmail';
 import CustomerContractsTable, { isContractActive } from './CustomerContractsTable';
-import CustomerSalesByMonth from './CustomerSalesByMonth';
+import CustomerSalesByMonth, { customerSalesRows } from './CustomerSalesByMonth';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
@@ -288,6 +288,9 @@ export default function ReportsPage({
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
   }
+  // Stable product label for the shared customer tables (memoized resolver).
+  const reportProductLabel = useCallback((n?: string) => (toShortform(n) || n || '(unknown)').trim(), [toShortform]);
+
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [trendYear, setTrendYear] = useState<string>('all');
   const [topNSearch, setTopNSearch] = useState('');
@@ -1363,9 +1366,35 @@ export default function ReportsPage({
   const [reportEmailSending, setReportEmailSending] = useState(false);
   const [reportEmailResult, setReportEmailResult] = useState<{ ok: boolean; message: string } | null>(null);
 
+  /** The customer's current orders — Open / Confirmed and not yet invoiced (by
+   *  BOL), any ship date — with the Contracts page "Orders on Contract" columns. */
+  const currentOrdersFor = useCallback((customerId: string) => {
+    const cust = customers.find(c => c.id === customerId);
+    if (!cust) return [];
+    const norm = (v?: string) => (v || '').trim().toLowerCase();
+    const names = new Set([norm(cust.name), norm(cust.itasCustomerName)].filter(Boolean));
+    const invoicedBols = new Set(invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit' && i.bolNumber).map(i => (i.bolNumber || '').trim().toUpperCase()));
+    return orders
+      .filter(o => (o.status === 'Open' || o.status === 'Confirmed')
+        && (names.has(norm(o.customer)) || names.has(norm(resolveCustomerName(o.customer))))
+        && !invoicedBols.has((o.bolNumber || '').trim().toUpperCase()))
+      .sort((a, b) => (a.shipmentDate || a.date || '').localeCompare(b.shipmentDate || b.date || ''))
+      .map(o => ({
+        bol: o.bolNumber || '',
+        customer: o.customer || '',
+        product: (o.lineItems || []).map(li => reportProductLabel(li.productDisplayName || li.productName)).filter(Boolean).join(', ')
+          || (o.product ? reportProductLabel(o.product) : ''),
+        po: o.po || '',
+        shipDate: o.shipmentDate || '',
+        qtyMt: (o.lineItems || []).reduce((s, li) => s + (li.totalWeight || 0), 0),
+        amount: o.amount || 0,
+        status: o.status,
+      }));
+  }, [customers, invoices, orders, resolveCustomerName, reportProductLabel]);
+
   const openCustomerReportPdf = useCallback(async (row: typeof customerReport[number]) => {
     const { generateCustomerReportPdf } = await import('../customerReportPdf');
-    const monthly = customerMonthlySales.rows.find(r => r.id === row.id);
+    const cust = customers.find(c => c.id === row.id);
     const { blob, blobUrl, filename } = generateCustomerReportPdf({
       customer: row.customer,
       customerNumber: row.customerNumber,
@@ -1374,14 +1403,16 @@ export default function ReportsPage({
       onOrderMt: row.onOrderMt,
       contractCount: row.contractCount,
       remainingTotal: row.remainingTotal,
-      byMonth: monthly?.byMonth || {},
+      byMonth: customerMonthlySales.rows.find(r => r.id === row.id)?.byMonth || {},
+      salesRows: cust ? customerSalesRows(cust, invoices, reportProductLabel, reportYear) : [],
+      orders: currentOrdersFor(row.id),
       contracts: row.contractRows,
     });
     setReportPdf(prev => {
       if (prev?.url) URL.revokeObjectURL(prev.url);
       return { url: blobUrl, blob, filename, customerId: row.id, customer: row.customer };
     });
-  }, [customerMonthlySales, reportYear]);
+  }, [customers, invoices, reportProductLabel, reportYear, customerMonthlySales, currentOrdersFor]);
 
   const closeReportPdf = () => {
     setReportPdf(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; });
@@ -1558,9 +1589,6 @@ export default function ReportsPage({
   }, [invoiceCustIndex, reportYear]);
   /** The report year's 12 months, as YYYY-MM keys. */
   const reportYearMonths = useMemo(() => Array.from({ length: 12 }, (_, i) => `${reportYear}-${String(i + 1).padStart(2, '0')}`), [reportYear]);
-
-  // Stable product label for the shared customer tables (memoized resolver).
-  const reportProductLabel = useCallback((n?: string) => (toShortform(n) || n || '(unknown)').trim(), [toShortform]);
 
   const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
   const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;

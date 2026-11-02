@@ -20,6 +20,19 @@ export interface CustomerReportContract {
   qtyOnOrder: number;
 }
 
+/** A current (open / confirmed, not yet invoiced) order — the same columns as
+ *  the Contracts page "Orders on Contract" list. */
+export interface CustomerReportOrder {
+  bol: string;
+  customer: string;
+  product: string;
+  po: string;
+  shipDate: string;
+  qtyMt: number;
+  amount: number;
+  status: string;
+}
+
 export interface CustomerReportData {
   customer: string;
   customerNumber?: string;
@@ -29,9 +42,12 @@ export interface CustomerReportData {
   onOrderMt: number;
   contractCount: number;
   remainingTotal: number;
-  /** YYYY-MM → invoiced MT. */
+  /** YYYY-MM → invoiced MT (drives the last-12-months bar chart). */
   byMonth: Record<string, number>;
+  /** Product × month rows (12 MT values) for salesYear (the table under the chart). */
+  salesRows: { name: string; values: number[] }[];
   contracts: CustomerReportContract[];
+  orders: CustomerReportOrder[];
 }
 
 const INK: [number, number, number] = [20, 20, 20];
@@ -135,10 +151,10 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
   doc.setTextColor(...MUTED);
   doc.text(`12-month total: ${num(yearTotal)} MT`, W - M, y - 6.5, { align: 'right' });
 
-  const chartH = 58;
+  const chartH = 44;
   const chartTop = y + 2;
   const baseY = chartTop + chartH - 10; // leave room for month labels
-  const plotH = chartH - 18;
+  const plotH = chartH - 16;
   doc.setFillColor(...PANEL);
   doc.roundedRect(M, chartTop - 2, CW, chartH + 2, 2, 2, 'F');
   const maxV = Math.max(...vals, 1);
@@ -168,16 +184,44 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
     doc.setTextColor(...MUTED);
     doc.text(`${MONTHS[parseInt(mm, 10) - 1]} '${yy.slice(2)}`, cx, baseY + 4.5, { align: 'center' });
   });
-  y = chartTop + chartH + 10;
+  y = chartTop + chartH + 4;
+
+  // ── …and under the chart, the product × month table for the report year (the
+  //    same table as the Sales Reports page and the customer card's Sales tab) ──
+  const salesYear = data.salesYear || new Date().getFullYear();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...INK);
+  doc.text(`Invoiced Sales by Product (MT) — ${salesYear}`, M, y);
+  y += 2;
+  const MAX_PRODUCTS = 5;
+  const sorted = [...data.salesRows].sort((a, b) => b.values.reduce((s, v) => s + v, 0) - a.values.reduce((s, v) => s + v, 0));
+  const shown = sorted.slice(0, MAX_PRODUCTS);
+  const rest = sorted.slice(MAX_PRODUCTS);
+  if (rest.length) shown.push({ name: `Other (${rest.length})`, values: MONTHS.map((_, i) => rest.reduce((s, r) => s + r.values[i], 0)) });
+  const cell = (v: number) => (v ? num(v) : '—');
+  const colTotals = MONTHS.map((_, i) => shown.reduce((s, r) => s + r.values[i], 0));
+  const salesBody: string[][] = shown.length
+    ? shown.map(r => [r.name, ...r.values.map(cell), num(r.values.reduce((a, b) => a + b, 0))])
+    : [[`No invoiced sales in ${salesYear}`, ...MONTHS.map(() => ''), '']];
+  autoTable(doc, {
+    startY: y,
+    margin: { left: M, right: M },
+    head: [['Product', ...MONTHS, 'Total (MT)']],
+    body: salesBody,
+    foot: shown.length ? [['Total', ...colTotals.map(cell), num(colTotals.reduce((a, b) => a + b, 0))]] : undefined,
+    styles: { fontSize: 6.5, cellPadding: 1.4, textColor: INK, lineColor: [225, 225, 220], lineWidth: 0.2, halign: 'center' },
+    headStyles: { fillColor: INK, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5 },
+    footStyles: { fillColor: PANEL, textColor: INK, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [250, 250, 248] },
+    columnStyles: { 0: { halign: 'left', cellWidth: 34, fontStyle: 'bold' }, 13: { fontStyle: 'bold' } },
+    didParseCell: (d: any) => { if (d.column.index === 0) d.cell.styles.halign = 'left'; },
+  });
+  y = ((doc as any).lastAutoTable?.finalY || y) + 9;
 
   // ── Contract details ──
   y = sectionTitle(doc, 'Contract Details', M, y, CW);
-  const footerY = H - 10;
-  // Fit on one page: estimate rows that fit, summarise any overflow.
-  const rowH = 6.2;
-  const maxRows = Math.max(1, Math.floor((footerY - 8 - y - 8) / rowH));
-  const rows = data.contracts.slice(0, maxRows);
-  const hidden = data.contracts.length - rows.length;
+  const rows = data.contracts;
   // Same columns as the customer card's Contracts table.
   const body = rows.map(c => [
     c.contractNumber,
@@ -194,7 +238,7 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
   if (body.length === 0) body.push(['No active contracts', '', '', '', '', '', '', '', '', '']);
   autoTable(doc, {
     startY: y,
-    margin: { left: M, right: M },
+    margin: { left: M, right: M, bottom: 18 },
     head: [['Contract #', 'Status', 'Product', 'Origin', 'Term', 'Price', 'Volume (MT)', 'Taken', 'On Order', 'Balance']],
     body,
     styles: { fontSize: 7, cellPadding: 1.6, textColor: INK, lineColor: [225, 225, 220], lineWidth: 0.2 },
@@ -213,23 +257,50 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
       }
     },
   });
-  if (hidden > 0) {
-    const endY = (doc as any).lastAutoTable?.finalY || y;
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7);
-    doc.setTextColor(...MUTED);
-    doc.text(`+ ${hidden} more contract${hidden === 1 ? '' : 's'} not shown`, M, endY + 4);
-  }
+  y = ((doc as any).lastAutoTable?.finalY || y) + 9;
 
-  // ── Footer ──
-  doc.setDrawColor(...GREEN);
-  doc.setLineWidth(0.4);
-  doc.line(M, footerY - 4, W - M, footerY - 4);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.setTextColor(...MUTED);
-  doc.text('Volumes in metric tonnes (MT). Sales volume is invoiced product; qty on order is open and confirmed orders not yet invoiced.', M, footerY);
-  doc.text('Sucro Canada', W - M, footerY, { align: 'right' });
+  // ── Current orders (same columns as Contracts → "Orders on Contract") ──
+  if (y > H - 40) { doc.addPage(); y = 18; }
+  y = sectionTitle(doc, 'Current Orders', M, y, CW);
+  const money = (n: number) => `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const orderBody = data.orders.map(o => [o.bol || '—', o.customer, o.product || '—', o.po || '—', o.shipDate ? fmtDate(o.shipDate) : '—', num(o.qtyMt, 2), money(o.amount), o.status]);
+  const orderMt = data.orders.reduce((s, o) => s + (o.qtyMt || 0), 0);
+  const orderAmt = data.orders.reduce((s, o) => s + (o.amount || 0), 0);
+  autoTable(doc, {
+    startY: y,
+    margin: { left: M, right: M, bottom: 18 },
+    head: [['BOL', 'Customer', 'Product', 'PO', 'Ship Date', 'Qty (MT)', 'Amount', 'Status']],
+    body: orderBody.length ? orderBody : [['No current orders', '', '', '', '', '', '', '']],
+    foot: orderBody.length ? [[`Total (${data.orders.length} order${data.orders.length === 1 ? '' : 's'})`, '', '', '', '', `${num(orderMt, 2)} MT`, money(orderAmt), '']] : undefined,
+    styles: { fontSize: 7, cellPadding: 1.6, textColor: INK, lineColor: [225, 225, 220], lineWidth: 0.2 },
+    headStyles: { fillColor: INK, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 6.5 },
+    footStyles: { fillColor: PANEL, textColor: INK, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: PANEL },
+    columnStyles: { 0: { fontStyle: 'bold' }, 1: { fontStyle: 'bold' }, 5: { halign: 'right', fontStyle: 'bold' }, 6: { halign: 'right', fontStyle: 'bold' } },
+    didParseCell: (d: any) => {
+      if ((d.section === 'head' || d.section === 'foot') && [5, 6].includes(d.column.index)) d.cell.styles.halign = 'right';
+      // Status colours matching the popup's pills.
+      if (d.section === 'body' && d.column.index === 7) {
+        d.cell.styles.fontStyle = 'bold';
+        d.cell.styles.textColor = d.cell.raw === 'Confirmed' ? [29, 78, 216] : d.cell.raw === 'Open' ? [180, 83, 9] : d.cell.raw === 'Completed' ? GREEN : MUTED;
+      }
+    },
+  });
+
+  // ── Footer on every page ──
+  const footerY = H - 10;
+  const pages = doc.getNumberOfPages();
+  for (let pg = 1; pg <= pages; pg++) {
+    doc.setPage(pg);
+    doc.setDrawColor(...GREEN);
+    doc.setLineWidth(0.4);
+    doc.line(M, footerY - 4, W - M, footerY - 4);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    doc.setTextColor(...MUTED);
+    doc.text('Volumes in metric tonnes (MT). Sales volume is invoiced product; qty on order is open and confirmed orders not yet invoiced.', M, footerY);
+    doc.text(pages > 1 ? `Sucro Canada  ·  Page ${pg} of ${pages}` : 'Sucro Canada', W - M, footerY, { align: 'right' });
+  }
 }
 
 export function generateCustomerReportPdf(data: CustomerReportData): { blob: Blob; blobUrl: string; filename: string } {

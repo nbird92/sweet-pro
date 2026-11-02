@@ -58,6 +58,34 @@ export function customerSalesYears(customer: Customer, invoices: Invoice[]): num
   return Array.from(ys).sort((a, b) => b - a);
 }
 
+/** Product × month rows (12 values, MT) for one customer and calendar year —
+ *  the data behind the table. Exported so the PDF report prints the same numbers. */
+export function customerSalesRows(customer: Customer, invoices: Invoice[], label: (name?: string) => string, year: number): { name: string; values: number[] }[] {
+  const names = new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean));
+  // Split an invoice's MT across its line items (by weight) so mixed loads land on the right product.
+  const invoiceProductMt = (inv: Invoice): { product: string; mt: number }[] => {
+    const lines = (inv.lineItems || []).filter(li => (li as any).productDisplayName || li.productName);
+    const totalW = lines.reduce((s, li) => s + (Number((li as any).totalWeight) || 0), 0);
+    if (lines.length > 1 && totalW > 0) {
+      return lines.map(li => ({ product: label((li as any).productDisplayName || li.productName), mt: (inv.qty || 0) * (Number((li as any).totalWeight) || 0) / totalW }));
+    }
+    const li = lines[0] as any;
+    return [{ product: label(li?.productDisplayName || inv.product || li?.productName), mt: inv.qty || 0 }];
+  };
+  const m = new Map<string, number[]>();
+  for (const inv of invoices) {
+    if (inv.status === 'Cancelled' || !names.has(norm(inv.customer))) continue;
+    if (parseInt((inv.date || '').slice(0, 4)) !== year) continue;
+    const mo = parseInt((inv.date || '').slice(5, 7)) - 1;
+    if (mo < 0 || mo > 11) continue;
+    for (const { product, mt } of invoiceProductMt(inv)) {
+      const v = m.get(product) || new Array(12).fill(0);
+      v[mo] += mt; m.set(product, v);
+    }
+  }
+  return Array.from(m.entries()).map(([name, values]) => ({ name, values })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export default function CustomerSalesByMonth({ customer, invoices, label, year, years, onYearChange }: {
   customer: Customer;
   invoices: Invoice[];
@@ -68,37 +96,13 @@ export default function CustomerSalesByMonth({ customer, invoices, label, year, 
   years?: number[];
   onYearChange: (y: number) => void;
 }) {
-  const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
-  const custInvoices = useMemo(() => invoices.filter(i => i.status !== 'Cancelled' && names.has(norm(i.customer))), [invoices, names]);
   const yearOptions = useMemo(() => {
     const ys = new Set(years && years.length ? years : customerSalesYears(customer, invoices));
     ys.add(year);
     return Array.from(ys).sort((a, b) => b - a);
   }, [years, customer, invoices, year]);
 
-  const rows = useMemo(() => {
-    // Split an invoice's MT across its line items (by weight) so mixed loads land on the right product.
-    const invoiceProductMt = (inv: Invoice): { product: string; mt: number }[] => {
-      const lines = (inv.lineItems || []).filter(li => (li as any).productDisplayName || li.productName);
-      const totalW = lines.reduce((s, li) => s + (Number((li as any).totalWeight) || 0), 0);
-      if (lines.length > 1 && totalW > 0) {
-        return lines.map(li => ({ product: label((li as any).productDisplayName || li.productName), mt: (inv.qty || 0) * (Number((li as any).totalWeight) || 0) / totalW }));
-      }
-      const li = lines[0] as any;
-      return [{ product: label(li?.productDisplayName || inv.product || li?.productName), mt: inv.qty || 0 }];
-    };
-    const m = new Map<string, number[]>();
-    for (const inv of custInvoices) {
-      if (parseInt((inv.date || '').slice(0, 4)) !== year) continue;
-      const mo = parseInt((inv.date || '').slice(5, 7)) - 1;
-      if (mo < 0 || mo > 11) continue;
-      for (const { product, mt } of invoiceProductMt(inv)) {
-        const v = m.get(product) || new Array(12).fill(0);
-        v[mo] += mt; m.set(product, v);
-      }
-    }
-    return Array.from(m.entries()).map(([name, values]) => ({ name, values })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [custInvoices, year, label]);
+  const rows = useMemo(() => customerSalesRows(customer, invoices, label, year), [customer, invoices, label, year]);
 
   return (
     <div className="bg-white border border-[#141414] p-4 space-y-3">
