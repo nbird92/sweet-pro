@@ -95,6 +95,7 @@ import {
 import { poKey, samePoNumber } from './utils/poNumber';
 import { sameLotCode, cleanLotCode, cleanLotCodeList, dedupeLotCodes, lotKey } from './utils/lotCode';
 const SalesForecastPage = lazy(() => import('./components/SalesForecastPage'));
+const HamiltonScheduleSyncModal = lazy(() => import('./components/HamiltonScheduleSyncModal'));
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
@@ -9227,6 +9228,20 @@ export default function App() {
   const [scheduleSyncConfig, setScheduleSyncConfig] = useState<ShipmentScheduleConfig | null>(null);
   const [scheduleSyncUrl, setScheduleSyncUrl] = useState('');
   const [isSyncingSchedule, setIsSyncingSchedule] = useState(false);
+  // Hamilton (Sherman) dock-schedule sync — dedicated modal for the wide SHERMAN sheet.
+  const [showHamiltonScheduleSync, setShowHamiltonScheduleSync] = useState(false);
+  const applyHamiltonScheduleSync = (newShipments: Shipment[], updates: Array<{ id: string; patch: Partial<Shipment> }>) => {
+    const patchById = new Map(updates.map(u => [u.id, u.patch] as const));
+    // Functional update: merge onto the LIVE list so edits made while the modal
+    // was open survive; updates are id-targeted patches, never whole records.
+    setHamiltonShipments(prev => [
+      ...prev.map(s => (patchById.has(s.id) ? { ...s, ...patchById.get(s.id)! } : s)),
+      ...newShipments,
+    ]);
+    const sherman = locations.find(l => l.name.toLowerCase().includes('sherman'));
+    if (sherman) setScheduleLocation(sherman.name);
+    setShowHamiltonScheduleSync(false);
+  };
   // Run the schedule-grid sync → stage results in the existing shipment preview.
   const runScheduleSync = async () => {
     if (!scheduleSyncConfig) return;
@@ -11919,6 +11934,10 @@ export default function App() {
             <button onClick={() => fileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <FileText size={12} /> Import CSV
+            </button>
+            <button onClick={() => setShowHamiltonScheduleSync(true)}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
+              <RefreshCw size={12} /> Sync Sherman
             </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
@@ -21109,6 +21128,26 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
+          );
+        })()}
+
+        {/* Hamilton (Sherman) dock-schedule sync */}
+        {showHamiltonScheduleSync && (() => {
+          const sherman = locations.find(l => l.name.toLowerCase().includes('sherman'));
+          return (
+            <Suspense fallback={null}>
+              <HamiltonScheduleSyncModal
+                onClose={() => setShowHamiltonScheduleSync(false)}
+                existingShipments={hamiltonShipments}
+                locations={locations}
+                customers={customers}
+                skus={skus}
+                qaProducts={qaProducts}
+                carriers={carriers}
+                slotTimes={generateTimeSlots(sherman?.appointmentStartTime || '06:00', sherman?.appointmentEndTime || '18:00', sherman?.appointmentDuration || 30)}
+                onApply={applyHamiltonScheduleSync}
+              />
+            </Suspense>
           );
         })()}
 

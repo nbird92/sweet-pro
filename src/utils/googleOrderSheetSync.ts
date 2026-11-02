@@ -431,7 +431,7 @@ function parseMolassesTab(rows: string[][]): ParsedOrderRow[] {
 /* Catalog resolution                                                  */
 /* ------------------------------------------------------------------ */
 
-function resolveCustomer(raw: string, customers: Customer[]): string {
+export function resolveCustomer(raw: string, customers: Customer[]): string {
   if (!raw) return raw;
   // Strong normalization: lowercase AND strip every non-alphanumeric, so casing,
   // apostrophes, punctuation and spacing all collapse ("Chapman's", "CHAPMANS",
@@ -452,7 +452,7 @@ function resolveCustomer(raw: string, customers: Customer[]): string {
   return m ? m.name : raw;
 }
 
-function resolveCarrier(raw: string, carriers: Carrier[]): string {
+export function resolveCarrier(raw: string, carriers: Carrier[]): string {
   if (!raw) return raw;
   const norm = raw.trim().toLowerCase();
   const exact = carriers.find(c => (c.name || '').trim().toLowerCase() === norm);
@@ -479,7 +479,7 @@ function normCode(s: string): string {
  *
  * Preserves arrays, primitives, and null. Empty strings, 0, false stay.
  */
-function stripUndefined<T>(value: T): T {
+export function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map(v => stripUndefined(v)) as unknown as T;
   }
@@ -577,7 +577,7 @@ function findSKUByCode(code: string, skus: SKU[]): SKU | null {
  *   3. Substring match against QA.skuName, then SKU.name (last resort).
  *   4. Fallback: keep raw text (caller treats as "unmatched").
  */
-function resolveProduct(
+export function resolveProduct(
   raw: string,
   skus: SKU[],
   qaProducts: QAProduct[],
