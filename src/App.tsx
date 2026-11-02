@@ -100,7 +100,7 @@ const ReportsPage = lazy(() => import('./components/ReportsPage'));
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
-import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource } from './utils/hamiltonScheduleSync';
+import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
 import {
   syncOrdersSheet,
   syncOrdersFromConfig,
@@ -3407,6 +3407,38 @@ export default function App() {
   // Convenience wrappers requested by the design.
   const resolveByBol = (bol?: string) => resolveRecord({ bol });
   const resolveByPo = (po?: string) => resolveRecord({ po });
+
+  // Ship-To for a shipment, from its order: matched by BOL (ignoring case and
+  // spacing), else by PO number. Among several orders on one PO (blanket POs),
+  // one that actually names a ship-to wins. Indexed once per data change.
+  const shipToIndex = useMemo(() => {
+    const custByName = new Map<string, Customer>(customers.map((c: Customer) => [c.name.trim().toUpperCase(), c]));
+    const nameFor = (o: Order): string => {
+      if (!o.shipToLocationId) return '';
+      const cust = custByName.get((o.customer || '').trim().toUpperCase());
+      return cust?.shipToLocations?.find(l => l.id === o.shipToLocationId)?.name || '';
+    };
+    const byBol = new Map<string, string>();
+    const byPo = new Map<string, string>();
+    for (const o of orders) {
+      const name = nameFor(o);
+      if (!name) continue;
+      const bk = (o.bolNumber || '').trim().toUpperCase();
+      if (bk && !byBol.has(bk)) byBol.set(bk, name);
+      const pk = poKey(o.po || '');
+      if (/^\d{5,}$/.test(pk) && !byPo.has(pk)) byPo.set(pk, name);
+    }
+    return { byBol, byPo };
+  }, [orders, customers]);
+  // PO fallback only for real PO numbers (5+ digits): poKey keeps just the digits,
+  // so a transfer ref like "SHER-TOTE-FERG-25" would collapse to "25" and hit an
+  // unrelated order.
+  const shipToForShipment = (s: { bol?: string; po?: string }): string => {
+    const byBol = shipToIndex.byBol.get((s.bol || '').trim().toUpperCase());
+    if (byBol) return byBol;
+    const pk = poKey(s.po || '');
+    return /^\d{5,}$/.test(pk) ? (shipToIndex.byPo.get(pk) || '') : '';
+  };
 
   // Enrich transfers ONCE per data change (not per render) via the unified
   // resolver, so the Transfers page's search/sort/filter no longer re-resolve
@@ -12189,13 +12221,7 @@ export default function App() {
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer || sRes.customer || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{(() => {
-                                                          // Look up ship-to via linked order's shipToLocationId
-                                                          const linkedOrder = orders.find(o => o.bolNumber === s.bol);
-                                                          if (!linkedOrder?.shipToLocationId) return '—';
-                                                          const cust = customers.find(c => c.name === linkedOrder.customer);
-                                                          return cust?.shipToLocations?.find(l => l.id === linkedOrder.shipToLocationId)?.name || '—';
-                                                        })()}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{shipToForShipment({ bol: s.bol || sRes.bolNumber, po: s.po || sRes.po }) || '—'}</td>
                                                         <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product || sRes.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || sRes.contractNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po || sRes.po || '—'}</td>
@@ -22442,7 +22468,7 @@ export default function App() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Time</label>
+                        <label className="text-[10px] uppercase font-bold opacity-60">Appointment Time</label>
                         <select
                           value={editingShipment.time || ''}
                           onChange={(e) => setEditingShipment({...editingShipment, time: e.target.value})}
@@ -22521,7 +22547,9 @@ export default function App() {
                         <label className="text-[10px] uppercase font-bold opacity-60">Arrive</label>
                         <input
                           type="time"
-                          value={editingShipment.arrive || ''}
+                          // Sheet-synced stamps are free text ("9:15 AM"); a time input only
+                          // accepts HH:MM, so normalize for display or the field shows blank.
+                          value={normalizeScheduleTime(editingShipment.arrive || '') || ''}
                           onChange={(e) => {
                             const updated = {...editingShipment, arrive: e.target.value};
                             if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
@@ -22534,7 +22562,9 @@ export default function App() {
                         <label className="text-[10px] uppercase font-bold opacity-60">Start</label>
                         <input
                           type="time"
-                          value={editingShipment.start || ''}
+                          // Sheet-synced stamps are free text ("9:15 AM"); a time input only
+                          // accepts HH:MM, so normalize for display or the field shows blank.
+                          value={normalizeScheduleTime(editingShipment.start || '') || ''}
                           onChange={(e) => {
                             const updated = {...editingShipment, start: e.target.value};
                             if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
@@ -22547,7 +22577,9 @@ export default function App() {
                         <label className="text-[10px] uppercase font-bold opacity-60">Out</label>
                         <input
                           type="time"
-                          value={editingShipment.out || ''}
+                          // Sheet-synced stamps are free text ("9:15 AM"); a time input only
+                          // accepts HH:MM, so normalize for display or the field shows blank.
+                          value={normalizeScheduleTime(editingShipment.out || '') || ''}
                           onChange={(e) => {
                             const updated = {...editingShipment, out: e.target.value};
                             if (e.target.value && updated.status !== 'In Progress' && updated.status !== 'Completed') updated.status = 'In Progress';
