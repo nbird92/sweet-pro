@@ -7,6 +7,7 @@ import { parseCSV } from '../utils/googleSheetsSync';
 import {
   HAMILTON_SCHEDULE_SHEET_ID, HAMILTON_SCHEDULE_TAB, HAMILTON_SCHEDULE_LOCATION,
   parseHamiltonSchedule, classifyScheduleRows, guessAppBay, normalizeScheduleTime,
+  loadHamiltonBayMap, saveHamiltonBayMap, loadHamiltonSource, saveHamiltonSource,
   type ScheduleParseResult, type ScheduleRowKind, type ClassifiedScheduleRow,
 } from '../utils/hamiltonScheduleSync';
 
@@ -18,7 +19,6 @@ import {
 //      current schedule (new / update / unchanged / conflict).
 //   3. Tick what to apply → onApply(new shipments, id-targeted patches).
 
-const BAY_MAP_KEY = 'hamiltonScheduleBayMap';
 const PREVIEW_LIMIT = 400;
 
 interface Props {
@@ -48,17 +48,15 @@ const KIND_STYLE: Record<ScheduleRowKind, { label: string; badge: string; tile: 
 };
 
 export default function HamiltonScheduleSyncModal({ onClose, existingShipments, locations, customers, skus, qaProducts, carriers, slotTimes, onApply }: Props) {
-  const [sheetUrl, setSheetUrl] = useState(`https://docs.google.com/spreadsheets/d/${HAMILTON_SCHEDULE_SHEET_ID}/`);
-  const [tabName, setTabName] = useState(HAMILTON_SCHEDULE_TAB);
+  const [sheetUrl, setSheetUrl] = useState(() => `https://docs.google.com/spreadsheets/d/${loadHamiltonSource().sheetId}/`);
+  const [tabName, setTabName] = useState(() => loadHamiltonSource().tab);
   const [year, setYear] = useState(new Date().getFullYear());
   const [fromDate, setFromDate] = useState(mondayOfThisWeek());
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ScheduleParseResult | null>(null);
-  const [bayMap, setBayMap] = useState<Record<string, string>>(() => {
-    try { return JSON.parse(localStorage.getItem(BAY_MAP_KEY) || '{}'); } catch { return {}; }
-  });
+  const [bayMap, setBayMap] = useState<Record<string, string>>(loadHamiltonBayMap);
   const [kindFilter, setKindFilter] = useState<ScheduleRowKind | 'all'>('all');
   const [search, setSearch] = useState('');
   // Per-row include overrides; rows without one follow the default (new + update on).
@@ -75,7 +73,7 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
   const updateBayMap = (sheetBay: string, appBay: string) => {
     setBayMap(prev => {
       const next = { ...prev, [sheetBay]: appBay };
-      try { localStorage.setItem(BAY_MAP_KEY, JSON.stringify(next)); } catch {}
+      saveHamiltonBayMap(next);
       return next;
     });
   };
@@ -95,9 +93,11 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
       setBayMap(prev => {
         const next = { ...prev };
         for (const b of result.bays) if (!(b.name in next)) next[b.name] = guessAppBay(b.name, appBays);
-        try { localStorage.setItem(BAY_MAP_KEY, JSON.stringify(next)); } catch {}
+        saveHamiltonBayMap(next);
         return next;
       });
+      // Remember the source so Sync All reads the same sheet/tab unattended.
+      saveHamiltonSource({ sheetId, tab: tabName.trim() || HAMILTON_SCHEDULE_TAB });
       setOverrides(new Map());
       setParsed(result);
     } catch (e) {

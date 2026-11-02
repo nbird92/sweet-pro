@@ -450,3 +450,27 @@ export function guessAppBay(sheetBay: string, appBays: string[]): string {
   if (!best && want.includes('molasses')) return '';
   return best;
 }
+
+/* ------------------------------------------------------------------ */
+/* Saved settings — shared by the modal and the unattended Sync All    */
+/* ------------------------------------------------------------------ */
+
+export const HAMILTON_BAY_MAP_KEY = 'hamiltonScheduleBayMap';
+const HAMILTON_SOURCE_KEY = 'hamiltonScheduleSource';
+
+export function loadHamiltonBayMap(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(HAMILTON_BAY_MAP_KEY) || '{}'); } catch { return {}; }
+}
+export function saveHamiltonBayMap(map: Record<string, string>) {
+  try { localStorage.setItem(HAMILTON_BAY_MAP_KEY, JSON.stringify(map)); } catch {}
+}
+/** Sheet + tab last read successfully in the modal (defaults to the Sherman workbook). */
+export function loadHamiltonSource(): { sheetId: string; tab: string } {
+  try {
+    const s = JSON.parse(localStorage.getItem(HAMILTON_SOURCE_KEY) || '{}');
+    return { sheetId: s.sheetId || HAMILTON_SCHEDULE_SHEET_ID, tab: s.tab || HAMILTON_SCHEDULE_TAB };
+  } catch { return { sheetId: HAMILTON_SCHEDULE_SHEET_ID, tab: HAMILTON_SCHEDULE_TAB }; }
+}
+export function saveHamiltonSource(src: { sheetId: string; tab: string }) {
+  try { localStorage.setItem(HAMILTON_SOURCE_KEY, JSON.stringify(src)); } catch {}
+}

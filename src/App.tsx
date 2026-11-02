@@ -99,7 +99,8 @@ const HamiltonScheduleSyncModal = lazy(() => import('./components/HamiltonSchedu
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
-import { syncShipmentScheduleSheet, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
+import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
+import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource } from './utils/hamiltonScheduleSync';
 import {
   syncOrdersSheet,
   syncOrdersFromConfig,
@@ -113,6 +114,7 @@ import {
   collapseLotCodeDuplicates,
   fetchTabPreview,
   extractSheetId,
+  fetchTabFromSheet,
   autoDetectColumns,
   columnLetter,
   DEFAULT_ORDER_IMPORT_CONFIG,
@@ -9600,8 +9602,8 @@ export default function App() {
   const presetIsUsable = (c?: SheetImportConfig | null) =>
     !!c && !!(c.sheetId || '').trim() && Array.isArray(c.tabs) && c.tabs.length > 0;
 
-  /** Run all four sheet imports back to back — orders, invoices, transfers and
-   *  Hamilton-lab lot codes — using ONLY each importer's saved preset, and accept
+  /** Run all sheet imports back to back — orders, invoices, transfers,
+   *  Hamilton-lab lot codes and the Sherman dock schedule — using ONLY each importer's saved preset, and accept
    *  every import/update automatically without showing a preview.
    *
    *  ORDER MATTERS: orders run before invoices because applying invoices drops any
@@ -9679,6 +9681,41 @@ export default function App() {
       }
     } else {
       notes.push('Hamilton Lab — skipped (no saved import preset)');
+    }
+
+    // 5. HAMILTON (SHERMAN) dock schedule — same parse/classify as the Sync Sherman
+    //    modal, using the bay mapping saved there. Applies new + update rows only;
+    //    slot conflicts are left for the modal, where they can be reviewed.
+    try {
+      const src = loadHamiltonSource();
+      const bayMap = loadHamiltonBayMap();
+      const sherman = locations.find(l => l.name.toLowerCase().includes('sherman'));
+      if (!Object.values(bayMap).some(Boolean)) {
+        notes.push('Sherman Schedule — skipped (open Sync Sherman once to map the bays)');
+      } else {
+        const grid = parseCSV(await fetchTabFromSheet(src.sheetId, src.tab));
+        const parsed = parseHamiltonSchedule(grid, { year: new Date().getFullYear() }, { customers, skus, qaProducts, carriers });
+        const monday = new Date();
+        monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+        const from = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+        const { rows } = classifyScheduleRows(parsed.rows, {
+          bayMap, from, location: sherman?.name || HAMILTON_SCHEDULE_LOCATION,
+          existing: hamiltonShipments, appBays: sherman?.bays || [],
+        });
+        const adds = rows.filter(r => r.kind === 'new').map(r => r.shipment!);
+        const updates = rows.filter(r => r.kind === 'update');
+        const conflicts = rows.filter(r => r.kind === 'conflict').length;
+        if (adds.length || updates.length) {
+          const patchById = new Map(updates.map(u => [u.existing!.id, u.patch!] as const));
+          setHamiltonShipments(prev => [
+            ...prev.map(s => (patchById.has(s.id) ? { ...s, ...patchById.get(s.id)! } : s)),
+            ...adds,
+          ]);
+        }
+        notes.push(`Sherman Schedule — ${adds.length} new, ${updates.length} updated${conflicts ? `, ${conflicts} slot conflicts (review in Sync Sherman)` : ''}${parsed.problems.length ? `, ${parsed.problems.length} unreadable rows` : ''}`);
+      }
+    } catch (e: any) {
+      notes.push(`Sherman Schedule — failed: ${e?.message || String(e)}`);
     }
 
     setSyncAllSummary(notes);
