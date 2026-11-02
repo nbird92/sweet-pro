@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Person } from '../types';
+import { Person, PERMISSION_GROUPS } from '../types';
 import { Plus, Users } from 'lucide-react';
 import PageBanner from './PageBanner';
 import DataTable from './DataTable';
@@ -40,6 +40,7 @@ const emptyPerson = (): Person => ({
   phone: '',
   department: 'operations',
   salespersonNumber: '',
+  position: '',
   notes: '',
 });
 
@@ -60,7 +61,9 @@ export default function PeoplePage({
   const filteredPeople = people.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.department.toLowerCase().includes(searchTerm.toLowerCase())
+    p.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.position || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.permission || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const peopleExportSheets = (): SheetSpec[] => [{
@@ -71,7 +74,9 @@ export default function PeoplePage({
       { header: 'Name', key: 'name' },
       { header: 'Email', key: 'email' },
       { header: 'Phone', key: 'phone' },
+      { header: 'Position', key: 'position' },
       { header: 'Department', key: 'department' },
+      { header: 'Permission', key: 'permission' },
       { header: 'Sales #', key: 'salespersonNumber' },
       { header: 'Notes', key: 'notes' },
     ],
@@ -111,7 +116,9 @@ export default function PeoplePage({
             { key: 'name', label: 'Name', bold: true },
             { key: 'email', label: 'Email' },
             { key: 'phone', label: 'Phone', render: (p) => p.phone || '-' },
+            { key: 'position', label: 'Position', render: (p) => p.position || '-' },
             { key: 'department', label: 'Department', render: (p) => <span className="uppercase">{p.department}</span> },
+            { key: 'permission', label: 'Permission', render: (p) => p.permission || '-' },
             { key: 'salespersonNumber', label: 'Sales #', render: (p) => p.salespersonNumber || '-' },
           ]}
           rows={filteredPeople}
@@ -152,7 +159,9 @@ export default function PeoplePage({
               <DetailRow label="Name" value={personDraft.name} bold />
               <DetailRow label="Email" value={personDraft.email} />
               <DetailRow label="Phone" value={personDraft.phone} />
+              <DetailRow label="Position" value={personDraft.position} />
               <DetailRow label="Department" value={<span className="uppercase">{personDraft.department}</span>} />
+              <DetailRow label="Permission" value={personDraft.permission} />
               {personDraft.department === 'sales' && <DetailRow label="Sales Person Number" value={personDraft.salespersonNumber} />}
               <DetailRow label="Notes" value={personDraft.notes} />
             </>
@@ -185,6 +194,25 @@ export default function PeoplePage({
                     className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
                     placeholder="Phone Number"
                   />
+                </DetailField>
+                <DetailField label="Position">
+                  <input
+                    type="text"
+                    value={personDraft.position || ''}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, position: e.target.value } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                    placeholder="e.g., Logistics Coordinator"
+                  />
+                </DetailField>
+                <DetailField label="Permission">
+                  <select
+                    value={personDraft.permission || ''}
+                    onChange={(e) => setPersonDraft(d => d ? { ...d, permission: e.target.value as Person['permission'] } : d)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm outline-none focus:bg-white"
+                  >
+                    <option value="">— None —</option>
+                    {PERMISSION_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
                 </DetailField>
                 <DetailField label="Department" required>
                   <select

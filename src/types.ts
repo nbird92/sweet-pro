@@ -161,8 +161,16 @@ export interface Person {
   phone?: string;
   department: 'sales' | 'operations' | 'logistics' | 'customer service' | 'QA' | 'trading';
   salespersonNumber?: string;
+  position?: string;        // job title, e.g. "Logistics Coordinator"
+  /** Permission group — will gate which pages the user can open. */
+  permission?: PermissionGroup | '';   // '' = none (Firestore rejects undefined fields)
   notes?: string;
 }
+
+/** Permission groups a Person can belong to. Page access per group is not
+ *  enforced yet; this is the assignment the access rules will read. */
+export const PERMISSION_GROUPS = ['Admin', 'Manager', 'Sales', 'Operations', 'Logistics', 'Customer Service', 'QA', 'Finance', 'Read Only'] as const;
+export type PermissionGroup = typeof PERMISSION_GROUPS[number];
 
 export interface ProductGroup {
   id: string;
