@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { Calendar, X, RefreshCw, AlertTriangle, ArrowRight } from 'lucide-react';
-import type { Customer, SKU, QAProduct, Carrier, Shipment, Location } from '../types';
+import type { Customer, SKU, QAProduct, Carrier, Shipment, Location, Invoice } from '../types';
 import { fetchTabFromSheet, extractSheetId } from '../utils/googleOrderSheetSync';
 import { parseCSV } from '../utils/googleSheetsSync';
 import {
@@ -24,6 +24,8 @@ const PREVIEW_LIMIT = 400;
 interface Props {
   onClose: () => void;
   existingShipments: Shipment[];
+  /** Invoice table — source of each BOL's scaled (invoiced) Qty (MT). */
+  invoices: Invoice[];
   locations: Location[];
   customers: Customer[];
   skus: SKU[];
@@ -47,7 +49,7 @@ const KIND_STYLE: Record<ScheduleRowKind, { label: string; badge: string; tile: 
   unchanged: { label: 'Unchanged', badge: 'bg-[#141414]/5 text-[#141414]/60', tile: 'border-[#141414]/20 bg-[#F5F5F5]' },
 };
 
-export default function HamiltonScheduleSyncModal({ onClose, existingShipments, locations, customers, skus, qaProducts, carriers, slotTimes, onApply }: Props) {
+export default function HamiltonScheduleSyncModal({ onClose, existingShipments, invoices, locations, customers, skus, qaProducts, carriers, slotTimes, onApply }: Props) {
   const [sheetUrl, setSheetUrl] = useState(() => `https://docs.google.com/spreadsheets/d/${loadHamiltonSource().sheetId}/`);
   const [tabName, setTabName] = useState(() => loadHamiltonSource().tab);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -111,9 +113,9 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
     if (!parsed) return null;
     return classifyScheduleRows(parsed.rows, {
       bayMap, from: fromDate || undefined, to: toDate || undefined,
-      location: locationName, existing: existingShipments, appBays,
+      location: locationName, existing: existingShipments, appBays, invoices,
     });
-  }, [parsed, bayMap, fromDate, toDate, locationName, existingShipments, appBays]);
+  }, [parsed, bayMap, fromDate, toDate, locationName, existingShipments, appBays, invoices]);
 
   const isIncluded = (r: ClassifiedScheduleRow) =>
     r.kind !== 'unchanged' && (overrides.has(r.key) ? overrides.get(r.key)! : (r.kind === 'new' || r.kind === 'update'));
@@ -271,6 +273,7 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
                         <th className="p-2 text-left font-bold">PO</th>
                         <th className="p-2 text-left font-bold">BOL</th>
                         <th className="p-2 text-right font-bold">Qty</th>
+                        <th className="p-2 text-right font-bold" title="Scaled Qty (MT) from the invoice table">Scaled</th>
                         <th className="p-2 text-left font-bold">Carrier</th>
                         <th className="p-2 text-left font-bold">Details</th>
                       </tr>
@@ -290,6 +293,7 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
                             <td className="p-2 font-mono">{r.po || '—'}</td>
                             <td className="p-2 font-mono">{r.bol || '—'}</td>
                             <td className="p-2 text-right font-mono">{r.qty || '—'}</td>
+                            <td className="p-2 text-right font-mono">{(r.shipment?.scaledQty ?? r.patch?.scaledQty ?? r.existing?.scaledQty) || '—'}</td>
                             <td className="p-2">{r.carrier || '—'}</td>
                             <td className="p-2 text-[11px]">
                               {r.changes.map(c => (
@@ -302,7 +306,7 @@ export default function HamiltonScheduleSyncModal({ onClose, existingShipments, 
                         );
                       })}
                       {visible.length === 0 && (
-                        <tr><td colSpan={12} className="p-6 text-center opacity-50 italic">No rows match.</td></tr>
+                        <tr><td colSpan={13} className="p-6 text-center opacity-50 italic">No rows match.</td></tr>
                       )}
                     </tbody>
                   </table>

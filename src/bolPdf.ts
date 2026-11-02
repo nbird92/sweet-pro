@@ -201,13 +201,29 @@ export function renderBolInto(doc: jsPDF, {
   let totalNetWeight = 0;
   let totalGrossWeight = 0;
 
+  // The BOL reports what is actually on the trailer: when the shipment carries a
+  // Scaled Qty (MT), every goods figure — Qty (MT), Qty (Units), Net and Gross —
+  // derives from it, split across lines in proportion to their ordered weight.
+  // Without a scaled qty the ordered quantities print as before.
+  const scaledMt = typeof shipment.scaledQty === 'number' && shipment.scaledQty > 0 ? shipment.scaledQty : 0;
+  const fmtUnits = (n: number) => String(Math.round(n * 100) / 100);
+
   if (order?.lineItems && order.lineItems.length > 0) {
+    const orderedMt = order.lineItems.reduce((s, li) => s + (li.totalWeight > 0 ? li.totalWeight : 0), 0);
+    const ratio = scaledMt > 0 && orderedMt > 0 ? scaledMt / orderedMt : 1;
     order.lineItems.forEach(item => {
       // Per-unit net & gross weight, matched on productKey then name, with
       // fallbacks so neither column is blank (gross ≈ net when no tare known).
+      // Resolved from the ORDERED line so the per-unit weight isn't skewed by scaling.
       const { netWt, grossWt } = resolveLineWeights(item, qaProducts);
-      const itemNet = netWt * item.qty;
-      const itemGross = grossWt * item.qty;
+      const lineMt = (item.totalWeight || 0) * ratio;
+      // Scaled units = scaled weight ÷ per-unit net weight (true unit count), else
+      // the ordered units scaled by the same ratio.
+      const units = ratio !== 1
+        ? (netWt > 0 && lineMt > 0 ? (lineMt * 1000) / netWt : (item.qty || 0) * ratio)
+        : (item.qty || 0);
+      const itemNet = ratio !== 1 && lineMt > 0 ? lineMt * 1000 : netWt * units;
+      const itemGross = ratio !== 1 && lineMt > 0 && netWt > 0 ? itemNet * (grossWt / netWt) : grossWt * units;
       totalNetWeight += itemNet;
       totalGrossWeight += itemGross;
 
@@ -215,8 +231,8 @@ export function renderBolInto(doc: jsPDF, {
       // (productDisplayName when set, falling back to bare productName).
       const description = item.productDisplayName || item.productName || '';
       lineItemsData.push([
-        item.totalWeight ? item.totalWeight.toFixed(2) : '',
-        item.qty ? item.qty.toString() : '',
+        lineMt ? lineMt.toFixed(2) : '',
+        units ? fmtUnits(units) : '',
         description,
         itemNet ? itemNet.toFixed(2) : '',
         itemGross ? itemGross.toFixed(2) : '',
@@ -225,11 +241,15 @@ export function renderBolInto(doc: jsPDF, {
   } else {
     // No line items — fall back to the order's product field (matches what
     // the order row shows in the Orders table) before the shipment's.
+    const mt = scaledMt || shipment.qty || 0;
+    // A scaled weight gives an exact net (MT × 1000); gross needs a tare we don't
+    // have, so it stays blank. Unscaled shipment.qty can be a truck count, so no net.
+    totalNetWeight = scaledMt * 1000;
     lineItemsData.push([
-      shipment.qty ? shipment.qty.toString() : '',
+      mt ? mt.toFixed(2) : '',
       '',
       order?.product || shipment.product || '',
-      '',
+      totalNetWeight ? totalNetWeight.toFixed(2) : '',
       '',
     ]);
   }

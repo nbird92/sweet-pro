@@ -19,7 +19,7 @@
 // (new / update / unchanged / conflict) is a separate pure step so the modal can
 // re-classify instantly as the user remaps bays or changes the date window.
 
-import type { Customer, SKU, QAProduct, Carrier, Shipment } from '../types';
+import type { Customer, SKU, QAProduct, Carrier, Shipment, Invoice } from '../types';
 import { resolveCustomer, resolveCarrier, resolveProduct, stripUndefined } from './googleOrderSheetSync';
 
 export const HAMILTON_SCHEDULE_SHEET_ID = '1pu359fHqjTzG8r8iBUv8zuroyOEZw_XxwWO-VsZtLRc';
@@ -303,10 +303,13 @@ const sameCustomer = (a: string, b: string) => {
  *  • Rows outside [from, to] or on a skipped bay are dropped (counted in `excluded`).
  * Matching (first hit wins, each existing shipment matched at most once):
  *   1. same BOL;  2. same PO on the same date;  3. same slot (date+time+bay) and customer.
+ * Scaled Qty (MT): when `invoices` is given, the invoiced weight for the row's BOL
+ * (summed across split invoices) fills the shipment's scaledQty — on new rows,
+ * and on matched rows whose scaledQty is still blank.
  */
 export function classifyScheduleRows(
   rows: ScheduleRow[],
-  opts: { bayMap: Record<string, string>; from?: string; to?: string; location: string; existing: Shipment[]; appBays: string[] },
+  opts: { bayMap: Record<string, string>; from?: string; to?: string; location: string; existing: Shipment[]; appBays: string[]; invoices?: Invoice[] },
 ): { rows: ClassifiedScheduleRow[]; excluded: number } {
   const appBaySet = new Set(opts.appBays);
   const pool = opts.existing.filter(s => {
@@ -325,6 +328,17 @@ export function classifyScheduleRows(
     if (normKey(s.po) && s.date) push(byPoDate, `${normKey(s.po)}|${s.date}`, s);
     if (s.date && s.bay) bySlot.set(slotKey(s.date, s.time, s.bay), s);
   }
+
+  // Invoiced (scaled) MT per BOL — split invoices share a BOL, so their qty sums.
+  const invoicedMt = new Map<string, number>();
+  for (const inv of opts.invoices || []) {
+    const k = normKey(inv.bolNumber);
+    if (k && typeof inv.qty === 'number' && inv.qty > 0) invoicedMt.set(k, (invoicedMt.get(k) || 0) + inv.qty);
+  }
+  const scaledFor = (bol: string | undefined) => {
+    const mt = invoicedMt.get(normKey(bol));
+    return mt ? Math.round(mt * 1000) / 1000 : 0;
+  };
 
   const used = new Set<string>();
   const takenSlots = new Map<string, string>(); // slot → who holds it in this import
@@ -370,6 +384,8 @@ export function classifyScheduleRows(
       if (r.po && !(match.po || '').trim()) set('po', r.po, '');
       if (r.bol && !(match.bol || '').trim()) set('bol', r.bol, '');
       if (r.qty > 0 && !(match.qty > 0)) set('qty', r.qty, match.qty);
+      const scaled = scaledFor(r.bol || match.bol);
+      if (scaled > 0 && !(typeof match.scaledQty === 'number' && match.scaledQty > 0)) set('scaledQty', scaled, '');
       if (!(match.location || '').trim()) set('location', opts.location, '');
       const cur = (match.status || '').toLowerCase();
       if (cur !== 'cancelled' && (STATUS_RANK[status.toLowerCase()] ?? 0) > (STATUS_RANK[cur] ?? 0)) set('status', status, match.status);
@@ -401,6 +417,7 @@ export function classifyScheduleRows(
       po: r.po,
       bol: r.bol,
       qty: r.qty,
+      scaledQty: scaledFor(r.bol) || undefined,
       carrier: r.carrier,
       arrive: r.arrive,
       start: r.start,

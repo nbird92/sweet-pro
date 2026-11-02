@@ -9700,7 +9700,7 @@ export default function App() {
         const from = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
         const { rows } = classifyScheduleRows(parsed.rows, {
           bayMap, from, location: sherman?.name || HAMILTON_SCHEDULE_LOCATION,
-          existing: hamiltonShipments, appBays: sherman?.bays || [],
+          existing: hamiltonShipments, appBays: sherman?.bays || [], invoices: curInvoices,
         });
         const adds = rows.filter(r => r.kind === 'new').map(r => r.shipment!);
         const updates = rows.filter(r => r.kind === 'update');
@@ -21176,6 +21176,7 @@ export default function App() {
               <HamiltonScheduleSyncModal
                 onClose={() => setShowHamiltonScheduleSync(false)}
                 existingShipments={hamiltonShipments}
+                invoices={invoices}
                 locations={locations}
                 customers={customers}
                 skus={skus}
