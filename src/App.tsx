@@ -1253,8 +1253,9 @@ export default function App() {
     const deliveryDate = toIsoDateSafe(po.deliveryDate) || toIsoDateSafe(po.shipmentDate);
     const shipmentDate = toIsoDateSafe(po.shipmentDate) || deliveryDate;
     // Currency: the matched contract's currency wins; else the single currency
-    // shared by ALL of this customer's active contracts; else the customer
-    // card's default currency; else whatever was scanned off the document.
+    // shared by ALL of this customer's active contracts; else whatever was
+    // scanned off the document; else (no currency on the PO) the customer
+    // card's default currency.
     const custContractCurrencies = cust
       ? Array.from(new Set(contractsForCustomer(cust)
           .filter(c => c.active !== false)
@@ -1263,8 +1264,9 @@ export default function App() {
       : [];
     const currency = (contract?.currency || '').trim().toUpperCase()
       || (custContractCurrencies.length === 1 ? custContractCurrencies[0] : '')
-      || (cust?.defaultCurrency || '').trim().toUpperCase()
-      || (po.currency || '').trim().toUpperCase();
+      || normalizeCurrencyCode(po.currency)
+      || normalizeCurrencyCode(cust?.defaultCurrency)
+      || '';
     // KG/lb/etc → MT factor, so a unit price or line total can be converted in
     // code when the extractor didn't already give $/MT.
     const mtPerUnit = (u?: string): number => {
@@ -1880,7 +1882,25 @@ export default function App() {
   // duplicate through; the commit is a FUNCTIONAL setOrders that re-dedups
   // against the authoritative prev so it can't clobber a concurrent edit either.
   // Returns the orders actually added.
+  /** Currency fallback for an order that arrived without one (sheet import, CSV,
+   *  scan, manual): its contract's currency, else the customer card's Default
+   *  Currency. An order that already carries a currency is returned untouched. */
+  const orderCurrencyFallback = (o: Order): string => {
+    const cn = (o.contractNumber || o.lineItems?.find(li => li.contractNumber)?.contractNumber || '').trim();
+    const contractCur = cn ? normalizeCurrencyCode(contracts.find(c => c.contractNumber === cn)?.currency) : undefined;
+    if (contractCur) return contractCur;
+    const custName = (o.customer || '').trim().toUpperCase();
+    const cust = custName ? customers.find(c => (c.name || '').trim().toUpperCase() === custName) : undefined;
+    return normalizeCurrencyCode(cust?.defaultCurrency) || '';
+  };
+  const withOrderCurrency = (o: Order): Order => {
+    if ((o.currency || '').trim()) return o;
+    const cur = orderCurrencyFallback(o);
+    return cur ? { ...o, currency: cur } : o;
+  };
+
   const addOrdersUnique = (candidates: Order[]): Order[] => {
+    candidates = candidates.map(withOrderCurrency);
     const accepted: Order[] = [];
     const batchPo = new Set<string>();
     const batchBol = new Set<string>();
@@ -4916,6 +4936,25 @@ export default function App() {
     });
     if (changed) setLotCodes(next);
   }, [lotCodes, invoices, orders]);
+
+  // Backfill order CURRENCY: any order with a blank currency (imported, scanned,
+  // CSV, or created before this rule) takes its contract's currency, else the
+  // customer card's Default Currency. Non-destructive — never overwrites a set
+  // currency — and self-converging (a filled order is skipped next pass).
+  // Functional update so it merges onto the live list.
+  useEffect(() => {
+    if (!orders.length || !customers.length) return;
+    if (!orders.some(o => !(o.currency || '').trim() && orderCurrencyFallback(o))) return;
+    setOrders(prev => {
+      let changed = false;
+      const next = prev.map(o => {
+        const filled = withOrderCurrency(o);
+        if (filled !== o) changed = true;
+        return filled;
+      });
+      return changed ? next : prev;
+    });
+  }, [orders, customers, contracts]);
 
   // Backfill delivery dates and trailer numbers across orders → shipments/invoices.
   //   • Shipment.deliveryDate  ← matching Order.deliveryDate (fallback: matching Invoice.deliveryDate)
