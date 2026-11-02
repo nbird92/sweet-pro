@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import CustomerContractsTable from './CustomerContractsTable';
+import CustomerSalesByMonth, { MonthMatrix } from './CustomerSalesByMonth';
 import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2 } from 'lucide-react';
 import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup } from '../types';
 
@@ -46,42 +47,6 @@ const Stat = ({ label, value, sub }: { label: string; value: string; sub?: strin
   </div>
 );
 
-/** Product × month matrix with row and column totals. */
-const MonthMatrix = ({ rows, months, empty, shade }: { rows: { name: string; values: number[] }[]; months: string[]; empty: string; shade?: (i: number) => boolean }) => {
-  const colTotals = months.map((_, i) => rows.reduce((s, r) => s + r.values[i], 0));
-  const grand = colTotals.reduce((a, b) => a + b, 0);
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[140px]">Product</th>
-            {months.map((m, i) => <th key={i} className={`text-center px-2 py-2 text-[10px] uppercase tracking-widest font-bold border border-gray-200 min-w-[64px] ${shade?.(i) ? 'bg-gray-100 text-gray-500' : 'opacity-60'}`}>{m}{shade && <div className="text-[8px] font-normal normal-case tracking-normal">{shade(i) ? 'actual' : 'forecast'}</div>}</th>)}
-            <th className="text-center px-3 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 border border-gray-200 min-w-[80px]">Total (MT)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.name} className="border-b border-gray-200 hover:bg-gray-50">
-              <td className="sticky left-0 z-10 bg-white px-3 py-1.5 font-medium border border-gray-200">{r.name}</td>
-              {r.values.map((v, i) => <td key={i} className={`px-2 py-1.5 text-center border border-gray-200 font-mono ${shade?.(i) ? 'bg-gray-100 text-gray-600' : ''}`}>{fmt(v)}</td>)}
-              <td className="px-3 py-1.5 text-center font-mono font-bold border border-gray-200">{fmt(r.values.reduce((a, b) => a + b, 0))}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={months.length + 2} className="px-4 py-8 text-center text-gray-400">{empty}</td></tr>}
-          {rows.length > 0 && (
-            <tr className="bg-gray-50 font-bold">
-              <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 border border-gray-200 text-[10px] uppercase tracking-widest">Total</td>
-              {colTotals.map((v, i) => <td key={i} className="px-2 py-2 text-center border border-gray-200 font-mono">{fmt(v)}</td>)}
-              <td className="px-3 py-2 text-center border border-gray-200 font-mono">{fmt(grand)}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
 export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('details');
   const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
@@ -102,26 +67,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
   };
 
   // ── Sales tab ──
-  const salesYears = useMemo(() => {
-    const ys = new Set<number>();
-    for (const i of custInvoices) { const y = parseInt((i.date || '').slice(0, 4)); if (y > 1990) ys.add(y); }
-    ys.add(new Date().getFullYear());
-    return Array.from(ys).sort((a, b) => b - a);
-  }, [custInvoices]);
   const [salesYear, setSalesYear] = useState<number>(new Date().getFullYear());
-  const salesRows = useMemo(() => {
-    const m = new Map<string, number[]>();
-    for (const inv of custInvoices) {
-      if (parseInt((inv.date || '').slice(0, 4)) !== salesYear) continue;
-      const mo = parseInt((inv.date || '').slice(5, 7)) - 1;
-      if (mo < 0 || mo > 11) continue;
-      for (const { product, mt } of invoiceProductMt(inv)) {
-        const v = m.get(product) || new Array(12).fill(0);
-        v[mo] += mt; m.set(product, v);
-      }
-    }
-    return Array.from(m.entries()).map(([name, values]) => ({ name, values })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [custInvoices, salesYear]);
 
   // ── Contracts tab ──
   const custContracts = useMemo(() => contracts
@@ -327,18 +273,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
           )}
 
           {tab === 'sales' && (
-            <div className="bg-white border border-[#141414] p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-[11px] uppercase font-bold tracking-widest">Invoiced Sales by Product (MT)</div>
-                <div className="flex items-center gap-2">
-                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">Year</label>
-                  <select value={salesYear} onChange={e => setSalesYear(parseInt(e.target.value))} className={selectCls}>
-                    {salesYears.map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </div>
-              </div>
-              <MonthMatrix rows={salesRows} months={MONTHS} empty={`No invoiced sales in ${salesYear}.`} />
-            </div>
+            <CustomerSalesByMonth customer={customer} invoices={invoices} label={label} year={salesYear} onYearChange={setSalesYear} />
           )}
 
           {tab === 'quotes' && (

@@ -24,6 +24,8 @@ export interface CustomerReportData {
   customer: string;
   customerNumber?: string;
   salesMt: number;
+  /** Calendar year the Sales Volume tile covers. */
+  salesYear?: number;
   onOrderMt: number;
   contractCount: number;
   remainingTotal: number;
@@ -95,7 +97,7 @@ export function renderCustomerReportInto(doc: jsPDF, data: CustomerReportData): 
   let y = 40;
   y = sectionTitle(doc, 'Sales Summary', M, y, CW);
   const tiles: Array<{ label: string; value: string; unit: string }> = [
-    { label: 'Sales Volume', value: num(data.salesMt), unit: 'MT invoiced' },
+    { label: data.salesYear ? `Sales Volume ${data.salesYear}` : 'Sales Volume', value: num(data.salesMt), unit: 'MT invoiced' },
     { label: 'Qty on Order', value: num(data.onOrderMt), unit: 'MT open' },
     { label: 'Active Contracts', value: String(data.contractCount), unit: 'contracts' },
     { label: 'Remaining Balance', value: num(data.remainingTotal), unit: 'MT on contract' },

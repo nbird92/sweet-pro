@@ -41,6 +41,7 @@ import { resolveShortForm } from '../utils/namingFormulaResolver';
 import { computeVolumeTaken } from '../utils/contractMatch';
 import { sendEmail } from '../utils/sendEmail';
 import CustomerContractsTable, { isContractActive } from './CustomerContractsTable';
+import CustomerSalesByMonth from './CustomerSalesByMonth';
 
 // ─── Props ──────────────────────────────────────────────────────────────────
 
@@ -100,8 +101,23 @@ export default function ReportsPage({
   // Resolve a free-text invoice product name to a SKU/QA pair from the
   // Products catalog. Tries exact match (case-insensitive), then a fuzzy
   // keyword match. Returns null when no current catalog entry matches.
+  // PERF: every report resolves the same few hundred product strings thousands
+  // of times (once per invoice per report). Cache each distinct string's result,
+  // and index QA products by SKU id so the fuzzy pass isn't skus × qaProducts.
+  const catalogCache = useMemo(() => new Map<string, { sku: SKU | null; qa: QAProduct | null } | null>(), [skus, qaProducts, sugarTypes]);
+  const qaBySkuId = useMemo(() => {
+    const m = new Map<string, QAProduct>();
+    for (const q of qaProducts) if (q.skuId && !m.has(q.skuId)) m.set(q.skuId, q);
+    return m;
+  }, [qaProducts]);
   const resolveToCatalog = useCallback((rawProduct: string | undefined): { sku: SKU | null; qa: QAProduct | null } | null => {
     if (!rawProduct) return null;
+    if (catalogCache.has(rawProduct)) return catalogCache.get(rawProduct)!;
+    const r = resolveToCatalogUncached(rawProduct);
+    catalogCache.set(rawProduct, r);
+    return r;
+  }, [catalogCache]);
+  function resolveToCatalogUncached(rawProduct: string): { sku: SKU | null; qa: QAProduct | null } | null {
     const trimmed = rawProduct.trim();
     if (!trimmed) return null;
     const lower = trimmed.toLowerCase();
@@ -168,7 +184,7 @@ export default function ReportsPage({
     let best: SKU | null = null;
     let bestScore = 0;
     for (const s of skus) {
-      const q = qaProducts.find(p => p.skuId === s.id);
+      const q = qaBySkuId.get(s.id);
       const sugarT = q?.sugarType || s.sugarType;
       const groupT = q?.productGroup || s.productGroup;
       const catT = q?.category || s.category;
@@ -185,39 +201,47 @@ export default function ReportsPage({
       if (score > bestScore) { bestScore = score; best = s; }
     }
     if (best && bestScore >= 5) {
-      return { sku: best, qa: qaProducts.find(p => p.skuId === best!.id) || null };
+      return { sku: best, qa: qaBySkuId.get(best.id) || null };
     }
     return null;
-  }, [skus, qaProducts, sugarTypes]);
+  }
 
   // Resolve any free-text invoice customer string to the CURRENT customer
   // record's name. Tolerant of case / whitespace / ITAS variants. Falls back
   // to the original string when no catalog customer can be matched.
+  // PERF: indexed + cached — this ran a linear scan of every customer for every
+  // invoice in several reports (the main cause of the page lag).
+  const customerNameIndex = useMemo(() => {
+    const normalize = (s: string | undefined | null) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const exact = new Map<string, string>();
+    const byNorm = new Map<string, string>();
+    for (const c of customers) {
+      if (c.name && !exact.has(c.name)) exact.set(c.name, c.name);
+      for (const k of [c.name, c.itasCustomerName, c.customerNumber, c.id]) {
+        const n = normalize(k);
+        if (n && !byNorm.has(n)) byNorm.set(n, c.name);
+      }
+    }
+    const names = customers.map(c => ({ n: normalize(c.name), name: c.name })).filter(x => x.n);
+    return { normalize, exact, byNorm, names, cache: new Map<string, string>() };
+  }, [customers]);
   const resolveCustomerName = useCallback((rawCustomer: string | undefined): string => {
     if (!rawCustomer) return '';
-    const normalize = (s: string | undefined | null) =>
-      (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const { normalize, exact, byNorm, names, cache } = customerNameIndex;
+    const hit = cache.get(rawCustomer);
+    if (hit !== undefined) return hit;
+    let out = rawCustomer;
     const target = normalize(rawCustomer);
-    if (!target) return rawCustomer;
-    // 1. Exact match
-    let match = customers.find(c => c.name === rawCustomer);
-    if (match) return match.name;
-    // 2. Normalized name / itasCustomerName / customerNumber / id match
-    match = customers.find(c =>
-      normalize(c.name) === target
-      || normalize(c.itasCustomerName) === target
-      || normalize(c.customerNumber) === target
-      || normalize(c.id) === target
-    );
-    if (match) return match.name;
-    // 3. Substring overlap with a current customer name
-    match = customers.find(c => {
-      const n = normalize(c.name);
-      return n && (target.includes(n) || n.includes(target));
-    });
-    if (match) return match.name;
-    return rawCustomer;
-  }, [customers]);
+    if (target) {
+      // 1. Exact  2. normalized name / ITAS name / customer # / id  3. substring overlap
+      out = exact.get(rawCustomer)
+        || byNorm.get(target)
+        || names.find(x => target.includes(x.n) || x.n.includes(target))?.name
+        || rawCustomer;
+    }
+    cache.set(rawCustomer, out);
+    return out;
+  }, [customerNameIndex]);
 
   // Resolve any free-text invoice product string to the CURRENT SKU's name.
   // Returns null when the product no longer exists in the catalog.
@@ -229,7 +253,15 @@ export default function ReportsPage({
 
   // Resolve any free-text product name to the SKU's shortform. Returns null
   // when the product is no longer in the catalog so the report can skip it.
+  const shortformCache = useMemo(() => new Map<string, string | null>(), [resolveToCatalog, sugarTypes, productGroups, namingFormulas]);
   const toShortform = useCallback((rawProduct: string | undefined): string | null => {
+    const key = rawProduct || '';
+    if (shortformCache.has(key)) return shortformCache.get(key)!;
+    const out = toShortformUncached(rawProduct);
+    shortformCache.set(key, out);
+    return out;
+  }, [shortformCache]);
+  function toShortformUncached(rawProduct: string | undefined): string | null {
     const match = resolveToCatalog(rawProduct);
     if (!match || (!match.sku && !match.qa)) return null;
     const { sku, qa } = match;
@@ -255,7 +287,7 @@ export default function ReportsPage({
     if (product.productGroup === 'Bulk') return `${st.abbreviation}${co}${product.maxColor}`;
     const wt = product.netWeightKg ? `${product.netWeightKg}kg ` : '';
     return `${wt}${st.abbreviation}${co}${product.maxColor}`;
-  }, [resolveToCatalog, sugarTypes, productGroups, namingFormulas]);
+  }
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [trendYear, setTrendYear] = useState<string>('all');
   const [topNSearch, setTopNSearch] = useState('');
@@ -267,6 +299,8 @@ export default function ReportsPage({
   const [grpSort, setGrpSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
   // Customer report — dropdown to focus a single customer ('' = all).
   const [reportCustomerId, setReportCustomerId] = useState<string>('');
+  // Customer report — calendar year filter (defaults to the current year).
+  const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
   // "Send to Customer" popout for the customer report.
 
   const toggleSort = (setter: React.Dispatch<React.SetStateAction<{ key: string; dir: 'asc' | 'desc' }>>) => (key: string) => {
@@ -1336,6 +1370,7 @@ export default function ReportsPage({
       customer: row.customer,
       customerNumber: row.customerNumber,
       salesMt: row.salesMt,
+      salesYear: reportYear,
       onOrderMt: row.onOrderMt,
       contractCount: row.contractCount,
       remainingTotal: row.remainingTotal,
@@ -1346,7 +1381,7 @@ export default function ReportsPage({
       if (prev?.url) URL.revokeObjectURL(prev.url);
       return { url: blobUrl, blob, filename, customerId: row.id, customer: row.customer };
     });
-  }, [customerMonthlySales]);
+  }, [customerMonthlySales, reportYear]);
 
   const closeReportPdf = () => {
     setReportPdf(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; });
@@ -1358,7 +1393,11 @@ export default function ReportsPage({
   const openReportEmail = () => {
     if (!reportPdf) return;
     const c = customers.find(x => x.id === reportPdf.customerId);
-    setReportEmailTo((c?.salesContactEmail || c?.contactEmail || '').trim());
+    // Default To: every Sales Contact address on the customer card (the field may
+    // hold several, comma/semicolon-separated); else the main contact email.
+    const splitEmails = (v?: string) => (v || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean);
+    const sales = splitEmails(c?.salesContactEmail);
+    setReportEmailTo((sales.length ? sales : splitEmails(c?.contactEmail)).join(', '));
     setReportEmailCc('');
     setReportEmailSubject(`Sales Report — ${reportPdf.customer}`);
     setReportEmailBody([
@@ -1428,12 +1467,17 @@ export default function ReportsPage({
   // REPORT: Customer report — sales volume, qty on order, contracts & balances
   // ═══════════════════════════════════════════════════════════════════════════
   const customerReport = useMemo(() => {
-    const { indicesFor, mts, norm } = invoiceCustIndex;
+    const { indicesFor, mts, monthOf, norm } = invoiceCustIndex;
     const ordMt = (o: Order) => (o.lineItems && o.lineItems.length)
       ? o.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0)
       : 0;
-    // "On order" = confirmed demand not yet invoiced (Open / Confirmed).
-    const onOrder = (o: Order) => o.status === 'Open' || o.status === 'Confirmed';
+    // "On order" = confirmed demand not yet invoiced (Open / Confirmed), scheduled
+    // to ship in the report year (undated orders always count).
+    const yr = String(reportYear);
+    const onOrder = (o: Order) => (o.status === 'Open' || o.status === 'Confirmed')
+      && (!(o.shipmentDate || o.date) || (o.shipmentDate || o.date || '').startsWith(yr));
+    // Contracts whose term overlaps the report year (blank dates = open-ended).
+    const inYear = (ct: Contract) => (!ct.startDate || ct.startDate.slice(0, 4) <= yr) && (!ct.endDate || ct.endDate.slice(0, 4) >= yr);
 
     // ONE pass over orders: bucket on-order indices per customer key (raw +
     // resolved, deduped on read) and MT per contract number, instead of
@@ -1470,13 +1514,13 @@ export default function ReportsPage({
       const num = norm(cust.customerNumber);
 
       let salesMt = 0;
-      indicesFor(names).forEach(idx => { salesMt += mts[idx]; });
+      indicesFor(names).forEach(idx => { if (monthOf[idx].startsWith(yr)) salesMt += mts[idx]; });
       const orderIdx = new Set<number>();
       names.forEach(n => (ordersByKey.get(n) || []).forEach(i => orderIdx.add(i)));
       let onOrderMt = 0;
       orderIdx.forEach(i => { onOrderMt += ordMt(orders[i]); });
 
-      const custContracts = contracts.filter(ct => ct.active !== false
+      const custContracts = contracts.filter(ct => ct.active !== false && inYear(ct)
         && ((num && norm(ct.customerNumber) === num) || names.has(norm(ct.customerName))));
       const contractRows = custContracts.map(ct => {
         const cn = norm(ct.contractNumber);
@@ -1504,7 +1548,19 @@ export default function ReportsPage({
     }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0);
 
     return rows.sort((a, b) => b.salesMt - a.salesMt);
-  }, [customers, invoiceCustIndex, orders, contracts, invoices, resolveCustomerName]);
+  }, [customers, invoiceCustIndex, orders, contracts, invoices, resolveCustomerName, reportYear]);
+
+  /** Years with invoiced sales (plus the current year), newest first. */
+  const reportYears = useMemo(() => {
+    const ys = new Set<number>([new Date().getFullYear(), reportYear]);
+    for (const mk of invoiceCustIndex.monthOf) { const y = parseInt(mk.slice(0, 4)); if (y > 1990) ys.add(y); }
+    return Array.from(ys).sort((a, b) => b - a);
+  }, [invoiceCustIndex, reportYear]);
+  /** The report year's 12 months, as YYYY-MM keys. */
+  const reportYearMonths = useMemo(() => Array.from({ length: 12 }, (_, i) => `${reportYear}-${String(i + 1).padStart(2, '0')}`), [reportYear]);
+
+  // Stable product label for the shared customer tables (memoized resolver).
+  const reportProductLabel = useCallback((n?: string) => (toShortform(n) || n || '(unknown)').trim(), [toShortform]);
 
   const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
   const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
@@ -1513,9 +1569,12 @@ export default function ReportsPage({
   // date). Columns are every YYYY-MM present in the data, ascending; each row is
   // a customer with a per-month map + total. Reuses the same customer name-match
   // as the Customer Report so the totals line up.
-  const monthlySalesRows = selectedCustomerRow
+  const monthlySalesRows = (selectedCustomerRow
     ? customerMonthlySales.rows.filter(r => r.id === reportCustomerId)
-    : customerMonthlySales.rows;
+    : customerMonthlySales.rows)
+    .map(r => ({ ...r, total: reportYearMonths.reduce((s, mk) => s + (r.byMonth[mk] || 0), 0) }))
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total);
 
   return (
     <div className="space-y-8">
@@ -1561,6 +1620,14 @@ export default function ReportsPage({
                 <option key={r.id} value={r.id}>{r.customer}</option>
               ))}
             </select>
+            <span className="text-[10px] uppercase tracking-widest opacity-60 ml-2">Year</span>
+            <select
+              value={reportYear}
+              onChange={(e) => setReportYear(parseInt(e.target.value))}
+              className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 outline-none"
+            >
+              {reportYears.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
             {/* Per-customer actions — only meaningful once a single customer is picked. */}
             {selectedCustomerRow && (
               <>
@@ -1585,11 +1652,8 @@ export default function ReportsPage({
 
         {selectedCustomerRow ? (() => {
           const row = selectedCustomerRow;
-          const monthly = customerMonthlySales.rows.find(r => r.id === row.id);
-          const monthKeys = customerMonthlySales.months.filter(mk => (monthly?.byMonth[mk] || 0) > 0);
-          const maxMonth = Math.max(1, ...monthKeys.map(mk => monthly?.byMonth[mk] || 0));
           const kpis = [
-            { label: 'Sales Volume', value: formatNum(row.salesMt), unit: 'MT invoiced', icon: <TrendingUp size={14} /> },
+            { label: `Sales Volume ${reportYear}`, value: formatNum(row.salesMt), unit: 'MT invoiced', icon: <TrendingUp size={14} /> },
             { label: 'Qty on Order', value: formatNum(row.onOrderMt), unit: 'MT open', icon: <Package size={14} /> },
             { label: 'Active Contracts', value: String(row.contractCount), unit: 'contracts', icon: <Layers size={14} /> },
             { label: 'Remaining Balance', value: formatNum(row.remainingTotal), unit: 'MT on contract', icon: <Scale size={14} /> },
@@ -1615,31 +1679,20 @@ export default function ReportsPage({
                 ))}
               </div>
 
-              {/* Sales by month */}
-              <div className={card}>
-                <div className={cardHead}>
-                  <span>Sales by Month (MT)</span>
-                  <span className="font-mono normal-case tracking-normal opacity-60">Total {formatNum(monthly?.total || 0)} MT</span>
-                </div>
-                {monthKeys.length === 0 ? (
-                  <div className="p-6 text-center text-xs opacity-50 italic">No invoiced volume with a valid date.</div>
-                ) : (
-                  <div className="p-4 grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
-                    {monthKeys.map(mk => {
-                      const v = monthly?.byMonth[mk] || 0;
-                      return (
-                        <div key={mk} className="flex items-center gap-2 text-xs">
-                          <span className="w-14 shrink-0 font-bold">{monthLabel(mk)}</span>
-                          <div className="flex-1 h-4 bg-[#141414]/5">
-                            <div className="h-full bg-[#141414]" style={{ width: `${Math.max(2, (v / maxMonth) * 100)}%` }} />
-                          </div>
-                          <span className="w-16 shrink-0 text-right font-mono">{formatNum(v)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              {/* Sales by month — the customer card's Sales table, on the report year */}
+              {(() => {
+                const cust = customers.find(c => c.id === row.id);
+                return cust ? (
+                  <CustomerSalesByMonth
+                    customer={cust}
+                    invoices={invoices}
+                    label={reportProductLabel}
+                    year={reportYear}
+                    years={reportYears}
+                    onYearChange={setReportYear}
+                  />
+                ) : null;
+              })()}
 
               {/* Contracts */}
               <div className="space-y-2">
@@ -1649,7 +1702,7 @@ export default function ReportsPage({
                 </div>
                 <CustomerContractsTable
                   rows={row.contractRows.map(c => ({ contract: c.contract, taken: c.taken, onOrder: c.qtyOnOrder, outstanding: c.remaining }))}
-                  label={(n) => (toShortform(n) || n || '(unknown)').trim()}
+                  label={reportProductLabel}
                   emptyMessage="No active contracts for this customer."
                 />
               </div>
@@ -1698,16 +1751,16 @@ export default function ReportsPage({
             the selected-customer filter (single row when one is chosen). */}
         <div className="border border-[#141414] border-t-0 overflow-x-auto">
           <div className="bg-[#2a2a2a] text-[#E4E3E0] px-4 py-2 text-[10px] font-bold uppercase tracking-widest">
-            Sales Volume by Month (MT)
+            Sales Volume by Month (MT) — {reportYear}
           </div>
-          {customerMonthlySales.months.length === 0 ? (
+          {reportYearMonths.length === 0 ? (
             <div className="p-6 text-center text-xs opacity-50 italic">No invoiced volume with a valid date.</div>
           ) : (
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
                   <th className="p-3 sticky left-0 bg-[#F5F5F5]">Customer</th>
-                  {customerMonthlySales.months.map(mk => (
+                  {reportYearMonths.map(mk => (
                     <th key={mk} className="p-3 text-right whitespace-nowrap">{monthLabel(mk)}</th>
                   ))}
                   <th className="p-3 text-right">Total</th>
@@ -1717,19 +1770,19 @@ export default function ReportsPage({
                 {monthlySalesRows.map(r => (
                   <tr key={r.id} className="hover:bg-[#F9F9F9]">
                     <td className="p-3 font-bold sticky left-0 bg-white">{r.customer}</td>
-                    {customerMonthlySales.months.map(mk => (
+                    {reportYearMonths.map(mk => (
                       <td key={mk} className="p-3 text-right font-mono">{r.byMonth[mk] ? formatNum(r.byMonth[mk]) : '—'}</td>
                     ))}
                     <td className="p-3 text-right font-mono font-bold">{formatNum(r.total)}</td>
                   </tr>
                 ))}
                 {monthlySalesRows.length === 0 && (
-                  <tr><td colSpan={customerMonthlySales.months.length + 2} className="p-6 text-center opacity-50 italic">No invoiced volume.</td></tr>
+                  <tr><td colSpan={reportYearMonths.length + 2} className="p-6 text-center opacity-50 italic">No invoiced volume.</td></tr>
                 )}
                 {monthlySalesRows.length > 1 && (
                   <tr className="bg-[#141414] text-[#E4E3E0] font-black">
                     <td className="p-3 uppercase tracking-widest sticky left-0 bg-[#141414]">Total</td>
-                    {customerMonthlySales.months.map(mk => (
+                    {reportYearMonths.map(mk => (
                       <td key={mk} className="p-3 text-right font-mono">{formatNum(monthlySalesRows.reduce((s, r) => s + (r.byMonth[mk] || 0), 0))}</td>
                     ))}
                     <td className="p-3 text-right font-mono">{formatNum(monthlySalesRows.reduce((s, r) => s + r.total, 0))}</td>
@@ -1781,12 +1834,11 @@ export default function ReportsPage({
       {/* Send to Customer — email menu modelled on Email Quote, PDF attached */}
       {reportPdf && reportEmailOpen && (() => {
         const c = customers.find(x => x.id === reportPdf.customerId);
-        const chips = c ? [
-          { label: 'Main', v: c.contactEmail },
-          { label: 'Sales', v: c.salesContactEmail },
-          { label: 'QA', v: c.qaContractEmail },
-          { label: 'CS', v: c.customerServiceEmail },
-        ].filter(x => (x.v || '').trim()) : [];
+        // One quick-pick chip per address (a card field can hold several).
+        const chips = c ? ([
+          ['Sales', c.salesContactEmail], ['Main', c.contactEmail], ['QA', c.qaContractEmail], ['CS', c.customerServiceEmail],
+        ] as Array<[string, string | undefined]>).flatMap(([label, v]) =>
+          (v || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean).map((addr, i) => ({ label, v: addr, key: `${label}-${i}` }))) : [];
         return (
           <div className="fixed inset-0 z-[650] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -1813,7 +1865,11 @@ export default function ReportsPage({
                   {chips.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1">
                       {chips.map(x => (
-                        <button key={x.label} onClick={() => setReportEmailTo(x.v!.trim())} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
+                        <button key={x.key} onClick={() => setReportEmailTo(prev => {
+                          // Add to the To list (no duplicates) rather than replacing it.
+                          const list = prev.split(/[,;]+/).map(y => y.trim()).filter(Boolean);
+                          return list.some(y => y.toLowerCase() === x.v.toLowerCase()) ? prev : [...list, x.v].join(', ');
+                        })} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           {x.label}: {x.v}
                         </button>
                       ))}
