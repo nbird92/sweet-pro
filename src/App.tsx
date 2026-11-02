@@ -97,6 +97,7 @@ import { sameLotCode, cleanLotCode, cleanLotCodeList, dedupeLotCodes, lotKey } f
 const SalesForecastPage = lazy(() => import('./components/SalesForecastPage'));
 const HamiltonScheduleSyncModal = lazy(() => import('./components/HamiltonScheduleSyncModal'));
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
+const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarrierReport'));
 import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
@@ -428,13 +429,14 @@ export default function App() {
   const [hiddenPages, setHiddenPages] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('sweetpro-hidden-pages');
-      return saved ? new Set(JSON.parse(saved)) : new Set<string>();
+      // "Reports" was renamed "Sales Reports" — carry a saved hidden flag over.
+      return saved ? new Set((JSON.parse(saved) as string[]).map(n => (n === 'Reports' ? 'Sales Reports' : n))) : new Set<string>();
     } catch { return new Set<string>(); }
   });
   const [pageOrder, setPageOrder] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('sweetpro-page-order');
-      return saved ? JSON.parse(saved) : [];
+      return saved ? (JSON.parse(saved) as string[]).map(n => (n === 'Reports' ? 'Sales Reports' : n)) : [];
     } catch { return []; }
   });
   // Per-table saved column order (tableKey -> ordered column keys). Backed by the
@@ -11539,7 +11541,7 @@ export default function App() {
     { name: 'Customer Quote', icon: Calculator },
     { name: 'Shipment Schedule', icon: Calendar },
     { name: 'Customers', icon: Users },
-    { name: 'Reports', icon: TrendingUp },
+    { name: 'Sales Reports', icon: TrendingUp },
     { name: 'Supply Chain', icon: Truck },
     { name: 'Tolling Fees', icon: DollarSign },
     { name: 'Contracts', icon: FileText },
@@ -15045,7 +15047,7 @@ export default function App() {
       );
     }
 
-    if (activePage === 'Reports') {
+    if (activePage === 'Sales Reports') {
       return (
         <ReportsPage
           invoices={invoices}
@@ -15062,6 +15064,8 @@ export default function App() {
           productGroups={productGroups}
           namingFormulas={namingFormulas}
           demurrageInvoices={demurrageInvoices}
+          senderName={user?.displayName || ''}
+          senderEmail={user?.email || ''}
         />
       );
     }
@@ -16279,6 +16283,13 @@ export default function App() {
                   defaultSortKey="shipmentDate"
                   defaultSortDir="desc"
                 />
+                {/* Demurrage cost by carrier (weekly / monthly) — moved here from
+                    the Reports page so it sits with the invoices it summarises. */}
+                <div className="mt-6">
+                  <Suspense fallback={null}>
+                    <DemurrageByCarrierReport demurrageInvoices={demurrageInvoices} />
+                  </Suspense>
+                </div>
               </div>
             );
           })()}

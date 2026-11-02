@@ -8,8 +8,13 @@ import {
   Download,
   FileSpreadsheet,
   Calendar,
-  Clock,
   Mail,
+  FileText,
+  Send,
+  TrendingUp,
+  Package,
+  Layers,
+  Scale,
 } from 'lucide-react';
 // Type-only: ExcelJS is dynamic-imported at each export handler below so it stays
 // out of the main bundle (all ExcelJS.* uses here are erased type positions).
@@ -53,6 +58,9 @@ interface ReportsPageProps {
   productGroups: ProductGroup[];
   namingFormulas: NamingFormula[];
   demurrageInvoices: DemurrageInvoice[];
+  /** Signed-in user — the From / sign-off on emailed customer reports. */
+  senderName?: string;
+  senderEmail?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -67,34 +75,6 @@ function formatCurrency(n: number): string {
   return '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Parse a demurrage date string into a local Date, or null when unparseable.
-// Handles the ISO 'YYYY-MM-DD' the modal date-picker and scanner emit, plus the
-// carrier-invoice formats the scanner sometimes passes through verbatim
-// ('Aug-06-2026', 'Aug 6, 2026', '2026/08/06').
-function parseDemDate(s?: string): Date | null {
-  if (!s) return null;
-  const str = s.trim();
-  if (!str) return null;
-  const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(str);
-  if (iso) {
-    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // Fall back to the Date parser. Swap dashes for spaces so 'Aug-06-2026' parses
-  // (native Date rejects that dash form) without touching the ISO branch above.
-  const d = new Date(str.replace(/-/g, ' '));
-  return isNaN(d.getTime()) ? null : d;
-}
-
-// Monday-anchored start of the week containing d (used for weekly bucketing).
-function weekStartOf(d: Date): Date {
-  const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const day = dt.getDay(); // 0 Sun .. 6 Sat
-  dt.setDate(dt.getDate() + (day === 0 ? -6 : 1 - day));
-  return dt;
-}
-
-const pad2 = (n: number) => String(n).padStart(2, '0');
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -113,6 +93,8 @@ export default function ReportsPage({
   productGroups,
   namingFormulas,
   demurrageInvoices,
+  senderName,
+  senderEmail,
 }: ReportsPageProps) {
   // Resolve a free-text invoice product name to a SKU/QA pair from the
   // Products catalog. Tries exact match (case-insensitive), then a fuzzy
@@ -275,8 +257,6 @@ export default function ReportsPage({
   }, [resolveToCatalog, sugarTypes, productGroups, namingFormulas]);
   // ── Sort/Search state per report ──────────────────────────────────────────
   const [trendYear, setTrendYear] = useState<string>('all');
-  // Demurrage report: bucket carrier costs by ISO week or calendar month.
-  const [demGranularity, setDemGranularity] = useState<'week' | 'month'>('month');
   const [topNSearch, setTopNSearch] = useState('');
   const [topNSort, setTopNSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
   const [projFyId, setProjFyId] = useState<string>(fiscalYears.length > 0 ? fiscalYears[0].id : '');
@@ -287,10 +267,6 @@ export default function ReportsPage({
   // Customer report — dropdown to focus a single customer ('' = all).
   const [reportCustomerId, setReportCustomerId] = useState<string>('');
   // "Send to Customer" popout for the customer report.
-  const [sendReportOpen, setSendReportOpen] = useState(false);
-  const [sendReportTo, setSendReportTo] = useState('');
-  const [sendReportSending, setSendReportSending] = useState(false);
-  const [sendReportResult, setSendReportResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const toggleSort = (setter: React.Dispatch<React.SetStateAction<{ key: string; dir: 'asc' | 'desc' }>>) => (key: string) => {
     setter(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' });
@@ -1149,115 +1125,16 @@ export default function ReportsPage({
     ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 0 }];
   }, [sortedGroupSales, groupSalesData, groupGrandTotalMt, groupGrandTotalRev]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // REPORT: Demurrage cost by carrier (weekly / monthly)
-  // Buckets carrier demurrage/wait-time invoices (Supply Chain page) by ISO week
-  // or calendar month, on the shipment date (falling back to the invoice date).
-  // ═══════════════════════════════════════════════════════════════════════════
-  const demStats = useMemo(() => {
-    const periodOf = (d: Date): { key: string; label: string } => {
-      if (demGranularity === 'month') {
-        return { key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`, label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}` };
-      }
-      const ws = weekStartOf(d);
-      return { key: `${ws.getFullYear()}-${pad2(ws.getMonth() + 1)}-${pad2(ws.getDate())}`, label: `${MONTH_NAMES[ws.getMonth()]} ${ws.getDate()}` };
-    };
-    const UNDATED = '￿'; // sorts after every real YYYY-… key
-    const periodLabels = new Map<string, string>();
-    // Bucket by CURRENCY first, then carrier — amounts in different currencies
-    // are never summed together (no FX conversion), so each currency reports its
-    // own carrier matrix + totals. Blank/unknown currency defaults to CAD (these
-    // are Canadian carrier invoices; the entry modal also defaults to CAD).
-    type Row = { carrier: string; total: number; count: number; byPeriod: Map<string, number> };
-    const byCurrency = new Map<string, Map<string, Row>>();
-    for (const inv of demurrageInvoices) {
-      const carrier = (inv.carrier || '').trim() || '—';
-      // Normalize free-text currency spellings ("CDN$", "CDN", "USD$", "US") so
-      // each doesn't report as its own currency group.
-      const curRaw = (inv.currency || '').toUpperCase().replace(/[^A-Z]/g, '');
-      const currency = ['CDN', 'CND', 'CA'].includes(curRaw) || curRaw.startsWith('CANADIAN') ? 'CAD'
-        : (['US', 'USA'].includes(curRaw) || curRaw.startsWith('USFUND') ? 'USD' : curRaw || 'CAD');
-      const amt = typeof inv.amount === 'number' && Number.isFinite(inv.amount) ? inv.amount : 0;
-      const dt = parseDemDate(inv.shipmentDate) || parseDemDate(inv.invoiceDate);
-      const p = dt ? periodOf(dt) : { key: UNDATED, label: 'Undated' };
-      periodLabels.set(p.key, p.label);
-      let cg = byCurrency.get(currency);
-      if (!cg) { cg = new Map(); byCurrency.set(currency, cg); }
-      let c = cg.get(carrier);
-      if (!c) { c = { carrier, total: 0, count: 0, byPeriod: new Map() }; cg.set(carrier, c); }
-      c.total += amt;
-      c.count += 1;
-      c.byPeriod.set(p.key, (c.byPeriod.get(p.key) || 0) + amt);
-    }
-    const periodKeys = [...periodLabels.keys()].sort(); // UNDATED sorts last
-    const periods = periodKeys.map(k => ({ key: k, label: periodLabels.get(k) || k }));
-    const groups = [...byCurrency.entries()].map(([currency, cg]) => {
-      const carriers = [...cg.values()].sort((a, b) => b.total - a.total);
-      const grand = carriers.reduce((s, c) => s + c.total, 0);
-      const count = carriers.reduce((s, c) => s + c.count, 0);
-      const periodTotals = new Map<string, number>();
-      for (const k of periodKeys) periodTotals.set(k, carriers.reduce((s, c) => s + (c.byPeriod.get(k) || 0), 0));
-      return { currency, carriers, grand, count, periodTotals };
-    }).sort((a, b) => b.grand - a.grand);
-    const distinctCarriers = new Set<string>();
-    for (const cg of byCurrency.values()) for (const k of cg.keys()) distinctCarriers.add(k);
-    return { periods, groups, count: demurrageInvoices.length, carrierCount: distinctCarriers.size, multiCurrency: groups.length > 1 };
-  }, [demurrageInvoices, demGranularity]);
-
-  const demMoney = useCallback(
-    (n: number, currency: string) => `${currency ? currency + ' ' : '$'}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    [],
-  );
-
-  const buildDemurrageSheet = useCallback((wb: ExcelJS.Workbook) => {
-    const ws = wb.addWorksheet('Demurrage by Carrier');
-    const dateStr = new Date().toLocaleDateString();
-    const gran = demGranularity === 'week' ? 'Weekly' : 'Monthly';
-    const totalsLine = demStats.groups.map(g => `${formatNum(g.grand, 2)} ${g.currency}`).join(' · ') || '0.00';
-    addTitleRows(ws, `Demurrage Cost by Carrier (${gran})`, `Generated ${dateStr} | ${demStats.carrierCount} carriers | ${demStats.count} invoices | ${totalsLine} total`);
-
-    const header = ['Carrier', ...demStats.periods.map(p => p.label), 'Total', 'Invoices'];
-    const headerRowNum = ws.rowCount + 1;
-    ws.addRow(header);
-    applyHeaderRow(ws, headerRowNum);
-    for (let i = 2; i <= header.length; i++) ws.getRow(headerRowNum).getCell(i).alignment = { horizontal: 'right' };
-
-    // One block per currency (amounts never summed across currencies).
-    demStats.groups.forEach((g) => {
-      if (demStats.multiCurrency) {
-        const br = ws.addRow([`${g.currency} — ${formatNum(g.grand, 2)} total`]);
-        br.font = { bold: true, italic: true };
-      }
-      g.carriers.forEach((c) => {
-        const r = ws.addRow([c.carrier, ...demStats.periods.map(p => c.byPeriod.get(p.key) || 0), c.total, c.count]);
-        for (let i = 2; i <= header.length - 1; i++) { r.getCell(i).numFmt = CURRENCY_FMT; r.getCell(i).alignment = { horizontal: 'right' }; }
-        r.getCell(header.length).numFmt = INT_FMT;
-        r.getCell(header.length).alignment = { horizontal: 'right' };
-      });
-      const totalRowNum = ws.rowCount + 1;
-      const tr = ws.addRow([`Total (${g.currency})`, ...demStats.periods.map(p => g.periodTotals.get(p.key) || 0), g.grand, g.count]);
-      for (let i = 2; i <= header.length - 1; i++) { tr.getCell(i).numFmt = CURRENCY_FMT; tr.getCell(i).alignment = { horizontal: 'right' }; }
-      tr.getCell(header.length).numFmt = INT_FMT;
-      tr.getCell(header.length).alignment = { horizontal: 'right' };
-      applyTotalRow(ws, totalRowNum);
-    });
-
-    ws.getColumn(1).width = 26;
-    for (let i = 2; i <= header.length; i++) ws.getColumn(i).width = 14;
-    ws.views = [{ state: 'frozen', ySplit: headerRowNum, xSplit: 1 }];
-  }, [demStats, demGranularity]);
-
   const exportAllReports = useCallback(async () => {
     const ExcelJSRuntime = (await import('exceljs')).default;
     const wb = new ExcelJSRuntime.Workbook();
     wb.creator = 'Sweet Pro';
     wb.created = new Date();
     buildProjectedSheet(wb);
-    buildDemurrageSheet(wb);
     const buf = await wb.xlsx.writeBuffer();
     const dateStr = new Date().toISOString().slice(0, 10);
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_Sales_Reports_${dateStr}.xlsx`);
-  }, [buildProjectedSheet, buildDemurrageSheet]);
+  }, [buildProjectedSheet]);
 
   // Customer sales volume broken out BY MONTH (invoiced MT bucketed on invoice
   // date). Declared here — ahead of the per-customer workbook builders below —
@@ -1388,14 +1265,16 @@ export default function ReportsPage({
       const ws = wb.addWorksheet('Contracts');
       addTitleRows(ws, `Customer Report — ${row.customer}`, `Contract Balances | Generated ${dateStr}`);
       const h = ws.rowCount + 1;
-      ws.addRow(['Contract #', 'Product', 'Contract Vol (MT)', 'Volume Taken (MT)', 'Remaining Contract Balance (MT)', 'Qty on Order (MT)']);
+      ws.addRow(['Contract #', 'Product', 'Price / MT', 'Currency', 'Start Date', 'End Date', 'Contract Vol (MT)', 'Volume Taken (MT)', 'Remaining Contract Balance (MT)', 'Qty on Order (MT)']);
       applyHeaderRow(ws, h);
-      for (let i = 3; i <= 6; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
+      ws.getRow(h).getCell(3).alignment = { horizontal: 'right' };
+      for (let i = 7; i <= 10; i++) ws.getRow(h).getCell(i).alignment = { horizontal: 'right' };
       row.contractRows.forEach((c, idx) => {
-        const r = ws.addRow([c.contractNumber, c.product, c.contractVol, c.taken, c.remaining, c.qtyOnOrder]);
-        rightAlign(r, 3, 6);
+        const r = ws.addRow([c.contractNumber, c.product, c.price || null, c.currency, c.startDate, c.endDate, c.contractVol, c.taken, c.remaining, c.qtyOnOrder]);
+        rightAlign(r, 3, 3, CURRENCY_FMT);
+        rightAlign(r, 7, 10);
         if (idx % 2 === 1) {
-          for (let i = 1; i <= 6; i++) {
+          for (let i = 1; i <= 10; i++) {
             r.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
           }
         }
@@ -1403,18 +1282,18 @@ export default function ReportsPage({
       if (row.contractRows.length) {
         const totalRowNum = ws.rowCount + 1;
         const t = ws.addRow([
-          '', 'Total',
+          '', 'Total', '', '', '', '',
           row.contractRows.reduce((s, c) => s + c.contractVol, 0),
           row.contractRows.reduce((s, c) => s + c.taken, 0),
           row.contractRows.reduce((s, c) => s + c.remaining, 0),
           row.contractRows.reduce((s, c) => s + c.qtyOnOrder, 0),
         ]);
-        rightAlign(t, 3, 6);
+        rightAlign(t, 7, 10);
         applyTotalRow(ws, totalRowNum);
       } else {
         ws.addRow(['No active contracts for this customer.']);
       }
-      setWidths(ws, 6);
+      setWidths(ws, 10);
     }
   }, [customerMonthlySales]);
 
@@ -1436,49 +1315,94 @@ export default function ReportsPage({
     saveAs(blob, customerReportFileName(row));
   }, [buildCustomerReportBlob]);
 
-  /** The customer's SALES CONTACT email (Customer.salesContactEmail), used to
-   *  pre-fill the Send to Customer box. Falls back to the generic contact email.
-   *  NOTE: salespersonId is the internal Sucro rep, NOT the customer, so it is
-   *  deliberately not used here. */
-  const suggestedReportRecipient = useCallback((customerId: string): string => {
-    const c = customers.find(x => x.id === customerId);
-    return (c?.salesContactEmail || c?.contactEmail || '').trim();
-  }, [customers]);
+  // ── Customer Report PDF — viewer + Send to Customer ─────────────────────
+  // Built like the BOL: jsPDF → blob URL → document viewer with Download and
+  // Send to Customer. Sending opens an email menu (modelled on Email Quote)
+  // and delivers through the app's email service with the PDF attached.
+  const [reportPdf, setReportPdf] = useState<{ url: string; blob: Blob; filename: string; customerId: string; customer: string } | null>(null);
+  const [reportEmailOpen, setReportEmailOpen] = useState(false);
+  const [reportEmailTo, setReportEmailTo] = useState('');
+  const [reportEmailCc, setReportEmailCc] = useState('');
+  const [reportEmailSubject, setReportEmailSubject] = useState('');
+  const [reportEmailBody, setReportEmailBody] = useState('');
+  const [reportEmailSending, setReportEmailSending] = useState(false);
+  const [reportEmailResult, setReportEmailResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  const openSendReport = useCallback((row: typeof customerReport[number]) => {
-    setSendReportTo(suggestedReportRecipient(row.id));
-    setSendReportResult(null);
-    setSendReportOpen(true);
-  }, [suggestedReportRecipient]);
+  const openCustomerReportPdf = useCallback(async (row: typeof customerReport[number]) => {
+    const { generateCustomerReportPdf } = await import('../customerReportPdf');
+    const monthly = customerMonthlySales.rows.find(r => r.id === row.id);
+    const { blob, blobUrl, filename } = generateCustomerReportPdf({
+      customer: row.customer,
+      customerNumber: row.customerNumber,
+      salesMt: row.salesMt,
+      onOrderMt: row.onOrderMt,
+      contractCount: row.contractCount,
+      remainingTotal: row.remainingTotal,
+      byMonth: monthly?.byMonth || {},
+      contracts: row.contractRows,
+    });
+    setReportPdf(prev => {
+      if (prev?.url) URL.revokeObjectURL(prev.url);
+      return { url: blobUrl, blob, filename, customerId: row.id, customer: row.customer };
+    });
+  }, [customerMonthlySales]);
 
-  const handleSendCustomerReport = useCallback(async (row: typeof customerReport[number]) => {
-    const recipients = sendReportTo.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
-    if (!recipients.length) {
-      setSendReportResult({ ok: false, message: 'Enter at least one email address.' });
-      return;
-    }
-    setSendReportSending(true);
-    setSendReportResult(null);
+  const closeReportPdf = () => {
+    setReportPdf(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; });
+    setReportEmailOpen(false);
+  };
+
+  const downloadReportPdf = () => { if (reportPdf) saveAs(reportPdf.blob, reportPdf.filename); };
+
+  const openReportEmail = () => {
+    if (!reportPdf) return;
+    const c = customers.find(x => x.id === reportPdf.customerId);
+    setReportEmailTo((c?.salesContactEmail || c?.contactEmail || '').trim());
+    setReportEmailCc('');
+    setReportEmailSubject(`Sales Report — ${reportPdf.customer}`);
+    setReportEmailBody([
+      `Dear ${reportPdf.customer},`,
+      '',
+      'Please find attached your current sales report, covering your sales summary, monthly sales volume and contract details.',
+      '',
+      'Please let us know if you have any questions.',
+      '',
+      'Best regards,',
+      senderName || 'Sucro Canada',
+      ...(senderEmail ? [senderEmail] : []),
+    ].join('\n'));
+    setReportEmailResult(null);
+    setReportEmailOpen(true);
+  };
+
+  const sendReportEmail = async () => {
+    if (!reportPdf) return;
+    const split = (v: string) => v.split(/[,;]+/).map(x => x.trim()).filter(Boolean);
+    const to = split(reportEmailTo);
+    if (!to.length) { setReportEmailResult({ ok: false, message: 'Enter at least one recipient.' }); return; }
+    setReportEmailSending(true);
+    setReportEmailResult(null);
     try {
-      const blob = await buildCustomerReportBlob(row);
+      const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const res = await sendEmail({
-        to: recipients,
-        subject: `Customer Report — ${row.customer}`,
-        html: `<p>Hello,</p>
-<p>Please find attached the current customer report for <strong>${row.customer}</strong>, covering the summary, monthly sales volume and contract balances.</p>
-<p>Regards,<br/>Sucro Canada</p>`,
-        attachment: blob,
-        attachmentFilename: customerReportFileName(row),
+        to,
+        cc: split(reportEmailCc),
+        subject: reportEmailSubject || `Sales Report — ${reportPdf.customer}`,
+        html: `<div style="font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap">${esc(reportEmailBody)}</div>`,
+        attachment: reportPdf.blob,
+        attachmentFilename: reportPdf.filename,
+        ...(senderName ? { fromName: senderName } : {}),
+        ...(senderEmail ? { replyTo: senderEmail } : {}),
       });
-      setSendReportResult(res.success
-        ? { ok: true, message: `Sent to ${(res.actualTo || recipients).join(', ')}` }
+      setReportEmailResult(res.success
+        ? { ok: true, message: `Sent to ${(res.actualTo || to).join(', ')}` }
         : { ok: false, message: res.error || 'Send failed.' });
     } catch (e: any) {
-      setSendReportResult({ ok: false, message: e?.message || String(e) });
+      setReportEmailResult({ ok: false, message: e?.message || String(e) });
     } finally {
-      setSendReportSending(false);
+      setReportEmailSending(false);
     }
-  }, [sendReportTo, buildCustomerReportBlob]);
+  };
 
   const exportSingleReport = useCallback(async (sheetName: string) => {
     const ExcelJSRuntime = (await import('exceljs')).default;
@@ -1490,13 +1414,12 @@ export default function ReportsPage({
       case 'combinations': buildCombinationsSheet(wb); break;
       case 'projected': buildProjectedSheet(wb); break;
       case 'group': buildGroupSheet(wb); break;
-      case 'demurrage': buildDemurrageSheet(wb); break;
     }
     const buf = await wb.xlsx.writeBuffer();
     const dateStr = new Date().toISOString().slice(0, 10);
-    const names: Record<string, string> = { monthly: 'Monthly_Trend', combinations: 'Customer_Product_Combos', projected: 'Projected_Annual_Sales', group: 'Sales_by_Customer_Group', demurrage: 'Demurrage_by_Carrier' };
+    const names: Record<string, string> = { monthly: 'Monthly_Trend', combinations: 'Customer_Product_Combos', projected: 'Projected_Annual_Sales', group: 'Sales_by_Customer_Group' };
     saveAs(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `SweetPro_${names[sheetName] || 'Report'}_${dateStr}.xlsx`);
-  }, [buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet, buildGroupSheet, buildDemurrageSheet]);
+  }, [buildMonthlySheet, buildCombinationsSheet, buildProjectedSheet, buildGroupSheet]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1565,11 +1488,16 @@ export default function ReportsPage({
         // Outstanding follows the same rule as the Contracts table: always
         // Contract Volume − Volume Taken, never the persisted volumeOutstanding.
         const remaining = contractVol - taken;
-        return { contractNumber: ct.contractNumber || '—', product: ct.skuName || '—', contractVol, taken, remaining, qtyOnOrder };
+        return {
+          contractNumber: ct.contractNumber || '—', product: ct.skuName || '—',
+          price: typeof ct.finalPrice === 'number' ? ct.finalPrice : 0, currency: (ct.currency || '').trim().toUpperCase(),
+          startDate: ct.startDate || '', endDate: ct.endDate || '',
+          contractVol, taken, remaining, qtyOnOrder,
+        };
       }).sort((a, b) => b.remaining - a.remaining);
       const remainingTotal = contractRows.reduce((s, c) => s + c.remaining, 0);
 
-      return { id: cust.id, customer: cust.name || '(unnamed)', salesMt, onOrderMt, contractCount: custContracts.length, remainingTotal, contractRows };
+      return { id: cust.id, customer: cust.name || '(unnamed)', customerNumber: cust.customerNumber || '', salesMt, onOrderMt, contractCount: custContracts.length, remainingTotal, contractRows };
     }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0);
 
     return rows.sort((a, b) => b.salesMt - a.salesMt);
@@ -1590,7 +1518,7 @@ export default function ReportsPage({
     <div className="space-y-8">
       {/* Page Header */}
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold uppercase tracking-tighter">Reports</h2>
+        <h2 className="text-xl font-bold uppercase tracking-tighter">Sales Reports</h2>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3 text-xs">
             <span className="text-[10px] uppercase tracking-widest font-bold opacity-60">
@@ -1630,96 +1558,143 @@ export default function ReportsPage({
                 <option key={r.id} value={r.id}>{r.customer}</option>
               ))}
             </select>
-            {/* Per-customer actions — only meaningful once a single customer is
-                picked, since both act on that one customer's three sections. */}
+            {/* Per-customer actions — only meaningful once a single customer is picked. */}
             {selectedCustomerRow && (
               <>
                 <button
                   onClick={() => exportCustomerReport(selectedCustomerRow)}
-                  title={`Export ${selectedCustomerRow.customer}'s report (all three sections) to Excel`}
+                  title={`Export ${selectedCustomerRow.customer}'s report to Excel`}
                   className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors"
                 >
                   <FileSpreadsheet size={12} /> Export to Excel
                 </button>
                 <button
-                  onClick={() => openSendReport(selectedCustomerRow)}
-                  title={`Email ${selectedCustomerRow.customer}'s report`}
-                  className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors"
+                  onClick={() => openCustomerReportPdf(selectedCustomerRow)}
+                  title={`Create a one-page PDF sales report for ${selectedCustomerRow.customer}`}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-700 transition-colors"
                 >
-                  <Mail size={12} /> Send to Customer
+                  <FileText size={12} /> Customer Report
                 </button>
               </>
             )}
           </div>
         </div>
 
-        {/* Send to Customer popout */}
-        {sendReportOpen && selectedCustomerRow && (
-          <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
-            <div
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex justify-between items-center">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Send Customer Report</h3>
-                <button onClick={() => setSendReportOpen(false)} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
+        {selectedCustomerRow ? (() => {
+          const row = selectedCustomerRow;
+          const monthly = customerMonthlySales.rows.find(r => r.id === row.id);
+          const monthKeys = customerMonthlySales.months.filter(mk => (monthly?.byMonth[mk] || 0) > 0);
+          const maxMonth = Math.max(1, ...monthKeys.map(mk => monthly?.byMonth[mk] || 0));
+          const kpis = [
+            { label: 'Sales Volume', value: formatNum(row.salesMt), unit: 'MT invoiced', icon: <TrendingUp size={14} /> },
+            { label: 'Qty on Order', value: formatNum(row.onOrderMt), unit: 'MT open', icon: <Package size={14} /> },
+            { label: 'Active Contracts', value: String(row.contractCount), unit: 'contracts', icon: <Layers size={14} /> },
+            { label: 'Remaining Balance', value: formatNum(row.remainingTotal), unit: 'MT on contract', icon: <Scale size={14} /> },
+          ];
+          const card = 'bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]';
+          const cardHead = 'px-4 py-2.5 border-b border-[#141414]/10 text-[10px] font-bold uppercase tracking-widest flex items-center justify-between';
+          const fmtDate = (d: string) => {
+            const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || '');
+            return m ? `${MONTH_NAMES[parseInt(m[2], 10) - 1]} ${parseInt(m[3], 10)}, ${m[1]}` : (d || '—');
+          };
+          return (
+            <div className="border border-[#141414] border-t-0 bg-[#F5F5F3] p-4 space-y-4">
+              {/* Sales summary */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {kpis.map(k => (
+                  <div key={k.label} className={`${card} p-4 border-l-4 border-l-emerald-600`}>
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-widest font-bold opacity-60">
+                      {k.label} <span className="opacity-70">{k.icon}</span>
+                    </div>
+                    <div className="mt-2 font-mono font-bold text-2xl leading-none">{k.value}</div>
+                    <div className="mt-1 text-[10px] opacity-50">{k.unit}</div>
+                  </div>
+                ))}
               </div>
-              <div className="p-6 space-y-4">
-                <div className="text-xs">
-                  Sending the report for <strong>{selectedCustomerRow.customer}</strong> as an Excel
-                  attachment with all three sections (summary, monthly sales, contracts).
+
+              {/* Sales by month */}
+              <div className={card}>
+                <div className={cardHead}>
+                  <span>Sales by Month (MT)</span>
+                  <span className="font-mono normal-case tracking-normal opacity-60">Total {formatNum(monthly?.total || 0)} MT</span>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold opacity-60">
-                    To — separate multiple addresses with a comma
-                  </label>
-                  <input
-                    type="text"
-                    value={sendReportTo}
-                    onChange={(e) => setSendReportTo(e.target.value)}
-                    placeholder="name@customer.com"
-                    className="w-full bg-[#F5F5F5] border border-[#141414] px-3 py-2 text-sm outline-none focus:bg-white"
-                  />
-                  {suggestedReportRecipient(selectedCustomerRow.id) ? (
-                    <div className="text-[10px] opacity-60">
-                      Suggested from the customer card&apos;s Sales Contact:{' '}
-                      <button
-                        onClick={() => setSendReportTo(suggestedReportRecipient(selectedCustomerRow.id))}
-                        className="underline decoration-dotted hover:opacity-100"
-                      >
-                        {suggestedReportRecipient(selectedCustomerRow.id)}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-[10px] opacity-60">
-                      No Sales Contact email on this customer&apos;s card — enter one manually.
-                    </div>
-                  )}
-                </div>
-                {sendReportResult && (
-                  <div className={`text-xs border-l-2 pl-3 py-1 ${sendReportResult.ok ? 'border-emerald-600 text-emerald-700' : 'border-red-500 text-red-700'}`}>
-                    {sendReportResult.message}
+                {monthKeys.length === 0 ? (
+                  <div className="p-6 text-center text-xs opacity-50 italic">No invoiced volume with a valid date.</div>
+                ) : (
+                  <div className="p-4 grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+                    {monthKeys.map(mk => {
+                      const v = monthly?.byMonth[mk] || 0;
+                      return (
+                        <div key={mk} className="flex items-center gap-2 text-xs">
+                          <span className="w-14 shrink-0 font-bold">{monthLabel(mk)}</span>
+                          <div className="flex-1 h-4 bg-[#141414]/5">
+                            <div className="h-full bg-[#141414]" style={{ width: `${Math.max(2, (v / maxMonth) * 100)}%` }} />
+                          </div>
+                          <span className="w-16 shrink-0 text-right font-mono">{formatNum(v)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
-              <div className="px-4 py-3 border-t border-[#141414]/10 bg-[#F5F5F5] flex justify-end gap-2">
-                <button
-                  onClick={() => setSendReportOpen(false)}
-                  className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-white transition-colors"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={() => handleSendCustomerReport(selectedCustomerRow)}
-                  disabled={sendReportSending || !sendReportTo.trim()}
-                  className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-40"
-                >
-                  <Mail size={14} /> {sendReportSending ? 'Sending…' : 'Send'}
-                </button>
+
+              {/* Contracts */}
+              <div className={card}>
+                <div className={cardHead}>
+                  <span>Contracts</span>
+                  <span className="font-mono normal-case tracking-normal opacity-60">{row.contractRows.length} active</span>
+                </div>
+                {row.contractRows.length === 0 ? (
+                  <div className="p-6 text-center text-xs opacity-50 italic">No active contracts for this customer.</div>
+                ) : (
+                  <div className="p-4 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+                    {row.contractRows.map((c, i) => {
+                      const pct = c.contractVol > 0 ? Math.min(100, Math.max(0, (c.taken / c.contractVol) * 100)) : 0;
+                      return (
+                        <div key={`${c.contractNumber}-${i}`} className="border border-[#141414]/15 bg-[#FAFAF8] p-3 space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-mono font-bold text-sm">{c.contractNumber}</div>
+                              <div className="text-[11px] opacity-70">{c.product}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-mono font-bold text-sm">{c.price ? `$${c.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</div>
+                              <div className="text-[10px] opacity-60">{c.currency ? `${c.currency} / MT` : 'per MT'}</div>
+                            </div>
+                          </div>
+                          <div className="text-[11px] flex items-center gap-1.5">
+                            <Calendar size={11} className="opacity-50" />
+                            <span>{c.startDate ? fmtDate(c.startDate) : '—'}</span>
+                            <span className="opacity-40">→</span>
+                            <span>{c.endDate ? fmtDate(c.endDate) : '—'}</span>
+                          </div>
+                          <div>
+                            <div className="h-1.5 bg-[#141414]/10"><div className="h-full bg-emerald-600" style={{ width: `${pct}%` }} /></div>
+                            <div className="mt-1 text-[10px] opacity-60">{pct.toFixed(0)}% taken</div>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1 text-center">
+                            {[
+                              { l: 'Volume', v: c.contractVol },
+                              { l: 'Taken', v: c.taken },
+                              { l: 'Remaining', v: c.remaining },
+                              { l: 'On Order', v: c.qtyOnOrder },
+                            ].map(x => (
+                              <div key={x.l} className="bg-white border border-[#141414]/10 py-1">
+                                <div className="text-[9px] uppercase tracking-wider opacity-50">{x.l}</div>
+                                <div className="font-mono text-[11px] font-bold">{formatNum(x.v)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )}
+          );
+        })() : (
+          <>
         <div className="border border-[#141414] border-t-0 overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -1802,43 +1777,145 @@ export default function ReportsPage({
             </table>
           )}
         </div>
-
-        {/* Contract-level detail — shown when a single customer is selected. */}
-        {selectedCustomerRow && (
-          <div className="border border-[#141414] border-t-0 overflow-x-auto">
-            <div className="bg-[#2a2a2a] text-[#E4E3E0] px-4 py-2 text-[10px] font-bold uppercase tracking-widest">
-              Contracts — {selectedCustomerRow.customer}
-            </div>
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                  <th className="p-3">Contract #</th>
-                  <th className="p-3">Product</th>
-                  <th className="p-3 text-right">Contract Vol (MT)</th>
-                  <th className="p-3 text-right">Volume Taken (MT)</th>
-                  <th className="p-3 text-right">Remaining Contract Balance (MT)</th>
-                  <th className="p-3 text-right">Qty on Order (MT)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {selectedCustomerRow.contractRows.map((c, i) => (
-                  <tr key={`${c.contractNumber}-${i}`} className="hover:bg-[#F9F9F9]">
-                    <td className="p-3 font-mono font-bold">{c.contractNumber}</td>
-                    <td className="p-3">{c.product}</td>
-                    <td className="p-3 text-right font-mono">{formatNum(c.contractVol)}</td>
-                    <td className="p-3 text-right font-mono">{formatNum(c.taken)}</td>
-                    <td className="p-3 text-right font-mono">{formatNum(c.remaining)}</td>
-                    <td className="p-3 text-right font-mono">{formatNum(c.qtyOnOrder)}</td>
-                  </tr>
-                ))}
-                {selectedCustomerRow.contractRows.length === 0 && (
-                  <tr><td colSpan={6} className="p-6 text-center opacity-50 italic">No active contracts for this customer.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          </>
         )}
       </div>
+
+      {/* Customer Report PDF — document viewer (same layout as the BOL viewer) */}
+      {reportPdf && (
+        <div className="fixed inset-0 z-[600] flex items-center-safe justify-center p-4 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+          <div
+            className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-4">
+                <h3 className="text-xs font-bold uppercase tracking-widest">Customer Report Preview</h3>
+                <span className="text-[10px] opacity-60 font-mono">{reportPdf.filename}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openReportEmail}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
+                >
+                  <Mail size={12} /> Send to Customer
+                </button>
+                <button
+                  onClick={downloadReportPdf}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
+                >
+                  <Download size={12} /> Download PDF
+                </button>
+                <button onClick={closeReportPdf} className="p-1 hover:bg-white/20 transition-colors"><X size={16} /></button>
+              </div>
+            </div>
+            <div className="flex-1 bg-[#525659]">
+              <iframe src={reportPdf.url} title="Customer Report PDF" className="w-full h-full border-0" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send to Customer — email menu modelled on Email Quote, PDF attached */}
+      {reportPdf && reportEmailOpen && (() => {
+        const c = customers.find(x => x.id === reportPdf.customerId);
+        const chips = c ? [
+          { label: 'Main', v: c.contactEmail },
+          { label: 'Sales', v: c.salesContactEmail },
+          { label: 'QA', v: c.qaContractEmail },
+          { label: 'CS', v: c.customerServiceEmail },
+        ].filter(x => (x.v || '').trim()) : [];
+        return (
+          <div className="fixed inset-0 z-[650] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Mail size={16} /> Email Customer Report</h3>
+                <button onClick={() => setReportEmailOpen(false)} className="hover:opacity-70"><X size={18} /></button>
+              </div>
+              <div className="p-6 space-y-3 overflow-y-auto flex-1">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">From</label>
+                  <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm text-[#141414]/70">
+                    {senderName || 'Sucro Canada'}{senderEmail ? ` <${senderEmail}>` : ''}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">To</label>
+                  <input
+                    type="text"
+                    value={reportEmailTo}
+                    onChange={(e) => setReportEmailTo(e.target.value)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                    placeholder="recipient@example.com (separate several with commas)"
+                  />
+                  {chips.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {chips.map(x => (
+                        <button key={x.label} onClick={() => setReportEmailTo(x.v!.trim())} className="text-[9px] px-2 py-0.5 bg-[#F5F5F5] border border-[#141414]/20 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
+                          {x.label}: {x.v}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">CC</label>
+                  <input
+                    type="text"
+                    value={reportEmailCc}
+                    onChange={(e) => setReportEmailCc(e.target.value)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                    placeholder="cc@example.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Subject</label>
+                  <input
+                    type="text"
+                    value={reportEmailSubject}
+                    onChange={(e) => setReportEmailSubject(e.target.value)}
+                    className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white transition-colors outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Message</label>
+                  <textarea
+                    value={reportEmailBody}
+                    onChange={(e) => setReportEmailBody(e.target.value)}
+                    rows={9}
+                    className="w-full bg-white border border-[#141414] p-3 text-xs font-mono leading-relaxed outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-2 border border-[#141414]/15 bg-[#F5F5F5] px-3 py-2 text-xs">
+                  <FileText size={14} className="text-red-600" />
+                  <span className="font-mono">{reportPdf.filename}</span>
+                  <span className="opacity-50">· attached</span>
+                </div>
+                {reportEmailResult && (
+                  <div className={`text-xs border-l-2 pl-3 py-1 ${reportEmailResult.ok ? 'border-emerald-600 text-emerald-700' : 'border-red-500 text-red-700'}`}>
+                    {reportEmailResult.message}
+                  </div>
+                )}
+              </div>
+              <div className="p-4 border-t border-[#141414]/10 flex gap-3">
+                <button
+                  onClick={sendReportEmail}
+                  disabled={reportEmailSending || !reportEmailTo.trim()}
+                  className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2 disabled:opacity-50"
+                >
+                  <Send size={14} /> {reportEmailSending ? 'Sending…' : 'Send'}
+                </button>
+                <button
+                  onClick={() => setReportEmailOpen(false)}
+                  className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                >
+                  {reportEmailResult?.ok ? 'Close' : 'Cancel'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══════════════ REPORT 5: Projected Annual Sales ═══════════════ */}
       <div>
@@ -2027,100 +2104,6 @@ export default function ReportsPage({
         )}
       </div>
 
-      {/* ═══════════════ REPORT: Demurrage Cost by Carrier ═══════════════ */}
-      <div>
-        <div className="bg-[#141414] text-[#E4E3E0] px-4 py-3 flex items-center justify-between flex-wrap gap-3">
-          <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2">
-            <Clock size={14} />
-            Demurrage Cost by Carrier
-          </h3>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center border border-[#E4E3E0]/20">
-              {(['week', 'month'] as const).map(g => (
-                <button
-                  key={g}
-                  onClick={() => setDemGranularity(g)}
-                  className={`px-3 py-1.5 text-[10px] uppercase tracking-widest font-bold transition-colors ${demGranularity === g ? 'bg-[#E4E3E0] text-[#141414]' : 'bg-[#2a2a2a] text-[#E4E3E0] hover:bg-[#3a3a3a]'}`}
-                >
-                  {g === 'week' ? 'Weekly' : 'Monthly'}
-                </button>
-              ))}
-            </div>
-            <button onClick={() => exportSingleReport('demurrage')} className="flex items-center gap-1 px-2 py-1.5 bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-[10px] uppercase tracking-widest hover:bg-[#3a3a3a] transition-colors" title="Export to Excel">
-              <Download size={11} /> Excel
-            </button>
-          </div>
-        </div>
-        <div className="border border-[#141414] border-t-0 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-          <div className="grid grid-cols-3 gap-0 border-b border-[#141414]">
-            <div className="p-4 border-r border-gray-200 bg-gray-50">
-              <div className="text-[10px] uppercase tracking-widest font-bold opacity-60 mb-1">Total Demurrage</div>
-              {demStats.groups.length === 0 ? (
-                <div className="font-mono font-bold text-lg">{demMoney(0, 'CAD')}</div>
-              ) : (
-                demStats.groups.map(g => (
-                  <div key={g.currency} className="font-mono font-bold text-lg leading-tight">{demMoney(g.grand, g.currency)}</div>
-                ))
-              )}
-            </div>
-            <div className="p-4 border-r border-gray-200">
-              <div className="text-[10px] uppercase tracking-widest font-bold opacity-60 mb-1">Carriers</div>
-              <div className="font-mono font-bold text-lg">{demStats.carrierCount}</div>
-            </div>
-            <div className="p-4">
-              <div className="text-[10px] uppercase tracking-widest font-bold opacity-60 mb-1">Invoices</div>
-              <div className="font-mono font-bold text-lg">{demStats.count}</div>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-50 border-b border-[#141414]">
-                  <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 sticky left-0 bg-gray-50 z-10">Carrier</th>
-                  {demStats.periods.map(p => (
-                    <th key={p.key} className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60 whitespace-nowrap">{p.label}</th>
-                  ))}
-                  <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Total</th>
-                  <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest font-bold opacity-60">Inv.</th>
-                </tr>
-              </thead>
-              {demStats.groups.map(g => (
-                <tbody key={g.currency} className="border-t border-[#141414]/20">
-                  {demStats.multiCurrency && (
-                    <tr className="bg-[#141414]/5">
-                      <td colSpan={demStats.periods.length + 3} className="px-4 py-1.5 text-[10px] uppercase tracking-widest font-bold sticky left-0 bg-[#f3f3f2] z-10">{g.currency}</td>
-                    </tr>
-                  )}
-                  {g.carriers.map(c => (
-                    <tr key={c.carrier} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-2 font-bold sticky left-0 bg-white z-10">{c.carrier}</td>
-                      {demStats.periods.map(p => {
-                        const v = c.byPeriod.get(p.key) || 0;
-                        return <td key={p.key} className="px-4 py-2 text-right font-mono whitespace-nowrap">{v ? demMoney(v, g.currency) : <span className="opacity-30">—</span>}</td>;
-                      })}
-                      <td className="px-4 py-2 text-right font-mono font-bold whitespace-nowrap">{demMoney(c.total, g.currency)}</td>
-                      <td className="px-4 py-2 text-right font-mono opacity-70">{c.count}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-gray-50 font-bold border-t-2 border-[#141414]">
-                    <td className="px-4 py-2 text-[10px] uppercase tracking-widest sticky left-0 bg-gray-50 z-10 whitespace-nowrap">Total{demStats.multiCurrency ? ` (${g.currency})` : ` (${g.carriers.length} carrier${g.carriers.length === 1 ? '' : 's'})`}</td>
-                    {demStats.periods.map(p => (
-                      <td key={p.key} className="px-4 py-2 text-right font-mono whitespace-nowrap">{demMoney(g.periodTotals.get(p.key) || 0, g.currency)}</td>
-                    ))}
-                    <td className="px-4 py-2 text-right font-mono whitespace-nowrap">{demMoney(g.grand, g.currency)}</td>
-                    <td className="px-4 py-2 text-right font-mono">{g.count}</td>
-                  </tr>
-                </tbody>
-              ))}
-              {demStats.groups.length === 0 && (
-                <tbody>
-                  <tr><td colSpan={demStats.periods.length + 3} className="px-4 py-8 text-center text-gray-400">No demurrage invoices yet. Carrier demurrage / wait-time invoices recorded on the Supply Chain page appear here.</td></tr>
-                </tbody>
-              )}
-            </table>
-          </div>
-        </div>
-      </div>
 
     </div>
   );
