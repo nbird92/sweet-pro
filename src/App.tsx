@@ -10540,6 +10540,38 @@ export default function App() {
     return activeLocationName(me?.defaultLocation);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, people, activeLocations]);
+  /** Quote tool: fill the quote's fields from the selected customer's card.
+   *  Only fields the card actually has a value for are changed:
+   *   • Default Currency      → Currency
+   *   • Default Payment Terms → Payment Terms
+   *   • Default Margin        → Refining Margin (CAD/MT)
+   *   • Default Location      → Origin (active locations only)
+   *   • CHEP account number   → Pallet Type = CHEP
+   *   • ship-to / card city   → Destination, when a freight rate exists for it */
+  const applyCustomerQuoteDefaults = (cust: Customer) => {
+    const cur = (cust.defaultCurrency || '').trim().toUpperCase();
+    const origin = activeLocationName(cust.defaultLocation);
+    const city = (cust.shipToLocations?.[0]?.city || cust.city || '').trim().toLowerCase();
+    setConfig(prev => {
+      const next = { ...prev };
+      if (cur === 'CAD' || cur === 'USD') next.currency = cur;
+      if ((cust.defaultPaymentTerms || '').trim()) next.paymentTerms = cust.defaultPaymentTerms;
+      if (typeof cust.defaultMargin === 'number' && cust.defaultMargin > 0) next.refiningMarginCadMt = cust.defaultMargin;
+      if (origin) next.origin = origin as any;
+      if ((cust.chepAccountNumber || '').trim()) {
+        next.palletType = 'CHEP';
+        next.isPalletCharge = true;
+        next.palletCostCadMt = 0;
+      }
+      if (city) {
+        const dest = [...new Set<string>(freightRates.filter(r => r.origin === next.origin).map(r => String(r.destination || "")))]
+          .find(d => { const dl = (d || '').toLowerCase(); return !!dl && (dl.includes(city) || city.includes(dl)); });
+        if (dest) next.destination = dest;
+      }
+      return next;
+    });
+  };
+
   const userDefaultLocationApplied = useRef(false);
   useEffect(() => {
     if (!userDefaultLocation || userDefaultLocationApplied.current) return;
@@ -17863,9 +17895,7 @@ export default function App() {
               onChange={(e) => {
                 setCustomer(e.target.value);
                 const selectedCust = customers.find(c => c.name === e.target.value);
-                if (selectedCust?.defaultPaymentTerms) {
-                  setConfig(prev => ({ ...prev, paymentTerms: selectedCust.defaultPaymentTerms }));
-                }
+                if (selectedCust) applyCustomerQuoteDefaults(selectedCust);
               }}
               className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
             >
