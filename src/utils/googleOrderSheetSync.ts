@@ -1822,10 +1822,25 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
 /* invoice line items inherit from the matching order.                    */
 /* ====================================================================== */
 
+/** A sync-imported invoice whose line items contradict the sheet's product
+ *  (e.g. inherited from a mismatched order) — replaced with the sheet's product. */
+export interface InvoiceProductCorrection {
+  id: string;
+  invoiceNumber: string;
+  bolNumber: string;
+  fromProduct: string;
+  product: string;
+  lineItems: OrderLineItem[];
+  /** JSON of the invoice's lineItems when read — the fix applies only if unchanged since. */
+  beforeLines: string;
+}
+
 export interface InvoiceSyncResult {
   newInvoices: Invoice[];
   /** Existing invoices that had missing fields backfilled from the sheet. */
   updatedInvoices: Invoice[];
+  /** Sync-imported invoices whose product disagrees with the sheet. */
+  productCorrections?: InvoiceProductCorrection[];
   skipped: Array<{ tab: string; bolNumber: string; invoiceNumber: string; reason: string }>;
   errors: Array<{ tab: string; rowIdx: number; message: string }>;
 }
@@ -1843,7 +1858,37 @@ export function parsedRowsToInvoicesConfigured(
   const tabByName = new Map<string, ConfiguredTab>();
   for (const t of configured) tabByName.set(t.tabName, t);
 
-  const result: InvoiceSyncResult = { newInvoices: [], updatedInvoices: [], skipped: [], errors: [] };
+  const result: InvoiceSyncResult = { newInvoices: [], updatedInvoices: [], productCorrections: [], skipped: [], errors: [] };
+
+  // Does a set of line items describe the SAME product as the sheet row? Lines
+  // inherited from the order on the same BOL used to win unconditionally, so a
+  // mismatched order (an LC100 row whose BOL order held GC100) stamped the wrong
+  // product on the invoice. Compare catalog keys when both sides have them; else
+  // compare sugar type (Liquid vs Granulated…), from the catalog or the code.
+  const qaById = new Map(qaProducts.map(q => [q.id, q] as const));
+  const skuById = new Map(skus.map(s => [s.id, s] as const));
+  const sugarOfKey = (key?: string): string => {
+    if (!key) return '';
+    const q = qaById.get(key); const s = skuById.get(key) || (q ? skuById.get(q.skuId) : undefined);
+    return ((q as any)?.sugarType || (s as any)?.sugarType || '').toString().trim().toLowerCase();
+  };
+  const sugarOfText = (t?: string): string => {
+    const v = (t || '').toLowerCase();
+    if (/\bmol/.test(v)) return 'molasses';
+    if (/liquid/.test(v) || /^\s*l[a-z]?\d/i.test(t || '')) return 'liquid';
+    if (/granulated/.test(v) || /^\s*g[a-z]?\d/i.test(t || '')) return 'granulated';
+    return '';
+  };
+  const linesMatchSheet = (lines: OrderLineItem[], refs: { productKey?: string }, raw: string): boolean => {
+    if (!lines.length || !(raw || '').trim()) return true;
+    const keys = lines.map(li => li.productKey).filter(Boolean) as string[];
+    if (refs.productKey && keys.length === lines.length) return keys.includes(refs.productKey);
+    const want = sugarOfKey(refs.productKey) || sugarOfText(raw);
+    if (!want) return true; // can't tell — trust the order
+    const have = lines.map(li => sugarOfKey(li.productKey) || sugarOfText(li.productDisplayName) || sugarOfText(li.productName)).filter(Boolean);
+    if (!have.length) return true;
+    return have.some(h => h.includes(want) || want.includes(h));
+  };
 
   // Invoice NUMBER is the unique key — BOL numbers are intentionally shared
   // across multiple invoices (and orders), so we do NOT dedup on BOL. A row
@@ -1926,9 +1971,16 @@ export function parsedRowsToInvoicesConfigured(
       let expectedFormat = tabFormat;
       if (bolPrefix === 'B') expectedFormat = 'Bulk';
       else if (bolPrefix === 'P') expectedFormat = 'Bagged';
+      else if (bolPrefix === 'L') expectedFormat = 'Liquid';
+      else if (bolPrefix === 'T') expectedFormat = 'Tote';
 
       const customerCanonical = resolveCustomer(r.customerName, customers);
-      const productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      // The BOL-prefix format is a hint: if nothing matches with it, retry without.
+      let productRefs = resolveProduct(r.productRaw, skus, qaProducts, expectedFormat);
+      if (!productRefs.productKey && expectedFormat) {
+        const loose = resolveProduct(r.productRaw, skus, qaProducts);
+        if (loose.productKey) productRefs = loose;
+      }
       const carrierCanonical = resolveCarrier(r.carrierName, carriers);
 
       // Pricing: amount = pricePerMt × quantityMT (qty is MT for bulk/liquid;
@@ -1956,7 +2008,9 @@ export function parsedRowsToInvoicesConfigured(
         ...(productRefs.productDisplayName ? { productDisplayName: productRefs.productDisplayName } : {}),
         ...(productRefs.productKey ? { productKey: productRefs.productKey } : {}),
       } : undefined;
-      const lineItems = linkedOrder?.lineItems?.length ? linkedOrder.lineItems : (builtLine ? [builtLine] : undefined);
+      // Inherit the order's lines only when they agree with the sheet's product.
+      const orderLinesOk = !!linkedOrder?.lineItems?.length && linesMatchSheet(linkedOrder.lineItems, productRefs, r.productRaw);
+      const lineItems = orderLinesOk ? linkedOrder!.lineItems : (builtLine ? [builtLine] : undefined);
 
       // 6. Existing invoice (matched by invoice NUMBER only)? Backfill its BLANK
       //    fields from the sheet — never overwrite a value already present.
@@ -1998,8 +2052,33 @@ export function parsedRowsToInvoicesConfigured(
         if ((!existingInv.lineItems || existingInv.lineItems.length === 0) && lineItems && lineItems.length) {
           patch.lineItems = lineItems;
         }
+        // Product correction — only for invoices this sync created (INV-IMPORT),
+        // whose lines contradict the sheet's product. Never touches invoices
+        // billed in the app.
+        let corrected = false;
+        if ((existingInv.id || '').startsWith('INV-IMPORT-') && builtLine
+          && existingInv.lineItems && existingInv.lineItems.length
+          && !linesMatchSheet(existingInv.lineItems, productRefs, r.productRaw)) {
+          const fixedLine: OrderLineItem = {
+            ...builtLine,
+            qty: existingInv.qty || builtLine.qty,
+            totalWeight: existingInv.qty || builtLine.totalWeight,
+          };
+          result.productCorrections!.push({
+            id: existingInv.id,
+            invoiceNumber: existingInv.invoiceNumber || r.invoiceNumber,
+            bolNumber: existingInv.bolNumber,
+            fromProduct: existingInv.lineItems.map(li => li.productDisplayName || li.productName).join(', '),
+            product: productRefs.productDisplayName || productRefs.productName,
+            lineItems: [stripUndefined(fixedLine)],
+            beforeLines: JSON.stringify(existingInv.lineItems),
+          });
+          corrected = true;
+        }
         if (Object.keys(patch).length > 0) {
           result.updatedInvoices.push(stripUndefined({ ...existingInv, ...patch }));
+          updatedInvoiceIds.add(existingInv.id);
+        } else if (corrected) {
           updatedInvoiceIds.add(existingInv.id);
         } else {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Existing invoice already has all the available info' });

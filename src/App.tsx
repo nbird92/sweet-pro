@@ -7078,7 +7078,13 @@ export default function App() {
           uniqueInvoices.push(inv);
         }
 
-        setInvoices(uniqueInvoices);
+        // Never resurrect an invoice the USER deleted this session (same rule as
+        // orders below): a pull landing before the async server delete re-added
+        // the row — and once back in memory the autosave saw nothing to delete,
+        // so the delete was lost ("delete only works half the time"). Baseline
+        // keeps the server truth so the next autosave still pushes the delete.
+        const invLedger = userDeletedIds.current[COLLECTIONS.invoices];
+        setInvoices(invLedger && invLedger.size ? uniqueInvoices.filter(inv => !invLedger.has(inv.id)) : uniqueInvoices);
         lastSyncedData.current.invoices = JSON.stringify(uniqueInvoices);
       }
       if (data.productGroups?.length) {
@@ -9461,6 +9467,21 @@ export default function App() {
       if (changed) { backfilledCount++; changedDocs.push(merged); }
       return changed ? merged : inv;
     });
+    // Product corrections (sync-imported invoices whose lines contradict the
+    // sheet). These DO overwrite product + lineItems — but only when the live
+    // invoice's lines are still exactly what the importer read, so a manual fix
+    // made since the preview is never reverted.
+    const corrections = new Map((preview.productCorrections || []).map(c => [c.id, c] as const));
+    if (corrections.size) {
+      afterUpdates = afterUpdates.map(inv => {
+        const c = corrections.get(inv.id);
+        if (!c || JSON.stringify(inv.lineItems || []) !== c.beforeLines) return inv;
+        const fixed: Invoice = { ...inv, product: c.product, lineItems: c.lineItems };
+        const at = changedDocs.findIndex(d => d.id === inv.id);
+        if (at >= 0) changedDocs[at] = fixed; else changedDocs.push(fixed);
+        return fixed;
+      });
+    }
     // Belt-and-braces for the Complete & Bill duplication: a NUMBERED new invoice
     // whose BOL|numeric-PO matches a live NUMBER-LESS invoice (an in-app C&B
     // invoice awaiting its SI number) is the same document. Adopt just the number
@@ -9764,7 +9785,7 @@ export default function App() {
           existingInvoices: curInvoices, existingOrders: curOrders, customers, skus, qaProducts, carriers,
         });
         curInvoices = applyInvoiceSyncResult(r, curInvoices);
-        notes.push(`Invoices — ${r.newInvoices.length} new, ${r.updatedInvoices.length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+        notes.push(`Invoices — ${r.newInvoices.length} new, ${r.updatedInvoices.length} updated${(r.productCorrections || []).length ? `, ${(r.productCorrections || []).length} product corrections` : ''}, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
       } catch (e: any) {
         notes.push(`Invoices — failed: ${e?.message || String(e)}`);
       }
@@ -21623,6 +21644,35 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Product corrections — sync-imported invoices whose product disagreed with the sheet */}
+                {(invoiceSyncPreview.productCorrections || []).length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70 text-amber-700">Product Corrections — product differs from the sheet ({invoiceSyncPreview.productCorrections!.length})</h4>
+                    <div className="border border-amber-300 overflow-hidden max-h-56 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <thead className="bg-amber-50 border-b border-amber-200 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left font-bold">Invoice #</th>
+                            <th className="p-2 text-left font-bold">BOL</th>
+                            <th className="p-2 text-left font-bold">Current Product</th>
+                            <th className="p-2 text-left font-bold">Sheet Product</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {invoiceSyncPreview.productCorrections!.map(c => (
+                            <tr key={c.id} className="border-b border-amber-100">
+                              <td className="p-2 font-mono font-bold">{c.invoiceNumber || '—'}</td>
+                              <td className="p-2 font-mono">{c.bolNumber}</td>
+                              <td className="p-2 line-through opacity-60">{productToShortform(c.fromProduct) || c.fromProduct || '—'}</td>
+                              <td className="p-2 font-bold">{productToShortform(c.product) || c.product}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 {/* Updated invoices (existing invoices with missing info backfilled) */}
                 {invoiceSyncPreview.updatedInvoices.length > 0 && (
                   <div>
@@ -21702,7 +21752,7 @@ export default function App() {
               <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
                 <button onClick={() => setInvoiceSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
                 <button
-                  disabled={invoiceSyncPreview.newInvoices.length === 0 && invoiceSyncPreview.updatedInvoices.length === 0}
+                  disabled={invoiceSyncPreview.newInvoices.length === 0 && invoiceSyncPreview.updatedInvoices.length === 0 && !(invoiceSyncPreview.productCorrections || []).length}
                   onClick={() => {
                     // Shared with Sync All so the two paths can't drift.
                     applyInvoiceSyncResult(invoiceSyncPreview, invoices);
@@ -21713,9 +21763,11 @@ export default function App() {
                   {(() => {
                     const n = invoiceSyncPreview.newInvoices.length;
                     const u = invoiceSyncPreview.updatedInvoices.length;
+                    const pc = (invoiceSyncPreview.productCorrections || []).length;
                     const parts: string[] = [];
                     if (n) parts.push(`Import ${n}`);
                     if (u) parts.push(`Update ${u}`);
+                    if (pc) parts.push(`Fix ${pc} product${pc === 1 ? '' : 's'}`);
                     return parts.length ? parts.join(' + ') : 'Apply';
                   })()}
                 </button>
