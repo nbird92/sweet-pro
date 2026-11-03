@@ -1,5 +1,4 @@
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Location, ShipToLocation, LotCode, QAProduct } from './types';
 import { sameLotCode } from './utils/lotCode';
 
@@ -56,19 +55,39 @@ export function resolveCoaSugarType(params: {
 }
 
 // ============================================================
-// COA PAGE — one layout, copied from the customer's Google Sheets templates:
+// COA PAGE — a cell-for-cell copy of the customer's Google Sheets templates:
 //   • "Granulated COA Template" (1CtUthOGFF…) — bulk / granulated / every
 //     non-liquid sugar.
 //   • "Liquid COA Template"     (1vA6uWIU4I…) — liquid sugar and molasses.
-// Both templates are the same sheet apart from the specification rows and the
-// footer: centered title; Customer block left / BOL-Carrier-Trailer-Pick-up-
-// PO-Delivery block right; one item line (Quantity | Product Name | Lot # |
-// Brand | Production Date | Expiration Date); Specification | Standards |
-// Results; MANUFACTURED BY / SHIPPER / ORIGIN / DESTINATION; Loading Date + QA
-// approval; footer. Wording below is the templates' text verbatim — only the
-// {{tokens}} are filled. (There is no Product Group field on either template.)
+// Geometry, merges, fills, borders and fonts are taken from the template sheet
+// itself (Sheets API grid data): 32 columns × 25px, the template's row heights,
+// Arial 10 (24 bold title), #D9D9D9 label fills, a black Specification header,
+// and the same border sides. The sheet is scaled to the page width, exactly as
+// Google's "fit to width" PDF export does. Wording is the templates' verbatim
+// text; only the {{tokens}} are filled. The two templates are the same sheet
+// apart from the specification rows and the footer.
 // ============================================================
 type CoaKind = 'liquid' | 'granulated';
+
+const GRID_COLS = 32;
+const COL_PX = 25;
+// Template row heights (px), row 1 → 42 — from the Granulated COA Template.
+const ROW_PX = [25, 25, 25, 25, 23, 25, 25, 25, 25, 25, 25, 23, 40, 50, 14, 25, 21, 21, 21, 25, 25, 25, 25, 25, 25, 25, 25, 14, 25, 25, 25, 25, 13, 25, 25, 25, 25, 50, 47, 30, 21, 21];
+const LABEL_FILL: [number, number, number] = [217, 217, 217];
+
+type Sides = string; // any of 't','b','l','r'
+interface CellOpts {
+  bold?: boolean;
+  size?: number;            // template pt (scaled on draw)
+  font?: 'helvetica' | 'times';
+  italic?: boolean;
+  fill?: [number, number, number];
+  color?: [number, number, number];
+  align?: 'left' | 'center' | 'right';
+  valign?: 'top' | 'middle' | 'bottom';
+  wrap?: boolean;
+  borders?: Sides;
+}
 
 function generateTemplateCoaPage(
   doc: jsPDF,
@@ -83,149 +102,155 @@ function generateTemplateCoaPage(
   product: { label: string; units: string },
   carrierEmail: string,
 ) {
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const M = 16;
-  const rightColX = 122;           // label column of the right-hand info block
-  const rightValX = 152;           // value column of the right-hand info block
+  const pageW = doc.internal.pageSize.getWidth();
+  // Fit the 32-column sheet to the page width with a margin equal to the
+  // template's own empty column A (so B…AE sit where the export puts them).
+  const margin = 8;
+  const s = (pageW - margin * 2) / (GRID_COLS * COL_PX); // mm per px
+  const ptScale = s / 0.2646;                             // px@96dpi → mm, applied to pt sizes
+  const top = 10;
+  const colX = (c: number) => margin + c * COL_PX * s;
+  const rowY = (r: number) => top + ROW_PX.slice(0, r).reduce((a, b) => a + b, 0) * s;
+
+  /** Draw one (possibly merged) cell. r/c are 1-based sheet rows; c0 is the
+   *  first column index (A=0) and c1 the exclusive end — Sheets merge style. */
+  const cell = (r0: number, r1: number, c0: number, c1: number, text: string, o: CellOpts = {}) => {
+    const x = colX(c0), y = rowY(r0 - 1), w = colX(c1) - x, h = rowY(r1) - y;
+    if (o.fill) { doc.setFillColor(...o.fill); doc.rect(x, y, w, h, 'F'); }
+    if (o.borders) {
+      doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.25);
+      if (o.borders.includes('t')) doc.line(x, y, x + w, y);
+      if (o.borders.includes('b')) doc.line(x, y + h, x + w, y + h);
+      if (o.borders.includes('l')) doc.line(x, y, x, y + h);
+      if (o.borders.includes('r')) doc.line(x + w, y, x + w, y + h);
+    }
+    if (!text) return;
+    const size = (o.size || 10) * ptScale;
+    doc.setFont(o.font || 'helvetica', o.bold && o.italic ? 'bolditalic' : o.bold ? 'bold' : o.italic ? 'italic' : 'normal');
+    doc.setFontSize(size);
+    doc.setTextColor(...(o.color || [0, 0, 0]));
+    const pad = 1.2;
+    const lines: string[] = o.wrap ? (doc.splitTextToSize(text, w - pad * 2) as string[]) : text.split('\n');
+    const lineH = size * 0.3528 * 1.15;
+    const blockH = lineH * lines.length;
+    const valign = o.valign || 'middle';
+    let ty = valign === 'top' ? y + pad + size * 0.3528
+      : valign === 'bottom' ? y + h - pad - blockH + size * 0.3528
+      : y + (h - blockH) / 2 + size * 0.3528 * 0.9;
+    const align = o.align || 'left';
+    const tx = align === 'center' ? x + w / 2 : align === 'right' ? x + w - pad : x + pad;
+    for (const ln of lines) { doc.text(ln, tx, ty, { align }); ty += lineH; }
+  };
+
   const joinVals = (key: keyof LotCode) =>
     [...new Set(shipmentLotCodes.map(lc => String((lc as any)[key] ?? '').trim()).filter(Boolean))].join(', ');
+  const lotNums = shipmentLotCodes.length
+    ? shipmentLotCodes.map(lc => lc.lotNumber).join(', ')
+    : (shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : [])).join(', ');
 
-  // ── Title ──
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.setTextColor(BLACK);
-  doc.text('CERTIFICATE OF ANALYSIS', pageWidth / 2, 20, { align: 'center' });
+  // ── Rows 1–4: title (B1:V4); W1:AF4 is the template's logo area ──
+  cell(1, 4, 1, 22, 'CERTIFICATE OF ANALYSIS', { bold: true, size: 24, align: 'center' });
 
-  // ── Customer block (left) — Name / Address (deliver-to) / Email ──
-  let y = 34;
-  doc.setFontSize(10);
-  doc.text('Customer', M, y);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  y += 6;
-  doc.text(`Name: ${customer?.name || shipment.customer || ''}`, M, y);
-  y += 5.5;
+  // ── Rows 6–11: Customer box (B:O) and shipment block (R:V labels, W:AE values) ──
   // {{deliver_name}} {{deliver_address}} {{deliver_city_province}} {{deliver_postal}}
   const deliverName = shipTo?.name || '';
   const deliverAddr = shipTo ? [shipTo.addressLine1, shipTo.addressLine2].filter(Boolean).join(' ') : (customer?.address || '');
   const deliverCity = shipTo ? [shipTo.city, shipTo.province].filter(Boolean).join(', ') : [customer?.city, customer?.province].filter(Boolean).join(', ');
   const deliverPostal = shipTo?.postalCode || customer?.postalCode || '';
-  const addrLines = doc.splitTextToSize(`Address: ${[deliverName, deliverAddr, deliverCity, deliverPostal].filter(Boolean).join(' ')}`, 95) as string[];
-  doc.text(addrLines, M, y);
-  y += addrLines.length * 5 + 0.5;
-  doc.text(`Email: ${customer?.qaContractEmail || customer?.contactEmail || ''}`, M, y);
+  cell(6, 6, 1, 15, 'Customer', { bold: true, fill: LABEL_FILL, borders: 'tlr' });
+  cell(7, 7, 1, 15, `Name: ${customer?.name || shipment.customer || ''}`, { bold: true, valign: 'bottom', borders: 'tlr' });
+  cell(8, 9, 1, 15, `Address: ${[deliverName, deliverAddr, deliverCity, deliverPostal].filter(Boolean).join(' ')}`, { bold: true, valign: 'top', wrap: true, borders: 'lr' });
+  cell(10, 10, 1, 15, `Email: ${customer?.qaContractEmail || customer?.contactEmail || ''}`, { bold: true, valign: 'bottom', borders: 'lr' });
+  cell(11, 11, 1, 15, '', { borders: 'blr' });
 
-  // ── Shipment block (right) ──
-  let ry = 34;
-  const rightRow = (label: string, value: string) => {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(label, rightColX, ry);
-    doc.setFont('helvetica', 'normal');
-    const v = doc.splitTextToSize(value || '', pageWidth - M - rightValX) as string[];
-    doc.text(v, rightValX, ry);
-    ry += 5.5 * Math.max(1, v.length);
-  };
-  rightRow('BOL #', shipment.bol || order?.bolNumber || '');
-  rightRow('Carrier:', [shipment.carrier || order?.carrier || '', carrierEmail].filter(Boolean).join('  '));
-  rightRow('Trailer #:', joinVals('trailerNumber') || shipment.trailerNo || '');
-  rightRow('Pick-up Date:', shipment.date || order?.shipmentDate || '');
-  rightRow('PO #:', order?.po || shipment.po || '');
-  rightRow('Delivery Required:', shipment.deliveryDate || order?.deliveryDate || '');
-
-  y = Math.max(y, ry) + 8;
-
-  // ── Item line ──
-  const lotNums = shipmentLotCodes.length
-    ? shipmentLotCodes.map(lc => lc.lotNumber).join(', ')
-    : (shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : [])).join(', ');
-  autoTable(doc, {
-    startY: y,
-    margin: { left: M, right: M },
-    head: [['Quantity', 'Product Name', 'Lot #', 'Brand', 'Production Date', 'Expiration Date']],
-    body: [[product.units, product.label, lotNums, 'SUCRO CAN', joinVals('date'), '']],
-    styles: { fontSize: 8, cellPadding: 2, lineColor: [20, 20, 20], lineWidth: 0.2, textColor: [20, 20, 20], halign: 'center' },
-    headStyles: { fillColor: [255, 255, 255], textColor: [20, 20, 20], fontStyle: 'bold', lineColor: [20, 20, 20], lineWidth: 0.2 },
+  const right: Array<[string, string]> = [
+    ['BOL #', shipment.bol || order?.bolNumber || ''],
+    ['Carrier:', [shipment.carrier || order?.carrier || '', carrierEmail].filter(Boolean).join('  ')],
+    ['Trailer #:', joinVals('trailerNumber') || shipment.trailerNo || ''],
+    ['Pick-up Date:', shipment.date || order?.shipmentDate || ''],
+    ['PO #:', order?.po || shipment.po || ''],
+    ['Delivery Required:', shipment.deliveryDate || order?.deliveryDate || ''],
+  ];
+  right.forEach(([label, value], i) => {
+    const r = 6 + i;
+    cell(r, r, 17, 22, label, { bold: true, fill: LABEL_FILL, borders: 'tblr' });
+    cell(r, r, 22, 31, value, { borders: i === 0 ? 'tr' : i === right.length - 1 ? 'br' : 'r' });
   });
-  y = ((doc as any).lastAutoTable?.finalY || y + 18) + 8;
 
-  // ── Specification | Standards | Results — the template's rows, verbatim ──
-  const res = (key: keyof LotCode) => joinVals(key);
+  // ── Rows 13–14: item line ──
+  const itemCols: Array<[number, number, string, string, boolean]> = [
+    [1, 6, 'Quantity', product.units, false],
+    [6, 11, 'Product Name', product.label, true],
+    [11, 16, 'Lot #', lotNums, true],
+    [16, 21, 'Brand', 'SUCRO CAN', true],
+    [21, 26, 'Production Date', joinVals('date'), false],
+    [26, 31, 'Expiration Date', '', false],
+  ];
+  for (const [c0, c1, head, val, wrap] of itemCols) {
+    cell(13, 13, c0, c1, head, { bold: true, fill: LABEL_FILL, align: 'center', wrap: true, borders: 'tblr' });
+    cell(14, 14, c0, c1, val, { align: 'center', wrap, borders: 'tblr' });
+  }
+
+  // ── Rows 16–23: Specification | Standards | Results ──
+  cell(16, 16, 1, 11, 'Specification', { bold: true, fill: [0, 0, 0], color: [255, 255, 255], align: 'center', borders: 'tblr' });
+  cell(16, 16, 11, 21, 'Standards', { bold: true, fill: [0, 0, 0], color: [255, 255, 255], align: 'center', borders: 'tblr' });
+  cell(16, 16, 21, 31, 'Results', { bold: true, fill: [0, 0, 0], color: [255, 255, 255], align: 'center', borders: 'tblr' });
   const maxColor = qaProduct?.maxColor != null && qaProduct.maxColor !== 0 ? String(qaProduct.maxColor) : '';
-  const rows: string[][] = kind === 'liquid'
+  const res = (key: keyof LotCode) => joinVals(key);
+  const sensorial = kind === 'liquid'
+    ? ['Clear viscous liquid, free of haze or sediment, typical sweet, free of foreign odors and off flavours', 'Confirm standard']
+    : ['Typical, Sweet, no off flavor or odor, dry crystalline, white refined sugar with a free flowing capacity', 'Conforms to Standard'];
+  const specRow = (r0: number, r1: number, name: string, standard: string, result: string) => {
+    cell(r0, r1, 1, 10, name, { align: 'center', borders: 'tbl' });
+    cell(r0, r1, 10, 22, standard, { align: 'center', wrap: true, borders: 'tblr' });
+    cell(r0, r1, 22, 31, result, { align: 'center', wrap: true, borders: 'tbr' });
+  };
+  specRow(17, 19, 'Sensorial', sensorial[0], sensorial[1]);
+  const rows: Array<[string, string, string]> = kind === 'liquid'
     ? [
-        ['Sensorial', 'Clear viscous liquid, free of haze or sediment, typical sweet, free of foreign odors and off flavours', 'Confirm standard'],
         ['Total solids (° Brix)', '67.0 to 68.0°', res('brix')],
         ['pH', '6.5 to 8.0', res('ph')],
         ['Color (ICUMSA units)', `Target ${maxColor}`.trim(), res('color')],
       ]
     : [
-        ['Sensorial', 'Typical, Sweet, no off flavor or odor, dry crystalline, white refined sugar with a free flowing capacity', 'Conforms to Standard'],
         ['Color', `Max. ICUMSA ${maxColor}`.trim(), res('color')],
         ['Moisture', 'Max. 0.05%', res('moisture')],
         ['Ash', 'Max. 0.04%', res('ash')],
         ['Sucrose', 'Min. 99.8%', res('sucrose')],
       ];
-  autoTable(doc, {
-    startY: y,
-    margin: { left: M, right: M },
-    head: [['Specification', 'Standards', 'Results']],
-    body: rows,
-    styles: { fontSize: 8.5, cellPadding: 2.5, lineColor: [20, 20, 20], lineWidth: 0.2, textColor: [20, 20, 20] },
-    headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', lineColor: [20, 20, 20], lineWidth: 0.2 },
-    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 38 }, 1: { cellWidth: 92 }, 2: { halign: 'center' } },
-  });
-  y = ((doc as any).lastAutoTable?.finalY || y + 40) + 4;
+  rows.forEach(([n, st, rs], i) => specRow(20 + i, 20 + i, n, st, rs));
 
-  doc.setFont('helvetica', 'italic');
-  doc.setFontSize(7.5);
-  doc.text('*The results reported correspond only to the lots referenced above.', M, y);
-  y += 9;
-
-  // ── Manufacturer / Shipper / Origin / Destination ──
-  const block = (label: string, lines: string[]) => {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(label, M, y); y += 5;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-    for (const l of lines) { doc.text(l, M, y); y += 4.5; }
-    y += 3;
-  };
-  block('MANUFACTURED BY:', ['Sucro Can Canada Inc']);
-  block('SHIPPER:', ['Sucro Can Canada Inc', '560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9', 'TEL: (289) 799-8966']);
+  // ── Row 24: lots note; rows 26–35: manufacturer / shipper / origin / destination ──
+  cell(24, 24, 1, 31, '*The results reported correspond only to the lots referenced above.');
+  cell(26, 26, 1, 15, 'MANUFACTURED BY:', { bold: true });
+  cell(27, 27, 1, 15, 'Sucro Can Canada Inc');
+  cell(29, 29, 1, 15, 'SHIPPER:', { bold: true });
+  cell(30, 30, 1, 15, 'Sucro Can Canada Inc');
+  cell(31, 31, 1, 20, '560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9');
+  cell(32, 32, 1, 15, 'TEL: (289) 799-8966');
   const originTxt = shipFromLocation?.name ? `${shipFromLocation.name.replace(/\s*\(.+\)$/, '')}, ON, Canada` : 'Hamilton, ON, Canada';
-  // DESTINATION is the DELIVER-TO: the order's ship-to site address. The
-  // customer's corporate address is only the fallback when no site is known.
+  // {{destination}} = the DELIVER-TO site; the customer's corporate address is
+  // only the fallback when no ship-to site is known.
   const destTxt = shipTo
     ? [shipTo.city || shipTo.addressLine1, shipTo.province, shipTo.country || (shipTo.city || shipTo.province ? 'Canada' : '')].filter(Boolean).join(', ')
     : [customer?.city, customer?.province, customer?.city || customer?.province ? 'Canada' : ''].filter(Boolean).join(', ');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text('ORIGIN:', M, y); doc.setFont('helvetica', 'normal'); doc.text(originTxt, M + 30, y); y += 5.5;
-  doc.setFont('helvetica', 'bold'); doc.text('DESTINATION:', M, y); doc.setFont('helvetica', 'normal'); doc.text(destTxt, M + 30, y); y += 10;
+  cell(34, 34, 1, 5, 'ORIGIN:', { bold: true });
+  cell(34, 34, 5, 20, originTxt, { valign: 'bottom' });
+  cell(35, 35, 1, 5, 'DESTINATION:', { bold: true });
+  cell(35, 35, 5, 20, destTxt, { valign: 'bottom' });
 
-  // ── Loading Date + QA approval ──
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text('Loading Date', M, y);
-  doc.text('Approved by QA Personnel ONLY', rightColX, y);
-  y += 8;
-  doc.setFont('helvetica', 'normal');
-  doc.text(shipment.date || order?.shipmentDate || '', M, y);
-  doc.setDrawColor(BLACK); doc.setLineWidth(0.3);
-  doc.line(M, y + 2, M + 55, y + 2);
-  doc.line(rightColX, y + 2, rightColX + 65, y + 2);
-  y += 14;
+  // ── Rows 37–38: Loading Date | Approved by QA Personnel ONLY ──
+  cell(37, 37, 1, 6, 'Loading Date', { bold: true, fill: LABEL_FILL, align: 'center', borders: 'tblr' });
+  cell(37, 37, 6, 16, 'Approved by QA Personnel ONLY', { bold: true, fill: LABEL_FILL, align: 'center', borders: 'tbr' });
+  cell(38, 38, 1, 6, shipment.date || order?.shipmentDate || '', { align: 'center', borders: 'tblr' });
+  cell(38, 38, 6, 16, '', { borders: 'br' }); // signature box (Dancing Script in the sheet)
 
-  // ── Footer — each template's own text ──
-  const footY = Math.max(y, doc.internal.pageSize.getHeight() - 24);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(80, 80, 80);
-  if (kind === 'liquid') {
-    doc.text('SUCRO CANADA INC.', pageWidth / 2, footY, { align: 'center' });
-    doc.text('560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9', pageWidth / 2, footY + 4, { align: 'center' });
-    doc.text('TEL : (289)-799-8966 quality@sucro.ca', pageWidth / 2, footY + 8, { align: 'center' });
-  } else {
-    doc.text('560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9 | 1(289)-799-8966 | quality@sucro.ca', pageWidth / 2, footY + 4, { align: 'center' });
-  }
-  doc.setTextColor(BLACK);
+  // ── Row 40: footer — each template's own text ──
+  const footer = kind === 'liquid'
+    ? 'SUCRO CANADA INC.\n560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9\nTEL : (289)-799-8966 quality@sucro.ca'
+    : '560 Ferguson Ave. North, Hamilton Ontario L8L 4Z9 | 1(289)-799-8966 | quality@sucro.ca';
+  cell(40, kind === 'liquid' ? 42 : 40, 1, 31, footer, { align: 'center', size: kind === 'liquid' ? 9 : 10 });
+  doc.setTextColor(0, 0, 0);
 }
 
 // ============================================================
