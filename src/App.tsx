@@ -6002,7 +6002,8 @@ export default function App() {
         shipTo: order.shipToLocationId ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId) : undefined,
         lotCodes, qaProducts,
         product: resolveCoaProduct(shipment, order),
-        carrierEmail: carriers.find(c => c.name === (shipment.carrier || order.carrier))?.contactEmail || '',
+        carrierName: coaCarrierFor(shipment, order).name,
+        carrierEmail: coaCarrierFor(shipment, order).email,
         logoDataUrl: coaLogoFor(shipment, order),
       });
       blobUrl = gen.blobUrl;
@@ -6274,6 +6275,21 @@ export default function App() {
     return undefined;
   };
 
+  /** Carrier for a COA: the LOT's loading-log carrier (what the lab recorded
+   *  actually loaded) wins over the shipment's scheduled carrier, which can be a
+   *  stale or mismatched booking (a "Contrans" lot printed "Mattice"). Email is
+   *  matched to that same carrier, case-insensitively, exact then partial. */
+  const coaCarrierFor = (shipment: Shipment, order?: Order): { name: string; email: string } => {
+    const lots = (shipment.lotNumbers && shipment.lotNumbers.length ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : []))
+      .map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln)))
+      .filter(Boolean) as LotCode[];
+    const name = (lots.map(l => (l.carrierName || '').trim()).find(Boolean) || shipment.carrier || order?.carrier || '').trim();
+    const n = name.toLowerCase();
+    const carr = n ? (carriers.find(c => (c.name || '').trim().toLowerCase() === n)
+      || carriers.find(c => { const cn = (c.name || '').trim().toLowerCase(); return !!cn && (cn.includes(n) || n.includes(cn)); })) : undefined;
+    return { name, email: carr?.contactEmail || carr?.contactEmails?.[0] || '' };
+  };
+
   /** Logo of the COA template linked to this shipment's sugar type (QA → Templates). */
   const coaLogoFor = (shipment: Shipment, order?: Order): string =>
     resolveCoaTemplate(resolveCoaSugarType({ shipment, order, lotCodes, qaProducts }))?.logoDataUrl || '';
@@ -6287,7 +6303,8 @@ export default function App() {
       const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
       const { blobUrl, filename } = generateCoaPdf({
         product: resolveCoaProduct(shipment, linkedOrder),
-        carrierEmail: carr?.contactEmail || '',
+        carrierName: coaCarrierFor(shipment, linkedOrder).name,
+        carrierEmail: coaCarrierFor(shipment, linkedOrder).email,
         logoDataUrl: coaLogoFor(shipment, linkedOrder),
         shipment,
         order: linkedOrder,
@@ -6331,7 +6348,9 @@ export default function App() {
       po: real?.po || lc.customerPo || '',
       bol,
       qty: real?.qty || 0,
-      carrier: real?.carrier || lc.carrierName || '',
+      // The lot's loading-log carrier is what actually loaded — it wins over the
+      // matched shipment's booked carrier.
+      carrier: lc.carrierName || real?.carrier || '',
       arrive: real?.arrive || '',
       start: real?.start || '',
       out: real?.out || '',
@@ -6380,6 +6399,7 @@ export default function App() {
       const { blobUrl, filename } = generateDocumentPackagePdf({
         coaProduct: resolveCoaProduct(shipment, linkedOrder),
         coaLogoDataUrl: coaLogoFor(shipment, linkedOrder),
+        coaCarrier: coaCarrierFor(shipment, linkedOrder),
         shipment,
         order: linkedOrder,
         customer: cust,
@@ -6571,7 +6591,8 @@ export default function App() {
         shipFromLocation: s.shipFromLocation, shipTo: s.shipToLocation,
         lotCodes, qaProducts,
         product: resolveCoaProduct(s.shipment, s.order),
-        carrierEmail: s.carrier?.contactEmail || '',
+        carrierName: coaCarrierFor(s.shipment, s.order).name,
+        carrierEmail: coaCarrierFor(s.shipment, s.order).email,
         logoDataUrl: coaLogoFor(s.shipment, s.order),
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);

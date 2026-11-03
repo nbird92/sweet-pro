@@ -17,6 +17,9 @@ interface GenerateCoaParams {
    *  spec lookup (resolved by the caller from the order line's productKey or the
    *  lot's sugar type / group / category). Falls back to a name lookup. */
   product?: { label: string; units: string; qaProduct?: QAProduct };
+  /** Carrier name for "{{carrier_name}}" — resolved by the caller (the lot's
+   *  loading-log carrier first). Falls back to the shipment / order carrier. */
+  carrierName?: string;
   /** Carrier contact email — the template's "{{carrier_name}}  {{carrier_email}}". */
   carrierEmail?: string;
   /** Logo from the linked COA template (QA → Templates), drawn top-right. */
@@ -102,6 +105,7 @@ function generateTemplateCoaPage(
   shipmentLotCodes: LotCode[],
   qaProduct: QAProduct | undefined,
   product: { label: string; units: string },
+  carrierName: string,
   carrierEmail: string,
   logoDataUrl: string,
 ) {
@@ -128,12 +132,27 @@ function generateTemplateCoaPage(
       if (o.borders.includes('r')) doc.line(x + w, y, x + w, y + h);
     }
     if (!text) return;
-    const size = (o.size || 10) * ptScale;
+    let size = (o.size || 10) * ptScale;
     doc.setFont(o.font || 'helvetica', o.bold && o.italic ? 'bolditalic' : o.bold ? 'bold' : o.italic ? 'italic' : 'normal');
     doc.setFontSize(size);
     doc.setTextColor(...(o.color || [0, 0, 0]));
     const pad = 1.2;
-    const lines: string[] = o.wrap ? (doc.splitTextToSize(text, w - pad * 2) as string[]) : text.split('\n');
+    const avail = w - pad * 2;
+    let lines: string[] = o.wrap ? (doc.splitTextToSize(text, avail) as string[]) : text.split('\n');
+    // Keep text inside its cell (the sheet's OVERFLOW_CELL spills into empty
+    // neighbours, which on a PDF meant running past the box and the margin).
+    const widest = () => Math.max(...lines.map(l => doc.getTextWidth(l)));
+    const linesFit = () => lines.length * size * 0.3528 * 1.15 <= h + 0.5;
+    if (!o.wrap && widest() > avail) {
+      const min = size * 0.65;
+      while (size > min && widest() > avail) { size -= 0.25; doc.setFontSize(size); }
+      if (widest() > avail) lines = doc.splitTextToSize(text, avail) as string[];
+    }
+    // Wrapped text taller than its cell: shrink until it fits the height too.
+    while (!linesFit() && size > (o.size || 10) * ptScale * 0.6) {
+      size -= 0.25; doc.setFontSize(size);
+      lines = doc.splitTextToSize(text, avail) as string[];
+    }
     const lineH = size * 0.3528 * 1.15;
     const blockH = lineH * lines.length;
     const valign = o.valign || 'middle';
@@ -180,7 +199,7 @@ function generateTemplateCoaPage(
 
   const right: Array<[string, string]> = [
     ['BOL #', shipment.bol || order?.bolNumber || ''],
-    ['Carrier:', [shipment.carrier || order?.carrier || '', carrierEmail].filter(Boolean).join('  ')],
+    ['Carrier:', [carrierName || shipment.carrier || order?.carrier || '', carrierEmail].filter(Boolean).join('  ')],
     ['Trailer #:', joinVals('trailerNumber') || shipment.trailerNo || ''],
     ['Pick-up Date:', shipment.date || order?.shipmentDate || ''],
     ['PO #:', order?.po || shipment.po || ''],
@@ -282,6 +301,7 @@ export function renderCoaInto(doc: jsPDF, {
   lotCodes,
   qaProducts,
   product,
+  carrierName,
   carrierEmail,
   logoDataUrl,
 }: GenerateCoaParams): void {
@@ -325,6 +345,7 @@ export function renderCoaInto(doc: jsPDF, {
     isLiquidSugar(sugarType) ? 'liquid' : 'granulated',
     shipment, order, customer, shipFromLocation, shipTo, shipmentLotCodes, qaProduct,
     { label: product?.label || displayProductName, units },
+    carrierName || '',
     carrierEmail || '',
     logoDataUrl || '',
   );
