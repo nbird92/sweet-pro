@@ -19,6 +19,8 @@ interface GenerateCoaParams {
   product?: { label: string; units: string; qaProduct?: QAProduct };
   /** Carrier contact email — the template's "{{carrier_name}}  {{carrier_email}}". */
   carrierEmail?: string;
+  /** Logo from the linked COA template (QA → Templates), drawn top-right. */
+  logoDataUrl?: string;
 }
 
 const BLACK = '#141414';
@@ -101,6 +103,7 @@ function generateTemplateCoaPage(
   qaProduct: QAProduct | undefined,
   product: { label: string; units: string },
   carrierEmail: string,
+  logoDataUrl: string,
 ) {
   const pageW = doc.internal.pageSize.getWidth();
   // Fit the 32-column sheet to the page width with a margin equal to the
@@ -150,6 +153,18 @@ function generateTemplateCoaPage(
 
   // ── Rows 1–4: title (B1:V4); W1:AF4 is the template's logo area ──
   cell(1, 4, 1, 22, 'CERTIFICATE OF ANALYSIS', { bold: true, size: 24, align: 'center' });
+  if (logoDataUrl) {
+    try {
+      const props = doc.getImageProperties(logoDataUrl);
+      const boxX = colX(22), boxY = rowY(0), boxW = colX(32) - boxX, boxH = rowY(4) - boxY;
+      const k = Math.min(boxW / props.width, boxH / props.height);
+      const w = props.width * k, h = props.height * k;
+      // Contain-fit, centred in the merged W1:AF4 area.
+      doc.addImage(logoDataUrl, (props.fileType || 'PNG') as any, boxX + (boxW - w) / 2, boxY + (boxH - h) / 2, w, h);
+    } catch (e) {
+      console.warn('COA logo could not be drawn:', e);
+    }
+  }
 
   // ── Rows 6–11: Customer box (B:O) and shipment block (R:V labels, W:AE values) ──
   // {{deliver_name}} {{deliver_address}} {{deliver_city_province}} {{deliver_postal}}
@@ -268,6 +283,7 @@ export function renderCoaInto(doc: jsPDF, {
   qaProducts,
   product,
   carrierEmail,
+  logoDataUrl,
 }: GenerateCoaParams): void {
   // Resolve the lot codes assigned to this shipment
   const assignedLotNums = shipment.lotNumbers || (shipment.lotNumber ? [shipment.lotNumber] : []);
@@ -310,6 +326,7 @@ export function renderCoaInto(doc: jsPDF, {
     shipment, order, customer, shipFromLocation, shipTo, shipmentLotCodes, qaProduct,
     { label: product?.label || displayProductName, units },
     carrierEmail || '',
+    logoDataUrl || '',
   );
 }
 

@@ -20,6 +20,8 @@ export interface GenerateDocumentPackageParams {
   includeBagIdReport: boolean;
   /** Catalog-resolved product for the COA page (see renderCoaInto). */
   coaProduct?: { label: string; units: string; qaProduct?: QAProduct };
+  /** Logo from the linked COA template, for the COA page. */
+  coaLogoDataUrl?: string;
   /** Scale Ticket Shipping/Receiving box to mark (invoice-table packages: 'shipping'). */
   scaleTicketDirection?: 'shipping' | 'receiving';
 }
@@ -35,7 +37,7 @@ export interface GenerateDocumentPackageParams {
  * Each document type mirrors a template type in the QA Templates table.
  */
 export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams): { blobUrl: string; filename: string } {
-  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection, coaProduct } = params;
+  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection, coaProduct, coaLogoDataUrl } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
 
   // One render step per document; each draws onto the current page. addPage()
@@ -43,7 +45,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
   // is included only for packaged / tote shipments.
   const steps: Array<() => void> = [
     () => renderBolInto(doc, { shipment, order, customer, carrier, shipFromLocation, shipToCustomer: customer, shipToLocation, qaProducts, lotCodes }),
-    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts, product: coaProduct, carrierEmail: carrier?.contactEmail || '' }),
+    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts, product: coaProduct, carrierEmail: carrier?.contactEmail || '', logoDataUrl: coaLogoDataUrl }),
     () => renderPackingListInto(doc, { shipment, order, customer, shipFromLocation, shipToLocation, qaProducts }),
   ];
   if (includeBagIdReport) {

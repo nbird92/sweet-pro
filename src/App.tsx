@@ -6003,6 +6003,7 @@ export default function App() {
         lotCodes, qaProducts,
         product: resolveCoaProduct(shipment, order),
         carrierEmail: carriers.find(c => c.name === (shipment.carrier || order.carrier))?.contactEmail || '',
+        logoDataUrl: coaLogoFor(shipment, order),
       });
       blobUrl = gen.blobUrl;
       filename = gen.filename;
@@ -6273,6 +6274,10 @@ export default function App() {
     return undefined;
   };
 
+  /** Logo of the COA template linked to this shipment's sugar type (QA → Templates). */
+  const coaLogoFor = (shipment: Shipment, order?: Order): string =>
+    resolveCoaTemplate(resolveCoaSugarType({ shipment, order, lotCodes, qaProducts }))?.logoDataUrl || '';
+
   const handleGenerateCoa = (shipment: Shipment) => {
     try {
       const bolKey = (shipment.bol || '').trim().toUpperCase();
@@ -6283,6 +6288,7 @@ export default function App() {
       const { blobUrl, filename } = generateCoaPdf({
         product: resolveCoaProduct(shipment, linkedOrder),
         carrierEmail: carr?.contactEmail || '',
+        logoDataUrl: coaLogoFor(shipment, linkedOrder),
         shipment,
         order: linkedOrder,
         customer: cust,
@@ -6373,6 +6379,7 @@ export default function App() {
       const includeBag = includeBagIdReport ?? hasPackagedOrToteProducts(linkedOrder?.lineItems, shipment.product);
       const { blobUrl, filename } = generateDocumentPackagePdf({
         coaProduct: resolveCoaProduct(shipment, linkedOrder),
+        coaLogoDataUrl: coaLogoFor(shipment, linkedOrder),
         shipment,
         order: linkedOrder,
         customer: cust,
@@ -6565,6 +6572,7 @@ export default function App() {
         lotCodes, qaProducts,
         product: resolveCoaProduct(s.shipment, s.order),
         carrierEmail: s.carrier?.contactEmail || '',
+        logoDataUrl: coaLogoFor(s.shipment, s.order),
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis' });

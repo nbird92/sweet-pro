@@ -1290,6 +1290,10 @@ export interface QATemplate {
   type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Bag ID Report' | 'Scale Ticket' | 'Order Confirmation' | 'Return Order Confirmation' | 'Other';
   googleSheetUrl: string;
   description?: string;
+  /** Logo printed on documents built from this template (e.g. the COA's top-right
+   *  logo area). Stored inline as a downscaled PNG data URL so documents can draw
+   *  it synchronously; '' = no logo. */
+  logoDataUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

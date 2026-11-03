@@ -219,7 +219,34 @@ export default function QualityAssurancePage({
   // Template state
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<QATemplate | null>(null);
-  const [templateForm, setTemplateForm] = useState<{ name: string; type: QATemplate['type']; googleSheetUrl: string; description: string }>({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
+  const [templateForm, setTemplateForm] = useState<{ name: string; type: QATemplate['type']; googleSheetUrl: string; description: string; logoDataUrl: string }>({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '', logoDataUrl: '' });
+  const [templateLogoError, setTemplateLogoError] = useState<string | null>(null);
+  /** Read an uploaded logo, downscale it to fit 600×240 (keeps transparency),
+   *  and return a PNG data URL small enough to live on the template record. */
+  const readLogoFile = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type)) { reject(new Error('Choose an image file (PNG or JPG).')); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That file is not a readable image.'));
+      img.onload = () => {
+        const scale = Math.min(1, 600 / img.width, 240 / img.height);
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('Image processing is not available in this browser.')); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        const url = canvas.toDataURL('image/png');
+        if (url.length > 700_000) { reject(new Error('That logo is too detailed to store — try a simpler or smaller image.')); return; }
+        resolve(url);
+      };
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
   const [deleteTemplateConfirmId, setDeleteTemplateConfirmId] = useState<string | null>(null);
 
   // Packaging Format detail-modal state (DataTable + DetailModal standard).
@@ -1923,7 +1950,8 @@ export default function QualityAssurancePage({
           <button
             onClick={() => {
               setEditingTemplate(null);
-              setTemplateForm({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '' });
+              setTemplateForm({ name: '', type: 'Bill of Lading', googleSheetUrl: '', description: '', logoDataUrl: '' });
+              setTemplateLogoError(null);
               setShowTemplateModal(true);
             }}
             className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-[10px] font-bold uppercase tracking-widest transition-colors"
@@ -1938,6 +1966,7 @@ export default function QualityAssurancePage({
               <th className="p-4">Type</th>
               <th className="p-4">Description</th>
               <th className="p-4">Google Sheet</th>
+              <th className="p-4">Logo</th>
               <th className="p-4">Last Updated</th>
             </tr>
           </thead>
@@ -1954,7 +1983,9 @@ export default function QualityAssurancePage({
                     type: template.type,
                     googleSheetUrl: template.googleSheetUrl,
                     description: template.description || '',
+                    logoDataUrl: template.logoDataUrl || '',
                   });
+                  setTemplateLogoError(null);
                   setShowTemplateModal(true);
                 }}
                 className="hover:bg-[#F9F9F9] transition-colors cursor-pointer"
@@ -1984,11 +2015,16 @@ export default function QualityAssurancePage({
                     </a>
                   ) : '—'}
                 </td>
+                <td className="p-4 text-xs border-r border-[#141414]/10">
+                  {template.logoDataUrl
+                    ? <img src={template.logoDataUrl} alt="" className="h-8 max-w-[96px] object-contain" />
+                    : <span className="opacity-40">—</span>}
+                </td>
                 <td className="p-4 text-xs opacity-60">{template.updatedAt ? new Date(template.updatedAt).toLocaleDateString() : '—'}</td>
               </tr>
             ))}
             {qaTemplates.length === 0 && (
-              <tr><td colSpan={5} className="p-12 text-center text-xs opacity-50 italic">No templates added yet. Add a Bill of Lading, Certificate of Analysis, or Packing List template.</td></tr>
+              <tr><td colSpan={6} className="p-12 text-center text-xs opacity-50 italic">No templates added yet. Add a Bill of Lading, Certificate of Analysis, or Packing List template.</td></tr>
             )}
           </tbody>
         </table>
@@ -2047,6 +2083,43 @@ export default function QualityAssurancePage({
                   <p className="text-[9px] opacity-50 mt-1">Paste the full URL of your Google Sheet template. Make sure the sheet is shared with anyone who needs access.</p>
                 </div>
                 <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Logo</label>
+                  <div className="flex items-center gap-3">
+                    <div className="w-36 h-16 border border-dashed border-[#141414]/30 bg-[#F9F9F9] flex items-center justify-center overflow-hidden">
+                      {templateForm.logoDataUrl
+                        ? <img src={templateForm.logoDataUrl} alt="Template logo" className="max-w-full max-h-full object-contain" />
+                        : <span className="text-[10px] opacity-40">No logo</span>}
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase cursor-pointer hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors text-center">
+                        {templateForm.logoDataUrl ? 'Replace' : 'Upload'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!f) return;
+                            try {
+                              const url = await readLogoFile(f);
+                              setTemplateForm(prev => ({ ...prev, logoDataUrl: url }));
+                              setTemplateLogoError(null);
+                            } catch (err) {
+                              setTemplateLogoError(err instanceof Error ? err.message : String(err));
+                            }
+                          }}
+                        />
+                      </label>
+                      {templateForm.logoDataUrl && (
+                        <button type="button" onClick={() => setTemplateForm(prev => ({ ...prev, logoDataUrl: '' }))} className="px-3 py-1.5 border border-red-400 text-red-600 text-[10px] font-bold uppercase hover:bg-red-500 hover:text-white transition-colors">Remove</button>
+                      )}
+                    </div>
+                  </div>
+                  {templateLogoError && <p className="text-[10px] text-red-600">{templateLogoError}</p>}
+                  <p className="text-[9px] opacity-50">Printed on documents built from this template — on a COA, in the top-right logo area.</p>
+                </div>
+                <div className="space-y-1">
                   <label className="text-[10px] uppercase font-bold opacity-60">Description</label>
                   <textarea
                     value={templateForm.description}
@@ -2090,6 +2163,7 @@ export default function QualityAssurancePage({
                           type: templateForm.type,
                           googleSheetUrl: templateForm.googleSheetUrl,
                           description: templateForm.description,
+                          logoDataUrl: templateForm.logoDataUrl || '',
                           updatedAt: now,
                         };
                         onUpdateTemplates(qaTemplates.map(t => t.id === editingTemplate.id ? updated : t));
@@ -2100,6 +2174,7 @@ export default function QualityAssurancePage({
                           type: templateForm.type,
                           googleSheetUrl: templateForm.googleSheetUrl,
                           description: templateForm.description,
+                          logoDataUrl: templateForm.logoDataUrl || '',
                           createdAt: now,
                           updatedAt: now,
                         };
