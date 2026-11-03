@@ -3340,7 +3340,7 @@ export default function App() {
 
   /** Live #11 raws for a calendar-month row ("Jan 2027"): map the month to its
    *  futures TERMINAL (Finance page table), resolve that terminal's contract
-   *  (same year while the terminal month hasn't passed, else next year) and
+   *  (same year; next year only when the terminal is >6 months behind) and
    *  read the live board's last price. ¢/lb ≡ USD/cwt numerically (100 lb per
    *  cwt), so no conversion. Null when the board / contract isn't loaded. */
   const liveRawsForMonth = (monthStr: string): { price: number; symbol: string } | null => {
@@ -3356,7 +3356,12 @@ export default function App() {
     const CODE: Record<string, string> = { Jan: 'F', Feb: 'G', Mar: 'H', Apr: 'J', May: 'K', Jun: 'M', Jul: 'N', Aug: 'Q', Sep: 'U', Oct: 'V', Nov: 'X', Dec: 'Z' };
     const code = CODE[term];
     if (!code) return null;
-    const termYear = tIdx >= mIdx ? year : year + 1;
+    // The terminal is the contract that PRICES this month — in the reference
+    // table it's the same month or an EARLIER one (Jun → May, Nov → Oct), so it
+    // belongs to the SAME year (Jun 2027 → May 2027, not May 2028). Only a
+    // terminal far behind the month (e.g. a custom Dec → Mar mapping) is the
+    // next year's contract.
+    const termYear = (mIdx - tIdx) > 6 ? year + 1 : year;
     const target = `SB${code}${String(termYear % 100).padStart(2, '0')}`;
     const q = liveSugar.contracts.find((c: any) => String(c.symbol || '').toUpperCase().startsWith(target))
       // Terminal contract not on the 8-deep board (too far out / expired) —
@@ -8682,6 +8687,10 @@ export default function App() {
     return (bulkGranulated || INITIAL_SKUS[0]).id;
   });
   const [selectedSugarTypeId, setSelectedSugarTypeId] = useState<string>('');
+  // Quote Product Differential (CAD/MT). Auto-filled from the selected product's
+  // Default Differential (Products table → premiumCadMt) whenever the product
+  // changes; the user may override it for this quote.
+  const [quoteDifferentialCadMt, setQuoteDifferentialCadMt] = useState<number>(0);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedBays, setExpandedBays] = useState<Set<string>>(new Set());
@@ -11519,8 +11528,9 @@ export default function App() {
     // Start with the appropriate base price
     let finalCadMt = config.origin === 'Vancouver' ? fcaVancouverBulk : fcaHamiltonBulk;
 
-    // Add SKU Premium (Differential)
-    finalCadMt += selectedSku.premiumCadMt;
+    // Add the Product Differential — the quote's editable field (defaults to the
+    // selected product's Default Differential from the Products table).
+    finalCadMt += quoteDifferentialCadMt || 0;
 
 
     // Add Freight ONLY if Delivered toggle is selected
@@ -11578,7 +11588,7 @@ export default function App() {
       fcaHamiltonBulk: convert(fcaHamiltonBulk),
       fcaVancouverBulk: convert(fcaVancouverBulk),
       vancouverSupplyChainCost: convert(totalSupplyChainCostPerMt),
-      differential: convert(selectedSku.premiumCadMt),
+      differential: convert(quoteDifferentialCadMt || 0),
       customerDifferential: 0, // field removed — use contract-line differentials
       deliveredFreight: config.isDelivered ? convert(freightCost / (config.volumePerLoadMt || 1)) : 0,
       exportDuty: convertUsd(config.exportDutyUsdMt),
@@ -11591,7 +11601,7 @@ export default function App() {
       freightCost: convert(freightCost),
       totalSupplyChainCostPerMt: convert(totalSupplyChainCostPerMt)
     };
-  }, [config, selectedSkuId, skus, freightRates, supplyChain]);
+  }, [config, selectedSkuId, skus, freightRates, supplyChain, quoteDifferentialCadMt]);
 
   const handleSort = (key: string) => {
     setSortConfig(prev => {
@@ -11601,6 +11611,34 @@ export default function App() {
       return { key, direction: 'asc' };
     });
   };
+
+  // Quote Product dropdown: the live catalog, labelled by short form + long
+  // form (SKU names alone are often bare format words like "Bulk").
+  const quoteProductOptions = useMemo(() => skus
+    .map(sk => {
+      const short = (sk.shortForm || '').trim() || productToShortform(sk.name) || '';
+      const long = (sk.productLongForm || '').trim();
+      const label = [short, long && long !== short ? long : '', !short && !long ? sk.name : ''].filter(Boolean).join(' — ') || sk.name;
+      return { id: sk.id, label };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label)),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [skus]);
+
+  // Once the live catalog loads, make sure the quote points at a REAL product:
+  // the initial id comes from the demo seed and usually isn't in the live list,
+  // and the calculation's skus[0] fallback is the Molasses SKU (named "Bulk").
+  // Prefer Bulk Granulated (non-molasses); seed the differential from it.
+  useEffect(() => {
+    if (!skus.length || skus.some(sk => sk.id === selectedSkuId)) return;
+    const notMol = (sk: SKU) => !/mol/i.test(`${sk.sugarType || ''} ${sk.name || ''} ${sk.shortForm || ''}`);
+    const pick = skus.find(sk => notMol(sk) && sk.productGroup === 'Bulk' && /granulated/i.test(`${sk.sugarType || ''} ${sk.productLongForm || ''}`))
+      || skus.find(sk => notMol(sk) && sk.productGroup === 'Bulk')
+      || skus.find(notMol) || skus[0];
+    setSelectedSkuId(pick.id);
+    setQuoteDifferentialCadMt(pick.premiumCadMt || 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skus]);
 
   const handleOrderSort = (key: string) => {
     setOrderSortConfig(prev => {
@@ -17824,6 +17862,50 @@ export default function App() {
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
+              <Package size={14} /> Product
+            </h2>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
+                <select
+                  value={skus.some(sk => sk.id === selectedSkuId) ? selectedSkuId : ''}
+                  onChange={(e) => {
+                    setSelectedSkuId(e.target.value);
+                    // Auto-populate the differential from the Products table default.
+                    const sk = skus.find(x => x.id === e.target.value);
+                    setQuoteDifferentialCadMt(sk?.premiumCadMt || 0);
+                  }}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
+                >
+                  <option value="">Select product…</option>
+                  {quoteProductOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold opacity-60">Product Differential (CAD/MT)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={Number.isFinite(quoteDifferentialCadMt) ? quoteDifferentialCadMt : 0}
+                  onChange={(e) => setQuoteDifferentialCadMt(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                />
+                {(() => {
+                  const def = skus.find(x => x.id === selectedSkuId)?.premiumCadMt || 0;
+                  return (quoteDifferentialCadMt || 0) !== def ? (
+                    <button type="button" onClick={() => setQuoteDifferentialCadMt(def)} className="text-[10px] underline decoration-dotted opacity-60 hover:opacity-100">
+                      Reset to product default (CAD ${def.toFixed(2)}/MT)
+                    </button>
+                  ) : (
+                    <div className="text-[10px] italic opacity-50">Product default from the Products table</div>
+                  );
+                })()}
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+            <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
               <DollarSign size={14} /> Market Inputs
             </h2>
             <div className="space-y-4">
@@ -20464,7 +20546,7 @@ export default function App() {
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Freight Type</td><td className="px-4 py-2 font-bold">{config.freightType || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{config.volumeMt} MT</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Per Load</td><td className="px-4 py-2 font-bold">{config.volumePerLoadMt} MT</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Product Differential</td><td className="px-4 py-2 font-bold">CAD ${(confirmSku?.premiumCadMt ?? 0).toFixed(2)}/MT</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Product Differential</td><td className="px-4 py-2 font-bold">CAD ${(quoteDifferentialCadMt || 0).toFixed(2)}/MT</td></tr>
                       </tbody>
                     </table>
                   </div>
