@@ -8,6 +8,9 @@ import type { Customer, Invoice } from '../types';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmt = (v: number, d = 1) => v ? v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
 const norm = (s?: string) => (s || '').trim().toLowerCase();
+/** Normalized names (name + ITAS name) of one customer or several. */
+const namesOf = (c: Customer | Customer[]) =>
+  new Set((Array.isArray(c) ? c : [c]).flatMap(x => [norm(x.name), norm(x.itasCustomerName)]).filter(Boolean));
 
 /** Product × month matrix with row and column totals. */
 export const MonthMatrix = ({ rows, months, empty, shade }: { rows: { name: string; values: number[] }[]; months: string[]; empty: string; shade?: (i: number) => boolean }) => {
@@ -47,8 +50,8 @@ export const MonthMatrix = ({ rows, months, empty, shade }: { rows: { name: stri
 
 /** Calendar years with invoiced sales for the customer, newest first (always
  *  includes the current year). */
-export function customerSalesYears(customer: Customer, invoices: Invoice[]): number[] {
-  const names = new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean));
+export function customerSalesYears(customer: Customer | Customer[], invoices: Invoice[]): number[] {
+  const names = namesOf(customer);
   const ys = new Set<number>();
   for (const i of invoices) {
     if (i.status === 'Cancelled' || !names.has(norm(i.customer))) continue;
@@ -60,8 +63,8 @@ export function customerSalesYears(customer: Customer, invoices: Invoice[]): num
 
 /** Product × month rows (12 values, MT) for one customer and calendar year —
  *  the data behind the table. Exported so the PDF report prints the same numbers. */
-export function customerSalesRows(customer: Customer, invoices: Invoice[], label: (name?: string) => string, year: number): { name: string; values: number[] }[] {
-  const names = new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean));
+export function customerSalesRows(customer: Customer | Customer[], invoices: Invoice[], label: (name?: string) => string, year: number): { name: string; values: number[] }[] {
+  const names = namesOf(customer);
   // Split an invoice's MT across its line items (by weight) so mixed loads land on the right product.
   const invoiceProductMt = (inv: Invoice): { product: string; mt: number }[] => {
     const lines = (inv.lineItems || []).filter(li => (li as any).productDisplayName || li.productName);
@@ -87,7 +90,8 @@ export function customerSalesRows(customer: Customer, invoices: Invoice[], label
 }
 
 export default function CustomerSalesByMonth({ customer, invoices, label, year, years, onYearChange }: {
-  customer: Customer;
+  /** One customer, or every member of a customer group. */
+  customer: Customer | Customer[];
   invoices: Invoice[];
   /** Product short-form resolver. */
   label: (name?: string) => string;

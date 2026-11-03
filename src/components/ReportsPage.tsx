@@ -302,6 +302,11 @@ export default function ReportsPage({
   const [grpSort, setGrpSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'totalMt', dir: 'desc' });
   // Customer report — dropdown to focus a single customer ('' = all).
   const [reportCustomerId, setReportCustomerId] = useState<string>('');
+  // Customer report — View By: individual customers or customer groups.
+  const [reportViewBy, setReportViewBy] = useState<'customer' | 'group'>('customer');
+  // Column sorting for the customer summary and the sales-by-month tables.
+  const [custSort, setCustSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'salesMt', dir: 'desc' });
+  const [monthSort, setMonthSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'total', dir: 'desc' });
   // Customer report — calendar year filter (defaults to the current year).
   const [reportYear, setReportYear] = useState<number>(new Date().getFullYear());
   // "Send to Customer" popout for the customer report.
@@ -1251,7 +1256,7 @@ export default function ReportsPage({
   ) => {
     const dateStr = new Date().toLocaleDateString();
     const months = customerMonthlySales.months;
-    const monthly = customerMonthlySales.rows.find(m => m.id === row.id);
+    const monthly = monthlyFor(row.memberIds);
 
     const rightAlign = (r: ExcelJS.Row, from: number, to: number, fmt = NUMBER_FMT) => {
       for (let i = from; i <= to; i++) {
@@ -1357,7 +1362,7 @@ export default function ReportsPage({
   // Built like the BOL: jsPDF → blob URL → document viewer with Download and
   // Send to Customer. Sending opens an email menu (modelled on Email Quote)
   // and delivers through the app's email service with the PDF attached.
-  const [reportPdf, setReportPdf] = useState<{ url: string; blob: Blob; filename: string; customerId: string; customer: string } | null>(null);
+  const [reportPdf, setReportPdf] = useState<{ url: string; blob: Blob; filename: string; customerId: string; memberIds: string[]; customer: string } | null>(null);
   const [reportEmailOpen, setReportEmailOpen] = useState(false);
   const [reportEmailTo, setReportEmailTo] = useState('');
   const [reportEmailCc, setReportEmailCc] = useState('');
@@ -1368,11 +1373,11 @@ export default function ReportsPage({
 
   /** The customer's current orders — Open / Confirmed and not yet invoiced (by
    *  BOL), any ship date — with the Contracts page "Orders on Contract" columns. */
-  const currentOrdersFor = useCallback((customerId: string) => {
-    const cust = customers.find(c => c.id === customerId);
-    if (!cust) return [];
+  const currentOrdersFor = useCallback((customerIds: string[]) => {
+    const members = customers.filter(c => customerIds.includes(c.id));
+    if (!members.length) return [];
     const norm = (v?: string) => (v || '').trim().toLowerCase();
-    const names = new Set([norm(cust.name), norm(cust.itasCustomerName)].filter(Boolean));
+    const names = new Set(members.flatMap(c => [norm(c.name), norm(c.itasCustomerName)]).filter(Boolean));
     const invoicedBols = new Set(invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit' && i.bolNumber).map(i => (i.bolNumber || '').trim().toUpperCase()));
     return orders
       .filter(o => (o.status === 'Open' || o.status === 'Confirmed')
@@ -1394,7 +1399,7 @@ export default function ReportsPage({
 
   const openCustomerReportPdf = useCallback(async (row: typeof customerReport[number]) => {
     const { generateCustomerReportPdf } = await import('../customerReportPdf');
-    const cust = customers.find(c => c.id === row.id);
+    const members = customers.filter(c => row.memberIds.includes(c.id));
     const { blob, blobUrl, filename } = generateCustomerReportPdf({
       customer: row.customer,
       customerNumber: row.customerNumber,
@@ -1403,14 +1408,14 @@ export default function ReportsPage({
       onOrderMt: row.onOrderMt,
       contractCount: row.contractCount,
       remainingTotal: row.remainingTotal,
-      byMonth: customerMonthlySales.rows.find(r => r.id === row.id)?.byMonth || {},
-      salesRows: cust ? customerSalesRows(cust, invoices, reportProductLabel, reportYear) : [],
-      orders: currentOrdersFor(row.id),
+      byMonth: monthlyFor(row.memberIds).byMonth,
+      salesRows: members.length ? customerSalesRows(members, invoices, reportProductLabel, reportYear) : [],
+      orders: currentOrdersFor(row.memberIds),
       contracts: row.contractRows,
     });
     setReportPdf(prev => {
       if (prev?.url) URL.revokeObjectURL(prev.url);
-      return { url: blobUrl, blob, filename, customerId: row.id, customer: row.customer };
+      return { url: blobUrl, blob, filename, customerId: row.id, memberIds: row.memberIds, customer: row.customer };
     });
   }, [customers, invoices, reportProductLabel, reportYear, customerMonthlySales, currentOrdersFor]);
 
@@ -1423,12 +1428,13 @@ export default function ReportsPage({
 
   const openReportEmail = () => {
     if (!reportPdf) return;
-    const c = customers.find(x => x.id === reportPdf.customerId);
-    // Default To: every Sales Contact address on the customer card (the field may
-    // hold several, comma/semicolon-separated); else the main contact email.
+    const members = customers.filter(x => reportPdf.memberIds.includes(x.id));
+    // Default To: every Sales Contact address on the customer card(s) (the field
+    // may hold several, comma/semicolon-separated); else the main contact email.
     const splitEmails = (v?: string) => (v || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean);
-    const sales = splitEmails(c?.salesContactEmail);
-    setReportEmailTo((sales.length ? sales : splitEmails(c?.contactEmail)).join(', '));
+    const uniq = (xs: string[]) => [...new Map(xs.map(x => [x.toLowerCase(), x])).values()];
+    const sales = uniq(members.flatMap(m => splitEmails(m.salesContactEmail)));
+    setReportEmailTo((sales.length ? sales : uniq(members.flatMap(m => splitEmails(m.contactEmail)))).join(', '));
     setReportEmailCc('');
     setReportEmailSubject(`Sales Report — ${reportPdf.customer}`);
     setReportEmailBody([
@@ -1575,7 +1581,7 @@ export default function ReportsPage({
       }).sort((a, b) => b.remaining - a.remaining);
       const remainingTotal = contractRows.reduce((s, c) => s + c.remaining, 0);
 
-      return { id: cust.id, customer: cust.name || '(unnamed)', customerNumber: cust.customerNumber || '', salesMt, onOrderMt, contractCount: custContracts.length, remainingTotal, contractRows };
+      return { id: cust.id, memberIds: [cust.id], customer: cust.name || '(unnamed)', customerNumber: cust.customerNumber || '', salesMt, onOrderMt, contractCount: custContracts.length, remainingTotal, contractRows };
     }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0);
 
     return rows.sort((a, b) => b.salesMt - a.salesMt);
@@ -1590,19 +1596,75 @@ export default function ReportsPage({
   /** The report year's 12 months, as YYYY-MM keys. */
   const reportYearMonths = useMemo(() => Array.from({ length: 12 }, (_, i) => `${reportYear}-${String(i + 1).padStart(2, '0')}`), [reportYear]);
 
-  const selectedCustomerRow = reportCustomerId ? customerReport.find(r => r.id === reportCustomerId) : null;
-  const customerReportRows = selectedCustomerRow ? [selectedCustomerRow] : customerReport;
+  // View by CUSTOMER GROUP: one row per group (plus "(No Group)"), summing its
+  // members' rows. Same shape as a customer row; memberIds lists the customers.
+  const groupReport = useMemo(() => {
+    const byCust = new Map(customerReport.map(r => [r.id, r] as const));
+    const buckets = new Map<string, { name: string; code: string; ids: string[] }>();
+    for (const c of customers) {
+      const gid = c.customerGroupId && customerGroups.some(g => g.id === c.customerGroupId) ? c.customerGroupId : '';
+      const g = customerGroups.find(x => x.id === gid);
+      const b = buckets.get(gid) || { name: g?.name || '(No Group)', code: g?.groupCode || '', ids: [] };
+      b.ids.push(c.id);
+      buckets.set(gid, b);
+    }
+    return [...buckets.entries()].map(([gid, b]) => {
+      const rows = b.ids.map(id => byCust.get(id)).filter(Boolean) as typeof customerReport;
+      return {
+        id: `grp:${gid || 'none'}`,
+        memberIds: b.ids,
+        customer: b.name,
+        customerNumber: b.code,
+        salesMt: rows.reduce((s, r) => s + r.salesMt, 0),
+        onOrderMt: rows.reduce((s, r) => s + r.onOrderMt, 0),
+        contractCount: rows.reduce((s, r) => s + r.contractCount, 0),
+        remainingTotal: rows.reduce((s, r) => s + r.remainingTotal, 0),
+        contractRows: rows.flatMap(r => r.contractRows).sort((a, b) => b.remaining - a.remaining),
+      };
+    }).filter(r => r.salesMt > 0 || r.onOrderMt > 0 || r.contractCount > 0)
+      .sort((a, b) => b.salesMt - a.salesMt);
+  }, [customerReport, customers, customerGroups]);
+  const activeReport = reportViewBy === 'group' ? groupReport : customerReport;
+
+  /** Invoiced MT per month summed over a set of customers. */
+  const monthlyFor = useCallback((ids: string[]) => {
+    const byMonth: Record<string, number> = {};
+    let total = 0;
+    for (const r of customerMonthlySales.rows) {
+      if (!ids.includes(r.id)) continue;
+      total += r.total;
+      for (const [mk, v] of Object.entries(r.byMonth)) byMonth[mk] = (byMonth[mk] || 0) + (Number(v) || 0);
+    }
+    return { byMonth, total };
+  }, [customerMonthlySales]);
+
+  const sortRows = <T,>(rows: T[], sort: { key: string; dir: 'asc' | 'desc' }, val: (r: T, key: string) => string | number): T[] =>
+    [...rows].sort((a, b) => {
+      const x = val(a, sort.key), y = val(b, sort.key);
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
+      return sort.dir === 'asc' ? c : -c;
+    });
+
+  const selectedCustomerRow = reportCustomerId ? activeReport.find(r => r.id === reportCustomerId) : null;
+  const customerReportRows = selectedCustomerRow
+    ? [selectedCustomerRow]
+    : sortRows(activeReport, custSort, (r, k) => (r as any)[k] ?? '');
 
   // Customer sales volume broken out BY MONTH (invoiced MT bucketed on invoice
   // date). Columns are every YYYY-MM present in the data, ascending; each row is
   // a customer with a per-month map + total. Reuses the same customer name-match
   // as the Customer Report so the totals line up.
-  const monthlySalesRows = (selectedCustomerRow
-    ? customerMonthlySales.rows.filter(r => r.id === reportCustomerId)
-    : customerMonthlySales.rows)
-    .map(r => ({ ...r, total: reportYearMonths.reduce((s, mk) => s + (r.byMonth[mk] || 0), 0) }))
-    .filter(r => r.total > 0)
-    .sort((a, b) => b.total - a.total);
+  type MonthlyRow = { id: string; customer: string; byMonth: Record<string, number>; total: number };
+  const monthlySalesRows = sortRows<MonthlyRow>(
+    (selectedCustomerRow ? [selectedCustomerRow] : activeReport)
+      .map((r): MonthlyRow => {
+        const m = monthlyFor(r.memberIds);
+        return { id: r.id, customer: r.customer, byMonth: m.byMonth, total: reportYearMonths.reduce((s, mk) => s + (m.byMonth[mk] || 0), 0) };
+      })
+      .filter(r => r.total > 0),
+    monthSort,
+    (r, k) => k === 'customer' ? r.customer : k === 'total' ? r.total : (r.byMonth[k] || 0),
+  );
 
   return (
     <div className="space-y-8">
@@ -1637,14 +1699,23 @@ export default function ReportsPage({
             Customer Report
           </h3>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-widest opacity-60">Customer</span>
+            <span className="text-[10px] uppercase tracking-widest opacity-60">View by</span>
+            <select
+              value={reportViewBy}
+              onChange={(e) => { setReportViewBy(e.target.value as 'customer' | 'group'); setReportCustomerId(''); }}
+              className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 outline-none"
+            >
+              <option value="customer">Customers</option>
+              <option value="group">Customer Group</option>
+            </select>
+            <span className="text-[10px] uppercase tracking-widest opacity-60 ml-2">{reportViewBy === 'group' ? 'Customer Group' : 'Customer'}</span>
             <select
               value={reportCustomerId}
               onChange={(e) => setReportCustomerId(e.target.value)}
               className="bg-[#2a2a2a] border border-[#E4E3E0]/20 text-[#E4E3E0] text-xs px-3 py-1.5 outline-none"
             >
-              <option value="">All Customers</option>
-              {[...customerReport].sort((a, b) => a.customer.localeCompare(b.customer)).map(r => (
+              <option value="">{reportViewBy === 'group' ? 'All Customer Groups' : 'All Customers'}</option>
+              {[...activeReport].sort((a, b) => a.customer.localeCompare(b.customer)).map(r => (
                 <option key={r.id} value={r.id}>{r.customer}</option>
               ))}
             </select>
@@ -1709,10 +1780,10 @@ export default function ReportsPage({
 
               {/* Sales by month — the customer card's Sales table, on the report year */}
               {(() => {
-                const cust = customers.find(c => c.id === row.id);
-                return cust ? (
+                const members = customers.filter(c => row.memberIds.includes(c.id));
+                return members.length ? (
                   <CustomerSalesByMonth
-                    customer={cust}
+                    customer={members}
                     invoices={invoices}
                     label={reportProductLabel}
                     year={reportYear}
@@ -1742,11 +1813,11 @@ export default function ReportsPage({
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                <th className="p-3">Customer</th>
-                <th className="p-3 text-right">Sales Volume (MT)</th>
-                <th className="p-3 text-right">Qty on Order (MT)</th>
-                <th className="p-3 text-right">Contracts</th>
-                <th className="p-3 text-right">Remaining Contract Balance (MT)</th>
+                <th className="p-3"><SortHeader label={reportViewBy === 'group' ? 'Customer Group' : 'Customer'} sortKey="customer" current={custSort} onToggle={toggleSort(setCustSort)} /></th>
+                <th className="p-3 text-right"><div className="flex justify-end"><SortHeader label="Sales Volume (MT)" sortKey="salesMt" current={custSort} onToggle={toggleSort(setCustSort)} /></div></th>
+                <th className="p-3 text-right"><div className="flex justify-end"><SortHeader label="Qty on Order (MT)" sortKey="onOrderMt" current={custSort} onToggle={toggleSort(setCustSort)} /></div></th>
+                <th className="p-3 text-right"><div className="flex justify-end"><SortHeader label="Contracts" sortKey="contractCount" current={custSort} onToggle={toggleSort(setCustSort)} /></div></th>
+                <th className="p-3 text-right"><div className="flex justify-end"><SortHeader label="Remaining Contract Balance (MT)" sortKey="remainingTotal" current={custSort} onToggle={toggleSort(setCustSort)} /></div></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#141414]/10">
@@ -1787,11 +1858,11 @@ export default function ReportsPage({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                  <th className="p-3 sticky left-0 bg-[#F5F5F5]">Customer</th>
+                  <th className="p-3 sticky left-0 bg-[#F5F5F5]"><SortHeader label={reportViewBy === 'group' ? 'Customer Group' : 'Customer'} sortKey="customer" current={monthSort} onToggle={toggleSort(setMonthSort)} /></th>
                   {reportYearMonths.map(mk => (
-                    <th key={mk} className="p-3 text-right whitespace-nowrap">{monthLabel(mk)}</th>
+                    <th key={mk} className="p-3 text-right whitespace-nowrap"><div className="flex justify-end"><SortHeader label={monthLabel(mk)} sortKey={mk} current={monthSort} onToggle={toggleSort(setMonthSort)} /></div></th>
                   ))}
-                  <th className="p-3 text-right">Total</th>
+                  <th className="p-3 text-right"><div className="flex justify-end"><SortHeader label="Total" sortKey="total" current={monthSort} onToggle={toggleSort(setMonthSort)} /></div></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
@@ -1861,12 +1932,15 @@ export default function ReportsPage({
 
       {/* Send to Customer — email menu modelled on Email Quote, PDF attached */}
       {reportPdf && reportEmailOpen && (() => {
-        const c = customers.find(x => x.id === reportPdf.customerId);
-        // One quick-pick chip per address (a card field can hold several).
-        const chips = c ? ([
+        const members = customers.filter(x => reportPdf.memberIds.includes(x.id));
+        // One quick-pick chip per address (a card field can hold several; a group
+        // offers every member's addresses).
+        const seenChip = new Set<string>();
+        const chips = members.flatMap(c => ([
           ['Sales', c.salesContactEmail], ['Main', c.contactEmail], ['QA', c.qaContractEmail], ['CS', c.customerServiceEmail],
         ] as Array<[string, string | undefined]>).flatMap(([label, v]) =>
-          (v || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean).map((addr, i) => ({ label, v: addr, key: `${label}-${i}` }))) : [];
+          (v || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean).map((addr, i) => ({ label: members.length > 1 ? `${label} · ${c.name}` : label, v: addr, key: `${c.id}-${label}-${i}` }))))
+          .filter(x => { const k = x.v.toLowerCase(); if (seenChip.has(k)) return false; seenChip.add(k); return true; });
         return (
           <div className="fixed inset-0 z-[650] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
