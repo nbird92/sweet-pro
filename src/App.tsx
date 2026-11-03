@@ -1619,7 +1619,11 @@ export default function App() {
       const baseWeightPerUnit = item.netWeightPerUnit || (item.qty ? baseTotalWeight / item.qty : skuNetKg / 1000);
       const mtAmount = item.mtAmount || (contract ? contractPriceForProduct(contract, item.productName, item.productKey) : 0) || (useScaled ? (inv.pricePerMt || 0) : 0);
       const singleImported = useScaled && items.length === 1;
-      const qtyUnits = singleImported ? scaledMt : item.qty;
+      // Units for a scaled single-line import = the scaled MT converted through the
+      // product's per-unit weight (was: the MT figure itself, so a bagged line
+      // showed e.g. 24.6 "units" instead of 984 bags). Bulk/liquid (no per-unit
+      // weight, or 1 MT/unit) still comes out equal to the MT.
+      const qtyUnits = singleImported ? lineItemUnits({ ...item, totalWeight: scaledMt, qty: scaledMt }) : item.qty;
       const totalWeight = singleImported ? scaledMt : baseTotalWeight;
       const weightPerUnit = singleImported ? (qtyUnits ? totalWeight / qtyUnits : baseWeightPerUnit) : baseWeightPerUnit;
       const unitAmount = item.unitAmount || (mtAmount * weightPerUnit);

@@ -413,7 +413,15 @@ export async function restSyncCollection(
   const pend = pendingWrites.get(collectionName) || new Map<string, { id: string }>();
   for (const d of upserts) pend.set(String(d.id), d);
   pendingWrites.set(collectionName, pend);
-  const settle = () => { for (const d of upserts) if (pend.get(String(d.id)) === d) pend.delete(String(d.id)); };
+  const settle = () => {
+    const ackAt = Date.now();
+    const recent = recentWrites.get(collectionName) || new Map<string, { doc: { id: string }; ackAt: number }>();
+    for (const d of upserts) {
+      if (pend.get(String(d.id)) === d) pend.delete(String(d.id));
+      recent.set(String(d.id), { doc: d, ackAt });
+    }
+    recentWrites.set(collectionName, recent);
+  };
   // Failed writes stay overlaid until a later write of the same doc succeeds.
   const res = await restSyncCollectionInner(collectionName, upserts, deleteIds);
   if (res.ok) settle();
@@ -421,6 +429,13 @@ export async function restSyncCollection(
 }
 
 const pendingWrites = new Map<string, Map<string, { id: string }>>();
+// Writes the server has ACKED, with the ack time. A pull that STARTED before the
+// ack may carry the older server copy (its read happened first) — and with the
+// pending overlay already cleared, that stale copy used to replace the user's
+// saved edit ("edits don't appear after Save Changes"). Overlay these onto any
+// pull that began before the ack. Pruned after a few minutes.
+const recentWrites = new Map<string, Map<string, { doc: { id: string }; ackAt: number }>>();
+const RECENT_WRITE_TTL_MS = 5 * 60 * 1000;
 
 async function restSyncCollectionInner(
   collectionName: string,
@@ -804,9 +819,19 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
 /** Load the tombstone markers and strip tombstoned docs from the loaded data.
  *  A doc still present on the server (another session re-wrote it) is deleted
  *  again in the background. */
-function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
+function applyTombstones(data: Record<string, any[]>, pullStartedAt = 0): Record<string, any[]> {
   const marks = data[TOMBSTONE_COLLECTION] || [];
   delete data[TOMBSTONE_COLLECTION];
+  // Overlay writes acked AFTER this pull started (its read may predate them).
+  const now = Date.now();
+  for (const [col, recent] of recentWrites) {
+    for (const [id, w] of recent) {
+      if (now - w.ackAt > RECENT_WRITE_TTL_MS) { recent.delete(id); continue; }
+      if (w.ackAt < pullStartedAt || !data[col]) continue;
+      const i = data[col].findIndex(d => String(d.id) === id);
+      if (i >= 0) data[col][i] = w.doc; else data[col].push(w.doc);
+    }
+  }
   // Overlay writes still awaiting their server ack (newer than the server copy).
   for (const [col, pend] of pendingWrites) {
     if (!pend.size || !data[col]) continue;
@@ -824,9 +849,12 @@ function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
     if (!m?.collection || !m?.docId || (m.deletedAt && m.deletedAt < cutoff)) continue;
     byCol.set(m.collection, [...(byCol.get(m.collection) || []), String(m.docId)]);
   }
-  for (const [col, ids] of byCol) {
-    addTombstones(col, ids);
-    const set = tombstones.get(col)!;
+  for (const [col, ids] of byCol) addTombstones(col, ids);
+  // Strip every KNOWN tombstone — including ones this session just created, whose
+  // server marker a pull that started before the delete hasn't seen yet (that
+  // race is how a deleted invoice "came back" in the table).
+  for (const [col, set] of tombstones) {
+    if (!set.size || !data[col]) continue;
     const rows = data[col] || [];
     const zombies = rows.filter(d => set.has(String(d.id))).map(d => String(d.id));
     if (zombies.length) {
@@ -839,6 +867,7 @@ function applyTombstones(data: Record<string, any[]>): Record<string, any[]> {
 }
 
 export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fromCache: boolean }> {
+  const pullStartedAt = Date.now();
   const names = [...Object.values(COLLECTIONS), TOMBSTONE_COLLECTION];
   // Every doc is written with doc(collection, item.id) and carries `id` in its
   // data too, so the Firestore document id IS the record id. Fall back to it when
@@ -893,7 +922,7 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
     );
     const totalMs = Math.round(performance.now() - t0);
     console.log(`%c[load] server pull (REST): ${names.length} collections in ${(totalMs / 1000).toFixed(1)}s${slow.length ? ` — slowest/biggest: ${slow.join(' · ')}` : ''}`, 'color:#0a7');
-    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>), fromCache: false };
+    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>, pullStartedAt), fromCache: false };
   } catch (serverErr) {
     console.warn('[fetchAllData] Server read failed — falling back to the local cache (READ-ONLY).', serverErr);
     // getDocs prefers the cache when the server is unreachable. If even this
@@ -905,7 +934,7 @@ export async function fetchAllData(): Promise<{ data: Record<string, any[]>; fro
         return [name, snapshot.docs.map(withId)] as const;
       })
     );
-    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>), fromCache: true };
+    return { data: applyTombstones(Object.fromEntries(results) as Record<string, any[]>, pullStartedAt), fromCache: true };
   }
 }
 
