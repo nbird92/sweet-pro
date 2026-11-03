@@ -228,7 +228,11 @@ export default function QualityAssurancePage({
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Could not read the file.'));
     reader.onload = () => {
-      const img = new Image();
+      // NOT `new Image()`: this file imports lucide's <Image> icon, which
+      // shadows the DOM Image constructor here — `new Image()` threw inside
+      // this callback, so the promise never settled and the upload silently
+      // did nothing.
+      const img = document.createElement('img');
       img.onerror = () => reject(new Error('That file is not a readable image.'));
       img.onload = () => {
         const scale = Math.min(1, 600 / img.width, 240 / img.height);
@@ -243,7 +247,7 @@ export default function QualityAssurancePage({
         if (url.length > 700_000) { reject(new Error('That logo is too detailed to store — try a simpler or smaller image.')); return; }
         resolve(url);
       };
-      img.src = String(reader.result || '');
+      try { img.src = String(reader.result || ''); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
     };
     reader.readAsDataURL(file);
   });
