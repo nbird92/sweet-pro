@@ -11662,8 +11662,20 @@ export default function App() {
       // quantities (the Invoices table) — NOT the shipment schedule / shipments.
       // Only billed invoices (not Cancelled / Credit) with a date count; the week
       // comes from the invoice date.
+      // CURRENT YEAR only: weeks are labelled "Week N" with no year, so invoices
+      // from earlier years used to pile into the same week rows. Filter on the
+      // ISO week-year (the year of the week's Thursday) so the year boundary
+      // matches the week numbers — e.g. Jan 1 can belong to last year's Week 53.
+      const dashYear = new Date().getFullYear();
+      const isoWeekYear = (dateStr: string): number => {
+        const [y, m, d] = (dateStr || '').slice(0, 10).split('-').map(Number);
+        if (!y || !m || !d) return NaN;
+        const dt = new Date(y, m - 1, d);
+        dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7) + 3); // Thursday of that week
+        return dt.getFullYear();
+      };
       const billedWeeklyInvoices = invoices.filter(i =>
-        i.status !== 'Cancelled' && i.status !== 'Credit' && !!i.date);
+        i.status !== 'Cancelled' && i.status !== 'Credit' && !!i.date && isoWeekYear(i.date) === dashYear);
       const weekOfDate = (dateStr: string): string => {
         const n = getWeekNumber(dateStr);
         return Number.isFinite(n) && n > 0 ? `Week ${n}` : '';
@@ -11779,7 +11791,7 @@ export default function App() {
             return (
               <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
                 <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                  <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals — {new Date().getFullYear()}</h3>
                   <div className="flex gap-6 text-[10px]">
                     <span>Total Volume: <strong>{Math.round(grandVolume).toLocaleString()} MT</strong></span>
                     <span>Total Tolling: <strong>CAD ${Math.round(grandTolling).toLocaleString()}</strong></span>
@@ -11820,7 +11832,7 @@ export default function App() {
             {/* Weekly Totals Table */}
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals — {new Date().getFullYear()}</h3>
               </div>
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -11876,8 +11888,10 @@ export default function App() {
                 <tbody className="divide-y divide-[#141414]/10">
                   {(() => {
                     const today = new Date().toISOString().split('T')[0];
+                    // Upcoming appointments in the CURRENT calendar year only.
+                    const yearEnd = `${today.slice(0, 4)}-12-31`;
                     const allShipments = [...hamiltonShipments, ...vancouverShipments]
-                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled' && (s.date || '') >= today)
+                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled' && (s.date || '') >= today && (s.date || '') <= yearEnd)
                       .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
                     // Scheduler rows often carry a format placeholder ("Bulk") as
                     // the product — show the real SHORTFORM name from the
@@ -11944,7 +11958,7 @@ export default function App() {
             {/* Volume by Product */}
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] lg:col-span-2 overflow-hidden">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Volume by Product (MT)</h3>
+                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Volume by Product (MT) — {new Date().getFullYear()}</h3>
               </div>
               <table className="w-full text-left border-collapse">
                 <thead>
