@@ -11851,7 +11851,7 @@ export default function App() {
   const renderContent = () => {
     // The QA page — mounted in full on the Quality Assurance page, or card-only
     // (just one product's tabbed card) from the Products page.
-    const qaPageElement = (extra?: { cardOnlyProductId?: string; onCardClose?: () => void }) => (
+    const qaPageElement = (extra?: { cardOnlyProductId?: string; onCardClose?: () => void; onSaveDifferential?: (skuId: string, value: number) => void }) => (
       <QualityAssurancePage
         {...(extra || {})}
           qaProducts={qaProducts}
@@ -14298,7 +14298,7 @@ export default function App() {
 
           {productsTab === 'products' && (<>
           <div className="bg-[#FFF9E6] border border-[#141414]/20 p-3 text-xs text-[#141414]/70 italic">
-            Click a product to open its product card (Product Details, Specs, Packaging, BOM). Warehouse, Commodity Group, Terminal and Terminal Name are edited right here in the table.
+            Click a product to open its product card. Only differentials (Differentials tab, or the card's Differential tab) and the Warehouse, Commodity Group, Terminal and Terminal Name columns are edited here — all other product edits are made on the <span className="font-bold">Quality Assurance</span> page.
           </div>
 
           {/* Products — standardized read-only DataTable. Rows open a view-only
@@ -14400,7 +14400,18 @@ export default function App() {
           )}
 
           {/* Tabbed product card (same card as the QA page). */}
-          {productCardQaId && qaPageElement({ cardOnlyProductId: productCardQaId, onCardClose: () => setProductCardQaId(null) })}
+          {productCardQaId && qaPageElement({
+            cardOnlyProductId: productCardQaId,
+            onCardClose: () => setProductCardQaId(null),
+            // The one card edit allowed from the Products page.
+            onSaveDifferential: (skuId, v) => {
+              const base = skus.find(x => x.id === skuId);
+              if (!base) return;
+              const updated = { ...base, premiumCadMt: v };
+              setSkus(prev => prev.map(x => x.id === skuId ? updated : x));
+              saveNow(COLLECTIONS.products, [updated]);
+            },
+          })}
 
           {/* Read-only product detail (view mode only). */}
           <DetailModal

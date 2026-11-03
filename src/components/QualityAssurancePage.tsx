@@ -33,6 +33,9 @@ interface QualityAssurancePageProps {
   cardOnlyProductId?: string;
   /** Called when the card is closed in card-only mode. */
   onCardClose?: () => void;
+  /** Card-only mode: save the product's Default Differential (CAD/MT) — the one
+   *  edit the Products page allows on the card (adds a Differential tab). */
+  onSaveDifferential?: (skuId: string, value: number) => void;
 }
 
 function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -110,6 +113,7 @@ export default function QualityAssurancePage({
   onUpdateTemplates,
   cardOnlyProductId,
   onCardClose,
+  onSaveDifferential,
 }: QualityAssurancePageProps) {
   // Auto-populate: create QA entries for any SKUs not already tracked
   useEffect(() => {
@@ -157,7 +161,7 @@ export default function QualityAssurancePage({
       ) {
         autoType = 'Granulated';
       }
-      if (autoType && sugarTypes.some(st => st.name === autoType)) {
+      if (autoType && sugarTypes.some(st => st.name === autoType) && !cardOnlyProductId) {
         onUpdateQAProduct({ ...qa, sugarType: autoType });
       }
     });
@@ -192,8 +196,9 @@ export default function QualityAssurancePage({
   const [productModalMaximized, setProductModalMaximized] = useState(false);
   const [productModalMinimized, setProductModalMinimized] = useState(false);
   // Product card tabs (like the customer card).
-  type ProductCardTab = 'details' | 'specs' | 'packaging' | 'bom';
+  type ProductCardTab = 'details' | 'specs' | 'packaging' | 'bom' | 'differential';
   const [productCardTab, setProductCardTab] = useState<ProductCardTab>('details');
+  const [diffDraft, setDiffDraft] = useState<string | null>(null);
 
   // BOM editing state
   const [editingBomItem, setEditingBomItem] = useState<BOMItem | null>(null);
@@ -737,6 +742,7 @@ export default function QualityAssurancePage({
     setProductModalMaximized(false);
     setProductModalMinimized(false);
     setProductCardTab('details');
+    setDiffDraft(null);
   };
 
   const closeDetail = () => {
@@ -2834,6 +2840,7 @@ export default function QualityAssurancePage({
                   ['specs', 'Specs'],
                   ['packaging', 'Packaging'],
                   ['bom', 'BOM'],
+                  ...(onSaveDifferential ? [['differential', 'Differential']] : []),
                 ] as Array<[ProductCardTab, string]>).map(([id, label]) => (
                   <button
                     key={id}
@@ -3503,6 +3510,41 @@ export default function QualityAssurancePage({
                 </div>
 
                 </>)}
+                {productCardTab === 'differential' && onSaveDifferential && selectedProduct && (() => {
+                  const sku = skus.find(x => x.id === selectedProduct.skuId);
+                  const stored = sku?.premiumCadMt || 0;
+                  const draft = diffDraft ?? String(stored);
+                  const dirty = (parseFloat(draft || '0') || 0) !== stored;
+                  return (
+                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Default Differential</div>
+                      {sku ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number" step="0.01" value={draft}
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => setDiffDraft(e.target.value)}
+                              className="w-36 bg-white border border-[#141414] p-2 text-sm font-mono font-bold outline-none"
+                            />
+                            <span className="text-xs opacity-60">CAD/MT</span>
+                            <button
+                              disabled={!dirty}
+                              onClick={() => { onSaveDifferential(sku.id, parseFloat(draft) || 0); setDiffDraft(null); }}
+                              className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase disabled:opacity-30"
+                            >
+                              Save
+                            </button>
+                          </div>
+                          <p className="text-[10px] opacity-50">Used as the product differential in quotes and contract re-pricing.</p>
+                        </>
+                      ) : (
+                        <p className="text-xs opacity-60 italic">No product record is linked to this QA product.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {productCardTab === 'bom' && (<>
                 {/* Bill of Materials */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
@@ -3736,9 +3778,14 @@ export default function QualityAssurancePage({
                     </>
                   ) : (
                     <>
+                      {cardOnlyProductId && (
+                        <div className="flex-[2] text-[10px] opacity-60 self-center">
+                          Product details are edited on the Quality Assurance page.
+                        </div>
+                      )}
                       {/* Delete moved here from the table's old Actions column —
                           routes through the existing delete-confirm dialog. */}
-                      <button
+                      {!cardOnlyProductId && <button
                         onClick={() => {
                           if (selectedProduct) {
                             setDeleteConfirmId(selectedProduct.id);
@@ -3748,13 +3795,13 @@ export default function QualityAssurancePage({
                         className="px-6 py-4 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center-safe justify-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
-                      </button>
-                      <button
+                      </button>}
+                      {!cardOnlyProductId && <button
                         onClick={() => setIsEditing(true)}
                         className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
                       >
                         Edit Product
-                      </button>
+                      </button>}
                       <button
                         onClick={closeDetail}
                         className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
