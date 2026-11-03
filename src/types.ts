@@ -48,6 +48,12 @@ export interface SKU {
   productFormat?: string; // Format field (e.g., Bulk, Bagged, Tote, Liquid)
   shortForm?: string; // Auto-calculated: ProductGroupCode + C/B + SugarTypeAbbr
   productLongForm?: string; // Auto-calculated: ProductFormat + SugarType + Conv./Organic + Color
+  // Logistics fields — edited on the Products page (moved from the QA card).
+  // Readers fall back to the legacy QA product values when blank.
+  warehouse?: string;          // Liquid | DRY (feeds Stock Requests)
+  commodityGroup?: string;     // WHT | LIQ SUCROS (feeds Stock Requests)
+  terminal?: string;           // Terminal code (from the product location's terminals)
+  terminalName?: string;       // Terminal name
 }
 
 export interface ShipToLocation {

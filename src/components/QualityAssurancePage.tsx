@@ -29,6 +29,10 @@ interface QualityAssurancePageProps {
   onUpdateQAProduct: (product: QAProduct) => void;
   onDeleteQAProduct: (productId: string) => void;
   onUpdateTemplates: (templates: QATemplate[]) => void;
+  /** Card-only mode (Products page): render ONLY this QA product's card. */
+  cardOnlyProductId?: string;
+  /** Called when the card is closed in card-only mode. */
+  onCardClose?: () => void;
 }
 
 function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -104,9 +108,12 @@ export default function QualityAssurancePage({
   onUpdateQAProduct,
   onDeleteQAProduct,
   onUpdateTemplates,
+  cardOnlyProductId,
+  onCardClose,
 }: QualityAssurancePageProps) {
   // Auto-populate: create QA entries for any SKUs not already tracked
   useEffect(() => {
+    if (cardOnlyProductId) return; // card-only mount (Products page): no side effects
     const existingSkuIds = new Set(qaProducts.map(q => q.skuId));
     const missing = skus.filter(s => !existingSkuIds.has(s.id));
     if (missing.length > 0) {
@@ -184,6 +191,9 @@ export default function QualityAssurancePage({
   // Modal window state
   const [productModalMaximized, setProductModalMaximized] = useState(false);
   const [productModalMinimized, setProductModalMinimized] = useState(false);
+  // Product card tabs (like the customer card).
+  type ProductCardTab = 'details' | 'specs' | 'packaging' | 'bom';
+  const [productCardTab, setProductCardTab] = useState<ProductCardTab>('details');
 
   // BOM editing state
   const [editingBomItem, setEditingBomItem] = useState<BOMItem | null>(null);
@@ -726,6 +736,7 @@ export default function QualityAssurancePage({
     setIsEditing(false);
     setProductModalMaximized(false);
     setProductModalMinimized(false);
+    setProductCardTab('details');
   };
 
   const closeDetail = () => {
@@ -736,7 +747,16 @@ export default function QualityAssurancePage({
     setProductModalMinimized(false);
     setShowBomForm(false);
     setEditingBomItem(null);
+    if (cardOnlyProductId) onCardClose?.();
   };
+
+  // Card-only mode: open the requested product's card.
+  useEffect(() => {
+    if (!cardOnlyProductId) return;
+    const qa = qaProducts.find(q => q.id === cardOnlyProductId);
+    if (qa && selectedProduct?.id !== qa.id) openDetail(qa);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardOnlyProductId]);
 
   const saveChanges = () => {
     if (!editData) return;
@@ -1026,6 +1046,7 @@ export default function QualityAssurancePage({
   }];
   return (
     <div>
+      {!cardOnlyProductId && (
       <PageBanner
         icon={<CheckCircle2 size={18} />}
         title="Quality Assurance"
@@ -1062,7 +1083,9 @@ export default function QualityAssurancePage({
         </button>
         <input ref={csvImportRef} type="file" accept=".csv" onChange={handleImportQACSV} className="sr-only" />
       </PageBanner>
-    <div className="p-6 space-y-4">
+      )}
+    <div className={cardOnlyProductId ? '' : 'p-6 space-y-4'}>
+      {!cardOnlyProductId && (<>
 
       {/* Search + column controls */}
       <div className="flex items-center gap-2">
@@ -2503,6 +2526,7 @@ export default function QualityAssurancePage({
           </div>
         )}
       </AnimatePresence>
+      </>)}
 
       {/* Hidden file inputs */}
       <input type="file" ref={packagingFileRef} className="hidden" accept="image/*" onChange={handlePackagingUpload} />
@@ -2593,56 +2617,6 @@ export default function QualityAssurancePage({
                       <select value={newProductData.location} onChange={(e) => setNewProductData(prev => reconcileTerminal({ ...prev, location: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
                         <option value="">Select Location</option>
                         {locations.filter(l => l.active !== false).map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</label>
-                      <select value={newProductData.warehouse || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, warehouse: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
-                        <option value="">Select Warehouse</option>
-                        <option value="Liquid">Liquid</option>
-                        <option value="DRY">DRY</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</label>
-                      <select value={newProductData.commodityGroup || ''} onChange={(e) => setNewProductData(prev => ({ ...prev, commodityGroup: e.target.value || undefined }))} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none">
-                        <option value="">Select Commodity</option>
-                        <option value="WHT">WHT</option>
-                        <option value="LIQ SUCROS">LIQ SUCROS</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
-                      <select
-                        value={newProductData.terminal || ''}
-                        onChange={(e) => {
-                          const code = e.target.value;
-                          const match = terminalsForLocation(newProductData.location).find(t => t.terminal === code);
-                          setNewProductData(prev => ({ ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) }));
-                        }}
-                        className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                      >
-                        <option value="">Select Terminal</option>
-                        {terminalsForLocation(newProductData.location).map((t, i) => (
-                          <option key={i} value={t.terminal}>{t.terminal}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
-                      <select
-                        value={newProductData.terminalName || ''}
-                        onChange={(e) => {
-                          const name = e.target.value;
-                          const match = terminalsForLocation(newProductData.location).find(t => t.terminalName === name);
-                          setNewProductData(prev => ({ ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) }));
-                        }}
-                        className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                      >
-                        <option value="">Select Terminal Name</option>
-                        {terminalsForLocation(newProductData.location).map((t, i) => (
-                          <option key={i} value={t.terminalName}>{t.terminalName}</option>
-                        ))}
                       </select>
                     </div>
                     <div>
@@ -2847,13 +2821,32 @@ export default function QualityAssurancePage({
                   })()}
                 </h3>
                 <div className="flex items-center gap-1">
-                  <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>
+                  {!cardOnlyProductId && <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>}
                   <button onClick={(e) => { e.stopPropagation(); setProductModalMaximized(!productModalMaximized); }} className="p-1 hover:bg-white/20 transition-colors" title={productModalMaximized ? 'Restore' : 'Maximize'}>{productModalMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
                   <button onClick={closeDetail} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
                 </div>
               </div>
 
+              {/* Tabs — like the customer card */}
+              <div className="flex border-b border-[#141414] bg-[#F5F5F5] sticky top-[52px] z-10">
+                {([
+                  ['details', 'Product Details'],
+                  ['specs', 'Specs'],
+                  ['packaging', 'Packaging'],
+                  ['bom', 'BOM'],
+                ] as Array<[ProductCardTab, string]>).map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => setProductCardTab(id)}
+                    className={`px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest border-r border-[#141414]/10 transition-colors ${productCardTab === id ? 'bg-white text-[#141414] border-b-2 border-b-[#141414] -mb-px' : 'opacity-50 hover:opacity-100'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               <div className="p-6 space-y-4">
+                {productCardTab === 'details' && (<>
                 {/* Section 0: Product Details (editable - syncs back to Products table) */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
@@ -2869,64 +2862,6 @@ export default function QualityAssurancePage({
                           className="w-full bg-white border border-[#141414] p-2 text-xs font-mono outline-none"
                           placeholder="e.g. 000001"
                         />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</label>
-                        <select
-                          value={editData?.warehouse || ''}
-                          onChange={(e) => setEditData(prev => prev ? { ...prev, warehouse: e.target.value || undefined } : prev)}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                        >
-                          <option value="">Select Warehouse</option>
-                          <option value="Liquid">Liquid</option>
-                          <option value="DRY">DRY</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</label>
-                        <select
-                          value={editData?.commodityGroup || ''}
-                          onChange={(e) => setEditData(prev => prev ? { ...prev, commodityGroup: e.target.value || undefined } : prev)}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                        >
-                          <option value="">Select Commodity</option>
-                          <option value="WHT">WHT</option>
-                          <option value="LIQ SUCROS">LIQ SUCROS</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</label>
-                        <select
-                          value={editData?.terminal || ''}
-                          onChange={(e) => {
-                            const code = e.target.value;
-                            const match = terminalsForLocation(editData?.location).find(t => t.terminal === code);
-                            setEditData(prev => prev ? { ...prev, terminal: code || undefined, terminalName: match ? match.terminalName : (code ? prev.terminalName : undefined) } : prev);
-                          }}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                        >
-                          <option value="">Select Terminal</option>
-                          {terminalsForLocation(editData?.location).map((t, i) => (
-                            <option key={i} value={t.terminal}>{t.terminal}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</label>
-                        <select
-                          value={editData?.terminalName || ''}
-                          onChange={(e) => {
-                            const name = e.target.value;
-                            const match = terminalsForLocation(editData?.location).find(t => t.terminalName === name);
-                            setEditData(prev => prev ? { ...prev, terminalName: name || undefined, terminal: match ? match.terminal : (name ? prev.terminal : undefined) } : prev);
-                          }}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                        >
-                          <option value="">Select Terminal Name</option>
-                          {terminalsForLocation(editData?.location).map((t, i) => (
-                            <option key={i} value={t.terminalName}>{t.terminalName}</option>
-                          ))}
-                        </select>
                       </div>
                       <div>
                         <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Packaging Format</label>
@@ -3065,10 +3000,6 @@ export default function QualityAssurancePage({
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Conv./Organic</div><div className="text-xs font-bold">{displayData.category}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Sugar Type</div><div className="text-xs font-bold">{displayData.sugarType || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Location</div><div className="text-xs font-bold">{displayData.location}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Warehouse</div><div className="text-xs font-bold">{displayData.warehouse || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Commodity Group</div><div className="text-xs font-bold">{displayData.commodityGroup || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Terminal</div><div className="text-xs font-bold">{displayData.terminal || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Terminal Name</div><div className="text-xs font-bold">{displayData.terminalName || '—'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Net Weight (KG)</div><div className="text-xs font-bold">{displayData.netWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Gross Weight (KG)</div><div className="text-xs font-bold">{displayData.grossWeightKg || '-'}</div></div>
                       <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Max Color</div><div className="text-xs font-bold">{displayData.maxColor}</div></div>
@@ -3160,6 +3091,8 @@ export default function QualityAssurancePage({
                   </div>
                 </div>
 
+                </>)}
+                {productCardTab === 'specs' && (<>
                 {/* Section 2: Product Specifications */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Specifications</div>
@@ -3244,6 +3177,8 @@ export default function QualityAssurancePage({
                   </div>
                 </div>
 
+                </>)}
+                {productCardTab === 'packaging' && (<>
                 {/* Section 3: Packaging Supplier */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging Supplier</div>
@@ -3475,6 +3410,8 @@ export default function QualityAssurancePage({
                   )}
                 </div>
 
+                </>)}
+                {productCardTab === 'specs' && (<>
                 {/* Section 9: Spec Sheets */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Spec Sheets</div>
@@ -3565,6 +3502,8 @@ export default function QualityAssurancePage({
                   )}
                 </div>
 
+                </>)}
+                {productCardTab === 'bom' && (<>
                 {/* Bill of Materials */}
                 <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
                   <div className="flex justify-between items-center border-b border-[#141414]/10 pb-2">
@@ -3775,6 +3714,8 @@ export default function QualityAssurancePage({
                     </div>
                   )}
                 </div>
+
+                </>)}
 
                 {/* Action Buttons */}
                 <div className="flex gap-4 pt-2">

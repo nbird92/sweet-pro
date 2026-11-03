@@ -516,6 +516,10 @@ export default function App() {
   // Products are edited on the QA page, so this is view-only.
   const [skuDetail, setSkuDetail] = useState<SKU | null>(null);
   const [skuDiffDraft, setSkuDiffDraft] = useState<string | null>(null);
+  // Products page: tab, the QA product card opened from a row, per-row differential drafts.
+  const [productsTab, setProductsTab] = useState<'products' | 'differentials'>('products');
+  const [productCardQaId, setProductCardQaId] = useState<string | null>(null);
+  const [diffDrafts, setDiffDrafts] = useState<Record<string, string>>({});
   // Detail modal for the standardized Locations table (Supply Chain page).
   // Core fields are read-only (edited on QA), but bays stay editable here.
   const [locationDetail, setLocationDetail] = useState<Location | null>(null);
@@ -11845,6 +11849,92 @@ export default function App() {
   }, []);
 
   const renderContent = () => {
+    // The QA page — mounted in full on the Quality Assurance page, or card-only
+    // (just one product's tabbed card) from the Products page.
+    const qaPageElement = (extra?: { cardOnlyProductId?: string; onCardClose?: () => void }) => (
+      <QualityAssurancePage
+        {...(extra || {})}
+          qaProducts={qaProducts}
+          skus={skus}
+          people={people}
+          productGroups={productGroups}
+          locations={locations}
+          vendors={vendors}
+          qaTemplates={qaTemplates}
+          sugarTypes={sugarTypes}
+          packagingFormats={packagingFormats}
+          onUpdatePackagingFormats={withDeleteTracking(COLLECTIONS.packagingFormats, packagingFormats, setPackagingFormats)}
+          namingFormulas={namingFormulas}
+          onUpdateNamingFormulas={withDeleteTracking(COLLECTIONS.namingFormulas, namingFormulas, setNamingFormulas)}
+          onUpdateProductGroups={withDeleteTracking(COLLECTIONS.productGroups, productGroups, setProductGroups)}
+          onUpdateSugarTypes={withDeleteTracking(COLLECTIONS.sugarTypes, sugarTypes, setSugarTypes)}
+          onUpdateLocations={withDeleteTracking(COLLECTIONS.locations, locations, setLocations)}
+          onAddQAProduct={(rawProduct) => {
+            // Fill a blank Product Group from the format/name so new products carry
+            // the right group (and tolling fee) instead of an empty/defaulted one.
+            const product = (rawProduct.productGroup && rawProduct.productGroup.trim())
+              ? rawProduct
+              : { ...rawProduct, productGroup: deriveProductGroup(rawProduct.productFormat, rawProduct.skuName) || (productGroups[0]?.name || '') };
+            setQaProducts(prev => [...prev, product]);
+            saveNow(COLLECTIONS.qaProducts, [product]); // durable immediately
+            // Also create a corresponding SKU so the Products page mirrors it
+            const existingSku = skus.find(s => s.id === product.skuId);
+            if (!existingSku) {
+              const newSkuFromQA: SKU = {
+                id: product.skuId,
+                productCode: product.productCode,
+                name: product.skuName || product.productFormat || '',
+                productGroup: product.productGroup,
+                category: product.category,
+                netWeight: product.netWeightKg || 0,
+                brix: 99.9,
+                premiumCadMt: 0,
+                netWeightKg: product.netWeightKg,
+                grossWeightKg: product.grossWeightKg,
+                maxColor: product.maxColor,
+                location: product.location,
+                sugarType: product.sugarType,
+                productFormat: product.productFormat,
+              };
+              setSkus(prev => [...prev, newSkuFromQA]);
+              saveNow(COLLECTIONS.products, [newSkuFromQA]); // durable immediately
+            }
+          }}
+          onUpdateQAProduct={(raw) => {
+            // Keep the group populated: if it was cleared, re-derive from format/name.
+            const updated = (raw.productGroup && raw.productGroup.trim())
+              ? raw
+              : { ...raw, productGroup: deriveProductGroup(raw.productFormat, raw.skuName) || raw.productGroup };
+            setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+            // DURABLE IMMEDIATELY — like contracts/customers. QA edits used to rely
+            // solely on the 5s debounced autosave, so a refresh shortly after an
+            // edit (before that cycle completed) lost it. saveNow persists this
+            // record to Firestore right away (REST-first where the SDK stream is
+            // dead), independent of the debounce.
+            saveNow(COLLECTIONS.qaProducts, [updated]);
+            // Mirror QA changes to the corresponding SKU so the Products page stays
+            // in sync — and persist that mirror immediately too.
+            const existingSku = skus.find(s => s.id === updated.skuId);
+            const patchedSku = existingSku ? {
+              ...existingSku,
+              productCode: updated.productCode ?? existingSku.productCode,
+              name: updated.skuName || existingSku.name,
+              productGroup: updated.productGroup,
+              category: updated.category,
+              location: updated.location,
+              netWeightKg: updated.netWeightKg,
+              grossWeightKg: updated.grossWeightKg,
+              maxColor: updated.maxColor,
+              sugarType: updated.sugarType,
+              productFormat: updated.productFormat,
+            } : null;
+            setSkus(prev => prev.map(s => s.id === updated.skuId ? (patchedSku || s) : s));
+            if (patchedSku) saveNow(COLLECTIONS.products, [patchedSku]);
+          }}
+          onDeleteQAProduct={(id) => { recordUserDeletes(COLLECTIONS.qaProducts, [id]); setQaProducts(prev => prev.filter(p => p.id !== id)); }}
+          onUpdateTemplates={withDeleteTracking(COLLECTIONS.qaTemplates, qaTemplates, setQaTemplates)}
+        />
+    );
     try {
     if (activePage === 'Dashboard') {
       const todayISO = new Date().toISOString().split('T')[0];
@@ -14074,6 +14164,55 @@ export default function App() {
       });
       type EnrichedSku = typeof enrichedSkus[number];
 
+      // Logistics fields now live on the PRODUCT (SKU); legacy values still on
+      // the QA record show until the product is edited here.
+      const productLogistics = (sk: SKU) => {
+        const qa = qaProducts.find(q => q.skuId === sk.id);
+        return {
+          warehouse: sk.warehouse || qa?.warehouse || '',
+          commodityGroup: sk.commodityGroup || qa?.commodityGroup || '',
+          terminal: sk.terminal || qa?.terminal || '',
+          terminalName: sk.terminalName || qa?.terminalName || '',
+        };
+      };
+      // Terminals for a product's location (exact name, else a UNIQUE prefix —
+      // never guess between Hamilton (Sherman) and Hamilton (Ferguson)).
+      const productTerminals = (locName?: string) => {
+        const n = (locName || '').trim().toLowerCase();
+        if (!n) return [];
+        const exact = locations.find(l => l.name.trim().toLowerCase() === n);
+        if (exact) return exact.terminalNames || [];
+        const pre = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+        return pre.length === 1 ? (pre[0].terminalNames || []) : [];
+      };
+      const saveLogistics = (skuId: string, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', value: string) => {
+        const base = skus.find(x => x.id === skuId);
+        if (!base) return;
+        const cur = productLogistics(base);
+        const next: SKU = { ...base, ...cur, [field]: value };
+        // Terminal + Terminal Name move together (pick one, the other follows).
+        const terms = productTerminals(base.location);
+        if (field === 'terminal') next.terminalName = terms.find(t => t.terminal === value)?.terminalName || (value ? cur.terminalName : '');
+        if (field === 'terminalName') next.terminal = terms.find(t => t.terminalName === value)?.terminal || (value ? cur.terminal : '');
+        setSkus(prev => prev.map(x => x.id === skuId ? next : x));
+        saveNow(COLLECTIONS.products, [next]);
+      };
+      const logisticsSelect = (sk: SKU, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', options: Array<[string, string]>) => {
+        const value = productLogistics(sk)[field];
+        return (
+          <select
+            value={value}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => saveLogistics(sk.id, field, e.target.value)}
+            className="bg-white border border-[#141414]/30 px-1 py-0.5 text-[11px] outline-none focus:border-[#141414]"
+          >
+            <option value="">—</option>
+            {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
+          </select>
+        );
+      };
+
       const productExportSheets = (): SheetSpec[] => [
         {
           sheetName: 'Products',
@@ -14144,8 +14283,22 @@ export default function App() {
             placeholder="Search products by name, group, location or ID..." 
           />
           
+          {/* Tabs */}
+          <div className="flex border-b border-[#141414]">
+            {([['products', 'Products'], ['differentials', 'Differentials']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setProductsTab(id)}
+                className={`px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors ${productsTab === id ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#141414]/5 opacity-60'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {productsTab === 'products' && (<>
           <div className="bg-[#FFF9E6] border border-[#141414]/20 p-3 text-xs text-[#141414]/70 italic">
-            This table is read-only. Product changes can only be made on the <span className="font-bold">Quality Assurance</span> page.
+            Click a product to open its product card (Product Details, Specs, Packaging, BOM). Warehouse, Commodity Group, Terminal and Terminal Name are edited right here in the table.
           </div>
 
           {/* Products — standardized read-only DataTable. Rows open a view-only
@@ -14174,13 +14327,80 @@ export default function App() {
               { key: 'netWeightKg', label: 'Net Weight (KG)', bold: true, align: 'right', sortValue: (s) => s._netWt || 0, render: (s) => s._netWt },
               { key: 'grossWeightKg', label: 'Gross Weight (KG)', align: 'right', render: (s) => s.grossWeightKg || '-' },
               { key: 'premiumCadMt', label: 'Differential (CAD/MT)', align: 'right', mono: true, sortValue: (s) => s.premiumCadMt || 0, render: (s) => s.premiumCadMt ? s.premiumCadMt.toFixed(2) : '—' },
+              { key: 'warehouse', label: 'Warehouse', sortValue: (s) => productLogistics(s).warehouse, render: (s) => logisticsSelect(s, 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']]) },
+              { key: 'commodityGroup', label: 'Commodity Group', sortValue: (s) => productLogistics(s).commodityGroup, render: (s) => logisticsSelect(s, 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']]) },
+              { key: 'terminal', label: 'Terminal', sortValue: (s) => productLogistics(s).terminal, render: (s) => logisticsSelect(s, 'terminal', productTerminals(s.location).map(t => [t.terminal, t.terminal] as [string, string])) },
+              { key: 'terminalName', label: 'Terminal Name', sortValue: (s) => productLogistics(s).terminalName, render: (s) => logisticsSelect(s, 'terminalName', productTerminals(s.location).map(t => [t.terminalName, t.terminalName] as [string, string])) },
             ]}
             rows={enrichedSkus}
             getRowKey={(s) => s.id}
-            onRowClick={(s) => setSkuDetail(s)}
+            onRowClick={(s) => {
+              // Open the tabbed product card (QA record); products without a QA
+              // record fall back to the read-only detail view.
+              const qa = qaProducts.find(q => q.skuId === s.id);
+              if (qa) setProductCardQaId(qa.id); else setSkuDetail(s);
+            }}
             emptyMessage="No products yet. Add products on the Quality Assurance page."
             defaultSortKey="productName"
           />
+
+          </>)}
+
+          {productsTab === 'differentials' && (
+            <DataTable<EnrichedSku>
+              title="Differentials"
+              icon={<DollarSign size={14} />}
+              storageKey="product-differentials"
+              columns={[
+                { key: 'productCode', label: 'Prod No.', mono: true, bold: true, render: (s) => s.productCode || '—' },
+                { key: 'productName', label: 'Product Name', bold: true, sortValue: (s) => s._productName, render: (s) => s._productName },
+                { key: 'shortform', label: 'Shortform', mono: true, bold: true, sortValue: (s) => s._shortform, render: (s) => s._shortform },
+                { key: 'productGroup', label: 'Product Group' },
+                { key: 'location', label: 'Location' },
+                {
+                  key: 'premiumCadMt', label: 'Default Differential (CAD/MT)', align: 'right', sortValue: (s) => s.premiumCadMt || 0,
+                  render: (s) => {
+                    const stored = s.premiumCadMt || 0;
+                    const draft = diffDrafts[s.id] ?? String(stored);
+                    const dirty = (parseFloat(draft || '0') || 0) !== stored;
+                    return (
+                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="number" step="0.01" value={draft}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setDiffDrafts(prev => ({ ...prev, [s.id]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget.nextElementSibling as HTMLButtonElement | null)?.click(); }}
+                          className="w-28 bg-white border border-[#141414]/30 px-2 py-1 text-xs font-mono text-right outline-none focus:border-[#141414]"
+                        />
+                        <button
+                          disabled={!dirty}
+                          onClick={() => {
+                            const v = parseFloat(draft) || 0;
+                            const base = skus.find(x => x.id === s.id);
+                            if (!base) return;
+                            const updated = { ...base, premiumCadMt: v };
+                            setSkus(prev => prev.map(x => x.id === s.id ? updated : x));
+                            saveNow(COLLECTIONS.products, [updated]);
+                            setDiffDrafts(prev => { const n = { ...prev }; delete n[s.id]; return n; });
+                          }}
+                          className="px-2.5 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase disabled:opacity-20"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    );
+                  },
+                },
+              ]}
+              rows={enrichedSkus}
+              getRowKey={(s) => s.id}
+              emptyMessage="No products yet."
+              defaultSortKey="productName"
+            />
+          )}
+
+          {/* Tabbed product card (same card as the QA page). */}
+          {productCardQaId && qaPageElement({ cardOnlyProductId: productCardQaId, onCardClose: () => setProductCardQaId(null) })}
 
           {/* Read-only product detail (view mode only). */}
           <DetailModal
@@ -14516,87 +14736,7 @@ export default function App() {
 
     if (activePage === 'Quality Assurance') {
       return (
-        <QualityAssurancePage
-          qaProducts={qaProducts}
-          skus={skus}
-          people={people}
-          productGroups={productGroups}
-          locations={locations}
-          vendors={vendors}
-          qaTemplates={qaTemplates}
-          sugarTypes={sugarTypes}
-          packagingFormats={packagingFormats}
-          onUpdatePackagingFormats={withDeleteTracking(COLLECTIONS.packagingFormats, packagingFormats, setPackagingFormats)}
-          namingFormulas={namingFormulas}
-          onUpdateNamingFormulas={withDeleteTracking(COLLECTIONS.namingFormulas, namingFormulas, setNamingFormulas)}
-          onUpdateProductGroups={withDeleteTracking(COLLECTIONS.productGroups, productGroups, setProductGroups)}
-          onUpdateSugarTypes={withDeleteTracking(COLLECTIONS.sugarTypes, sugarTypes, setSugarTypes)}
-          onUpdateLocations={withDeleteTracking(COLLECTIONS.locations, locations, setLocations)}
-          onAddQAProduct={(rawProduct) => {
-            // Fill a blank Product Group from the format/name so new products carry
-            // the right group (and tolling fee) instead of an empty/defaulted one.
-            const product = (rawProduct.productGroup && rawProduct.productGroup.trim())
-              ? rawProduct
-              : { ...rawProduct, productGroup: deriveProductGroup(rawProduct.productFormat, rawProduct.skuName) || (productGroups[0]?.name || '') };
-            setQaProducts(prev => [...prev, product]);
-            saveNow(COLLECTIONS.qaProducts, [product]); // durable immediately
-            // Also create a corresponding SKU so the Products page mirrors it
-            const existingSku = skus.find(s => s.id === product.skuId);
-            if (!existingSku) {
-              const newSkuFromQA: SKU = {
-                id: product.skuId,
-                productCode: product.productCode,
-                name: product.skuName || product.productFormat || '',
-                productGroup: product.productGroup,
-                category: product.category,
-                netWeight: product.netWeightKg || 0,
-                brix: 99.9,
-                premiumCadMt: 0,
-                netWeightKg: product.netWeightKg,
-                grossWeightKg: product.grossWeightKg,
-                maxColor: product.maxColor,
-                location: product.location,
-                sugarType: product.sugarType,
-                productFormat: product.productFormat,
-              };
-              setSkus(prev => [...prev, newSkuFromQA]);
-              saveNow(COLLECTIONS.products, [newSkuFromQA]); // durable immediately
-            }
-          }}
-          onUpdateQAProduct={(raw) => {
-            // Keep the group populated: if it was cleared, re-derive from format/name.
-            const updated = (raw.productGroup && raw.productGroup.trim())
-              ? raw
-              : { ...raw, productGroup: deriveProductGroup(raw.productFormat, raw.skuName) || raw.productGroup };
-            setQaProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
-            // DURABLE IMMEDIATELY — like contracts/customers. QA edits used to rely
-            // solely on the 5s debounced autosave, so a refresh shortly after an
-            // edit (before that cycle completed) lost it. saveNow persists this
-            // record to Firestore right away (REST-first where the SDK stream is
-            // dead), independent of the debounce.
-            saveNow(COLLECTIONS.qaProducts, [updated]);
-            // Mirror QA changes to the corresponding SKU so the Products page stays
-            // in sync — and persist that mirror immediately too.
-            const existingSku = skus.find(s => s.id === updated.skuId);
-            const patchedSku = existingSku ? {
-              ...existingSku,
-              productCode: updated.productCode ?? existingSku.productCode,
-              name: updated.skuName || existingSku.name,
-              productGroup: updated.productGroup,
-              category: updated.category,
-              location: updated.location,
-              netWeightKg: updated.netWeightKg,
-              grossWeightKg: updated.grossWeightKg,
-              maxColor: updated.maxColor,
-              sugarType: updated.sugarType,
-              productFormat: updated.productFormat,
-            } : null;
-            setSkus(prev => prev.map(s => s.id === updated.skuId ? (patchedSku || s) : s));
-            if (patchedSku) saveNow(COLLECTIONS.products, [patchedSku]);
-          }}
-          onDeleteQAProduct={(id) => { recordUserDeletes(COLLECTIONS.qaProducts, [id]); setQaProducts(prev => prev.filter(p => p.id !== id)); }}
-          onUpdateTemplates={withDeleteTracking(COLLECTIONS.qaTemplates, qaTemplates, setQaTemplates)}
-        />
+        qaPageElement()
       );
     }
 
@@ -17437,9 +17577,9 @@ export default function App() {
           //      terminal within that list, since each terminal is tagged with the
           //      warehouse it serves.
           const orderTerminals = terminalsForLoc(o.location);
-          const terminalFor = (qa: QAProduct | null) => {
+          const terminalFor = (p: { qa: QAProduct | null; sku?: SKU | null }) => {
             if (!orderTerminals.length) return undefined;
-            const wh = (qa?.warehouse || '').trim().toLowerCase();
+            const wh = (p.sku?.warehouse || p.qa?.warehouse || '').trim().toLowerCase();
             if (wh) {
               const hit = orderTerminals.find(t => (t.warehouse || '').trim().toLowerCase() === wh);
               if (hit) return hit;
@@ -17448,7 +17588,7 @@ export default function App() {
             // when the location offers a single terminal — otherwise it's ambiguous.
             return orderTerminals.length === 1 ? orderTerminals[0] : undefined;
           };
-          const rowTerminals = products.map(p => terminalFor(p.qa));
+          const rowTerminals = products.map(p => terminalFor(p));
           const terminal = joinDistinct(rowTerminals.map(t => t?.terminal));
           const terminalName = joinDistinct(rowTerminals.map(t => t?.terminalName));
           let terminalNote = '';
@@ -17456,10 +17596,10 @@ export default function App() {
             if (!orderTerminals.length) {
               terminalNote = terminalDiag(o.location);
             } else {
-              const whs = joinDistinct(products.map(p => p.qa?.warehouse));
+              const whs = joinDistinct(products.map(p => p.sku?.warehouse || p.qa?.warehouse));
               terminalNote = whs
                 ? `No terminal at "${o.location}" is tagged with the product warehouse "${whs}". Open Locations → "${o.location}" → Terminal Names and set that terminal's Warehouse.`
-                : `The ordered product has no Warehouse set, and "${o.location}" defines ${orderTerminals.length} terminals — so the right one can't be chosen. Set Warehouse on the QA product.`;
+                : `The ordered product has no Warehouse set, and "${o.location}" defines ${orderTerminals.length} terminals — so the right one can't be chosen. Set its Warehouse on the Products page.`;
             }
           }
           return {
@@ -17472,8 +17612,8 @@ export default function App() {
             units: lineItems.reduce((s, li) => s + lineItemUnits(li), 0),
             qtyMt: lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0),
             packing: joinDistinct(products.map(p => p.qa?.productFormat || p.sku?.productFormat)),
-            warehouse: joinDistinct(products.map(p => p.qa?.warehouse)),
-            cmy: joinDistinct(products.map(p => p.qa?.commodityGroup)),
+            warehouse: joinDistinct(products.map(p => p.sku?.warehouse || p.qa?.warehouse)),
+            cmy: joinDistinct(products.map(p => p.sku?.commodityGroup || p.qa?.commodityGroup)),
             shipDate: o.shipmentDate || '',
             productGroup: joinDistinct(products.map(p => p.qa?.productGroup || p.sku?.productGroup)),
             orderLocation: (o.location || '').trim(),
