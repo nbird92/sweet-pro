@@ -6001,6 +6001,8 @@ export default function App() {
         shipFromLocation: shipFromLoc,
         shipTo: order.shipToLocationId ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId) : undefined,
         lotCodes, qaProducts,
+        product: resolveCoaProduct(shipment, order),
+        carrierEmail: carriers.find(c => c.name === (shipment.carrier || order.carrier))?.contactEmail || '',
       });
       blobUrl = gen.blobUrl;
       filename = gen.filename;
@@ -6228,12 +6230,59 @@ export default function App() {
     return (isLiquidSugar(sugarType) ? liquidCoa : granCoa) || coas[0];
   };
 
+  /** The product a COA certifies — resolved from the CATALOG, never by bare
+   *  name (catalog names are often format words like "Bulk", and the Molasses
+   *  SKU is literally named "Bulk", so name lookups picked the wrong product and
+   *  product group). Priority:
+   *   1. the order line (by productKey) whose product matches the lot's sugar
+   *      type — or the first line when the lot has no sugar type;
+   *   2. else the QA product matching the lot's sugar type + product group +
+   *      category (the lab's own record of what was loaded).
+   *  Units follow the order confirmation's {{item_units}} (lineItemUnits). */
+  const resolveCoaProduct = (shipment: Shipment, order?: Order): { label: string; units: string; qaProduct?: QAProduct } | undefined => {
+    const lotNum = (shipment.lotNumbers && shipment.lotNumbers[0]) || shipment.lotNumber;
+    const lot = lotNum ? lotCodes.find(lc => sameLotCode(lc.lotNumber, lotNum)) : undefined;
+    const qaFor = (key?: string) => key ? (qaProducts.find(q => q.id === key) || qaProducts.find(q => q.skuId === key)) : undefined;
+    const norm = (v?: string) => (v || '').trim().toLowerCase();
+    const sameSugar = (a?: string, b?: string) => { const x = norm(a), y = norm(b); return !!x && !!y && (x.includes(y) || y.includes(x)); };
+    const fmtUnits = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    const lines = (order?.lineItems || []).filter(li => li.productName || li.productKey);
+    const line = lot?.sugarType
+      ? lines.find(li => sameSugar(qaFor(li.productKey)?.sugarType, lot.sugarType))
+      : lines[0];
+    if (line) {
+      return {
+        label: lineItemToShortform(line) || line.productDisplayName || line.productName,
+        units: fmtUnits(lineItemUnits(line)),
+        qaProduct: qaFor(line.productKey),
+      };
+    }
+    if (lot?.sugarType) {
+      const bySugar = qaProducts.filter(q => sameSugar(q.sugarType, lot.sugarType));
+      const qa = bySugar.find(q => norm(q.productGroup) === norm(lot.productGroup) && norm(q.category) === norm(lot.category))
+        || bySugar.find(q => norm(q.productGroup) === norm(lot.productGroup))
+        || bySugar.find(q => norm(q.category) === norm(lot.category))
+        || bySugar[0];
+      const mt = parseFloat(String(lot.qtyMt || '')) || shipment.qty || 0;
+      return {
+        label: qa ? (lineItemToShortform({ productName: qa.skuName, productKey: qa.id }) || qa.skuName) : lot.sugarType,
+        units: mt ? `${fmtUnits(mt)} MT` : '',
+        qaProduct: qa,
+      };
+    }
+    return undefined;
+  };
+
   const handleGenerateCoa = (shipment: Shipment) => {
     try {
-      const linkedOrder = orders.find(o => o.bolNumber === shipment.bol);
+      const bolKey = (shipment.bol || '').trim().toUpperCase();
+      const linkedOrder = bolKey ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey) : undefined;
       const cust = customers.find(c => c.name === shipment.customer);
+      const carr = carriers.find(c => c.name === shipment.carrier);
       const shipFromLoc = locations.find(l => l.name === (linkedOrder?.location || '') || l.locationCode === (linkedOrder?.location || ''));
       const { blobUrl, filename } = generateCoaPdf({
+        product: resolveCoaProduct(shipment, linkedOrder),
+        carrierEmail: carr?.contactEmail || '',
         shipment,
         order: linkedOrder,
         customer: cust,
@@ -6323,6 +6372,7 @@ export default function App() {
         : undefined;
       const includeBag = includeBagIdReport ?? hasPackagedOrToteProducts(linkedOrder?.lineItems, shipment.product);
       const { blobUrl, filename } = generateDocumentPackagePdf({
+        coaProduct: resolveCoaProduct(shipment, linkedOrder),
         shipment,
         order: linkedOrder,
         customer: cust,
@@ -6513,6 +6563,8 @@ export default function App() {
         shipment: s.shipment, order: s.order, customer: s.consignee,
         shipFromLocation: s.shipFromLocation, shipTo: s.shipToLocation,
         lotCodes, qaProducts,
+        product: resolveCoaProduct(s.shipment, s.order),
+        carrierEmail: s.carrier?.contactEmail || '',
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, templateType: 'Certificate of Analysis' });

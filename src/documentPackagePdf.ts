@@ -18,6 +18,8 @@ export interface GenerateDocumentPackageParams {
   /** Include the Bag ID Report page. Only true when the invoice/order carries
    *  packaged or tote products (bulk/liquid loads have no bag IDs). */
   includeBagIdReport: boolean;
+  /** Catalog-resolved product for the COA page (see renderCoaInto). */
+  coaProduct?: { label: string; units: string; qaProduct?: QAProduct };
   /** Scale Ticket Shipping/Receiving box to mark (invoice-table packages: 'shipping'). */
   scaleTicketDirection?: 'shipping' | 'receiving';
 }
@@ -33,7 +35,7 @@ export interface GenerateDocumentPackageParams {
  * Each document type mirrors a template type in the QA Templates table.
  */
 export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams): { blobUrl: string; filename: string } {
-  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection } = params;
+  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection, coaProduct } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
 
   // One render step per document; each draws onto the current page. addPage()
@@ -41,7 +43,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
   // is included only for packaged / tote shipments.
   const steps: Array<() => void> = [
     () => renderBolInto(doc, { shipment, order, customer, carrier, shipFromLocation, shipToCustomer: customer, shipToLocation, qaProducts, lotCodes }),
-    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts }),
+    () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts, product: coaProduct, carrierEmail: carrier?.contactEmail || '' }),
     () => renderPackingListInto(doc, { shipment, order, customer, shipFromLocation, shipToLocation, qaProducts }),
   ];
   if (includeBagIdReport) {
