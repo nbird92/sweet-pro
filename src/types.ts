@@ -11,6 +11,8 @@ export interface CommodityConfig {
   deliveredFreightCadMt: number;
   currency: 'USD' | 'CAD';
   isExport: boolean;
+  /** Quote tool: price one or more specific products (each base + its differential). */
+  isAddProduct?: boolean;
   exportDutyUsdMt: number;
   origin: 'Hamilton' | 'Vancouver';
   destination: string;
@@ -304,6 +306,11 @@ export interface ContractLine {
   productName: string;
   differentialCadMt: number; // Product-specific differential (CAD/MT)
   finalPriceMt: number; // Bulk price + differential = line-specific final price
+  /** Full catalog product name (naming formula) for display — productName stays
+   *  the catalog value order lines carry, which is what lines are matched on. */
+  productDisplayName?: string;
+  /** QA / SKU id of the exact catalog product. */
+  productKey?: string;
 }
 
 export interface Shipment {

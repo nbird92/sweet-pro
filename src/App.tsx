@@ -8687,10 +8687,12 @@ export default function App() {
     return (bulkGranulated || INITIAL_SKUS[0]).id;
   });
   const [selectedSugarTypeId, setSelectedSugarTypeId] = useState<string>('');
-  // Quote Product Differential (CAD/MT). Auto-filled from the selected product's
-  // Default Differential (Products table → premiumCadMt) whenever the product
-  // changes; the user may override it for this quote.
-  const [quoteDifferentialCadMt, setQuoteDifferentialCadMt] = useState<number>(0);
+  // Quote product lines (shown when the "Add Product" toggle is on). Each line is
+  // one catalog product (same options as order / contract lines — `value` is the
+  // name order lines carry, `key` the QA/SKU id) with its own differential
+  // (CAD/MT), auto-filled from the product's Default Differential.
+  type QuoteProductLine = { id: string; key: string; value: string; label: string; differentialCadMt: number };
+  const [quoteProducts, setQuoteProducts] = useState<QuoteProductLine[]>([]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [expandedBays, setExpandedBays] = useState<Set<string>>(new Set());
@@ -11339,7 +11341,18 @@ export default function App() {
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
       palletType: config.palletType || '',
       margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0,
-      active: true
+      active: true,
+      // Quote product lines → contract lines (base price + product differential).
+      ...(calculations.productPrices.some(pp => pp.key) ? {
+        contractLines: calculations.productPrices.filter(pp => pp.key).map((pp, i) => ({
+          id: `CL-${Date.now()}-${i}`,
+          productName: pp.value,
+          productDisplayName: pp.label,
+          productKey: pp.key,
+          differentialCadMt: pp.differentialCadMt || 0,
+          finalPriceMt: Math.round(pp.finalMt * 100) / 100,
+        })),
+      } : {}),
     };
 
     setContracts([...contracts, newContract]);
@@ -11363,7 +11376,7 @@ export default function App() {
       id: `QUOTE-${Date.now()}`,
       savedAt: new Date().toISOString(),
       savedBy: user?.displayName || user?.email || undefined,
-      product: sku.shortForm || sku.productLongForm || sku.name,
+      product: calculations.productPrices.filter(pp => pp.key).map(pp => pp.label).join(', ') || sku.shortForm || sku.productLongForm || sku.name,
       origin: config.origin,
       destination: config.isDelivered ? config.destination : undefined,
       shippingTerms: config.shippingTerms || undefined,
@@ -11528,9 +11541,6 @@ export default function App() {
     // Start with the appropriate base price
     let finalCadMt = config.origin === 'Vancouver' ? fcaVancouverBulk : fcaHamiltonBulk;
 
-    // Add the Product Differential — the quote's editable field (defaults to the
-    // selected product's Default Differential from the Products table).
-    finalCadMt += quoteDifferentialCadMt || 0;
 
 
     // Add Freight ONLY if Delivered toggle is selected
@@ -11578,6 +11588,22 @@ export default function App() {
     const totalQuoteValue = finalCadMt * config.volumeMt;
     const displayTotalValue = convert(totalQuoteValue);
 
+    // Per-product prices ("Add Product" toggle): the quote's base price plus each
+    // line's differential; unit price from that product's net weight.
+    const productPrices = (config.isAddProduct ? quoteProducts : []).map(line => {
+      const qa = qaProducts.find(q => q.id === line.key);
+      const sk = skus.find(x => x.id === (qa?.skuId || line.key));
+      const netKg = qa?.netWeightKg || sk?.netWeightKg || sk?.netWeight || 0;
+      const lineCadMt = finalCadMt + (line.differentialCadMt || 0);
+      return {
+        ...line,
+        differential: convert(line.differentialCadMt || 0),
+        finalMt: convert(lineCadMt),
+        netKg,
+        perUnit: netKg > 0 ? convert((lineCadMt / 1000) * netKg) : convert(lineCadMt),
+      };
+    });
+
     return {
       rawMtUsd: rawUsdMt,
       oceanFreightUsd: oceanFreightUsdMt,
@@ -11588,7 +11614,7 @@ export default function App() {
       fcaHamiltonBulk: convert(fcaHamiltonBulk),
       fcaVancouverBulk: convert(fcaVancouverBulk),
       vancouverSupplyChainCost: convert(totalSupplyChainCostPerMt),
-      differential: convert(quoteDifferentialCadMt || 0),
+      differential: 0, // product differentials are per product line — see productPrices
       customerDifferential: 0, // field removed — use contract-line differentials
       deliveredFreight: config.isDelivered ? convert(freightCost / (config.volumePerLoadMt || 1)) : 0,
       exportDuty: convertUsd(config.exportDutyUsdMt),
@@ -11596,12 +11622,13 @@ export default function App() {
       finalMt: displayFinalMt,
       perUnit: displayPerUnit,
       totalQuoteValue: displayTotalValue,
+      productPrices,
       selectedSku,
       currencySymbol: isUsd ? 'USD' : 'CAD',
       freightCost: convert(freightCost),
       totalSupplyChainCostPerMt: convert(totalSupplyChainCostPerMt)
     };
-  }, [config, selectedSkuId, skus, freightRates, supplyChain, quoteDifferentialCadMt]);
+  }, [config, selectedSkuId, skus, qaProducts, freightRates, supplyChain, quoteProducts]);
 
   const handleSort = (key: string) => {
     setSortConfig(prev => {
@@ -11612,18 +11639,6 @@ export default function App() {
     });
   };
 
-  // Quote Product dropdown: the live catalog, labelled by short form + long
-  // form (SKU names alone are often bare format words like "Bulk").
-  const quoteProductOptions = useMemo(() => skus
-    .map(sk => {
-      const short = (sk.shortForm || '').trim() || productToShortform(sk.name) || '';
-      const long = (sk.productLongForm || '').trim();
-      const label = [short, long && long !== short ? long : '', !short && !long ? sk.name : ''].filter(Boolean).join(' — ') || sk.name;
-      return { id: sk.id, label };
-    })
-    .sort((a, b) => a.label.localeCompare(b.label)),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [skus]);
 
   // Once the live catalog loads, make sure the quote points at a REAL product:
   // the initial id comes from the demo seed and usually isn't in the live list,
@@ -11636,7 +11651,6 @@ export default function App() {
       || skus.find(sk => notMol(sk) && sk.productGroup === 'Bulk')
       || skus.find(notMol) || skus[0];
     setSelectedSkuId(pick.id);
-    setQuoteDifferentialCadMt(pick.premiumCadMt || 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skus]);
 
@@ -17862,50 +17876,6 @@ export default function App() {
 
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
-              <Package size={14} /> Product
-            </h2>
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Product</label>
-                <select
-                  value={skus.some(sk => sk.id === selectedSkuId) ? selectedSkuId : ''}
-                  onChange={(e) => {
-                    setSelectedSkuId(e.target.value);
-                    // Auto-populate the differential from the Products table default.
-                    const sk = skus.find(x => x.id === e.target.value);
-                    setQuoteDifferentialCadMt(sk?.premiumCadMt || 0);
-                  }}
-                  className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
-                >
-                  <option value="">Select product…</option>
-                  {quoteProductOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold opacity-60">Product Differential (CAD/MT)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={Number.isFinite(quoteDifferentialCadMt) ? quoteDifferentialCadMt : 0}
-                  onChange={(e) => setQuoteDifferentialCadMt(parseFloat(e.target.value) || 0)}
-                  className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm font-mono focus:outline-none"
-                />
-                {(() => {
-                  const def = skus.find(x => x.id === selectedSkuId)?.premiumCadMt || 0;
-                  return (quoteDifferentialCadMt || 0) !== def ? (
-                    <button type="button" onClick={() => setQuoteDifferentialCadMt(def)} className="text-[10px] underline decoration-dotted opacity-60 hover:opacity-100">
-                      Reset to product default (CAD ${def.toFixed(2)}/MT)
-                    </button>
-                  ) : (
-                    <div className="text-[10px] italic opacity-50">Product default from the Products table</div>
-                  );
-                })()}
-              </div>
-            </div>
-          </section>
-
-          <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-            <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
               <DollarSign size={14} /> Market Inputs
             </h2>
             <div className="space-y-4">
@@ -18021,6 +17991,22 @@ export default function App() {
                     className={`w-10 h-5 rounded-full relative transition-colors ${config.isExport ? 'bg-[#141414]' : 'bg-slate-300'}`}
                   >
                     <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-colors ${config.isExport ? 'left-6' : 'left-1'}`} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] uppercase font-bold opacity-60">Add Product</label>
+                  <button
+                    onClick={() => {
+                      // Turning it on with no lines starts one empty product line.
+                      if (!config.isAddProduct && quoteProducts.length === 0) {
+                        setQuoteProducts([{ id: `QP-${Date.now()}`, key: '', value: '', label: '', differentialCadMt: 0 }]);
+                      }
+                      handleToggleChange('isAddProduct');
+                    }}
+                    className={`w-10 h-5 rounded-full relative transition-colors ${config.isAddProduct ? 'bg-[#141414]' : 'bg-slate-300'}`}
+                  >
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-colors ${config.isAddProduct ? 'left-6' : 'left-1'}`} />
                   </button>
                 </div>
 
@@ -18159,6 +18145,84 @@ export default function App() {
               </motion.section>
             )}
           </AnimatePresence>
+
+          <AnimatePresence>
+            {config.isAddProduct && (() => {
+              const options = buildOrderProductOptions(undefined, { selectableOnly: true });
+              const defaultDiff = (key: string) => {
+                const qa = qaProducts.find(q => q.id === key);
+                return skus.find(x => x.id === (qa?.skuId || key))?.premiumCadMt || 0;
+              };
+              const updateLine = (id: string, patch: Partial<QuoteProductLine>) =>
+                setQuoteProducts(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l));
+              return (
+                <motion.section
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]"
+                >
+                  <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
+                    <Package size={14} /> Products
+                  </h2>
+                  <div className="space-y-4">
+                    {quoteProducts.map((line, idx) => (
+                      <div key={line.id} className="border border-[#141414]/15 bg-[#F9F9F9] p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-bold opacity-60">Product {idx + 1}</span>
+                          <button
+                            onClick={() => setQuoteProducts(prev => prev.filter(l => l.id !== line.id))}
+                            className="p-1 text-red-500 hover:bg-red-50 transition-colors"
+                            title="Remove product"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        <select
+                          value={line.key}
+                          onChange={(e) => {
+                            const opt = options.find(o => o.key === e.target.value);
+                            // Auto-populate the differential from the Products table default.
+                            updateLine(line.id, {
+                              key: opt?.key || '',
+                              value: opt?.value || '',
+                              label: opt?.label || '',
+                              differentialCadMt: opt ? defaultDiff(opt.key) : 0,
+                            });
+                          }}
+                          className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none"
+                        >
+                          <option value="">Select product…</option>
+                          {options.map(o => <option key={o.key} value={o.key}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>)}
+                        </select>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-60">Differential (CAD/MT)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={Number.isFinite(line.differentialCadMt) ? line.differentialCadMt : 0}
+                            onChange={(e) => updateLine(line.id, { differentialCadMt: parseFloat(e.target.value) || 0 })}
+                            className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                          />
+                          {line.key && line.differentialCadMt !== defaultDiff(line.key) && (
+                            <button type="button" onClick={() => updateLine(line.id, { differentialCadMt: defaultDiff(line.key) })} className="text-[10px] underline decoration-dotted opacity-60 hover:opacity-100">
+                              Reset to product default (CAD ${defaultDiff(line.key).toFixed(2)}/MT)
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setQuoteProducts(prev => [...prev, { id: `QP-${Date.now()}-${prev.length}`, key: '', value: '', label: '', differentialCadMt: 0 }])}
+                      className="w-full py-2 border border-dashed border-[#141414] text-[10px] font-bold uppercase flex items-center justify-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
+                    >
+                      <Plus size={12} /> Add Product
+                    </button>
+                  </div>
+                </motion.section>
+              );
+            })()}
+          </AnimatePresence>
         </div>
 
         {/* Output Section */}
@@ -18187,9 +18251,9 @@ export default function App() {
                 </>
               )}
 
-              {calculations.differential !== 0 && (
-                <DataRow label={`Product Differential — ${calculations.selectedSku.name} (${calculations.currencySymbol}/MT)`} value={`${calculations.differential.toFixed(2)}`} />
-              )}
+              {calculations.productPrices.filter(pp => pp.key).map(pp => (
+                <React.Fragment key={pp.id}><DataRow label={`Product Differential — ${pp.label} (${calculations.currencySymbol}/MT)`} value={`${pp.differential.toFixed(2)}`} /></React.Fragment>
+              ))}
               
               {config.isDelivered && (
                 <DataRow label={`Delivered Freight (${calculations.currencySymbol}/MT)`} value={`${calculations.deliveredFreight.toFixed(2)}`} />
@@ -18216,6 +18280,33 @@ export default function App() {
                   <div className="text-[10px] italic">{calculations.currencySymbol} per {calculations.selectedSku.netWeightKg ? 'Unit' : 'Metric Ton'}</div>
                 </div>
               </div>
+
+              {/* Per-product pricing — base rate + each product's differential */}
+              {calculations.productPrices.some(pp => pp.key) && (
+                <div className="p-6">
+                  <div className="text-[10px] uppercase font-bold opacity-60 mb-2">Product Pricing</div>
+                  <table className="w-full text-xs border border-[#141414]/15">
+                    <thead className="bg-[#F5F5F5] text-[10px] uppercase">
+                      <tr>
+                        <th className="p-2 text-left">Product</th>
+                        <th className="p-2 text-right">Differential ({calculations.currencySymbol}/MT)</th>
+                        <th className="p-2 text-right">Final Rate ({calculations.currencySymbol}/MT)</th>
+                        <th className="p-2 text-right">Unit Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#141414]/10">
+                      {calculations.productPrices.filter(pp => pp.key).map(pp => (
+                        <tr key={pp.id}>
+                          <td className="p-2 font-bold">{pp.label}</td>
+                          <td className="p-2 text-right font-mono">{pp.differential.toFixed(2)}</td>
+                          <td className="p-2 text-right font-mono font-bold">{calculations.currencySymbol} ${pp.finalMt.toFixed(2)}</td>
+                          <td className="p-2 text-right font-mono">{calculations.currencySymbol} ${pp.perUnit.toFixed(2)}{pp.netKg > 0 ? ` / ${pp.netKg}kg` : ' / MT'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
 
@@ -20546,7 +20637,7 @@ export default function App() {
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Freight Type</td><td className="px-4 py-2 font-bold">{config.freightType || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{config.volumeMt} MT</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Per Load</td><td className="px-4 py-2 font-bold">{config.volumePerLoadMt} MT</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Product Differential</td><td className="px-4 py-2 font-bold">CAD ${(quoteDifferentialCadMt || 0).toFixed(2)}/MT</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Products</td><td className="px-4 py-2 font-bold">{calculations.productPrices.filter(pp => pp.key).map(pp => `${pp.label} (+CAD $${(pp.differentialCadMt || 0).toFixed(2)}/MT)`).join('; ') || 'Bulk (base price)'}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -20591,8 +20682,8 @@ export default function App() {
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">FCA {config.origin} Bulk</td>
                         <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</td>
-                        <td className="px-4 py-2 opacity-70">Product Differential</td>
-                        <td className="px-4 py-2 text-right font-bold">{calculations.differential !== 0 ? `${calculations.currencySymbol} $${calculations.differential.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Product Lines</td>
+                        <td className="px-4 py-2 text-right font-bold">{calculations.productPrices.filter(pp => pp.key).length || '—'}</td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 opacity-70"></td>
@@ -20622,8 +20713,14 @@ export default function App() {
                           <td className="px-4 py-2"></td>
                         </tr>
                       )}
+                      {calculations.productPrices.filter(pp => pp.key).map(pp => (
+                        <tr key={pp.id} className="bg-[#F9F9F9]">
+                          <td className="px-4 py-2 opacity-70" colSpan={3}>{pp.label} <span className="opacity-60">(contract line, +{calculations.currencySymbol} ${pp.differential.toFixed(2)}/MT)</span></td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${pp.finalMt.toFixed(2)}/MT</td>
+                        </tr>
+                      ))}
                       <tr className="bg-[#141414] text-[#E4E3E0]">
-                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>Final Price</td>
+                        <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>{calculations.productPrices.some(pp => pp.key) ? 'Base Price (Bulk)' : 'Final Price'}</td>
                         <td className="px-4 py-3 text-right font-black text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</td>
                       </tr>
                     </tbody>
@@ -20665,7 +20762,13 @@ export default function App() {
             lines.push('');
             lines.push('QUOTE SUMMARY');
             lines.push('-------------------------------------');
-            lines.push(`Product: ${emailSku.name}`);
+            // Full product names: the quote's product lines when added, else the base product.
+            const emailProducts = calculations.productPrices.filter(pp => pp.key);
+            if (emailProducts.length) {
+              lines.push(`Product${emailProducts.length > 1 ? 's' : ''}: ${emailProducts.map(pp => pp.label).join('; ')}`);
+            } else {
+              lines.push(`Product: ${emailSku.productLongForm || emailSku.shortForm || emailSku.name}`);
+            }
             lines.push(`Origin: ${config.origin}`);
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
             lines.push(`Volume: ${config.volumeMt} MT`);
@@ -20681,7 +20784,15 @@ export default function App() {
             lines.push('FINAL PRICING');
             lines.push('-------------------------------------');
             lines.push(`Final Price: ${cs} $${calculations.finalMt.toFixed(2)}/MT`);
-            lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
+            if (emailProducts.length) {
+              // Per-product prices (base + differential), full product names.
+              lines[lines.length - 1] = `Base Price (Bulk): ${cs} $${calculations.finalMt.toFixed(2)}/MT`;
+              for (const pp of emailProducts) {
+                lines.push(`${pp.label}: ${cs} $${pp.finalMt.toFixed(2)}/MT${pp.netKg > 0 ? ` (${cs} $${pp.perUnit.toFixed(2)} per ${pp.netKg}kg)` : ''}`);
+              }
+            } else {
+              lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
+            }
             lines.push('');
             lines.push('Please let us know if you have any questions or would like to proceed.');
             lines.push('');
@@ -23731,7 +23842,7 @@ export default function App() {
                         <tbody>
                           {(editingContract.contractLines || []).map(cl => (
                             <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
-                              <td className="p-2 font-bold">{productNameToDisplay(cl.productName) || cl.productName}</td>
+                              <td className="p-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
                               <td className="p-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
                               <td className="p-2 text-right font-bold">${cl.finalPriceMt.toFixed(2)}</td>
                               <td className="p-2">
@@ -23933,7 +24044,7 @@ export default function App() {
                           </tr>
                           {selectedContractDetail.contractLines.map((cl, idx) => (
                             <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
-                              <td className="px-4 py-2 opacity-70">{productNameToDisplay(cl.productName) || cl.productName}</td>
+                              <td className="px-4 py-2 opacity-70">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
                               <td className="px-4 py-2 text-right font-bold">{cl.differentialCadMt >= 0 ? '+' : '−'}${Math.abs(cl.differentialCadMt).toFixed(2)}/MT</td>
                               <td className="px-4 py-2 opacity-70">Final Price</td>
                               <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}/MT</td>
@@ -23966,7 +24077,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         {selectedContractDetail.contractLines.map((cl, idx) => (
                           <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
-                            <td className="px-4 py-2 font-bold">{productNameToDisplay(cl.productName) || cl.productName}</td>
+                            <td className="px-4 py-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
                             <td className="px-4 py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
                             <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
                           </tr>
