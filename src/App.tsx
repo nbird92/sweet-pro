@@ -28,6 +28,7 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  SlidersHorizontal,
   CheckCircle2,
   AlertCircle,
   Calendar,
@@ -3208,6 +3209,7 @@ export default function App() {
   const [orderDeleteConfirmId, setOrderDeleteConfirmId] = useState<string | null>(null);
   const [shipmentDeleteConfirmId, setShipmentDeleteConfirmId] = useState<string | null>(null);
   const [contractInactivateConfirmId, setContractInactivateConfirmId] = useState<string | null>(null);
+  const [contractColsMenuOpen, setContractColsMenuOpen] = useState(false);
   const [orderHideConfirmId, setOrderHideConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: string; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
@@ -4239,13 +4241,15 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const text = (e.target?.result as string || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const lines = text.split('\n').filter(l => l.trim());
+        // Proper CSV parsing (quoted fields): a plain split(',') shifted every
+        // column after a value containing a comma (customer names, notes, terms).
+        const text = (e.target?.result as string || '').replace(/^\uFEFF/, '');
+        const lines = parseCSV(text).filter(r => r.some(c => (c || '').trim()));
         if (lines.length < 2) {
           alert('CSV file is empty or has no data rows.');
           return;
         }
-        const csvHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const csvHeaders = lines[0].map(h => (h || '').trim().toLowerCase());
 
         if (!csvHeaders.includes('contractnumber') && !csvHeaders.includes('contract')) {
           alert(`CSV is missing a required "contractNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
@@ -4256,8 +4260,11 @@ export default function App() {
         let newCount = 0;
         let updatedCount = 0;
         let skippedRows = 0;
+        let inactivatedCount = 0;
+        let reactivatedCount = 0;
+        const blockedInactivations: string[] = [];
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
+          const values = lines[i].map(v => (v || '').trim());
           const entry: any = {};
           csvHeaders.forEach((h, idx) => { entry[h] = values[idx] || ''; });
 
@@ -4278,7 +4285,7 @@ export default function App() {
           const skuName = entry.skuname || entry.sku || entry.product || '';
           const origin = entry.origin || '';
           const destination = entry.destination || '';
-          const finalPrice = parseFloat(entry.pricemt || entry.finalprice || entry.price || '0') || 0;
+          const finalPrice = parseFloat(entry['price/mt'] || entry.pricemt || entry.finalprice || entry.price || '0') || 0;
           const currency = entry.currency || 'CAD';
           const notes = entry.notes || '';
           const shippingTerms = entry.shippingterms || '';
@@ -4298,6 +4305,12 @@ export default function App() {
           const margin = parseFloat(entry.margin || '0') || 0;
           const contractDate = entry.contractdate || entry.contract_date || '';
           const itasName = entry.itasname || entry.itas || '';
+          // Status column: Active / Inactive (blank = leave as is; new rows default Active).
+          const statusRaw = (entry.status || entry.active || '').trim().toLowerCase();
+          const wantActive: boolean | undefined =
+            /^(inactive|closed|false|no|n|0)$/.test(statusRaw) ? false
+            : /^(active|open|true|yes|y|1)$/.test(statusRaw) ? true
+            : undefined;
 
           // Check if contract with this number already exists — update in working array
           const existingIdx = workingContracts.findIndex(c => c.contractNumber === contractNumber);
@@ -4333,6 +4346,17 @@ export default function App() {
               contractDate: contractDate || c.contractDate,
               itasName: itasName || c.itasName,
             };
+            // Status: inactivate / reactivate in bulk. Inactivation follows the same
+            // rule as the toggle — blocked while the contract has uninvoiced orders.
+            const wasActive = c.active !== false;
+            if (wantActive === false && wasActive) {
+              const open = uninvoicedOrdersForContract(contractNumber);
+              if (open.length) blockedInactivations.push(`${contractNumber} (${open.length} uninvoiced order${open.length === 1 ? '' : 's'})`);
+              else { workingContracts[existingIdx] = { ...workingContracts[existingIdx], active: false }; inactivatedCount++; }
+            } else if (wantActive === true && !wasActive) {
+              workingContracts[existingIdx] = { ...workingContracts[existingIdx], active: true };
+              reactivatedCount++;
+            }
             continue;
           }
 
@@ -4362,7 +4386,7 @@ export default function App() {
             paymentTerms: paymentTerms || undefined,
             palletType: (palletType || undefined) as any,
             margin: margin || undefined,
-            active: true,
+            active: wantActive !== false,
             ...(contractDate ? { contractDate } : {}),
             ...(itasName ? { itasName } : {}),
           });
@@ -4380,9 +4404,14 @@ export default function App() {
         const parts: string[] = [];
         if (newCount > 0) parts.push(`${newCount} new contract${newCount > 1 ? 's' : ''} imported`);
         if (updatedCount > 0) parts.push(`${updatedCount} existing contract${updatedCount > 1 ? 's' : ''} updated`);
+        if (inactivatedCount > 0) parts.push(`${inactivatedCount} inactivated`);
+        if (reactivatedCount > 0) parts.push(`${reactivatedCount} reactivated`);
         if (skippedRows > 0) parts.push(`${skippedRows} row${skippedRows > 1 ? 's' : ''} skipped`);
+        if (blockedInactivations.length > 0) {
+          parts.push(`\n\nNot inactivated — uninvoiced orders must be invoiced first:\n${blockedInactivations.join('\n')}`);
+        }
         if (parts.length > 0) {
-          alert(parts.join(', ') + '.');
+          alert(parts.join(', ').replace(', \n\n', '\n\n') + (blockedInactivations.length ? '' : '.'));
         } else {
           alert('No contracts could be imported. The file may be empty or in an unexpected format.');
         }
@@ -11290,21 +11319,22 @@ export default function App() {
     setFreightRates(freightRates.filter(f => f.id !== id));
   };
 
+  /** Uninvoiced (or still Open) orders against a contract — any of these block
+   *  inactivating it. Shared by the toggle and the CSV import's Status column. */
+  const uninvoicedOrdersForContract = (contractNumber: string) => orders
+    .filter(o => o.status !== 'Cancelled' &&
+      (o.contractNumber === contractNumber || o.lineItems.some(li => li.contractNumber === contractNumber)))
+    .filter(o => {
+      const hasInvoice = invoices.some(inv => inv.bolNumber === o.bolNumber && inv.status !== 'Cancelled');
+      return !hasInvoice || o.status === 'Open';
+    });
+
   const toggleContractActive = (id: string) => {
     const contract = contracts.find(c => c.id === id);
     if (!contract) return;
     // If trying to inactivate, check for uninvoiced orders against this contract
     if (contract.active !== false) {
-      const contractOrders = orders.filter(o =>
-        o.status !== 'Cancelled' &&
-        (o.contractNumber === contract.contractNumber ||
-          o.lineItems.some(li => li.contractNumber === contract.contractNumber))
-      );
-      // Check if any of those orders are not yet invoiced
-      const uninvoicedOrders = contractOrders.filter(o => {
-        const hasInvoice = invoices.some(inv => inv.bolNumber === o.bolNumber && inv.status !== 'Cancelled');
-        return !hasInvoice || o.status === 'Open';
-      });
+      const uninvoicedOrders = uninvoicedOrdersForContract(contract.contractNumber);
       if (uninvoicedOrders.length > 0) {
         setErrorBox(`Cannot inactivate contract ${contract.contractNumber} — it has ${uninvoicedOrders.length} uninvoiced order(s). All orders must be invoiced before inactivation.`);
         setContractInactivateConfirmId(null);
@@ -16694,6 +16724,19 @@ export default function App() {
     }
 
     if (activePage === 'Contracts') {
+      // Column show/hide — saved per user (same prefs store as the DataTables).
+      const CONTRACT_COLS_KEY = 'contracts-table';
+      const CONTRACT_COLUMNS: Array<[string, string]> = [
+        ['customerNumber', 'Cust No.'], ['customerName', 'Customer Name'], ['itasName', 'ITAS Name'],
+        ['finalPrice', 'Price/MT'], ['raws', 'Raws (USD/cwt)'], ['margin', 'Margin (CAD/MT)'],
+        ['contractVolume', 'Volume (MT)'], ['volumeTaken', 'Volume Taken (MT)'], ['volumeOnOrder', 'Volume on Order (MT)'],
+        ['volumeOutstanding', 'Volume Outstanding (MT)'], ['contractDate', 'Contract Date'], ['startDate', 'Start Date'],
+        ['endDate', 'End Date'], ['shippingTerms', 'Shipping Terms'], ['paymentTerms', 'Payment Terms'], ['status', 'Status'],
+      ];
+      const contractHiddenCols = new Set(columnVisibilityStore.get(CONTRACT_COLS_KEY) || []);
+      const showContractCol = (key: string) => !contractHiddenCols.has(key);
+      // Contract No. + Actions are always shown.
+      const contractVisibleColCount = 2 + CONTRACT_COLUMNS.filter(([k]) => showContractCol(k)).length;
       const activeOnlyContracts = showInactiveContracts ? contracts : contracts.filter(c => c.active !== false);
       const searchedContracts = getSortedAndFilteredData<Contract>(activeOnlyContracts, ['contractNumber', 'customerName', 'customerNumber', 'skuName', 'origin', 'destination']);
       // Sort on the value each column DISPLAYS. The generic sorter compared raw
@@ -16756,7 +16799,7 @@ export default function App() {
       const contractsRemaining = filteredContracts.length - visibleContracts.length;
       const inactiveCount = contracts.filter(c => c.active === false).length;
 
-      const contractCsvHeaders = ['contractNumber', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+      const contractCsvHeaders = ['contractNumber', 'status', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
       const contractExportSheets = (): SheetSpec[] => [{
         sheetName: 'Contracts',
         title: 'Contract Management',
@@ -16823,6 +16866,8 @@ export default function App() {
                     ...c,
                     itasName: linkedItas,
                     'Price/MT': c.finalPrice, // CSV column header is "Price/MT"
+                    // Active / Inactive — edit and re-import to (in)activate many at once.
+                    status: c.active === false ? 'Inactive' : 'Active',
                     volumeOutstanding: undefined,
                     id: undefined,
                     active: undefined,
@@ -17042,12 +17087,51 @@ export default function App() {
             </button>
           </PageBanner>
 
-          <div className="px-6 pt-4">
-            <SearchInput
-              value={searchTerm}
-              onChange={setSearchTerm}
-              placeholder="Search contracts by number, customer, SKU, origin or destination..."
-            />
+          <div className="px-6 pt-4 flex items-center gap-2">
+            <div className="flex-1">
+              <SearchInput
+                value={searchTerm}
+                onChange={setSearchTerm}
+                placeholder="Search contracts by number, customer, SKU, origin or destination..."
+              />
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setContractColsMenuOpen(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+                title="Show or hide columns"
+              >
+                <SlidersHorizontal size={12} /> Columns{contractHiddenCols.size ? ` (${contractHiddenCols.size} hidden)` : ''}
+              </button>
+              {contractColsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setContractColsMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-40 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] w-60 max-h-[60vh] overflow-y-auto">
+                    <div className="px-3 py-2 border-b border-[#141414]/10 flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold opacity-60">Show columns</span>
+                      <button onClick={() => columnVisibilityStore.set(CONTRACT_COLS_KEY, [])} className="text-[10px] underline decoration-dotted opacity-70 hover:opacity-100">Show all</button>
+                    </div>
+                    {CONTRACT_COLUMNS.map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-[#F5F5F5]">
+                        <input
+                          type="checkbox"
+                          checked={!contractHiddenCols.has(key)}
+                          onChange={() => {
+                            const next = new Set(contractHiddenCols);
+                            if (next.has(key)) next.delete(key); else next.add(key);
+                            columnVisibilityStore.set(CONTRACT_COLS_KEY, [...next]);
+                          }}
+                          className="accent-[#141414]"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                    <div className="px-3 py-2 border-t border-[#141414]/10 text-[10px] opacity-50">Contract No. and Actions are always shown. Saved to your account.</div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="px-6 py-4">
@@ -17056,22 +17140,22 @@ export default function App() {
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[160px]" />
-                  <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>
-                  <SortableHeader label="Price/MT" sortKey="finalPrice" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Raws (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Volume on Order (MT)" sortKey="volumeOnOrder" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Contract Date" sortKey="contractDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Payment Terms" sortKey="paymentTerms" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Status" sortKey="active" currentSort={sortConfig} onSort={handleSort} />
+                  {showContractCol('customerNumber') && <SortableHeader label="Cust No." sortKey="customerNumber" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('customerName') && <SortableHeader label="Customer Name" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('itasName') && <th className="p-3 border-r border-[#141414]/10">ITAS Name</th>}
+                  {showContractCol('finalPrice') && <SortableHeader label="Price/MT" sortKey="finalPrice" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('raws') && <SortableHeader label="Raws (USD/cwt)" sortKey="rawPriceUsdMt" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('margin') && <SortableHeader label="Margin (CAD/MT)" sortKey="margin" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('contractVolume') && <SortableHeader label="Volume (MT)" sortKey="contractVolume" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('volumeTaken') && <SortableHeader label="Volume Taken (MT)" sortKey="volumeTaken" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('volumeOnOrder') && <SortableHeader label="Volume on Order (MT)" sortKey="volumeOnOrder" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('volumeOutstanding') && <SortableHeader label="Volume Outstanding (MT)" sortKey="volumeOutstanding" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('contractDate') && <SortableHeader label="Contract Date" sortKey="contractDate" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('startDate') && <SortableHeader label="Start Date" sortKey="startDate" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('endDate') && <SortableHeader label="End Date" sortKey="endDate" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('shippingTerms') && <SortableHeader label="Shipping Terms" sortKey="shippingTerms" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('paymentTerms') && <SortableHeader label="Payment Terms" sortKey="paymentTerms" currentSort={sortConfig} onSort={handleSort} />}
+                  {showContractCol('status') && <SortableHeader label="Status" sortKey="active" currentSort={sortConfig} onSort={handleSort} />}
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
@@ -17080,18 +17164,18 @@ export default function App() {
                   <React.Fragment key={c.id}>
                     <tr style={{ contentVisibility: 'auto', containIntrinsicSize: '0 48px' } as React.CSSProperties} className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
                       <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || itasNameByCustomerKey.get(`id:${c.customerNumber}`) || itasNameByCustomerKey.get(`name:${c.customerName}`) || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>
+                      {showContractCol('customerNumber') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>}
+                      {showContractCol('customerName') && <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>}
+                      {showContractCol('itasName') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || itasNameByCustomerKey.get(`id:${c.customerNumber}`) || itasNameByCustomerKey.get(`name:${c.customerName}`) || '—'}</td>}
+                      {showContractCol('finalPrice') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>}
                       {/* Raws — ALWAYS USD/cwt (the #11 quoting unit), converted from
                           the stored USD/MT. Never CAD and never per-MT. */}
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{(() => {
+                      {showContractCol('raws') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{(() => {
                         const cwt = rawPriceUsdCwt(c.rawPriceUsdMt);
                         return cwt === null ? '—' : `USD $${cwt.toFixed(2)}`;
-                      })()}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>
+                      })()}</td>}
+                      {showContractCol('margin') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>}
+                      {showContractCol('contractVolume') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>}
                       {(() => {
                         // Volume Taken / on Order / Outstanding come from the
                         // contractVolumeStats memo — computed once per data change
@@ -17104,7 +17188,7 @@ export default function App() {
                         const volumeOutstandingComputed = st.outstanding;
                         return (
                           <>
-                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                            {showContractCol('volumeTaken') && <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                               <button
                                 onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber + ':taken' ? null : c.contractNumber + ':taken'); }}
                                 className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
@@ -17112,8 +17196,8 @@ export default function App() {
                               >
                                 {volumeTakenComputed.toFixed(2)}
                               </button>
-                            </td>
-                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
+                            </td>}
+                            {showContractCol('volumeOnOrder') && <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
                               <button
                                 onClick={(e) => { e.stopPropagation(); setContractOrdersPopup(contractOrdersPopup === c.contractNumber + ':onorder' ? null : c.contractNumber + ':onorder'); }}
                                 className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
@@ -17121,23 +17205,23 @@ export default function App() {
                               >
                                 {volumeOnOrderComputed.toFixed(2)}
                               </button>
-                            </td>
-                            <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${volumeOutstandingComputed < 0 ? 'text-red-700' : ''}`}>
+                            </td>}
+                            {showContractCol('volumeOutstanding') && <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${volumeOutstandingComputed < 0 ? 'text-red-700' : ''}`}>
                               {volumeOutstandingComputed.toFixed(2)}
-                            </td>
+                            </td>}
                           </>
                         );
                       })()}
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractDate || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms || '—'}</td>
-                      <td className="p-3 text-xs border-r border-[#141414]/10">
+                      {showContractCol('contractDate') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractDate || '—'}</td>}
+                      {showContractCol('startDate') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.startDate}</td>}
+                      {showContractCol('endDate') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.endDate}</td>}
+                      {showContractCol('shippingTerms') && <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.shippingTerms || '—'}</td>}
+                      {showContractCol('paymentTerms') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.paymentTerms || '—'}</td>}
+                      {showContractCol('status') && <td className="p-3 text-xs border-r border-[#141414]/10">
                         <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${c.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                           {c.active !== false ? 'Active' : 'Inactive'}
                         </span>
-                      </td>
+                      </td>}
                       <td className="p-3 text-xs flex items-center gap-2">
                         <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -17153,7 +17237,7 @@ export default function App() {
                     <AnimatePresence>
                       {expandedRows.has(c.id) && (
                         <tr>
-                          <td colSpan={17} className="p-0">
+                          <td colSpan={contractVisibleColCount} className="p-0">
                             <motion.div
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: 'auto', opacity: 1 }}
