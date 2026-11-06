@@ -125,6 +125,7 @@ import {
   DEFAULT_TRANSFER_IMPORT_CONFIG,
   DEFAULT_LOTCODE_IMPORT_CONFIG,
   ORDER_FIELDS,
+  transferQtyMt,
   TRANSFER_FIELDS,
   LOTCODE_FIELDS,
   type OrderSyncResult,
@@ -3533,6 +3534,8 @@ export default function App() {
   // the only meaningful dependency.
   const enrichedTransfers = useMemo<Transfer[]>(() => transfers.map(t => {
     const r = resolveByPo(t.po);
+    // Weights always in MT (some records/imports carried KG).
+    t = { ...t, amount: transferQtyMt(t.amount) };
     // A transfer carries ONE lot code. The resolver's shipment contributor is a
     // comma-JOINED list of every lot on the matching shipment, so borrowing it
     // whole made one transfer display several lot codes — take the first only.
@@ -6641,7 +6644,9 @@ export default function App() {
       // ONE carrier: the transfer's Carrier field (never the transload carriers).
       const carrierName = singleCarrier(t.carrier) || singleCarrier(sched?.carrier);
       const scaledMt = sched && typeof sched.scaledQty === 'number' && sched.scaledQty > 0 ? sched.scaledQty : 0;
-      const qtyMt = scaledMt || t.amount || 0;
+      const qtyMt = scaledMt || transferQtyMt(t.amount);
+      // Line weights in MT (a KG-sized line weight is converted).
+      const tLines = (t.lineItems || []).map(li => (li.totalWeight || 0) >= 1000 ? { ...li, totalWeight: transferQtyMt(li.totalWeight) } : li);
       const shipment: Shipment = {
         id: sched?.id || `TMP-TRF-${t.id}`, week: sched?.week || '',
         date: t.shipmentDate || sched?.date || '', day: sched?.day || '', time: sched?.time || '', bay: sched?.bay || '',
@@ -6661,8 +6666,8 @@ export default function App() {
         contractNumber: t.contractNumber, po: t.po || '',
         date: t.shipmentDate || '', shipmentDate: t.shipmentDate, deliveryDate: t.arrivalDate,
         status: 'Completed',
-        lineItems: (t.lineItems && t.lineItems.length)
-          ? (scaledMt > 0 ? rescaleLineItemsToMt(t.lineItems, scaledMt) : t.lineItems)
+        lineItems: tLines.length
+          ? (scaledMt > 0 ? rescaleLineItemsToMt(tLines, scaledMt) : tLines)
           : [{
             id: `TMP-LI-${t.id}`, productName: t.product || '', qty: qtyMt,
             contractNumber: t.contractNumber || '', netWeightPerUnit: 0, totalWeight: qtyMt,
@@ -8687,6 +8692,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders, hamiltonShipments, vancouverShipments, lastSynced]);
 
+  // Transfer weights are MT. Records imported/entered as KG (amount, transload
+  // amounts or line weights of 1,000+) are converted once and saved; converges
+  // because a converted value is below the KG threshold.
+  useEffect(() => {
+    if (!lastSynced || !transfers.length) return;
+    const kg = (v: unknown) => (Number(v) || 0) >= 1000;
+    const fixed: Transfer[] = [];
+    const next = transfers.map(t => {
+      const bad = kg(t.amount) || (t.legs || []).some(l => kg(l.amount)) || (t.lineItems || []).some(li => kg(li.totalWeight));
+      if (!bad) return t;
+      const n: Transfer = {
+        ...t,
+        amount: transferQtyMt(t.amount),
+        ...(t.legs ? { legs: t.legs.map(l => ({ ...l, amount: transferQtyMt(l.amount) })) } : {}),
+        ...(t.lineItems ? { lineItems: t.lineItems.map(li => kg(li.totalWeight) ? { ...li, totalWeight: transferQtyMt(li.totalWeight) } : li) } : {}),
+      };
+      fixed.push(n);
+      return n;
+    });
+    if (!fixed.length) return;
+    setTransfers(next);
+    saveNow(COLLECTIONS.transfers, fixed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transfers, lastSynced]);
+
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
   useEffect(() => {
@@ -10568,7 +10598,7 @@ export default function App() {
   };
 
   // ── Transfer CSV import ───────────────────────────────────────────────────
-  const TRANSFER_CSV_HEADERS = ['Transfer No.', 'From', 'To', 'Product', 'Customer', 'PO No.', 'Contract #', 'Split #', 'Lot Code', 'Country of Origin', 'Amount (MT)', 'Brix', 'Silo', 'Carrier', 'Trailer #', 'PAPS #', 'Customs Entry #', 'Port of Entry', 'HTS Code', 'Shipment Date', 'Arrival Date', 'Status', 'Notes'];
+  const TRANSFER_CSV_HEADERS = ['Transfer No.', 'From', 'To', 'Product', 'Customer', 'PO No.', 'Contract #', 'Split #', 'Lot Code', 'Country of Origin', 'QTY (MT)', 'Brix', 'Silo', 'Carrier', 'Trailer #', 'PAPS #', 'Customs Entry #', 'Port of Entry', 'HTS Code', 'Shipment Date', 'Arrival Date', 'Status', 'Notes'];
   const downloadTransferTemplate = () => {
     const example = ['TRF-2026-001', 'Hamilton', 'Vancouver', 'Bulk Liquid Sucrose', '', 'PO-12345', '', '', 'LOT-2026-001', '', '22', '', '', 'Contrans', '', '', '', '', '', '2026-07-10', '2026-07-17', 'Pending', ''];
     const csv = [TRANSFER_CSV_HEADERS.join(','), example.join(',')].join('\n');
@@ -10614,7 +10644,7 @@ export default function App() {
             splitNumber: get(entry, 'split', 'splitnumber') || undefined,
             lotCode,
             countryOfOrigin: get(entry, 'countryoforigin', 'country') || lc?.countryOfOrigin || undefined,
-            amount: parseFloat(get(entry, 'amountmt', 'amount', 'qty')) || 0,
+            amount: transferQtyMt(get(entry, 'qtymt', 'amountmt', 'amount', 'qty')),
             brix: get(entry, 'brix') || lc?.brix || undefined,
             silo: get(entry, 'silo') || lc?.silo || undefined,
             carrier: get(entry, 'carrier'),
@@ -13068,7 +13098,7 @@ export default function App() {
           { header: 'Split #', key: 'splitNumber' },
           { header: 'Lot Code', key: 'lotCode' },
           { header: 'Country of Origin', key: 'countryOfOrigin' },
-          { header: 'Amount (MT)', key: 'amount', format: 'number' },
+          { header: 'QTY (MT)', key: 'amount', format: 'number' },
           { header: 'Brix', key: 'brix' },
           { header: 'Silo', key: 'silo' },
           { header: 'Carrier', key: 'carrier' },
@@ -13215,7 +13245,7 @@ export default function App() {
               { key: 'splitNumber', label: 'Split #', mono: true, render: (t) => t.splitNumber || '—' },
               { key: 'lotCode', label: 'Lot Code', mono: true, render: (t) => t.lotCode || '—' },
               { key: 'countryOfOrigin', label: 'Country of Origin', render: (t) => t.countryOfOrigin || '—' },
-              { key: 'amount', label: 'Amount (MT)', align: 'right', bold: true },
+              { key: 'amount', label: 'QTY (MT)', align: 'right', bold: true, render: (t) => transferQtyMt(t.amount).toLocaleString(undefined, { maximumFractionDigits: 3 }) },
               { key: 'brix', label: 'Brix', render: (t) => t.brix || '—' },
               { key: 'silo', label: 'Silo', render: (t) => t.silo || '—' },
               { key: 'carrier', label: 'Carrier', render: (t) => singleCarrier(t.carrier) || '—' },
@@ -22754,7 +22784,7 @@ export default function App() {
                             <th className="p-2 text-left font-bold">To</th>
                             <th className="p-2 text-left font-bold">Product</th>
                             <th className="p-2 text-left font-bold">PO</th>
-                            <th className="p-2 text-right font-bold">Amount (MT)</th>
+                            <th className="p-2 text-right font-bold">QTY (MT)</th>
                             <th className="p-2 text-left font-bold">Carrier</th>
                             <th className="p-2 text-left font-bold">Ship Date</th>
                             <th className="p-2 text-left font-bold">Arrival</th>
@@ -29829,14 +29859,14 @@ export default function App() {
                     {/* Total weight comes straight from the Line Items section. */}
                     {newTransferLegs.length === 0 && (
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Total Weight (MT)</label>
+                        <label className="text-[10px] uppercase font-bold opacity-60">QTY (MT)</label>
                         <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)} MT</div>
                       </div>
                     )}
                     {newTransferLegs.length > 0 && (
                       <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
-                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{newTransferLegs.reduce((s, l) => s + l.amount, 0).toFixed(1)} MT</div>
+                        <label className="text-[10px] uppercase font-bold opacity-60">QTY (MT)</label>
+                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{newTransferLegs.reduce((s, l) => s + (Number(l.amount) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT</div>
                       </div>
                     )}
                   </div>
@@ -29948,7 +29978,7 @@ export default function App() {
                             </select>
                           </div>
                           <div className="space-y-0.5">
-                            <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
+                            <label className="text-[9px] uppercase font-bold opacity-50">QTY (MT)</label>
                             <DecimalInput value={leg.amount || undefined} onValue={(v) => updateLeg(leg.id, 'amount', (v ?? 0))} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                           </div>
                         </div>
@@ -30010,12 +30040,12 @@ export default function App() {
           };
           const updateEditLeg = (legId: string, field: keyof TransferLeg, value: any) => {
             const updated = editLegs.map(l => l.id === legId ? { ...l, [field]: value } : l);
-            const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
+            const totalAmt = updated.reduce((s, l) => s + (Number(l.amount) || 0), 0);
             setEditingTransfer({ ...editingTransfer, legs: updated, amount: updated.length > 0 ? totalAmt : editingTransfer.amount });
           };
           const removeEditLeg = (legId: string) => {
             const updated = editLegs.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 }));
-            const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
+            const totalAmt = updated.reduce((s, l) => s + (Number(l.amount) || 0), 0);
             setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount });
           };
           return (
@@ -30050,18 +30080,23 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4">
                   {/* Product comes from the Line Items & Contracts section below. */}
                   {/* Total weight comes straight from the Line Items section. */}
-                  {!hasLegs && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Total Weight (MT)</label>
-                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)} MT</div>
-                    </div>
-                  )}
-                  {hasLegs && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Total Amount (MT)</label>
-                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{editLegs.reduce((s, l) => s + l.amount, 0).toFixed(1)} MT</div>
-                    </div>
-                  )}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">QTY (MT)</label>
+                    <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{(hasLegs
+                      ? editLegs.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+                      : (transferLineItems.length ? transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) : transferQtyMt(editingTransfer.amount))
+                    ).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT</div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                    <select value={singleCarrier(editingTransfer.carrier)} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">Select Carrier</option>
+                      {singleCarrier(editingTransfer.carrier) && !carriers.some(c => c.name === singleCarrier(editingTransfer.carrier)) && (
+                        <option value={singleCarrier(editingTransfer.carrier)}>{singleCarrier(editingTransfer.carrier)}</option>
+                      )}
+                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -30086,16 +30121,6 @@ export default function App() {
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
                     <input type="text" value={editingTransfer.po || ''} onChange={(e) => setEditingTransfer({...editingTransfer, po: e.target.value})} placeholder="e.g. PO-12345" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
-                    <select value={singleCarrier(editingTransfer.carrier)} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                      <option value="">Select Carrier</option>
-                      {singleCarrier(editingTransfer.carrier) && !carriers.some(c => c.name === singleCarrier(editingTransfer.carrier)) && (
-                        <option value={singleCarrier(editingTransfer.carrier)}>{singleCarrier(editingTransfer.carrier)}</option>
-                      )}
-                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                    </select>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -30225,7 +30250,7 @@ export default function App() {
                           </select>
                         </div>
                         <div className="space-y-0.5">
-                          <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
+                          <label className="text-[9px] uppercase font-bold opacity-50">QTY (MT)</label>
                           <DecimalInput value={leg.amount || undefined} onValue={(v) => updateEditLeg(leg.id, 'amount', (v ?? 0))} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                         </div>
                       </div>
@@ -30272,12 +30297,14 @@ export default function App() {
                       // Recalculate totals from legs before saving
                       let updatedTransfer = { ...editingTransfer };
                       if (updatedTransfer.legs && updatedTransfer.legs.length > 0) {
+                        updatedTransfer.legs = updatedTransfer.legs.map(l => ({ ...l, amount: transferQtyMt(l.amount) }));
                         updatedTransfer.amount = updatedTransfer.legs.reduce((s, l) => s + l.amount, 0);
                       }
                       // ONE carrier on the transfer (its BOL/COA carrier) — the
                       // transload carriers stay on their legs.
                       updatedTransfer.carrier = singleCarrier(updatedTransfer.carrier) || singleCarrier(updatedTransfer.legs?.[0]?.carrier);
                       updatedTransfer = applyTransferLineItems(updatedTransfer);
+                      updatedTransfer.amount = transferQtyMt(updatedTransfer.amount);
                       setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
                     }}

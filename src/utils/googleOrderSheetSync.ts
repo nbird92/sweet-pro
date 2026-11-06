@@ -45,6 +45,15 @@ const COL_BV_INDEX = 73;
  *  column) and gets surfaced in the preview's Skipped list. */
 export const MAX_ORDER_MT = 200;
 
+/** A transfer quantity in MT. Transfer sheet cells sometimes hold KG (e.g.
+ *  24000 for a 24 MT truck); no plant transfer is 1,000 MT or more, so a value
+ *  that large is read as KG and converted. */
+export function transferQtyMt(v: unknown): number {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/,/g, ''));
+  if (!Number.isFinite(n)) return 0;
+  return n >= 1000 ? Math.round(n) / 1000 : n;
+}
+
 // Molasses tab column layout (0-indexed):
 //   A=0 WEEK, B=1 BOL DATE, C=2 DAY, D=3 CLIENT, E=4 PO NUMBER,
 //   F=5 Litres, G=6 QTY Shipped (MT), H=7 BRIX, I=8 QUANTITY (DRY BASIS),
@@ -2738,7 +2747,7 @@ export function parsedRowsToTransfersConfigured(
         arrivalDate: r.deliveryDate || r.shipmentDate,
         carrier: carrierCanonical || '',
         product: storedProduct,
-        amount: r.quantityMT,
+        amount: transferQtyMt(r.quantityMT),
         po: r.poNumber || undefined,
         lotCode: firstLot(r.lotCode) || undefined,
         contractNumber: r.contractNumber || undefined,
@@ -2806,7 +2815,7 @@ export function parsedRowsToTransfersConfigured(
         arrivalDate: r.deliveryDate || r.shipmentDate,
         carrier: carrierCanonical || '',
         product: storedProduct,
-        amount: r.quantityMT,
+        amount: transferQtyMt(r.quantityMT),
         status: 'Pending',
         ...fields,
         // status is authoritative for a NEW transfer; fields doesn't carry it.
