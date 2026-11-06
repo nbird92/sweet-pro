@@ -249,6 +249,19 @@ function DecimalInput({ value, onValue, className, placeholder }: {
   );
 }
 
+/** A line's weight in MT. Some transfer lines carried KG in totalWeight (the
+ *  units were right): when totalWeight is ~1000x units x per-unit kg / 1000, use
+ *  the derived MT; any other 1,000+ value is read as KG. */
+function normalizeLineMt(li: OrderLineItem): OrderLineItem {
+  const tw = Number(li.totalWeight) || 0;
+  const npu = Number(li.netWeightPerUnit) || 0;
+  const q = Number(li.qty) || 0;
+  const derived = npu > 0 && q > 0 ? (q * npu) / 1000 : 0;
+  if (derived > 0 && tw > 0 && Math.abs(tw / derived - 1000) < 1) return { ...li, totalWeight: derived };
+  if (tw >= 1000) return { ...li, totalWeight: Math.round(tw) / 1000 };
+  return li;
+}
+
 /** One carrier name from a carrier field. Older transfers stored every
  *  transload carrier joined ("A → B"); documents list only the first one. */
 function singleCarrier(name?: string): string {
@@ -6617,6 +6630,8 @@ export default function App() {
       const fromLoc = findLoc(t.from);
       const toLoc = findLoc(t.to);
       const shipperName = fromLoc?.bolName || fromLoc?.name || t.from || 'Sucro Can Canada Inc';
+      const custName = (t.customer || resolveByPo(t.po).customer || '').trim();
+      const transferCust = custName ? (customers.find(c => c.name === custName) || customers.find(c => c.name.trim().toLowerCase() === custName.toLowerCase())) : undefined;
       // Consignee = shipper (same company on a transfer).
       const consignee = {
         id: `TMP-CONS-${t.id}`,
@@ -6627,6 +6642,8 @@ export default function App() {
         postalCode: fromLoc?.postalCode || '',
         defaultLocation: fromLoc?.name || '',
         defaultMargin: 0,
+        // Contact email = the transfer's selected customer.
+        contactEmail: transferCust?.contactEmail || transferCust?.customerServiceEmail || transferCust?.salesContactEmail || '',
       } as unknown as Customer;
       const shipTo: ShipToLocation = {
         id: `TMP-SHIPTO-${t.id}`,
@@ -6644,9 +6661,10 @@ export default function App() {
       // ONE carrier: the transfer's Carrier field (never the transload carriers).
       const carrierName = singleCarrier(t.carrier) || singleCarrier(sched?.carrier);
       const scaledMt = sched && typeof sched.scaledQty === 'number' && sched.scaledQty > 0 ? sched.scaledQty : 0;
-      const qtyMt = scaledMt || transferQtyMt(t.amount);
-      // Line weights in MT (a KG-sized line weight is converted).
-      const tLines = (t.lineItems || []).map(li => (li.totalWeight || 0) >= 1000 ? { ...li, totalWeight: transferQtyMt(li.totalWeight) } : li);
+      // Line weights in MT (KG-sized line weights are converted).
+      const tLines = (t.lineItems || []).map(normalizeLineMt);
+      const linesMt = tLines.reduce((s, li) => s + (li.totalWeight || 0), 0);
+      const qtyMt = scaledMt || linesMt || transferQtyMt(t.amount);
       const shipment: Shipment = {
         id: sched?.id || `TMP-TRF-${t.id}`, week: sched?.week || '',
         date: t.shipmentDate || sched?.date || '', day: sched?.day || '', time: sched?.time || '', bay: sched?.bay || '',
@@ -6766,19 +6784,8 @@ export default function App() {
     const unitQa = qaProducts.find(q => q.skuName === d.productValue);
     const perUnitKg = (unitSku?.netWeightKg || unitSku?.netWeight || unitQa?.netWeightKg || 0) || 1000;
     const qtyMtFromUnits = Math.round(d.qtyUnits * perUnitKg) / 1000;
-    const c = d.contractNumber ? contracts.find(k => k.contractNumber === d.contractNumber) : undefined;
-    if (d.contractNumber && c) {
-      const otherWeight = transferLineItems
-        .filter((li, i) => li.contractNumber === d.contractNumber && i !== editingTransferLineIdx)
-        .reduce((s, li) => s + (li.totalWeight || 0), 0);
-      const available = contractAvailableMt(c) - otherWeight;
-      if (qtyMtFromUnits > available + 1e-6) {
-        setErrorBox(`Not enough volume on contract ${c.contractNumber}: ${Math.max(0, available).toFixed(2)} MT available, but this line requires ${qtyMtFromUnits.toFixed(2)} MT. Reduce the quantity or choose a different contract.`);
-        return;
-      }
-    }
-    const price = c ? contractPriceFor(c, d.productLabel || d.productValue) : 0;
-    const li = buildScanLineItem({ productValue: d.productValue, productKey: d.productKey, productLabel: d.productLabel, productRaw: '', productCodeRaw: '', qtyMt: qtyMtFromUnits, pricePerMt: price, contractNumber: d.contractNumber });
+    // Internal transfers carry no contract and no pricing.
+    const li = buildScanLineItem({ productValue: d.productValue, productKey: d.productKey, productLabel: d.productLabel, productRaw: '', productCodeRaw: '', qtyMt: qtyMtFromUnits, pricePerMt: 0, contractNumber: '' });
     setTransferLineItems(prev => editingTransferLineIdx !== null ? prev.map((x, i) => i === editingTransferLineIdx ? li : x) : [...prev, li]);
     setEditingTransferLineIdx(null);
     setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' });
@@ -6788,10 +6795,9 @@ export default function App() {
    *  same layout as the order menus (entry row + line table with edit/delete). */
   const renderTransferLineItemsSection = () => {
     const opts = buildOrderProductOptions(undefined, { selectableOnly: true });
-    const activeContracts = contracts.filter(c => c.active !== false);
     return (
       <div className="space-y-3">
-        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Line Items &amp; Contracts</h4>
+        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Line Items</h4>
         {/* Entry table — same dark-headed layout as the order menus. */}
         <div className="border border-[#141414]">
           <table className="w-full text-left border-collapse">
@@ -6799,7 +6805,6 @@ export default function App() {
               <tr className="text-[10px] uppercase font-bold">
                 <th className="p-3">Product</th>
                 <th className="p-3 w-32">Transfer QTY (Units)</th>
-                <th className="p-3 w-52">Contract #</th>
                 <th className="p-3 w-32 text-center">Actions</th>
               </tr>
             </thead>
@@ -6818,12 +6823,6 @@ export default function App() {
                 <td className="p-2">
                   <DecimalInput value={transferLineDraft.qtyUnits || undefined} onValue={(num) => setTransferLineDraft(d => ({ ...d, qtyUnits: num ?? 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
                 </td>
-                <td className="p-2">
-                  <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
-                    <option value="">— None —</option>
-                    {activeContracts.map(c => <option key={c.id} value={c.contractNumber}>{c.contractNumber}{c.customerName ? ` — ${c.customerName}` : ''}</option>)}
-                  </select>
-                </td>
                 <td className="p-2 text-center whitespace-nowrap">
                   <button type="button" onClick={commitTransferLineDraft} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80 transition-colors">{editingTransferLineIdx !== null ? 'Update' : 'Add'}</button>
                   {editingTransferLineIdx !== null && (
@@ -6841,9 +6840,6 @@ export default function App() {
                 <th className="p-2 font-bold">Product</th>
                 <th className="p-2 font-bold text-right">Transfer QTY (Units)</th>
                 <th className="p-2 font-bold text-right">Transfer Weight (MT)</th>
-                <th className="p-2 font-bold">Contract #</th>
-                <th className="p-2 font-bold text-right">$/MT</th>
-                <th className="p-2 font-bold text-right">Amount ($)</th>
                 <th className="p-2 font-bold text-center">Actions</th>
               </tr>
             </thead>
@@ -6853,9 +6849,6 @@ export default function App() {
                   <td className="p-2">{lineItemToShortform(li)}</td>
                   <td className="p-2 text-right font-mono">{(li.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                   <td className="p-2 text-right font-mono font-bold">{(li.totalWeight || 0).toFixed(2)}</td>
-                  <td className="p-2 font-mono">{li.contractNumber || '—'}</td>
-                  <td className="p-2 text-right font-mono">{li.mtAmount ? `$${li.mtAmount.toFixed(2)}` : '—'}</td>
-                  <td className="p-2 text-right font-mono font-bold">{li.lineAmount ? `$${li.lineAmount.toFixed(2)}` : '—'}</td>
                   <td className="p-2 text-center whitespace-nowrap">
                     <button type="button" onClick={() => { setEditingTransferLineIdx(idx); setTransferLineDraft({ productKey: li.productKey || '', productValue: li.productName, productLabel: li.productDisplayName || '', qtyUnits: li.qty || 0, contractNumber: li.contractNumber || '' }); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit line"><Pencil size={12} /></button>
                     <button type="button" onClick={() => { setTransferLineItems(prev => prev.filter((_, i) => i !== idx)); if (editingTransferLineIdx === idx) { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' }); } }} className="p-1 text-red-500 hover:bg-red-50 transition-colors" title="Remove line"><Trash2 size={12} /></button>
@@ -6866,9 +6859,6 @@ export default function App() {
                 <td className="p-2">Total</td>
                 <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.qty || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                 <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)}</td>
-                <td className="p-2"></td>
-                <td className="p-2"></td>
-                <td className="p-2 text-right font-mono">{`$${transferLineItems.reduce((s, li) => s + (li.lineAmount || 0), 0).toFixed(2)}`}</td>
                 <td className="p-2"></td>
               </tr>
             </tbody>
@@ -8700,14 +8690,18 @@ export default function App() {
     const kg = (v: unknown) => (Number(v) || 0) >= 1000;
     const fixed: Transfer[] = [];
     const next = transfers.map(t => {
-      const bad = kg(t.amount) || (t.legs || []).some(l => kg(l.amount)) || (t.lineItems || []).some(li => kg(li.totalWeight));
+      const bad = kg(t.amount) || (t.legs || []).some(l => kg(l.amount)) || (t.lineItems || []).some(li => normalizeLineMt(li) !== li);
       if (!bad) return t;
       const n: Transfer = {
         ...t,
         amount: transferQtyMt(t.amount),
         ...(t.legs ? { legs: t.legs.map(l => ({ ...l, amount: transferQtyMt(l.amount) })) } : {}),
-        ...(t.lineItems ? { lineItems: t.lineItems.map(li => kg(li.totalWeight) ? { ...li, totalWeight: transferQtyMt(li.totalWeight) } : li) } : {}),
+        ...(t.lineItems ? { lineItems: t.lineItems.map(normalizeLineMt) } : {}),
       };
+      // Without transloads the amount is the line total.
+      if (!(n.legs && n.legs.length) && n.lineItems && n.lineItems.length) {
+        n.amount = Math.round(n.lineItems.reduce((s, li) => s + (li.totalWeight || 0), 0) * 1000) / 1000;
+      }
       fixed.push(n);
       return n;
     });
@@ -29920,10 +29914,6 @@ export default function App() {
                           {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                         </select>
                       </div>
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Contract #</label><input name="contractNumber" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Split #</label><input name="splitNumber" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Brix <span className="text-[8px] opacity-40">(auto)</span></label><input name="brix" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
-                      <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Silo <span className="text-[8px] opacity-40">(auto)</span></label><input name="silo" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
                       <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Country of Origin <span className="text-[8px] opacity-40">(auto)</span></label><input name="countryOfOrigin" type="text" placeholder="from lot code" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" /></div>
                       <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">PAPS #</label><input name="papsNo" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
                       <div className="space-y-1"><label className="text-[10px] uppercase font-bold opacity-60">Trailer #</label><input name="trailerNo" type="text" className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" /></div>
@@ -30161,22 +30151,6 @@ export default function App() {
                         {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                         {editingTransfer.customer && !customers.some(c => c.name === editingTransfer.customer) && <option value={editingTransfer.customer}>{editingTransfer.customer}</option>}
                       </select>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Contract #</label>
-                      <input type="text" value={editingTransfer.contractNumber || ''} onChange={(e) => setEditingTransfer({...editingTransfer, contractNumber: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Split #</label>
-                      <input type="text" value={editingTransfer.splitNumber || ''} onChange={(e) => setEditingTransfer({...editingTransfer, splitNumber: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Brix</label>
-                      <input type="text" value={editingTransfer.brix || ''} onChange={(e) => setEditingTransfer({...editingTransfer, brix: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Silo</label>
-                      <input type="text" value={editingTransfer.silo || ''} onChange={(e) => setEditingTransfer({...editingTransfer, silo: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">Country of Origin <span className="text-[8px] opacity-40">(from lot code)</span></label>

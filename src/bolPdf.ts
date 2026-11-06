@@ -337,7 +337,12 @@ export function renderBolInto(doc: jsPDF, {
 
   drawInfoField(doc, 'Freight Terms', freightTerms, leftCol, y, thirdW);
   drawInfoField(doc, 'Trailer Number', shipment.trailerNo || '', leftCol + thirdW, y, thirdW);
-  drawInfoField(doc, 'Seal Number(s)', sealNums, leftCol + thirdW * 2, y, thirdW);
+  // Seal numbers that don't fit their box move to the NOTES section (more room)
+  // with a pointer in the field.
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  const sealsOverflow = !!sealNums && doc.getTextWidth(sealNums) > thirdW - 4;
+  drawInfoField(doc, 'Seal Number(s)', sealsOverflow ? 'See notes below' : sealNums, leftCol + thirdW * 2, y, thirdW);
   y += 14;
 
   drawInfoField(doc, 'Origin of Goods', originOfGoods, leftCol, y, thirdW);
@@ -378,6 +383,7 @@ export function renderBolInto(doc: jsPDF, {
   // pushed the box past the bottom margin and cut the page off). Skip the box
   // entirely when there is no meaningful room left. (pageHeight/bottomMargin
   // declared above the page-break guard.)
+  const notesText = [sealsOverflow ? `Seal Number(s): ${sealNums}` : '', shipment.notes || ''].filter(Boolean).join('\n');
   const notesH = Math.max(0, Math.min(18, pageHeight - bottomMargin - y));
   if (notesH >= 6) {
     doc.setFont('helvetica', 'bold');
@@ -386,13 +392,13 @@ export function renderBolInto(doc: jsPDF, {
     doc.text('NOTES', leftCol + 2, y + 3);
     doc.setDrawColor(200, 200, 200);
     doc.rect(leftCol, y, contentWidth, notesH);
-    if (shipment.notes) {
+    if (notesText) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(BLACK);
       // Clip note lines to the box so long / multi-line notes never spill below
       // the box outline or past the page bottom.
-      const lines = doc.splitTextToSize(shipment.notes, contentWidth - 4);
+      const lines = doc.splitTextToSize(notesText, contentWidth - 4);
       const lineH = 3.3;
       const first = y + 7;
       const maxLines = Math.max(0, Math.floor((y + notesH - first) / lineH) + 1);
