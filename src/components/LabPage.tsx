@@ -5,6 +5,23 @@ import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import type { SheetSpec } from '../utils/exportExcel';
 import { samePoNumber } from '../utils/poNumber';
+
+/** BOL / PO / transfer reference compared without spaces or case. */
+const normRef = (v?: string) => (v || '').replace(/\s+/g, '').toUpperCase();
+/** A plain numeric PO ("12345", "PO# 012345") — 4+ digits and no other letters.
+ *  Only these may match by numeric value; reference codes such as transfer
+ *  numbers ("SHER-GRAN-WTC-4") must match exactly, since reducing them to their
+ *  digits ("4") links unrelated shipments. */
+const isNumericPo = (v?: string) => {
+  const t = (v || '').trim().replace(/^P\.?O\.?\s*#?\s*[-:]?\s*/i, '');
+  return !!t && !/[A-Za-z]/.test(t) && t.replace(/\D/g, '').length >= 4;
+};
+const poMatches = (a?: string, b?: string): boolean => {
+  const na = normRef(a); const nb = normRef(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return isNumericPo(a) && isNumericPo(b) && samePoNumber(a, b);
+};
 import { cleanLotCode, sameLotCode } from '../utils/lotCode';
 import { ColumnOrderContext, ColumnVisibilityContext } from './DataTable';
 
@@ -231,8 +248,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
       const lots = (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers : (s.lotNumber ? [s.lotNumber] : []))
         .map(l => (l || '').replace(/\s+/g, '').toUpperCase());
       if (lotU && lots.includes(lotU)) return true;
-      if (bolU && (s.bol || '').trim().toUpperCase() === bolU) return true;
-      if (po && samePoNumber(s.po, po)) return true;
+      if (bolU && normRef(s.bol) === normRef(bolU)) return true;
+      if (po && poMatches(s.po, po)) return true;
       return false;
     });
     if (!match) return '';
@@ -317,7 +334,9 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
   }, [transfers, shipmentSearch]);
 
   const handleSelectTransfer = (t: Transfer) => {
-    setFormData({ ...formData, bolNumber: t.transferNumber || '', customerPo: t.lotCode || '' });
+    // The transfer number links it (its booked shipment carries it as the BOL);
+    // the PO field takes the transfer's own PO — never its lot code.
+    setFormData({ ...formData, bolNumber: t.transferNumber || '', customerPo: t.po || '' });
     setShowShipmentPicker(false);
     setShipmentSearch('');
   };
@@ -533,14 +552,23 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
     setEditingLot(lc);
   };
 
+  /** The shipment a BOL / PO links to — BOL (or transfer number) first, then PO. */
+  const findLinkedShipment = (bol?: string, po?: string): Shipment | undefined => {
+    const b = normRef(bol);
+    return (b ? shipments.find(s => normRef(s.bol) === b) : undefined)
+      || ((po || '').trim() ? shipments.find(s => poMatches(s.po, po)) : undefined);
+  };
+  /** A transfer referenced by its transfer number in the BOL or PO field. */
+  const findLinkedTransfer = (bol?: string, po?: string): Transfer | undefined => {
+    const refs = [normRef(bol), normRef(po)].filter(Boolean);
+    return refs.length ? transfers.find(t => refs.includes(normRef(t.transferNumber))) : undefined;
+  };
+
   // Auto-assign lot code to shipment when BOL/PO is filled
   const autoAssignToShipment = (lotNum: string, bolNumber: string, customerPo: string, countryOfOrigin: string) => {
     if (!bolNumber && !customerPo) return;
     // Find matching shipment by BOL or PO
-    const match = shipments.find(s =>
-      (bolNumber && s.bol && s.bol === bolNumber) ||
-      samePoNumber(s.po, customerPo)
-    );
+    const match = findLinkedShipment(bolNumber, customerPo);
     if (match) {
       const currentLotNums = match.lotNumbers || (match.lotNumber ? [match.lotNumber] : []);
       // Whitespace-insensitive membership — a cleaned lot must not be appended a
@@ -1003,9 +1031,19 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                     </div>
                   </div>
                   {(formData.bolNumber || formData.customerPo) && (() => {
-                    const matched = shipments.find(s =>
-                      (formData.bolNumber && s.bol === formData.bolNumber) ||
-                      samePoNumber(s.po, formData.customerPo)
+                    const matched = findLinkedShipment(formData.bolNumber, formData.customerPo);
+                    const matchedTransfer = matched ? undefined : findLinkedTransfer(formData.bolNumber, formData.customerPo);
+                    if (matchedTransfer) return (
+                      <div className="text-[10px] text-blue-700 bg-blue-100 border border-blue-200 px-2 py-1.5 flex items-center gap-2">
+                        <span className="font-bold">Matched transfer:</span>
+                        <span className="font-mono">{matchedTransfer.transferNumber}</span>
+                        <span className="opacity-50">|</span>
+                        <span>{matchedTransfer.from} → {matchedTransfer.to}</span>
+                        <span className="opacity-50">|</span>
+                        <span>{matchedTransfer.product}</span>
+                        <span className="opacity-50">|</span>
+                        <span>{matchedTransfer.shipmentDate}</span>
+                      </div>
                     );
                     return matched ? (
                       <div className="text-[10px] text-blue-700 bg-blue-100 border border-blue-200 px-2 py-1.5 flex items-center gap-2">
