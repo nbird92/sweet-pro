@@ -248,6 +248,12 @@ function DecimalInput({ value, onValue, className, placeholder }: {
   );
 }
 
+/** One carrier name from a carrier field. Older transfers stored every
+ *  transload carrier joined ("A → B"); documents list only the first one. */
+function singleCarrier(name?: string): string {
+  return (name || '').split(/\s*(?:→|->|;)\s*/).map(x => x.trim()).find(Boolean) || '';
+}
+
 /** Normalize a free-text currency ("CDN$", "CDN", "CAD $", "USD$", "US funds")
  *  to a plain ISO code — demurrage invoices print it every which way, and each
  *  spelling otherwise shows up as its own "currency" in the table. */
@@ -3508,6 +3514,12 @@ export default function App() {
   // PO fallback only for real PO numbers (5+ digits): poKey keeps just the digits,
   // so a transfer ref like "SHER-TOTE-FERG-25" would collapse to "25" and hit an
   // unrelated order.
+  /** The transfer a schedule shipment was booked for (notes = "TRANSFER:{id}"). */
+  const transferForShipment = (s?: { notes?: string }): Transfer | undefined => {
+    const m = /^TRANSFER:(.+)$/.exec((s?.notes || '').trim());
+    return m ? transfers.find(t => t.id === m[1]) : undefined;
+  };
+
   const shipToForShipment = (s: { bol?: string; po?: string }): string => {
     const byBol = shipToIndex.byBol.get((s.bol || '').trim().toUpperCase());
     if (byBol) return byBol;
@@ -6215,6 +6227,10 @@ export default function App() {
   };
 
   const handleGenerateBol = (rawShipment: Shipment, orderOverride?: Order) => {
+    // A transfer booked in the schedule: the TRANSFER is the source of truth
+    // (same BOL as the Transfers table), topped up with this shipment's extras.
+    const trf = transferForShipment(rawShipment);
+    if (trf) { handleGenerateBolForTransfer(trf, rawShipment); return; }
     try {
       const { shipment, order: linkedOrder, shipFromLoc } = resolveShipmentDocSources(rawShipment, orderOverride);
       const cust = customers.find(c => c.name === shipment.customer);
@@ -6373,7 +6389,9 @@ export default function App() {
     const lots = (shipment.lotNumbers && shipment.lotNumbers.length ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : []))
       .map(ln => lotCodes.find(lc => sameLotCode(lc.lotNumber, ln)))
       .filter(Boolean) as LotCode[];
-    const name = (lots.map(l => (l.carrierName || '').trim()).find(Boolean) || shipment.carrier || order?.carrier || '').trim();
+    // ONE carrier, taken from the shipment first (then the lot's loading log,
+    // then the order) — never a joined list of transload carriers.
+    const name = singleCarrier(shipment.carrier) || lots.map(l => singleCarrier(l.carrierName)).find(Boolean) || singleCarrier(order?.carrier);
     const n = name.toLowerCase();
     const carr = n ? (carriers.find(c => (c.name || '').trim().toLowerCase() === n)
       || carriers.find(c => { const cn = (c.name || '').trim().toLowerCase(); return !!cn && (cn.includes(n) || n.includes(cn)); })) : undefined;
@@ -6385,6 +6403,8 @@ export default function App() {
     resolveCoaTemplate(resolveCoaSugarType({ shipment, order, lotCodes, qaProducts }))?.logoDataUrl || '';
 
   const handleGenerateCoa = (shipment: Shipment) => {
+    const trf = transferForShipment(shipment);
+    if (trf) { handleGenerateCoaForTransfer(trf, shipment); return; }
     try {
       const bolKey = (shipment.bol || '').trim().toUpperCase();
       const linkedOrder = bolKey ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bolKey) : undefined;
@@ -6478,6 +6498,8 @@ export default function App() {
    *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
    *  ID Report is included only for packaged / tote shipments. */
   const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order, scaleTicketDirection?: 'shipping' | 'receiving') => {
+    const trf = transferForShipment(rawShipment);
+    if (trf) { handleGenerateDocumentPackageForTransfer(trf, rawShipment); return; }
     try {
       const { shipment, order: linkedOrder, shipFromLoc } = resolveShipmentDocSources(rawShipment, orderOverride);
       const cust = customers.find(c => c.name === shipment.customer);
@@ -6579,7 +6601,10 @@ export default function App() {
    *  OUR OWN locations, so the SHIPPER and CONSIGNEE are the same party — the
    *  origin location's legal entity; Deliver To carries the destination plant. */
   /** Shared source builder for all transfer documents (BOL / COA / package). */
-  const buildTransferDocSources = (t: Transfer) => {
+  const buildTransferDocSources = (t: Transfer, schedArg?: Shipment) => {
+      // The transfer's booked shipment-schedule row (when any) supplies what the
+      // transfer itself doesn't carry: scaled qty, seal numbers, trailer, lots.
+      const sched = schedArg || [...hamiltonShipments, ...vancouverShipments].find(sh => sh.notes === `TRANSFER:${t.id}`);
       const findLoc = (nm?: string) => {
         const n = (nm || '').trim();
         if (!n) return undefined;
@@ -6610,15 +6635,23 @@ export default function App() {
         postalCode: toLoc?.postalCode || '',
         country: 'Canada',
       } as ShipToLocation;
-      const lots = (t.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      const tLots = (t.lotCode || '').split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      const schedLots = sched ? ((sched.lotNumbers && sched.lotNumbers.length) ? sched.lotNumbers : (sched.lotNumber ? [sched.lotNumber] : [])) : [];
+      const lots = tLots.length ? tLots : schedLots;
+      // ONE carrier: the transfer's Carrier field (never the transload carriers).
+      const carrierName = singleCarrier(t.carrier) || singleCarrier(sched?.carrier);
+      const scaledMt = sched && typeof sched.scaledQty === 'number' && sched.scaledQty > 0 ? sched.scaledQty : 0;
+      const qtyMt = scaledMt || t.amount || 0;
       const shipment: Shipment = {
-        id: `TMP-TRF-${t.id}`, week: '', date: t.shipmentDate || '', day: '', time: '', bay: '',
-        customer: shipperName, product: t.product || '', po: t.po || '',
-        bol: t.transferNumber || '',
-        qty: t.amount || 0, scaledQty: t.amount || 0,
-        carrier: t.carrier || '', arrive: '', start: '', out: '',
-        status: t.status || '', trailerNo: t.trailerNo,
-        deliveryDate: t.arrivalDate,
+        id: sched?.id || `TMP-TRF-${t.id}`, week: sched?.week || '',
+        date: t.shipmentDate || sched?.date || '', day: sched?.day || '', time: sched?.time || '', bay: sched?.bay || '',
+        customer: shipperName, product: t.product || sched?.product || '', po: t.po || '',
+        bol: t.transferNumber || sched?.bol || '',
+        qty: qtyMt, scaledQty: qtyMt,
+        carrier: carrierName, arrive: sched?.arrive || '', start: sched?.start || '', out: sched?.out || '',
+        status: t.status || '', trailerNo: t.trailerNo || sched?.trailerNo,
+        sealNumbers: sched?.sealNumbers,
+        deliveryDate: t.arrivalDate || sched?.deliveryDate,
         lotNumber: lots[0], lotNumbers: lots,
         contractNumber: t.contractNumber, location: t.from,
       };
@@ -6628,21 +6661,28 @@ export default function App() {
         contractNumber: t.contractNumber, po: t.po || '',
         date: t.shipmentDate || '', shipmentDate: t.shipmentDate, deliveryDate: t.arrivalDate,
         status: 'Completed',
-        lineItems: (t.lineItems && t.lineItems.length) ? t.lineItems : [{
-          id: `TMP-LI-${t.id}`, productName: t.product || '', qty: t.amount || 0,
-          contractNumber: t.contractNumber || '', netWeightPerUnit: 0, totalWeight: t.amount || 0,
-        }],
-        amount: 0, carrier: t.carrier || '', location: t.from || '',
+        lineItems: (t.lineItems && t.lineItems.length)
+          ? (scaledMt > 0 ? rescaleLineItemsToMt(t.lineItems, scaledMt) : t.lineItems)
+          : [{
+            id: `TMP-LI-${t.id}`, productName: t.product || '', qty: qtyMt,
+            contractNumber: t.contractNumber || '', netWeightPerUnit: 0, totalWeight: qtyMt,
+          }],
+        amount: 0, carrier: carrierName, location: t.from || '',
       };
-      const carr = carriers.find(c => c.name === t.carrier);
+      const cn = carrierName.toLowerCase();
+      const carr = cn ? (carriers.find(c => (c.name || '').trim().toLowerCase() === cn)
+        || carriers.find(c => { const x = (c.name || '').trim().toLowerCase(); return !!x && (x.includes(cn) || cn.includes(x)); })) : undefined;
       return { shipment, order, consignee, carrier: carr, shipFromLocation: fromLoc, shipToLocation: shipTo };
   };
 
-  const handleGenerateDocumentPackageForTransfer = (t: Transfer) => {
+  const handleGenerateDocumentPackageForTransfer = (t: Transfer, sched?: Shipment) => {
     try {
-      const s = buildTransferDocSources(t);
+      const s = buildTransferDocSources(t, sched);
       const includeBag = hasPackagedOrToteProducts(s.order.lineItems, t.product);
       const { blobUrl, filename } = generateDocumentPackagePdf({
+        coaProduct: resolveCoaProduct(s.shipment, s.order),
+        coaLogoDataUrl: coaLogoFor(s.shipment, s.order),
+        coaCarrier: coaCarrierFor(s.shipment, s.order),
         shipment: s.shipment, order: s.order, customer: s.consignee, carrier: s.carrier,
         shipFromLocation: s.shipFromLocation, shipToLocation: s.shipToLocation,
         lotCodes, qaProducts,
@@ -6657,9 +6697,9 @@ export default function App() {
   };
 
   /** Preview just the BOL for a transfer (shipper = consignee). */
-  const handleGenerateBolForTransfer = (t: Transfer) => {
+  const handleGenerateBolForTransfer = (t: Transfer, sched?: Shipment) => {
     try {
-      const s = buildTransferDocSources(t);
+      const s = buildTransferDocSources(t, sched);
       const { blobUrl, filename } = generateBolPdf({
         shipment: s.shipment, order: s.order, customer: s.consignee, carrier: s.carrier,
         shipFromLocation: s.shipFromLocation, shipToCustomer: s.consignee, shipToLocation: s.shipToLocation,
@@ -6673,9 +6713,9 @@ export default function App() {
   };
 
   /** Preview just the COA for a transfer. */
-  const handleGenerateCoaForTransfer = (t: Transfer) => {
+  const handleGenerateCoaForTransfer = (t: Transfer, sched?: Shipment) => {
     try {
-      const s = buildTransferDocSources(t);
+      const s = buildTransferDocSources(t, sched);
       const { blobUrl, filename } = generateCoaPdf({
         shipment: s.shipment, order: s.order, customer: s.consignee,
         shipFromLocation: s.shipFromLocation, shipTo: s.shipToLocation,
@@ -12663,7 +12703,6 @@ export default function App() {
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Customer</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Ship To</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[130px]">Product</th>
-                                                    <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[90px]">Contract</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">PO</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[80px]">BOL</th>
                                                     <th className="px-2 py-1 border-r border-[#141414]/5 min-w-[75px]">Order QTY</th>
@@ -12691,7 +12730,7 @@ export default function App() {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
                                                           <td className="px-2 py-1 text-[10px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
-                                                          <td colSpan={16} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
+                                                          <td colSpan={15} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
                                                                 setShipmentCreationData({ location: locationName as 'Hamilton' | 'Vancouver', date: dateStr, time: slot, bay, carrier: '', orderId: '' });
@@ -12714,9 +12753,8 @@ export default function App() {
                                                         <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer || sRes.customer || '—'}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{shipToForShipment({ bol: s.bol || sRes.bolNumber, po: s.po || sRes.po }) || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{transferForShipment(s)?.to || shipToForShipment({ bol: s.bol || sRes.bolNumber, po: s.po || sRes.po }) || '—'}</td>
                                                         <td className={`px-2 py-1 text-[10px] border-r border-[#141414]/5 ${!productMatchesCurrentSku(s.product) ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productMatchesCurrentSku(s.product) ? `No matching product in catalog: ${s.product}` : ''}>{productToShortform(s.product || sRes.product)}{!productMatchesCurrentSku(s.product) && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.contractNumber || sRes.contractNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po || sRes.po || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol || sRes.bolNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
@@ -13180,7 +13218,7 @@ export default function App() {
               { key: 'amount', label: 'Amount (MT)', align: 'right', bold: true },
               { key: 'brix', label: 'Brix', render: (t) => t.brix || '—' },
               { key: 'silo', label: 'Silo', render: (t) => t.silo || '—' },
-              { key: 'carrier', label: 'Carrier' },
+              { key: 'carrier', label: 'Carrier', render: (t) => singleCarrier(t.carrier) || '—' },
               { key: 'trailerNo', label: 'Trailer #', mono: true, render: (t) => t.trailerNo || '—' },
               { key: 'papsNo', label: 'PAPS #', mono: true, render: (t) => t.papsNo || '—' },
               { key: 'customsEntryNo', label: 'Customs Entry #', mono: true, render: (t) => t.customsEntryNo || '—' },
@@ -29491,8 +29529,9 @@ export default function App() {
                                 bay: shipmentCreationData.bay,
                                 customer: `Transfer: ${transfer.from} → ${transfer.to}`,
                                 product: transfer.product,
-                                po: transfer.lotCode || '',
+                                po: transfer.po || '',
                                 bol: transfer.transferNumber,
+                                ...((transfer.lotCode || '').trim() ? { lotNumbers: (transfer.lotCode || '').split(/[,;]+/).map(x => x.trim()).filter(Boolean) } : {}),
                                 qty: transfer.amount,
                                 carrier: shipmentCreationData.carrier,
                                 arrive: '',
@@ -29681,7 +29720,7 @@ export default function App() {
               from: g('from'), to: g('to'), product: g('product'),
               po: g('po') || undefined, lotCode: g('lotCode') || '',
               amount: newTransferLegs.length > 0 ? totalLegAmount : 0,
-              carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : g('carrier'),
+              carrier: g('carrier') || singleCarrier(newTransferLegs[0]?.carrier),
               shipmentDate: g('shipmentDate'), arrivalDate: g('arrivalDate'),
               notes: g('notes'), status: 'Pending',
               customer: g('customer') || undefined,
@@ -29747,7 +29786,7 @@ export default function App() {
                     po: g('po') || undefined,
                     lotCode: lotCode || '',
                     amount: newTransferLegs.length > 0 ? totalLegAmount : (parseFloat(data.get('amount') as string) || 0),
-                    carrier: newTransferLegs.length > 0 ? newTransferLegs.map(l => l.carrier).filter(Boolean).join(' → ') : (data.get('carrier') as string),
+                    carrier: g('carrier') || singleCarrier(newTransferLegs[0]?.carrier),
                     shipmentDate: data.get('shipmentDate') as string,
                     arrivalDate: data.get('arrivalDate') as string,
                     notes: g('notes'),
@@ -29820,15 +29859,13 @@ export default function App() {
                       <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
                       <input name="po" type="text" placeholder="e.g. PO-12345" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                     </div>
-                    {newTransferLegs.length === 0 && (
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
-                        <select name="carrier" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                          <option value="">Select Carrier</option>
-                          {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </select>
-                      </div>
-                    )}
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                      <select name="carrier" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                        <option value="">Select Carrier</option>
+                        {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
@@ -29974,14 +30011,12 @@ export default function App() {
           const updateEditLeg = (legId: string, field: keyof TransferLeg, value: any) => {
             const updated = editLegs.map(l => l.id === legId ? { ...l, [field]: value } : l);
             const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
-            const carrierStr = updated.map(l => l.carrier).filter(Boolean).join(' → ');
-            setEditingTransfer({ ...editingTransfer, legs: updated, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
+            setEditingTransfer({ ...editingTransfer, legs: updated, amount: updated.length > 0 ? totalAmt : editingTransfer.amount });
           };
           const removeEditLeg = (legId: string) => {
             const updated = editLegs.filter(l => l.id !== legId).map((l, i) => ({ ...l, legNumber: i + 1 }));
             const totalAmt = updated.reduce((s, l) => s + l.amount, 0);
-            const carrierStr = updated.map(l => l.carrier).filter(Boolean).join(' → ');
-            setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount, carrier: updated.length > 0 ? carrierStr : editingTransfer.carrier });
+            setEditingTransfer({ ...editingTransfer, legs: updated.length > 0 ? updated : undefined, amount: updated.length > 0 ? totalAmt : editingTransfer.amount });
           };
           return (
           <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
@@ -30052,15 +30087,16 @@ export default function App() {
                     <label className="text-[10px] uppercase font-bold opacity-60">PO No.</label>
                     <input type="text" value={editingTransfer.po || ''} onChange={(e) => setEditingTransfer({...editingTransfer, po: e.target.value})} placeholder="e.g. PO-12345" className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none" />
                   </div>
-                  {!hasLegs && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
-                      <select value={editingTransfer.carrier} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
-                        <option value="">Select Carrier</option>
-                        {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                      </select>
-                    </div>
-                  )}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Carrier</label>
+                    <select value={singleCarrier(editingTransfer.carrier)} onChange={(e) => setEditingTransfer({...editingTransfer, carrier: e.target.value})} className="w-full bg-white border border-[#141414] p-2 text-sm focus:outline-none">
+                      <option value="">Select Carrier</option>
+                      {singleCarrier(editingTransfer.carrier) && !carriers.some(c => c.name === singleCarrier(editingTransfer.carrier)) && (
+                        <option value={singleCarrier(editingTransfer.carrier)}>{singleCarrier(editingTransfer.carrier)}</option>
+                      )}
+                      {carriers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -30237,8 +30273,10 @@ export default function App() {
                       let updatedTransfer = { ...editingTransfer };
                       if (updatedTransfer.legs && updatedTransfer.legs.length > 0) {
                         updatedTransfer.amount = updatedTransfer.legs.reduce((s, l) => s + l.amount, 0);
-                        updatedTransfer.carrier = updatedTransfer.legs.map(l => l.carrier).filter(Boolean).join(' → ');
                       }
+                      // ONE carrier on the transfer (its BOL/COA carrier) — the
+                      // transload carriers stay on their legs.
+                      updatedTransfer.carrier = singleCarrier(updatedTransfer.carrier) || singleCarrier(updatedTransfer.legs?.[0]?.carrier);
                       updatedTransfer = applyTransferLineItems(updatedTransfer);
                       setTransfers(transfers.map(t => t.id === editingTransfer.id ? updatedTransfer : t));
                       setEditingTransfer(null);
