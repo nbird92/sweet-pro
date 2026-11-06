@@ -211,6 +211,43 @@ function rawPriceUsdCwt(rawPriceUsdMt?: number): number | null {
   return v < 100 ? v : v / MT_TO_CWT;
 }
 
+/** Numeric text box that keeps EXACTLY what the user types while focused.
+ *  A plain controlled input bound to a parsed number re-renders "12." as "12"
+ *  (and "0.0" as "0"), so a decimal point could never be typed; converted
+ *  values (raws USD/cwt ⇄ USD/MT) were rewritten on every keystroke. This
+ *  holds the raw text locally, reports the parsed number on each change
+ *  (undefined when blank), and re-formats from the stored value on blur or
+ *  when the value changes from outside. */
+function DecimalInput({ value, onValue, className, placeholder }: {
+  value: number | null | undefined;
+  onValue: (v: number | undefined) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const fmt = (v: number | null | undefined) => (v == null || !isFinite(v) ? '' : String(v));
+  const [text, setText] = React.useState<string>(fmt(value));
+  const focused = React.useRef(false);
+  React.useEffect(() => { if (!focused.current) setText(fmt(value)); }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      placeholder={placeholder}
+      onFocus={(e) => { focused.current = true; e.target.select(); }}
+      onBlur={() => { focused.current = false; setText(fmt(value)); }}
+      onChange={(e) => {
+        const t = e.target.value.replace(/,/g, '');
+        if (!/^-?\d*\.?\d*$/.test(t)) return; // digits, one dot, optional leading minus
+        setText(t);
+        const n = parseFloat(t);
+        onValue(t === '' || t === '-' || t === '.' || !isFinite(n) ? undefined : n);
+      }}
+      className={className}
+    />
+  );
+}
+
 /** Normalize a free-text currency ("CDN$", "CDN", "CAD $", "USD$", "US funds")
  *  to a plain ISO code — demurrage invoices print it every which way, and each
  *  spelling otherwise shows up as its own "currency" in the table. */
@@ -23762,21 +23799,17 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Volume (MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.contractVolume || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, contractVolume: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingContract.contractVolume || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, contractVolume: v ?? 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Final Price (per MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.finalPrice || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, finalPrice: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingContract.finalPrice || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, finalPrice: v ?? 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -23877,11 +23910,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Margin (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.margin || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, margin: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingContract.margin || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, margin: v ?? 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -23926,68 +23957,53 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">FX Rate</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.fxRate ?? ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, fxRate: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                    <DecimalInput
+                      value={editingContract.fxRate}
+                      onValue={(v) => setEditingContract({ ...editingContract, fxRate: v })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Raws (USD/cwt)</label>
                     {/* Entered and shown in USD/cwt (the #11 quoting unit); stored as USD/MT. */}
-                    <input
-                      type="text" inputMode="decimal"
-                      value={(() => { const v = rawPriceUsdCwt(editingContract.rawPriceUsdMt); return v === null ? '' : String(Math.round(v * 100) / 100); })()}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => {
-                        const cwt = parseFloat(e.target.value);
-                        setEditingContract({
-                          ...editingContract,
-                          rawPriceUsdMt: e.target.value === '' || !isFinite(cwt) ? undefined : Math.round(cwt * MT_TO_CWT * 100) / 100,
-                        });
-                      }}
+                    <DecimalInput
+                      value={(() => { const v = rawPriceUsdCwt(editingContract.rawPriceUsdMt); return v === null ? undefined : Math.round(v * 10000) / 10000; })()}
+                      onValue={(cwt) => setEditingContract({
+                        ...editingContract,
+                        rawPriceUsdMt: cwt === undefined || cwt <= 0 ? undefined : cwt * MT_TO_CWT,
+                      })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.deliveredFreight ?? ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, deliveredFreight: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                    <DecimalInput
+                      value={editingContract.deliveredFreight}
+                      onValue={(v) => setEditingContract({ ...editingContract, deliveredFreight: v })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Export Duty</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.exportDuty ?? ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, exportDuty: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                    <DecimalInput
+                      value={editingContract.exportDuty}
+                      onValue={(v) => setEditingContract({ ...editingContract, exportDuty: v })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Pallet Charge</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.palletCharge ?? ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, palletCharge: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                    <DecimalInput
+                      value={editingContract.palletCharge}
+                      onValue={(v) => setEditingContract({ ...editingContract, palletCharge: v })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Volume Taken (MT) <span className="text-[8px] opacity-40">(table shows invoiced total)</span></label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingContract.volumeTaken || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingContract({ ...editingContract, volumeTaken: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingContract.volumeTaken || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, volumeTaken: v ?? 0 })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
