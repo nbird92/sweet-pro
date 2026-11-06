@@ -1179,6 +1179,8 @@ export interface LotCode {
   silo: 'East' | 'West' | 'North' | 'South' | '';
   /** Load number appended to the generated lot code (…-[Silo][loadNumber]). */
   loadNumber?: string;
+  /** Railcar load — the lot code uses "RC" in place of the product-group code. */
+  railcar?: boolean;
   brix: string;
   ph: string;
   color: string;

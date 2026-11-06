@@ -7,8 +7,9 @@
 // record. These helpers canonicalise the HS- family and compare lot numbers
 // whitespace-insensitively so a cleaned code still matches a legacy spaced copy.
 
-/** The canonical structured lot-code shape: HS-{sugar}{pg2}{cat}{yy}{jjj}-{silo}{load}. */
-const CANONICAL_LOT = /^HS-[RLMIBY]\d{2}[BC]\d{2}\d{3}-?[EWNS]?\d*$/i;
+/** The canonical structured lot-code shape: HS-{sugar}{pg2}{cat}{yy}{jjj}-{silo}{load}.
+ *  pg2 is a 2-digit product-group code, or "RC" for a railcar load. */
+const CANONICAL_LOT = /^HS-[RLMIBY](?:\d{2}|RC)[BC]\d{2}\d{3}-?[EWNS]?\d*$/i;
 
 /** Strip ALL internal whitespace from a structured (HS-…) lot code so it is in
  *  canonical form — but ONLY when the stripped result is a valid lot code. That

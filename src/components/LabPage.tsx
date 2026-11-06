@@ -37,6 +37,7 @@ const EMPTY_FORM = {
   lotNumber: '', tankNumber: '', date: '', julianDate: '',
   category: '' as 'Conventional' | 'Organic' | '',
   productGroup: '', silo: '' as 'East' | 'West' | 'North' | 'South' | '', loadNumber: '',
+  railcar: false,
   brix: '', ph: '', color: '', temperature: '',
   invert: '', ash: '', moisture: '', flavourOdourOk: '' as 'Yes' | 'No' | '',
   testerId: '', testerName: '', notes: '',
@@ -68,6 +69,7 @@ function getJulianDay(dateStr: string): string {
 }
 
 // Generate lot code: HS-[Type][Group][Conv/Org][YY][JJJ]-[Silo][loadNumber]
+// A railcar load replaces [Group] with "RC".
 function generateLotCode(form: typeof EMPTY_FORM): string {
   const plant = 'HS';
   const sugarTypeMap: Record<string, string> = {
@@ -77,7 +79,9 @@ function generateLotCode(form: typeof EMPTY_FORM): string {
   const sugarCode = sugarTypeMap[form.sugarType] || '?';
   const pg = form.productGroup.toLowerCase();
   let pgCode = '00';
-  if (pg.includes('tote')) {
+  if (form.railcar) {
+    pgCode = 'RC';
+  } else if (pg.includes('tote')) {
     pgCode = '10';
   } else if (pg.includes('pack') || pg.includes('bag')) {
     pgCode = '50';
@@ -109,7 +113,7 @@ function parseLotCode(lot: string): {
   // still parses, and make the pre-silo dash optional to accept the legacy
   // no-dash form ("HS-L00C26222S").
   const s = (lot || '').replace(/\s+/g, '').toUpperCase();
-  const m = s.match(/^HS-([RLMIBY])(\d{2})([BC])(\d{2})(\d{3})-?([EWNS]?)(\d*)$/);
+  const m = s.match(/^HS-([RLMIBY])(\d{2}|RC)([BC])(\d{2})(\d{3})-?([EWNS]?)(\d*)$/);
   if (!m) return {};
   const sugarMap: Record<string, string> = { R: 'Granulated', L: 'Liquid', M: 'Molasses', I: 'Icing', B: 'Brown', Y: 'Yellow' };
   const siloMap: Record<string, 'East' | 'West' | 'North' | 'South'> = { E: 'East', W: 'West', N: 'North', S: 'South' };
@@ -249,7 +253,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
   // the sugar type encoded in the same lot code. Falls back to sensible defaults
   // when no matching group is configured.
   const productGroupFromLotCode = (pgCode?: string, sugarType?: string): string => {
-    if (!pgCode) return '';
+    if (!pgCode || pgCode === 'RC') return '';
     const byKw = (kw: string) => productGroups.find(g => (g.name || '').toLowerCase().includes(kw))?.name || '';
     if (pgCode === '10') return byKw('tote') || 'Tote';
     if (pgCode === '50') return byKw('bag') || byKw('pack') || 'Bagged';
@@ -511,6 +515,7 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
       // lot-code group segment (00=bulk/liquid, 10=tote, 50=bag).
       category: lc.category || parsed.category || '', productGroup: lc.productGroup || productGroupFromShipment(lc) || productGroupFromLotCode(parsed.pgCode, parsed.sugarType) || '',
       silo: lc.silo || parsed.silo || '', loadNumber: lc.loadNumber || parsed.loadNumber || '',
+      railcar: !!lc.railcar || parsed.pgCode === 'RC',
       brix: lc.brix, ph: lc.ph, color: lc.color, temperature: lc.temperature,
       invert: lc.invert, ash: lc.ash || '', moisture: lc.moisture || '', flavourOdourOk: lc.flavourOdourOk,
       testerId: lc.testerId, testerName: lc.testerName,
@@ -1098,6 +1103,14 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
                       <td className="p-1.5">
                         <input type="text" value={formData.countryOfOrigin} onChange={(e) => updateForm({ countryOfOrigin: e.target.value })}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-1.5 text-sm focus:outline-none" placeholder="e.g. Brazil" />
+                      </td>
+                      <td className="p-2 text-[10px] uppercase font-bold opacity-60 border-l border-r border-[#141414]/10">Railcar</td>
+                      <td className="p-1.5">
+                        <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                          <input type="checkbox" checked={!!formData.railcar} onChange={(e) => updateForm({ railcar: e.target.checked })}
+                            className="w-4 h-4 accent-[#141414]" />
+                          <span className="opacity-60">Use "RC" in place of group</span>
+                        </label>
                       </td>
                     </tr>
                     <tr className="border-b border-[#141414]/10">
