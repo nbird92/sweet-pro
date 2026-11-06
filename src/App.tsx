@@ -6756,7 +6756,7 @@ export default function App() {
                   </select>
                 </td>
                 <td className="p-2">
-                  <input type="text" inputMode="decimal" value={transferLineDraft.qtyUnits || ''} onFocus={(e) => e.target.select()} onChange={(e) => setTransferLineDraft(v => ({ ...v, qtyUnits: parseFloat(e.target.value) || 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
+                  <DecimalInput value={transferLineDraft.qtyUnits || undefined} onValue={(num) => setTransferLineDraft(d => ({ ...d, qtyUnits: num ?? 0 }))} className="w-full bg-white border border-[#141414] p-2 text-xs text-right font-mono focus:outline-none" />
                 </td>
                 <td className="p-2">
                   <select value={transferLineDraft.contractNumber} onChange={(e) => setTransferLineDraft(v => ({ ...v, contractNumber: e.target.value }))} className="w-full bg-white border border-[#141414] p-2 text-xs font-mono focus:outline-none">
@@ -19226,7 +19226,7 @@ export default function App() {
                       </div>
                       <div className="col-span-2 space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-50">QTY (units)</label>
-                        <input type="text" inputMode="decimal" value={invLineItem.qty || ''} onFocus={(e) => e.target.select()} onChange={(e) => setInvLineItem({ ...invLineItem, qty: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]" />
+                        <DecimalInput value={invLineItem.qty || undefined} onValue={(v) => setInvLineItem({ ...invLineItem, qty: (v ?? 0) })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-xs outline-none focus:border-[#141414]" />
                       </div>
                       <div className="col-span-3 space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-50">Contract #</label>
@@ -23674,21 +23674,17 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={newFreightRate.cost || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, cost: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={newFreightRate.cost || undefined}
+                      onValue={(v) => setNewFreightRate({ ...newFreightRate, cost: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={newFreightRate.mtPerLoad || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={newFreightRate.mtPerLoad || undefined}
+                      onValue={(v) => setNewFreightRate({ ...newFreightRate, mtPerLoad: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -24487,21 +24483,17 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={editingFreightRate.cost || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, cost: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingFreightRate.cost || undefined}
+                      onValue={(v) => setEditingFreightRate({ ...editingFreightRate, cost: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT / Load</label>
-                    <input
-                      type="text" inputMode="decimal"
-                      value={editingFreightRate.mtPerLoad || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingFreightRate.mtPerLoad || undefined}
+                      onValue={(v) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -24651,11 +24643,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newCustomer.defaultMargin || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewCustomer({ ...newCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newCustomer.defaultMargin || undefined}
+                        onValue={(v) => setNewCustomer({ ...newCustomer, defaultMargin: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -25181,51 +25171,41 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (kg)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newSku.netWeightKg || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSku({ ...newSku, netWeightKg: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newSku.netWeightKg || undefined}
+                        onValue={(v) => setNewSku({ ...newSku, netWeightKg: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (kg)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newSku.grossWeightKg || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSku({ ...newSku, grossWeightKg: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newSku.grossWeightKg || undefined}
+                        onValue={(v) => setNewSku({ ...newSku, grossWeightKg: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newSku.brix || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSku({ ...newSku, brix: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newSku.brix || undefined}
+                        onValue={(v) => setNewSku({ ...newSku, brix: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newSku.maxColor || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSku({ ...newSku, maxColor: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newSku.maxColor || undefined}
+                        onValue={(v) => setNewSku({ ...newSku, maxColor: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={newSku.premiumCadMt || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setNewSku({ ...newSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={newSku.premiumCadMt || undefined}
+                        onValue={(v) => setNewSku({ ...newSku, premiumCadMt: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -25458,11 +25438,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={editingCustomer.defaultMargin || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingCustomer({ ...editingCustomer, defaultMargin: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={editingCustomer.defaultMargin || undefined}
+                        onValue={(v) => setEditingCustomer({ ...editingCustomer, defaultMargin: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -25968,11 +25946,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT)</label>
-                    <input
-                      type="text" inputMode="decimal"
-                        value={editingSku.premiumCadMt || ""}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setEditingSku({ ...editingSku, premiumCadMt: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                        value={editingSku.premiumCadMt || undefined}
+                        onValue={(v) => setEditingSku({ ...editingSku, premiumCadMt: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -26087,11 +26063,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={newFreightRate.cost || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, cost: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={newFreightRate.cost || undefined}
+                      onValue={(v) => setNewFreightRate({ ...newFreightRate, cost: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -26112,11 +26086,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT per Load</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={newFreightRate.mtPerLoad || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setNewFreightRate({ ...newFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={newFreightRate.mtPerLoad || undefined}
+                      onValue={(v) => setNewFreightRate({ ...newFreightRate, mtPerLoad: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -26215,11 +26187,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Cost (CAD)</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={editingFreightRate.cost || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, cost: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingFreightRate.cost || undefined}
+                      onValue={(v) => setEditingFreightRate({ ...editingFreightRate, cost: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -26240,11 +26210,9 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">MT per Load</label>
-                    <input 
-                      type="text" inputMode="decimal"
-                      value={editingFreightRate.mtPerLoad || ''}
-                      onFocus={(e) => e.target.select()}
-                      onChange={(e) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: parseFloat(e.target.value) || 0 })}
+                    <DecimalInput
+                      value={editingFreightRate.mtPerLoad || undefined}
+                      onValue={(v) => setEditingFreightRate({ ...editingFreightRate, mtPerLoad: (v ?? 0) })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -27197,11 +27165,9 @@ export default function App() {
                             </select>
                           </td>
                           <td className="p-2">
-                            <input
-                              type="text" inputMode="decimal"
-                              value={newLineItem.qty || ""}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) => setNewLineItem({...newLineItem, qty: parseFloat(e.target.value) || 0})}
+                            <DecimalInput
+                              value={newLineItem.qty || undefined}
+                              onValue={(v) => setNewLineItem({...newLineItem, qty: (v ?? 0)})}
                               className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none"
                             />
                           </td>
@@ -28391,13 +28357,11 @@ export default function App() {
                                       />
                                     </td>
                                     <td className="p-2">
-                                      <input
-                                        type="text" inputMode="decimal"
-                                        value={entry.qty || ''}
-                                        onFocus={(e) => e.target.select()}
-                                        onChange={(e) => {
+                                      <DecimalInput
+                                        value={entry.qty || undefined}
+                                        onValue={(v) => {
                                           const next = [...batchOrder.entries];
-                                          next[idx].qty = parseFloat(e.target.value) || 0;
+                                          next[idx].qty = (v ?? 0);
                                           setBatchOrder({...batchOrder, entries: next});
                                         }}
                                         className="w-full bg-white border border-[#141414]/20 p-1.5 text-xs focus:border-[#141414] outline-none w-20"
@@ -29877,7 +29841,7 @@ export default function App() {
                           </div>
                           <div className="space-y-0.5">
                             <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
-                            <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                            <DecimalInput value={leg.amount || undefined} onValue={(v) => updateLeg(leg.id, 'amount', (v ?? 0))} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                           </div>
                         </div>
                         <div className="grid grid-cols-3 gap-3">
@@ -30155,7 +30119,7 @@ export default function App() {
                         </div>
                         <div className="space-y-0.5">
                           <label className="text-[9px] uppercase font-bold opacity-50">Amount (MT)</label>
-                          <input type="text" inputMode="decimal" value={leg.amount || ''} onFocus={(e) => e.target.select()} onChange={(e) => updateEditLeg(leg.id, 'amount', parseFloat(e.target.value) || 0)} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
+                          <DecimalInput value={leg.amount || undefined} onValue={(v) => updateEditLeg(leg.id, 'amount', (v ?? 0))} className="w-full bg-white border border-[#141414]/30 p-1.5 text-xs focus:outline-none" />
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-3">
