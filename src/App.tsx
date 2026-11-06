@@ -6233,7 +6233,8 @@ export default function App() {
     // Scaled weight: the shipment's own Scaled Qty wins; else the invoiced MT
     // (split invoices share a BOL, so their qty sums).
     const invoicedMt = bolInvoices.reduce((sum, i) => sum + (typeof i.qty === 'number' && i.qty > 0 ? i.qty : 0), 0);
-    const scaledMt = (typeof ship.scaledQty === 'number' && ship.scaledQty > 0) ? ship.scaledQty : invoicedMt;
+    // (A scaled qty typed in KG — 1,000+ — is converted to MT.)
+    const scaledMt = (typeof ship.scaledQty === 'number' && ship.scaledQty > 0) ? transferQtyMt(ship.scaledQty) : invoicedMt;
     if (scaledMt > 0) {
       ship = { ...ship, qty: scaledMt, scaledQty: scaledMt };
       if (order) order = { ...order, lineItems: rescaleLineItemsToMt(order.lineItems || [], scaledMt) };
@@ -6660,7 +6661,8 @@ export default function App() {
       const lots = tLots.length ? tLots : schedLots;
       // ONE carrier: the transfer's Carrier field (never the transload carriers).
       const carrierName = singleCarrier(t.carrier) || singleCarrier(sched?.carrier);
-      const scaledMt = sched && typeof sched.scaledQty === 'number' && sched.scaledQty > 0 ? sched.scaledQty : 0;
+      // The booked shipment's Scaled Qty may have been entered in KG — use MT.
+      const scaledMt = sched && typeof sched.scaledQty === 'number' && sched.scaledQty > 0 ? transferQtyMt(sched.scaledQty) : 0;
       // Line weights in MT (KG-sized line weights are converted).
       const tLines = (t.lineItems || []).map(normalizeLineMt);
       const linesMt = tLines.reduce((s, li) => s + (li.totalWeight || 0), 0);

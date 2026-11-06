@@ -205,13 +205,18 @@ export function renderBolInto(doc: jsPDF, {
   // Scaled Qty (MT), every goods figure — Qty (MT), Qty (Units), Net and Gross —
   // derives from it, split across lines in proportion to their ordered weight.
   // Without a scaled qty the ordered quantities print as before.
-  const scaledMt = typeof shipment.scaledQty === 'number' && shipment.scaledQty > 0 ? shipment.scaledQty : 0;
+  // Every weight here is MT. No single load (order <= 200 MT, transfer < 1,000 MT)
+  // reaches 1,000 MT, so a value that large was stored in KG — convert it, or a
+  // 48.31 MT load prints as 48,310 MT with net/gross 1,000x too large.
+  const mtOf = (v: unknown): number => { const n = Number(v) || 0; return n >= 1000 ? n / 1000 : (n > 0 ? n : 0); };
+  const scaledMt = mtOf(shipment.scaledQty);
   const fmtUnits = (n: number) => String(Math.round(n * 100) / 100);
 
   if (order?.lineItems && order.lineItems.length > 0) {
-    const orderedMt = order.lineItems.reduce((s, li) => s + (li.totalWeight > 0 ? li.totalWeight : 0), 0);
+    const lines = order.lineItems.map(li => ({ ...li, totalWeight: mtOf(li.totalWeight) }));
+    const orderedMt = lines.reduce((s, li) => s + li.totalWeight, 0);
     const ratio = scaledMt > 0 && orderedMt > 0 ? scaledMt / orderedMt : 1;
-    order.lineItems.forEach(item => {
+    lines.forEach(item => {
       // Per-unit net & gross weight, matched on productKey then name, with
       // fallbacks so neither column is blank (gross ≈ net when no tare known).
       // Resolved from the ORDERED line so the per-unit weight isn't skewed by scaling.
@@ -222,8 +227,11 @@ export function renderBolInto(doc: jsPDF, {
       const units = ratio !== 1
         ? (netWt > 0 && lineMt > 0 ? (lineMt * 1000) / netWt : (item.qty || 0) * ratio)
         : (item.qty || 0);
-      const itemNet = ratio !== 1 && lineMt > 0 ? lineMt * 1000 : netWt * units;
-      const itemGross = ratio !== 1 && lineMt > 0 && netWt > 0 ? itemNet * (grossWt / netWt) : grossWt * units;
+      // Net (kg) = the line's MT x 1000 whenever its weight is known — never the
+      // catalog per-unit weight x units, which disagrees when a line's units and
+      // per-unit weight don't line up. Gross keeps the catalog gross/net ratio.
+      const itemNet = lineMt > 0 ? lineMt * 1000 : netWt * units;
+      const itemGross = lineMt > 0 ? (netWt > 0 && grossWt > 0 ? itemNet * (grossWt / netWt) : itemNet) : grossWt * units;
       totalNetWeight += itemNet;
       totalGrossWeight += itemGross;
 
@@ -241,7 +249,7 @@ export function renderBolInto(doc: jsPDF, {
   } else {
     // No line items — fall back to the order's product field (matches what
     // the order row shows in the Orders table) before the shipment's.
-    const mt = scaledMt || shipment.qty || 0;
+    const mt = scaledMt || mtOf(shipment.qty);
     // A scaled weight gives an exact net (MT × 1000); gross needs a tare we don't
     // have, so it stays blank. Unscaled shipment.qty can be a truck count, so no net.
     totalNetWeight = scaledMt * 1000;
