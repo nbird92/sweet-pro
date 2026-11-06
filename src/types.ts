@@ -577,6 +577,8 @@ export interface Order {
   excludeFromTolling?: boolean; // unticked "Tolling Fees" box — omit from tolling fee calculations/reports
   customsEntryNo?: string;  // Customs entry number
   lotCode?: string;         // Lot code(s) — e.g. mapped from an order-sheet-sync column
+  /** Scaled (weighed) quantity in MT — mirrored with the linked shipment's Scaled Qty (by BOL). */
+  scaledQtyMt?: number;
 }
 
 /** One row in the Email Center's PO-import dashboard. Written by the app each

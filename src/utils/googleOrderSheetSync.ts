@@ -63,6 +63,8 @@ export interface ParsedOrderRow {
   deliveryDate: string; // ISO YYYY-MM-DD
   /** Ordered quantity in metric tonnes */
   quantityMT: number;
+  /** Scaled (weighed) quantity in MT — the "Scaled QTY (MT)" column, when mapped. */
+  scaledQtyMt?: number;
   invoiceNumber: string;
   status: string;
   /** Contract number from the sheet (column W on LIQ/TOT/DRY, N on Molasses) */
@@ -970,6 +972,8 @@ export interface ColumnMap {
   shipmentDate?: number;
   deliveryDate?: number;
   quantityMT?: number;
+  /** Scaled QTY (MT) — written to Order.scaledQtyMt. */
+  scaledQtyMt?: number;
   invoiceNumber?: number;
   status?: number;
   contractNumber?: number;
@@ -1202,7 +1206,8 @@ export function autoDetectColumns(...headerRows: string[][]): ColumnMap {
     bolNumber: find(h => h === 'bol' || h === 'bol #' || h === 'bol number' || /bill of lading/.test(h) || /^bol date$/.test(h)),
     shipmentDate: find(h => /^load(?:ing)? date$|^ship(?:ment)? date$|^bol date$/.test(h)),
     deliveryDate: find(h => /^deliver(?:y)? date$/.test(h)),
-    quantityMT: find(h => /^qty|quantity|^ordered qty|qty shipped/.test(h)),
+    quantityMT: find(h => !/scaled/.test(h) && /^qty|quantity|^ordered qty|qty shipped/.test(h)),
+    scaledQtyMt: find(h => /scaled/.test(h) && /qty|quantity|weight|mt/.test(h)),
     invoiceNumber: find(h => h === 'invoice #' || h === 'invoice no' || h === 'invoice number'),
     status: find(h => h === 'status' || /cancel/.test(h)),
     contractNumber: find(h => h === 'contract' || h === 'contract #' || h === 'contract number' || h === 'p contract'),
@@ -1303,6 +1308,7 @@ export function parseConfiguredTab(
     const transferNoRaw = cell(row, cm.transferNumber);
     const lotRaw = cell(row, cm.lotCode);
     const papsRaw = cell(row, cm.papsNo);
+    const scaledRaw = cell(row, cm.scaledQtyMt);
     const customsEntryRaw = cell(row, cm.customsEntryNo);
     const reversalsRaw = cell(row, cm.reversals);
     const brixRaw = cell(row, cm.brix);
@@ -1377,6 +1383,7 @@ export function parseConfiguredTab(
       // NaN here when the cell was blank or non-numeric — the converter
       // skips those rows with a clear reason rather than importing qty 0.
       quantityMT: qty,
+      scaledQtyMt: (() => { const n = parseFloat((scaledRaw || '').replace(/,/g, '')); return Number.isFinite(n) && n > 0 ? n : undefined; })(),
       invoiceNumber: invoiceVal,
       status,
       contractNumber: contractRaw,
@@ -1588,6 +1595,7 @@ export function parsedRowsToOrdersConfigured(
         if (blank(o.lotCode) && r.lotCode) p.lotCode = r.lotCode;
         if (blank(o.papsNo) && r.papsNo) p.papsNo = r.papsNo;
         if (blank(o.customsEntryNo) && r.customsEntryNo) p.customsEntryNo = r.customsEntryNo;
+        if (blank(o.scaledQtyMt) && r.scaledQtyMt) p.scaledQtyMt = r.scaledQtyMt;
         if (blank(o.shipToLocationId) && shipToLocationId) p.shipToLocationId = shipToLocationId;
         return p;
       };
@@ -1694,6 +1702,7 @@ export function parsedRowsToOrdersConfigured(
         ...(r.papsNo ? { papsNo: r.papsNo } : {}),
         ...(r.customsEntryNo ? { customsEntryNo: r.customsEntryNo } : {}),
         ...(r.lotCode ? { lotCode: r.lotCode } : {}),
+        ...(r.scaledQtyMt ? { scaledQtyMt: r.scaledQtyMt } : {}),
       };
       result.newOrders.push(stripUndefined(newOrder));
       if (bolU) addedBOLs.add(bolU);
@@ -1800,6 +1809,7 @@ export const ORDER_FIELDS: Array<{ key: keyof ColumnMap; label: string; required
   { key: 'shipmentDate', label: 'Shipment Date', required: true },
   { key: 'deliveryDate', label: 'Delivery Date' },
   { key: 'quantityMT', label: 'Quantity (MT)', required: true },
+  { key: 'scaledQtyMt', label: 'Scaled QTY (MT)' },
   { key: 'contractNumber', label: 'Contract Number' },
   { key: 'splitNumber', label: 'Split Number' },
   { key: 'lotCode', label: 'Lot Code' },

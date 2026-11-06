@@ -696,6 +696,7 @@ export default function App() {
   const [orderLocation, setOrderLocation] = useState('');
   const [orderCurrency, setOrderCurrency] = useState('');
   const [orderShipToId, setOrderShipToId] = useState<string>(''); // ship-to location id under the selected customer
+  const [orderScaledQty, setOrderScaledQty] = useState<number | undefined>(undefined); // Scaled QTY (MT)
   const [orderPapsNo, setOrderPapsNo] = useState('');          // PAPS number (customs)
   const [orderIncludeTolling, setOrderIncludeTolling] = useState(true); // "Tolling Fees" tick box
   const [orderCustomsEntryNo, setOrderCustomsEntryNo] = useState(''); // Customs entry number
@@ -5829,6 +5830,20 @@ export default function App() {
     }
     // Durable at click time — same rule as order/invoice saves.
     saveNow(COLLECTIONS.shipments, [s]);
+    // Scaled QTY (MT) is mirrored shipment <-> order (by BOL): a value entered or
+    // cleared in the Edit Shipment menu is written to the linked order(s).
+    const prevShip = [...hamiltonShipments, ...vancouverShipments].find(x => x.id === s.id);
+    const posMt = (v?: number) => (typeof v === 'number' && v > 0 ? v : undefined);
+    const newScaled = posMt(s.scaledQty);
+    const bolU = (s.bol || '').trim().toUpperCase();
+    if (bolU && newScaled !== posMt(prevShip?.scaledQty)) {
+      const linked = orders.filter(o => (o.bolNumber || '').trim().toUpperCase() === bolU && posMt(o.scaledQtyMt) !== newScaled);
+      if (linked.length) {
+        const ids = new Set(linked.map(o => o.id));
+        setOrders(prev => prev.map(o => ids.has(o.id) ? { ...o, scaledQtyMt: newScaled } : o));
+        saveNow(COLLECTIONS.orders, linked.map(o => ({ ...o, scaledQtyMt: newScaled })));
+      }
+    }
   };
 
   const buildReturnOrderDraftFromInvoice = (inv: Invoice): ReturnOrder => {
@@ -6885,6 +6900,10 @@ export default function App() {
       const lc = lotCodes.find(l => (l.trailerNumber || '').trim()
         && ((bol && (l.bolNumber || '').trim() === bol) || (!!pk && poKey(l.customerPo) === pk)));
       if (lc?.trailerNumber) patch.trailerNo = lc.trailerNumber;
+    }
+    if (!(typeof editingShipment.scaledQty === 'number' && editingShipment.scaledQty > 0) && bol) {
+      const ord = orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bol.toUpperCase() && typeof o.scaledQtyMt === 'number' && o.scaledQtyMt > 0);
+      if (ord) patch.scaledQty = ord.scaledQtyMt;
     }
     if (Object.keys(patch).length) setEditingShipment(prev => prev ? { ...prev, ...patch } : prev);
     // Keyed on the shipment id so it runs once per open and can't loop on its own patch.
@@ -8593,6 +8612,40 @@ export default function App() {
       if (van.count > 0) setVancouverShipments(van.updated);
     }
   }, [orders, hamiltonShipments, vancouverShipments]);
+
+  // Scaled QTY (MT): a shipment with a blank Scaled Qty is auto-populated from
+  // its order's Scaled QTY (MT), matched by BOL. Fills blanks only (never
+  // overwrites), so it converges; clears flow through the explicit save paths.
+  useEffect(() => {
+    if (!lastSynced) return;
+    const byBol = new Map<string, number>();
+    for (const o of orders) {
+      const b = (o.bolNumber || '').trim().toUpperCase();
+      if (b && typeof o.scaledQtyMt === 'number' && o.scaledQtyMt > 0 && !byBol.has(b)) byBol.set(b, o.scaledQtyMt);
+    }
+    if (!byBol.size) return;
+    const changed: Shipment[] = [];
+    const fill = (list: Shipment[]) => {
+      let any = false;
+      const next = list.map(s => {
+        if (typeof s.scaledQty === 'number' && s.scaledQty > 0) return s;
+        const v = byBol.get((s.bol || '').trim().toUpperCase());
+        if (!v) return s;
+        any = true;
+        const n = { ...s, scaledQty: v };
+        changed.push(n);
+        return n;
+      });
+      return any ? next : list;
+    };
+    const ham = fill(hamiltonShipments);
+    const van = fill(vancouverShipments);
+    if (!changed.length) return;
+    if (ham !== hamiltonShipments) setHamiltonShipments(ham);
+    if (van !== vancouverShipments) setVancouverShipments(van);
+    saveNow(COLLECTIONS.shipments, changed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, hamiltonShipments, vancouverShipments, lastSynced]);
 
   // Sync QA product edits back to the Products (SKU) table
   // Updates existing SKUs and creates new ones for QA products with no match
@@ -13726,6 +13779,9 @@ export default function App() {
         } else if (key === 'pricePerMt') {
           aVal = orderPricePerMt(a);
           bVal = orderPricePerMt(b);
+        } else if (key === 'scaledQtyMt') {
+          aVal = a.scaledQtyMt ?? -1;
+          bVal = b.scaledQtyMt ?? -1;
         } else {
           aVal = (a as any)[key] ?? '';
           bVal = (b as any)[key] ?? '';
@@ -13958,6 +14014,7 @@ export default function App() {
                   <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Order Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  <SortableHeader label="Scaled QTY (MT)" sortKey="scaledQtyMt" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="PO No." sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
                   <SortableHeader label="Delivery Date" sortKey="deliveryDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -13974,7 +14031,7 @@ export default function App() {
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={17} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={18} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       {orders.length === 0 ? (
                         'No orders yet. Use "Add Order" to create new orders.'
                       ) : searchTerm ? (
@@ -14031,6 +14088,7 @@ export default function App() {
                         <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || ordRes.contractNumber || '—'}</td>
                         <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${totalWeight.toFixed(2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{(totalWeight * 1000).toFixed(0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{typeof ord.scaledQtyMt === 'number' && ord.scaledQtyMt > 0 ? ord.scaledQtyMt.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po || ordRes.po || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
@@ -14134,7 +14192,7 @@ export default function App() {
                               setOrderShipToId(ord.shipToLocationId || '');
                               setOrderLocation(ord.location || '');
                               setOrderCurrency(ord.currency || '');
-                              setOrderPapsNo(ord.papsNo || ''); setOrderIncludeTolling(!ord.excludeFromTolling);
+                              setOrderPapsNo(ord.papsNo || ''); setOrderScaledQty(ord.scaledQtyMt); setOrderIncludeTolling(!ord.excludeFromTolling);
                               setOrderCustomsEntryNo(ord.customsEntryNo || '');
                               setOrderLineItems(ord.lineItems);
                               setEditingLineItemIdx(null);
@@ -19852,7 +19910,7 @@ export default function App() {
                         setOrderShipToId(viewingOrderCard.shipToLocationId || '');
                         setOrderLocation(viewingOrderCard.location || '');
                         setOrderCurrency(viewingOrderCard.currency || '');
-                        setOrderPapsNo(viewingOrderCard.papsNo || ''); setOrderIncludeTolling(!viewingOrderCard.excludeFromTolling);
+                        setOrderPapsNo(viewingOrderCard.papsNo || ''); setOrderScaledQty(viewingOrderCard.scaledQtyMt); setOrderIncludeTolling(!viewingOrderCard.excludeFromTolling);
                         setOrderCustomsEntryNo(viewingOrderCard.customsEntryNo || '');
                         setOrderLineItems(viewingOrderCard.lineItems);
                         if (cust) setFilteredOrderContracts(contractsForCustomer(cust));
@@ -26799,7 +26857,7 @@ export default function App() {
                   setOrderShipToId(ord.shipToLocationId || '');
                   setOrderLocation(ord.location || '');
                   setOrderCurrency(ord.currency || '');
-                  setOrderPapsNo(ord.papsNo || ''); setOrderIncludeTolling(!ord.excludeFromTolling);
+                  setOrderPapsNo(ord.papsNo || ''); setOrderScaledQty(ord.scaledQtyMt); setOrderIncludeTolling(!ord.excludeFromTolling);
                   setOrderCustomsEntryNo(ord.customsEntryNo || '');
                   setOrderLineItems(ord.lineItems);
                   setEditingLineItemIdx(null);
@@ -26901,7 +26959,7 @@ export default function App() {
                 <h3 className="text-xs font-bold uppercase tracking-widest">
                   {isAddingOrder ? 'Add New Order' : 'Edit Order'}
                 </h3>
-                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setOrderPapsNo(''); setOrderCustomsEntryNo(''); setOrderIncludeTolling(true); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
+                <button onClick={() => { setIsAddingOrder(false); setEditingOrder(null); setOrderLineItems([]); setOrderCustomerId(''); setOrderCustomerNumberInput(''); setOrderPO(''); setOrderShipmentDate(''); setOrderDeliveryDate(''); setOrderCarrier('Customer Pick Up'); setOrderShippingTerms(''); setOrderLocation(''); setOrderShipToId(''); setOrderPapsNo(''); setOrderScaledQty(undefined); setOrderCustomsEntryNo(''); setOrderIncludeTolling(true); setEditingLineItemIdx(null); setNewLineItem({ productName: '', productKey: '', productDisplayName: '', qty: 0, contractNumber: '' }); }} className="hover:rotate-90 transition-transform">
                   <X size={18} />
                 </button>
               </div>
@@ -27094,6 +27152,15 @@ export default function App() {
                           value={orderCustomsEntryNo}
                           onChange={(e) => setOrderCustomsEntryNo(e.target.value)}
                           placeholder="Customs entry number"
+                          className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] uppercase font-bold opacity-60">Scaled QTY (MT)</label>
+                        <DecimalInput
+                          value={orderScaledQty}
+                          onValue={(v) => setOrderScaledQty(v)}
+                          placeholder="Weighed MT"
                           className="w-full bg-white border border-[#141414] p-2 text-sm font-mono focus:outline-none"
                         />
                       </div>
@@ -27489,6 +27556,7 @@ export default function App() {
                           splitNumber: editingOrder.splitNumber,
                           palletType: firstContract?.palletType || editingOrder.palletType || '',
                           papsNo: orderPapsNo.trim() || undefined,
+                          scaledQtyMt: orderScaledQty && orderScaledQty > 0 ? orderScaledQty : undefined,
                           excludeFromTolling: orderIncludeTolling ? undefined : true,
                           customsEntryNo: orderCustomsEntryNo.trim() || undefined,
                         };
@@ -27517,6 +27585,9 @@ export default function App() {
                               // The order's shipment date is the pick-up date.
                               date: updatedOrder.shipmentDate || s.date,
                               deliveryDate: updatedOrder.deliveryDate || s.deliveryDate,
+                              // Scaled QTY (MT) is mirrored order <-> shipment: push it
+                              // across only when it was changed on this order.
+                              scaledQty: updatedOrder.scaledQtyMt !== editingOrder.scaledQtyMt ? updatedOrder.scaledQtyMt : s.scaledQty,
                             };
                             changedShipments.push(next);
                             return next;
@@ -27575,7 +27646,7 @@ export default function App() {
                       setOrderLocation('');
                       setOrderCurrency('');
                       setOrderShipToId('');
-                      setOrderPapsNo('');
+                      setOrderPapsNo(''); setOrderScaledQty(undefined);
                       setOrderIncludeTolling(true);
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
@@ -27677,7 +27748,7 @@ export default function App() {
                       setOrderLocation('');
                       setOrderCurrency('');
                       setOrderShipToId('');
-                      setOrderPapsNo('');
+                      setOrderPapsNo(''); setOrderScaledQty(undefined);
                       setOrderIncludeTolling(true);
                       setOrderCustomsEntryNo('');
                       setOrderCustomerNumberInput('');
