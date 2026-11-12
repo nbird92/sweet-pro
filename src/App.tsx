@@ -5180,7 +5180,12 @@ export default function App() {
       const s = (stored || '').trim();
       if (!s) return null;
       const canon = canonical.get(norm(s));
-      return canon && canon !== s ? canon : null; // only when it differs
+      // Compare against the value AS STORED, not the trimmed copy: a catalog name
+      // with a stray leading/trailing space never equals the trimmed string, so
+      // the same name was rewritten on every pass — new order/invoice objects each
+      // time, an endless render loop that kept the whole app busy (every click
+      // waited seconds to show).
+      return canon && canon !== stored ? canon : null; // only when it differs
     };
 
     let ordersChanged = false;
