@@ -5846,6 +5846,20 @@ export default function App() {
    *  UPSERTS: the old inline handlers used prev.map(), which silently dropped a
    *  shipment that wasn't already in a list (and defaulted an unknown record to
    *  Vancouver). Anything not found is inserted into its own site's schedule. */
+  /** Change an order's status so it shows LIVE: functional state update (no
+   *  stale closure), the open order card kept in step, and a durable write at
+   *  click time — a debounced autosave could be overtaken by the periodic server
+   *  pull, which put the old status back until a later sync. */
+  const applyOrderStatus = (orderId: string, status: Order['status']): Order | undefined => {
+    const current = orders.find(o => o.id === orderId);
+    if (!current) return undefined;
+    const updated: Order = { ...current, status };
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+    setViewingOrderCard(prev => prev && prev.id === orderId ? { ...prev, status } : prev);
+    saveNow(COLLECTIONS.orders, [updated]);
+    return updated;
+  };
+
   const saveShipmentEdits = (s: Shipment) => {
     if (hamiltonShipments.some(x => x.id === s.id)) {
       setHamiltonShipments(prev => prev.map(x => x.id === s.id ? s : x));
@@ -14182,7 +14196,7 @@ export default function App() {
                                 setPendingStatusChange({ orderId: ord.id, newStatus });
                                 setShowOrderConfirmation(true);
                               } else {
-                                setOrders(orders.map(o => o.id === ord.id ? { ...o, status: newStatus } : o));
+                                applyOrderStatus(ord.id, newStatus);
                               }
                             }}
                             className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] focus:outline-none cursor-pointer ${
@@ -29192,21 +29206,19 @@ export default function App() {
                           onClick={() => {
                             if (isCancelling) {
                               // Cancel order and delete associated shipments
-                              setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Cancelled' } : o));
+                              applyOrderStatus(pendingStatusChange.orderId, 'Cancelled');
                               if (orderBol && associatedShipments.length > 0) {
+                                recordUserDeletes(COLLECTIONS.shipments, associatedShipments.map(s => s.id));
                                 setHamiltonShipments(prev => prev.filter(s => (s.bol || '').trim() !== orderBol));
                                 setVancouverShipments(prev => prev.filter(s => (s.bol || '').trim() !== orderBol));
                               }
                             } else {
-                              setOrders(orders.map(o => o.id === pendingStatusChange.orderId ? { ...o, status: 'Confirmed' } : o));
+                              const confirmedOrder = applyOrderStatus(pendingStatusChange.orderId, 'Confirmed');
                               // Auto-send on Confirmed is opt-in via Email
                               // Center → Settings → Triggers. Phase 1 keeps
                               // sends manual (button on the order detail card).
-                              if (emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
-                                const confirmedOrder = orders.find(o => o.id === pendingStatusChange.orderId);
-                                if (confirmedOrder) {
-                                  sendOrderConfirmationEmail({ ...confirmedOrder, status: 'Confirmed' }, { triggeredBy: 'automation' });
-                                }
+                              if (confirmedOrder && emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
+                                sendOrderConfirmationEmail(confirmedOrder, { triggeredBy: 'automation' });
                               }
                             }
                             setShowOrderConfirmation(false);
