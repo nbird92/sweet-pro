@@ -1733,7 +1733,32 @@ export default function App() {
   // the raw (order-inherited, unscaled) values when you switch from view to edit.
   const openInvoiceForEdit = (inv: Invoice) => {
     const { rows } = resolveInvoiceRows(inv);
-    setEditingInvoiceCard(rows.length ? { ...inv, lineItems: rows.map(r => r.effectiveItem) } : { ...inv });
+    const base = rows.length ? { ...inv, lineItems: rows.map(r => r.effectiveItem) } : { ...inv };
+    // Blank Shipment / Delivery dates are filled from the order (else its shipment).
+    const d = invoiceDatesFromSources(inv);
+    setEditingInvoiceCard({
+      ...base,
+      shipmentDate: (base.shipmentDate || '').trim() || d.shipmentDate || base.shipmentDate,
+      deliveryDate: (base.deliveryDate || '').trim() || d.deliveryDate || base.deliveryDate,
+    });
+  };
+
+  /** Shipment + delivery dates for an invoice from its ORDER (matched by BOL, then
+   *  by a numeric PO of 5+ digits), falling back to the shipment-schedule row with
+   *  the same BOL (pick-up date / delivery date). Billed orders are removed once
+   *  their invoice exists, so the schedule row is often the only source left. */
+  const invoiceDatesFromSources = (inv: Invoice): { shipmentDate?: string; deliveryDate?: string } => {
+    const bol = (inv.bolNumber || '').trim().toUpperCase();
+    const pk = poKey(inv.po);
+    const numericPo = /^\d{5,}$/.test(pk);
+    const order = (bol ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bol) : undefined)
+      || (numericPo ? orders.find(o => poKey(o.po) === pk) : undefined);
+    const ship = bol ? [...hamiltonShipments, ...vancouverShipments].find(x => (x.bol || '').trim().toUpperCase() === bol) : undefined;
+    const t = (v?: string) => (v || '').trim() || undefined;
+    return {
+      shipmentDate: t(order?.shipmentDate) || t(ship?.date) || ((inv.id || '').startsWith('INV-IMPORT-') ? t(inv.date) : undefined),
+      deliveryDate: t(order?.deliveryDate) || t(ship?.deliveryDate),
+    };
   };
 
   // Commit a new line-item list onto the invoice being edited and recompute the
@@ -5138,16 +5163,53 @@ export default function App() {
     if (ham.count > 0) setHamiltonShipments(ham.updated);
     if (van.count > 0) setVancouverShipments(van.updated);
 
-    // Invoice.deliveryDate ← matching Order.deliveryDate (only when blank).
-    if (oDelivBol.size || oDelivPo.size) {
+    // Invoice.shipmentDate / deliveryDate ← the matching ORDER (BOL, then numeric
+    // PO), else the shipment-schedule row with the same BOL. Only BLANK fields are
+    // filled, and only with a non-empty value, so this converges (no loop).
+    {
+      const oShipBol = new Map<string, string>();
+      const oShipPo = new Map<string, string>();
+      for (const o of orders) {
+        const d = (o.shipmentDate || '').trim();
+        if (!d) continue;
+        const bol = (o.bolNumber || '').trim().toUpperCase();
+        if (bol && !oShipBol.has(bol)) oShipBol.set(bol, d);
+        const po = poKey(o.po);
+        if (po && !oShipPo.has(po)) oShipPo.set(po, d);
+      }
+      const sShipBol = new Map<string, string>();
+      const sDelivBol = new Map<string, string>();
+      for (const sh of [...hamiltonShipments, ...vancouverShipments]) {
+        const bol = (sh.bol || '').trim().toUpperCase();
+        if (!bol) continue;
+        const sd = (sh.date || '').trim();
+        const dd = (sh.deliveryDate || '').trim();
+        if (sd && !sShipBol.has(bol)) sShipBol.set(bol, sd);
+        if (dd && !sDelivBol.has(bol)) sDelivBol.set(bol, dd);
+      }
       let invChanged = false;
       const nextInv = invoices.map(inv => {
-        if ((inv.deliveryDate || '').trim()) return inv;
+        const needShip = !(inv.shipmentDate || '').trim();
+        const needDeliv = !(inv.deliveryDate || '').trim();
+        if (!needShip && !needDeliv) return inv;
         const bol = (inv.bolNumber || '').trim().toUpperCase();
-        const po = poKey(inv.po);
-        const d = (bol && oDelivBol.get(bol)) || (po && oDelivPo.get(po));
-        if (d) { invChanged = true; return { ...inv, deliveryDate: d }; }
-        return inv;
+        const pk = poKey(inv.po);
+        const po = /^\d{5,}$/.test(pk) ? pk : '';
+        const patch: Partial<Invoice> = {};
+        if (needShip) {
+          // Last resort for sheet-imported invoices: their own `date` IS the sheet's
+          // loading (shipment) date.
+          const importedDate = (inv.id || '').startsWith('INV-IMPORT-') ? (inv.date || '').trim() : '';
+          const d = (bol && oShipBol.get(bol)) || (po && oShipPo.get(po)) || (bol && sShipBol.get(bol)) || importedDate;
+          if (d) patch.shipmentDate = d;
+        }
+        if (needDeliv) {
+          const d = (bol && oDelivBol.get(bol)) || (po && oDelivPo.get(po)) || (bol && sDelivBol.get(bol));
+          if (d) patch.deliveryDate = d;
+        }
+        if (!patch.shipmentDate && !patch.deliveryDate) return inv;
+        invChanged = true;
+        return { ...inv, ...patch };
       });
       if (invChanged) setInvoices(nextInv);
     }

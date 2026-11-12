@@ -499,6 +499,7 @@ export interface Invoice {
   splitNo?: string;
   dueDate?: string; // Calculated from date + customer payment terms
   deliveryDate?: string; // Delivery date carried from the matching order; propagated into the shipment
+  shipmentDate?: string; // Shipment (pick-up) date — from the matching order, else its shipment-schedule row
   trailerNo?: string;    // Trailer number(s) from the sync sheet; propagated into the shipment Trailer No. field
   lineItems?: OrderLineItem[]; // Line item details from the linked order
   shippingTerms?: string;

@@ -2057,6 +2057,8 @@ export function parsedRowsToInvoicesConfigured(
         if (blank(existingInv.reversals) && r.reversals) patch.reversals = r.reversals;
         if (blank(existingInv.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
         if (blank(existingInv.trailerNo) && r.trailerNo) patch.trailerNo = r.trailerNo;
+        if (blank(existingInv.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
+        if (blank(existingInv.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
         // Pricing backfill — price and amount filled independently, each only
         // when the existing invoice is missing it (never overwrites a value).
         if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
@@ -2124,6 +2126,9 @@ export function parsedRowsToInvoicesConfigured(
         amount,
         shipmentId: linkedOrder?.id || '',
         date: r.shipmentDate,
+        // The sheet's loading / delivery dates — shown as Shipment / Delivery Date.
+        ...(r.shipmentDate ? { shipmentDate: r.shipmentDate } : {}),
+        ...(r.deliveryDate ? { deliveryDate: r.deliveryDate } : {}),
         status: 'Open',
         ...(pricePerMt > 0 ? { pricePerMt } : {}),
         ...(r.splitNumber ? { splitNo: r.splitNumber } : {}),
