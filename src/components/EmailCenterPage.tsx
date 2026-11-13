@@ -240,18 +240,15 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   // An APPOINTMENT request — its own review table, separate from order
   // amendments. Legacy rows predate kind:'appointment' and carry
   // kind:'amendment' + a requested appointment time, so match on shape too.
-  // Appointment CHANGES that the model filed as kind:'amendment' (e.g. "Move load
-  // 3083910 to 15:00 on 11/12", "Change delivery time to 18:00", "Reschedule …
-  // for 23:00 loading time") also belong here: a pickup/delivery date or time
-  // change that isn't a quantity / split / cancellation request.
-  const APPT_WORDS = /\b(\d{1,2}:\d{2}|\d{1,2}\s?(?:am|pm)|resched\w*|appointment|appt|load(?:ing)? time|delivery time|pick-?up time|eta|move (?:load|po|order|delivery|pick-?up)|afternoon|morning)\b/i;
+  // Rows the model filed as kind:'amendment' join this table only when they
+  // change a TIME (appointment / delivery time, e.g. "Move load 3083910 to 15:00",
+  // "Change delivery time to 18:00"). A date-only move of the pick-up or delivery
+  // day is an order amendment and stays in the Order Amendments table.
   const isApptRequest = (a: PoAmendment) => {
     if (a.kind === 'appointment' || !!(a.requestedApptDate && a.requestedApptTime)) return true;
     if (a.kind === 'cancellation' || a.cancel || a.newSplitNumber) return false;
-    const timeTalk = APPT_WORDS.test(`${a.summary || ''}`);
-    const dateChange = !!(a.newShipmentDate || a.newDeliveryDate);
-    const qtyChange = typeof a.newQuantityMt === 'number';
-    return (dateChange && (!qtyChange || timeTalk)) || (timeTalk && !qtyChange);
+    const rt = requestedTimes(a);
+    return !!(rt.pickupTime || rt.deliveryTime);
   };
   // Amendment review queue — pending/unmatched first (need action), then newest.
   const sortQueue = (list: PoAmendment[]) => {
@@ -327,6 +324,63 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       // Asking for the slot it already has (e.g. "schedule confirmed").
       pickUnchanged: !!pickTime && reqPickDate === oldPickDate && pickTime === oldPickTime,
     };
+  };
+  /** Only the values a row CHANGES, as label + old → new. */
+  const changeItems = (a: PoAmendment): { label: string; from: string; to: string; danger?: boolean }[] => {
+    if (a.kind === 'cancellation' || a.cancel) return [{ label: 'Cancel order', from: '', to: '', danger: true }];
+    const c = apptView(a).cols;
+    const out: { label: string; from: string; to: string }[] = [];
+    const push = (label: string, from: string, to: string) => { if (to && to !== from) out.push({ label, from, to }); };
+    push('Pick-up date', c.pickDate.from, c.pickDate.to);
+    push('Appointment time', c.apptTime.from, c.apptTime.to);
+    push('Delivery date', c.delDate.from, c.delDate.to);
+    push('Delivery time', c.delTime.from, c.delTime.to);
+    if (typeof a.newQuantityMt === 'number') push('Quantity', a.prevQuantityMt != null ? `${a.prevQuantityMt.toFixed(2)} MT` : '', `${a.newQuantityMt.toFixed(2)} MT`);
+    if (a.newSplitNumber) push('Split', a.prevSplitNumber || '', a.newSplitNumber);
+    return out;
+  };
+  const renderChanges = (a: PoAmendment) => {
+    const items = changeItems(a);
+    if (!items.length) {
+      const v = apptView(a);
+      return <span className="opacity-60">{v.pickUnchanged ? `Confirms appointment time ${v.pickTime}` : (a.summary || 'See email')}</span>;
+    }
+    return (
+      <div className="space-y-0.5">
+        {items.map((it, i) => it.danger ? (
+          <div key={i} className="text-red-700 font-bold">Cancel order</div>
+        ) : (
+          <div key={i} className="whitespace-nowrap">
+            <span className="text-[10px] uppercase font-bold opacity-50 mr-1.5">{it.label}</span>
+            <span className="font-mono opacity-50">{it.from || '—'}</span>
+            <span className="opacity-40"> → </span>
+            <b className="font-mono text-violet-800">{it.to}</b>
+          </div>
+        ))}
+      </div>
+    );
+  };
+  /** Expanded row: the email the request came from (sender lives here now). */
+  const renderEmailRow = (a: PoAmendment, colSpan: number) => {
+    const mail = emailForAmendment(a);
+    return (
+      <tr className="bg-violet-50/60">
+        <td colSpan={colSpan} className="px-6 py-4 border-t border-violet-200">
+          <div className="text-[10px] uppercase font-bold opacity-60 mb-1">
+            {mail?.subject || a.subject || 'Email'}
+            <span className="normal-case font-normal opacity-80"> — {mail?.fromName ? `${mail.fromName} <${mail.fromEmail || a.fromEmail || ''}>` : (mail?.fromEmail || a.fromEmail || '')}</span>
+          </div>
+          {mail?.body || mail?.snippet ? (
+            <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed max-h-80 overflow-y-auto bg-white border border-[#141414]/10 p-3">{(mail.body || mail.snippet || '').trim()}</pre>
+          ) : (
+            <div className="text-xs bg-white border border-[#141414]/10 p-3">
+              <div className="opacity-60 italic mb-1">The email body isn't in the recent inbox feed — showing the extracted request.</div>
+              <div>{a.summary || amendmentChangeText(a)}</div>
+            </div>
+          )}
+        </td>
+      </tr>
+    );
   };
   const amendmentsSorted = useMemo(() => sortQueue(poAmendments.filter(a => !isApptRequest(a))), [poAmendments]);
   const pendingAmendments = poAmendments.filter(a => !isApptRequest(a) && (a.status === 'pending' || a.status === 'unmatched')).length;
@@ -660,13 +714,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">PO / BOL</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Pick-up Date</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Appointment Time</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Delivery Date</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Delivery Time</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Requested change</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Slot check / Suggested</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
                   <th className="p-3 bg-[#141414]">Actions</th>
@@ -681,34 +731,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     title="Click to show the email"
                   >
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
-                    <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
-                    {(() => {
-                      const v = apptView(a);
-                      // Arrow system in every column: whenever the email names a value,
-                      // show current → requested ('—' when there's no current value;
-                      // greyed when it matches). Otherwise just the current value.
-                      const Cell = ({ c }: { c: { from: string; to: string } }) => (
-                        <td className="p-3 text-xs font-mono whitespace-nowrap">
-                          {c.to ? (
-                            <span>
-                              <span className="opacity-50">{c.from || '—'}</span>
-                              <span className="opacity-40"> → </span>
-                              <b className={c.to !== c.from ? 'text-violet-800' : 'opacity-50'}>{c.to}</b>
-                            </span>
-                          ) : (
-                            <span className="opacity-60">{c.from || '—'}</span>
-                          )}
-                        </td>
-                      );
-                      return (<>
-                        <Cell c={v.cols.pickDate} />
-                        <Cell c={v.cols.apptTime} />
-                        <Cell c={v.cols.delDate} />
-                        <Cell c={v.cols.delTime} />
-                      </>);
-                    })()}
+                    <td className="p-3 text-xs">{renderChanges(a)}</td>
                     {(() => {
                       const v = apptView(a);
                       const { cur } = v;
@@ -760,27 +785,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       )}
                     </td>
                   </tr>
-                  {expandedApptId === a.id && (() => {
-                    const mail = emailForAmendment(a);
-                    return (
-                      <tr className="bg-violet-50/60">
-                        <td colSpan={12} className="px-6 py-4 border-t border-violet-200">
-                          <div className="text-[10px] uppercase font-bold opacity-60 mb-1">
-                            {mail?.subject || a.subject || 'Email'}
-                            <span className="normal-case font-normal opacity-80"> — {mail?.fromName ? `${mail.fromName} <${mail.fromEmail || a.fromEmail || ''}>` : (mail?.fromEmail || a.fromEmail || '')}</span>
-                          </div>
-                          {mail?.body || mail?.snippet ? (
-                            <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed max-h-80 overflow-y-auto bg-white border border-[#141414]/10 p-3">{(mail.body || mail.snippet || '').trim()}</pre>
-                          ) : (
-                            <div className="text-xs bg-white border border-[#141414]/10 p-3">
-                              <div className="opacity-60 italic mb-1">The email body isn't in the recent inbox feed — showing the extracted request.</div>
-                              <div>{a.summary || amendmentChangeText(a)}</div>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })()}
+                  {expandedApptId === a.id && renderEmailRow(a, 7)}
                   </React.Fragment>
                 ))}
               </tbody>
@@ -801,7 +806,6 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">PO No.</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Order (BOL)</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Requested change</th>
@@ -811,14 +815,18 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
                 {amendmentsSorted.map(a => (
-                  <tr key={a.id} className="hover:bg-[#F9F9F9]">
+                  <React.Fragment key={a.id}>
+                  <tr
+                    className={`cursor-pointer ${expandedApptId === a.id ? 'bg-violet-50' : 'hover:bg-[#F9F9F9]'}`}
+                    onClick={() => setExpandedApptId(id => (id === a.id ? null : a.id))}
+                    title="Click to show the email"
+                  >
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
-                    <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[140px] truncate">{a.poNumber || '—'}</div></td>
                     <td className="p-3 text-xs font-mono"><div className="max-w-[110px] truncate">{a.orderBol || '—'}</div></td>
-                    <td className={`p-3 text-xs ${a.kind === 'cancellation' || a.cancel ? 'text-red-700 font-bold' : ''}`} title={a.summary}><div className="max-w-[280px] truncate">{amendmentChangeText(a)}</div></td>
+                    <td className="p-3 text-xs">{renderChanges(a)}</td>
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
-                    <td className="p-3 whitespace-nowrap">
+                    <td className="p-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {a.status === 'pending' ? (
                         <div className="flex gap-2">
                           <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800">Apply</button>
@@ -836,6 +844,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       )}
                     </td>
                   </tr>
+                  {expandedApptId === a.id && renderEmailRow(a, 6)}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
