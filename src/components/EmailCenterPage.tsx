@@ -290,6 +290,13 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       oldDel: fmt(oldDelDate),
       newDel: fmt(newDelDate || oldDelDate, rt.deliveryTime),
       reqPickDate, pickTime,
+      // Separate columns: each is current -> requested (requested '' = no change asked).
+      cols: {
+        pickDate: { from: oldPickDate, to: newPickDate },
+        apptTime: { from: oldPickTime, to: pickTime },
+        delDate: { from: oldDelDate, to: newDelDate },
+        delTime: { from: '', to: rt.deliveryTime },
+      },
       // Asking for the slot it already has (e.g. "schedule confirmed").
       pickUnchanged: !!pickTime && reqPickDate === oldPickDate && pickTime === oldPickTime,
     };
@@ -629,7 +636,10 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">PO / BOL</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Appointment (current → requested)</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Pick-up Date</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Appointment Time</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Delivery Date</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Delivery Time</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Slot check / Suggested</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
                   <th className="p-3 bg-[#141414]">Actions</th>
@@ -641,28 +651,29 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
-                    <td className="p-3 text-xs">{a.customer || '—'}</td>
                     <td className="p-3 text-xs" title={a.summary}>
-                      {(() => {
-                        const v = apptView(a);
-                        const Row = ({ label, from, to }: { label: string; from: string; to: string }) => (
-                          <div className="flex items-baseline gap-1.5 whitespace-nowrap">
-                            <span className="text-[9px] uppercase font-bold opacity-50 w-14 shrink-0">{label}</span>
-                            <span className="font-mono opacity-60">{from}</span>
-                            <span className="opacity-40">→</span>
-                            <span className={`font-mono font-bold ${from === to ? 'opacity-60' : 'text-violet-800'}`}>{to}</span>
-                          </div>
-                        );
-                        if (!v.wantsPick && !v.wantsDel) return <div className="max-w-[300px] truncate">{a.summary || amendmentChangeText(a)}</div>;
-                        return (
-                          <div className="space-y-0.5">
-                            {v.wantsPick && <Row label="Pick-up" from={v.oldPick} to={v.newPick} />}
-                            {v.wantsDel && <Row label="Delivery" from={v.oldDel} to={v.newDel} />}
-                            {a.summary && <div className="text-[10px] opacity-50 max-w-[320px] truncate">{a.summary}</div>}
-                          </div>
-                        );
-                      })()}
+                      <div>{a.customer || '—'}</div>
+                      {a.summary && <div className="text-[10px] opacity-50 max-w-[240px] truncate">{a.summary}</div>}
                     </td>
+                    {(() => {
+                      const v = apptView(a);
+                      // current → requested; just the current value when no change is asked.
+                      const Cell = ({ c }: { c: { from: string; to: string } }) => (
+                        <td className="p-3 text-xs font-mono whitespace-nowrap">
+                          {c.to && c.from && c.to !== c.from ? (
+                            <span><span className="opacity-50">{c.from || '—'}</span> <span className="opacity-40">→</span> <b className="text-violet-800">{c.to}</b></span>
+                          ) : (
+                            <span className={c.to ? 'font-bold text-violet-800' : 'opacity-60'}>{c.to || c.from || '—'}</span>
+                          )}
+                        </td>
+                      );
+                      return (<>
+                        <Cell c={v.cols.pickDate} />
+                        <Cell c={v.cols.apptTime} />
+                        <Cell c={v.cols.delDate} />
+                        <Cell c={v.cols.delTime} />
+                      </>);
+                    })()}
                     {(() => {
                       const v = apptView(a);
                       const { cur } = v;
