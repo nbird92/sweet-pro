@@ -6843,25 +6843,10 @@ export default function App() {
    *  Report is included only when THIS invoice carries packaged or tote products.
    *  When a "Pro Forma Invoice" template is in the QA Templates table, the
    *  rendered pro forma is merged in as the package's first pages. */
-  /** Render the Pro Forma Invoice from the ACTUAL template sheet (QA Templates →
-   *  "Pro Forma Invoice") — so any edit to the sheet shows up on the next package. */
-  const renderProFormaFromSheet = async (sheetId: string, d: ProFormaData): Promise<Blob> => renderSheetTemplatePdf({
-    sheetId,
-    tokens: {
-      invoice_no: d.invoiceNo, contract_no: d.contractNo, invoice_date: d.invoiceDate, po: d.reference,
-      shipper_name: d.shipperName, shipper_address: d.shipperAddress, shipper_city_province: d.shipperCityProvince,
-      consignee_name: d.consigneeName, consignee_tel: d.consigneeTel, consignee_email: d.consigneeEmail,
-      BOL_Date: d.bolDate, currency: d.currency, total_invoice_amount: d.totalAmount,
-      total_invoice_amount_written_long_form: d.totalInWords,
-      payment_terms: d.paymentTerms || '', invoice_due_date: d.dueDate || '', CSR_Name: d.csrName || '',
-    },
-    lineItems: d.lines.map(l => ({ description: l.description, contract: l.contract, units: l.units, currency_unit_price: l.unitPrice, 'tax_%': l.tax, Invoice_line_Amount: l.amount })),
-    itemTokens: ['currency_unit_price', 'tax_%', 'Invoice_line_Amount'],
-    numericFields: ['units', 'currency_unit_price', 'Invoice_line_Amount'],
-    numericTokens: ['total_invoice_amount'],
-  });
-
-  const handleGenerateDocumentPackageForInvoice = async (inv: Invoice) => {
+  /** Invoice-table action: build the document package for an invoice. The Bag ID
+   *  Report is included only when THIS invoice carries packaged or tote products.
+   *  The Pro Forma Invoice (drawn by the app — instant, no sheet render) leads. */
+  const handleGenerateDocumentPackageForInvoice = (inv: Invoice) => {
     const shipment = resolveInvoiceShipment(inv);
     if (!shipment) {
       setErrorBox('This invoice has no BOL number — cannot build a document package.');
@@ -6873,54 +6858,8 @@ export default function App() {
     // All package documents show the invoice's scaled Qty (MT) — the official
     // weighed quantity — not the ordered quantity.
     const scaled = scaleDocSourcesToInvoice(inv, shipment, orderOverride);
-    const proForma = proFormaDataForInvoice(inv);
-    // Without a template sheet (or for a transfer load) the built-in Pro Forma
-    // page leads the package. Invoiced loads are outbound → Shipping scale ticket.
-    if (!proFormaSheetId || transferForShipment(scaled.shipment)) {
-      handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proForma);
-      return;
-    }
-    let pkg: { blobUrl: string; filename: string };
-    try {
-      const { shipment: s, order: o, shipFromLoc } = resolveShipmentDocSources(scaled.shipment, scaled.order);
-      const cust = customers.find(c => c.name === s.customer);
-      const shipToLoc = o?.shipToLocationId ? cust?.shipToLocations?.find(l => l.id === o.shipToLocationId) : undefined;
-      pkg = generateDocumentPackagePdf({
-        coaProduct: resolveCoaProduct(s, o), coaLogoDataUrl: coaLogoFor(s, o), coaCarrier: coaCarrierFor(s, o),
-        shipment: s, order: o, customer: cust, carrier: carriers.find(c => c.name === s.carrier),
-        shipFromLocation: shipFromLoc, shipToLocation: shipToLoc, lotCodes, qaProducts,
-        includeBagIdReport, scaleTicketDirection: 'shipping',
-      });
-    } catch (e: any) {
-      setErrorBox('Failed to generate document package: ' + (e?.message || 'Unknown error'));
-      return;
-    }
-    setPoIngestNotice('Building the document package — filling the Pro Forma Invoice template…');
-    try {
-      const [proBlob, pkgBytes] = await Promise.all([
-        renderProFormaFromSheet(proFormaSheetId, proForma),
-        fetch(pkg.blobUrl).then(r => r.arrayBuffer()),
-      ]);
-      const { PDFDocument } = await import('pdf-lib');
-      const merged = await PDFDocument.create();
-      for (const bytes of [await proBlob.arrayBuffer(), pkgBytes]) {
-        const src = await PDFDocument.load(bytes);
-        const pages = await merged.copyPages(src, src.getPageIndices());
-        pages.forEach(pg => merged.addPage(pg));
-      }
-      const out = await merged.save();
-      URL.revokeObjectURL(pkg.blobUrl);
-      const url = URL.createObjectURL(new Blob([out], { type: 'application/pdf' }));
-      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url, filename: pkg.filename, title: 'Document Package Preview' });
-      setPoIngestNotice(null);
-    } catch (e: any) {
-      // Template render unavailable → the built-in Pro Forma page instead.
-      console.error('Pro Forma template render failed; using the built-in page:', e);
-      URL.revokeObjectURL(pkg.blobUrl);
-      handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proForma);
-      setPoIngestNotice(`Pro Forma template couldn't be filled (${e?.message || 'render failed'}) — used the built-in Pro Forma page.`);
-    }
+    // Invoiced loads are outbound — the Scale Ticket's Shipping box is marked.
+    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proFormaDataForInvoice(inv));
   };
 
   /** Transfer-table action: build the document package (BOL, COA, Packing List,
