@@ -106,6 +106,7 @@ export interface Customer {
   customerServiceEmail?: string;
   notes?: string;
   salespersonId?: string;
+  csrId?: string;               // Customer service rep (Person.id, department 'customer service')
   defaultCarrierCode?: string;
   chepAccountNumber?: string;   // customer's CHEP pallet account number
   defaultCurrency?: string;     // 'CAD' | 'USD' — fallback currency when no contract currency is known

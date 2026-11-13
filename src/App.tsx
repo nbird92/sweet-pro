@@ -25704,6 +25704,24 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">CSR</label>
+                    <select
+                      value={editingCustomer.csrId || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, csrId: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    >
+                      <option value="">Select a CSR</option>
+                      {people
+                        .filter(p => (p.department || '').toLowerCase() === 'customer service')
+                        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                        .map(p => <option key={p.id} value={p.id}>{p.name}{p.position ? ` — ${p.position}` : ''}</option>)}
+                      {/* Keep a saved CSR visible if they've since moved department / been removed. */}
+                      {editingCustomer.csrId && !people.some(p => p.id === editingCustomer.csrId && (p.department || '').toLowerCase() === 'customer service') && (
+                        <option value={editingCustomer.csrId}>{people.find(p => p.id === editingCustomer.csrId)?.name || 'Unknown person'} (not in Customer Service)</option>
+                      )}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Margin (CAD/MT)</label>
                     <DecimalInput
                         value={editingCustomer.defaultMargin || undefined}
