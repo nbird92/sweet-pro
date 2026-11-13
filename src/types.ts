@@ -659,6 +659,7 @@ export interface PoAmendment {
   fromEmail?: string;
   subject?: string;
   sourceFile?: string;         // attachment name or "(email body)"
+  sourceEmailId?: string;      // Gmail message id of the email (= InboxFeedItem.id)
   poNumber?: string;           // the existing PO being amended
   customer?: string;
   orderId?: string;            // matched order (absent when status === 'unmatched')

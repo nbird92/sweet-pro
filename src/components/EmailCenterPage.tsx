@@ -263,6 +263,33 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   };
   const apptRequestsSorted = useMemo(() => sortQueue(poAmendments.filter(isApptRequest)), [poAmendments]);
 
+  // Appointment row expanded to show its email (click a row to toggle).
+  const [expandedApptId, setExpandedApptId] = useState<string | null>(null);
+  /** The inbox email a row came from: by Gmail message id, else the same subject
+   *  + sender received closest to the row's time. */
+  const emailForAmendment = (a: PoAmendment): InboxFeedItem | undefined => {
+    if (a.sourceEmailId) { const hit = inboxFeed.find(f => f.id === a.sourceEmailId); if (hit) return hit; }
+    // Older rows carry no message id: match the thread by subject, ignoring
+    // RE:/FW: prefixes and [GROUP]/[EXTERNAL] tags, then pick the reply that
+    // mentions this row's PO, from the same sender, closest in time.
+    const norm = (v?: string) => {
+      let t = (v || '').trim().toLowerCase();
+      for (let i = 0; i < 6; i++) t = t.replace(/^(?:(?:re|fw|fwd)\s*:\s*|\[[^\]]*\]\s*)/, '');
+      return t.replace(/\s+/g, ' ').trim();
+    };
+    const subj = norm(a.subject);
+    if (!subj) return undefined;
+    const from = (a.fromEmail || '').trim().toLowerCase();
+    const po = (a.poNumber || '').replace(/^po[-\s#]*/i, '').trim();
+    const t = Date.parse(a.receivedAt || a.createdAt || '') || 0;
+    const score = (f: InboxFeedItem) =>
+      (po && `${f.body || ''} ${f.snippet || ''}`.includes(po) ? 0 : 2)
+      + (from && (f.fromEmail || '').trim().toLowerCase() === from ? 0 : 1);
+    return inboxFeed
+      .filter(f => norm(f.subject) === subj)
+      .sort((x, y) => (score(x) - score(y)) || (Math.abs((Date.parse(x.receivedAt) || 0) - t) - Math.abs((Date.parse(y.receivedAt) || 0) - t)))[0];
+  };
+
   /** One reading of an appointment row, shared by its Appointment / Slot check /
    *  cells: current (old) vs requested (new) pick-up and delivery. */
   const apptView = (a: PoAmendment) => {
@@ -647,14 +674,16 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
                 {apptRequestsSorted.map(a => (
-                  <tr key={a.id} className="hover:bg-[#F9F9F9]">
+                  <React.Fragment key={a.id}>
+                  <tr
+                    className={`cursor-pointer ${expandedApptId === a.id ? 'bg-violet-50' : 'hover:bg-[#F9F9F9]'}`}
+                    onClick={() => setExpandedApptId(id => (id === a.id ? null : a.id))}
+                    title="Click to show the email"
+                  >
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
-                    <td className="p-3 text-xs" title={a.summary}>
-                      <div>{a.customer || '—'}</div>
-                      {a.summary && <div className="text-[10px] opacity-50 max-w-[240px] truncate">{a.summary}</div>}
-                    </td>
+                    <td className="p-3 text-xs">{a.customer || '—'}</td>
                     {(() => {
                       const v = apptView(a);
                       // current → requested; just the current value when no change is asked.
@@ -707,7 +736,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       </>);
                     })()}
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
-                    <td className="p-3 whitespace-nowrap">
+                    <td className="p-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                       {a.status === 'pending' ? (
                         <div className="flex gap-2">
                           <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800" title={a.requestedApptDate ? (a.suggestedApptTime ? `Books the suggested ${a.suggestedApptTime} (requested slot was taken), or the requested time if it has freed up` : 'Books the requested time') : 'Applies the date change to the order'}>{a.requestedApptDate ? 'Book' : 'Apply'}</button>
@@ -725,6 +754,28 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       )}
                     </td>
                   </tr>
+                  {expandedApptId === a.id && (() => {
+                    const mail = emailForAmendment(a);
+                    return (
+                      <tr className="bg-violet-50/60">
+                        <td colSpan={12} className="px-6 py-4 border-t border-violet-200">
+                          <div className="text-[10px] uppercase font-bold opacity-60 mb-1">
+                            {mail?.subject || a.subject || 'Email'}
+                            <span className="normal-case font-normal opacity-80"> — {mail?.fromName ? `${mail.fromName} <${mail.fromEmail || a.fromEmail || ''}>` : (mail?.fromEmail || a.fromEmail || '')}</span>
+                          </div>
+                          {mail?.body || mail?.snippet ? (
+                            <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed max-h-80 overflow-y-auto bg-white border border-[#141414]/10 p-3">{(mail.body || mail.snippet || '').trim()}</pre>
+                          ) : (
+                            <div className="text-xs bg-white border border-[#141414]/10 p-3">
+                              <div className="opacity-60 italic mb-1">The email body isn't in the recent inbox feed — showing the extracted request.</div>
+                              <div>{a.summary || amendmentChangeText(a)}</div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })()}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
