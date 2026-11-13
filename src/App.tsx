@@ -262,6 +262,24 @@ function normalizeLineMt(li: OrderLineItem): OrderLineItem {
   return li;
 }
 
+/** The sequence counter a BOL contributes for `prefix`, or null. Only the
+ *  canonical PREFIX + 6 digits form (e.g. L501330) and the legacy
+ *  PREFIX-YEAR-COUNTER form count. Longer tails — legacy 7-digit plant numbers
+ *  (L5001066, L2054965) and typos (L50001026, an extra 0) — are ignored: a
+ *  "variable-length" fallback used to take the largest number on ANY same-letter
+ *  BOL, so one 8-digit typo made every later BOL 8 digits long (L50001080). */
+function bolSequenceNumber(bol: string | undefined, prefix: string): number | null {
+  const b = (bol || '').trim().toUpperCase();
+  if (!prefix || !b.startsWith(prefix)) return null;
+  const tail = b.slice(prefix.length);
+  if (/^\d{6}$/.test(tail)) return parseInt(tail, 10);
+  if (tail.startsWith('-')) {
+    const n = parseInt(tail.split('-').pop() || '', 10);
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
+
 /** One carrier name from a carrier field. Older transfers stored every
  *  transload carrier joined ("A → B"); documents list only the first one. */
 function singleCarrier(name?: string): string {
@@ -6984,9 +7002,10 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
   const [orderSortConfig, setOrderSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'shipmentDate', direction: 'desc' });
-  // Orders with 'Completed' status are auto-hidden from the Orders table by
-  // default; this toggle reveals them (they also surface while searching).
-  const [showCompletedOrders, setShowCompletedOrders] = useState(false);
+  // Stale orders (shipment date two weeks or more in the past) are auto-hidden
+  // from the Orders table — display only, never deleted; this toggle reveals
+  // them (they also surface while searching).
+  const [showStaleOrders, setShowStaleOrders] = useState(false);
   const [editingSupplyChain, setEditingSupplyChain] = useState<SupplyChainComponent | null>(null);
   const [isAddingSupplyChain, setIsAddingSupplyChain] = useState(false);
   const [editingShipment, setEditingShipment] = useState<Shipment | null>(null);
@@ -7424,7 +7443,7 @@ export default function App() {
             for (const inv of (data.invoices || [])) { const b = bolOf(inv.bolNumber); if (b && !/cancel|credit/i.test(inv.status || '') && !invByBol.has(b)) invByBol.set(b, inv); }
             const maxByPrefix = new Map<string, number>();
             for (const b of [...byBol.keys(), ...((data.invoices || []).map((i: any) => bolOf(i.bolNumber)))]) {
-              const m = /^([A-Z])(\d{6,})$/.exec(b || '');
+              const m = /^([A-Z])(\d{6})$/.exec(b || '');
               if (m) maxByPrefix.set(m[1], Math.max(maxByPrefix.get(m[1]) || 0, parseInt(m[2], 10)));
             }
             const renumbered: any[] = [];
@@ -9299,19 +9318,8 @@ export default function App() {
     // including legacy formats like PREFIX-YEAR-COUNTER.
     const counters: number[] = [];
     for (const bol of allBols) {
-      if (!bol) continue;
-      if (/^[A-Z]\d{6}$/.test(bol) && bol[0] === prefix) {
-        counters.push(parseInt(bol.slice(1), 10) || 0);
-      } else if (bol.startsWith(prefix + '-')) {
-        const parts = bol.split('-');
-        const last = parts[parts.length - 1];
-        const n = parseInt(last, 10);
-        if (!isNaN(n)) counters.push(n);
-      } else if (/^[A-Z]\d+$/.test(bol) && bol[0] === prefix) {
-        // Fallback for variable-length numeric tails
-        const n = parseInt(bol.slice(1), 10);
-        if (!isNaN(n)) counters.push(n);
-      }
+      const n = bolSequenceNumber(bol, prefix);
+      if (n !== null) counters.push(n);
     }
 
     let next = (counters.length > 0 ? Math.max(...counters) : 0) + 1;
@@ -9329,26 +9337,43 @@ export default function App() {
   const fixBolPrefixes = () => {
     const reserved: string[] = [];
     const remap: Record<string, string> = {};
+    // BOLs already on an active invoice are on issued documents — never renumber.
+    const invoicedBols = new Set(invoices
+      .filter(i => i.status !== 'Cancelled' && i.status !== 'Credit')
+      .map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+    let malformed = 0;
     const newOrders = orders.map(o => {
       const current = (o.bolNumber || '').trim();
-      if (!current || !(o.lineItems && o.lineItems.length) || o.status === 'Completed') {
+      if (!current || !(o.lineItems && o.lineItems.length) || o.status === 'Completed' || invoicedBols.has(current.toUpperCase())) {
         if (current) reserved.push(current);
         return o;
       }
       const candidate = generateBOLNumber(o.lineItems, reserved, o.product);
-      if (current[0] === candidate[0]) { reserved.push(current); return o; }
+      // App-created orders (ORD-<timestamp>, not sheet imports — those carry the
+      // plant's own numbers) whose BOL isn't PREFIX + 6 digits were numbered by
+      // the old variable-length counter bug (e.g. L50001080) — renumber them.
+      const appCreated = /^ORD-\d/.test(o.id || '');
+      const isMalformed = appCreated && !/^[A-Z]\d{6}$/.test(current.toUpperCase());
+      if (current[0] === candidate[0] && !isMalformed) { reserved.push(current); return o; }
+      if (isMalformed) malformed++;
       reserved.push(candidate);
       remap[current] = candidate;
       return { ...o, bolNumber: candidate };
     });
     const count = Object.keys(remap).length;
-    if (!count) { setErrorBox('All order BOL prefixes already match their product groups.'); return; }
+    if (!count) { setErrorBox('All order BOLs already match their product groups and the PREFIX + 6-digit format.'); return; }
+    const changedOrders = newOrders.filter((o, i) => o !== orders[i]);
+    const remapShip = (s: Shipment) => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s;
+    const changedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s => remap[s.bol]).map(remapShip);
     setOrders(newOrders);
-    setHamiltonShipments(prev => prev.map(s => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s));
-    setVancouverShipments(prev => prev.map(s => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s));
+    setHamiltonShipments(prev => prev.map(remapShip));
+    setVancouverShipments(prev => prev.map(remapShip));
     setInvoices(prev => prev.map(inv => inv.bolNumber && remap[inv.bolNumber] ? { ...inv, bolNumber: remap[inv.bolNumber] } : inv));
     setReturnOrders(prev => prev.map(ro => ro.originalBolNumber && remap[ro.originalBolNumber] ? { ...ro, originalBolNumber: remap[ro.originalBolNumber] } : ro));
-    setPoIngestNotice(`Fixed ${count} BOL prefix${count === 1 ? '' : 'es'} to match product groups.`);
+    // Durable at click time, like every other explicit save.
+    if (changedOrders.length) saveNow(COLLECTIONS.orders, changedOrders);
+    if (changedShipments.length) saveNow(COLLECTIONS.shipments, changedShipments);
+    setPoIngestNotice(`Re-numbered ${count} BOL${count === 1 ? '' : 's'}${malformed ? ` (${malformed} with an extra digit)` : ''}: ${Object.entries(remap).slice(0, 6).map(([a, b]) => `${a} → ${b}`).join(', ')}${count > 6 ? ', …' : ''}.`);
   };
 
   // Compute `count` sequential BOL numbers for a product — its product group's
@@ -9366,18 +9391,18 @@ export default function App() {
     ];
     let maxCounter = 0;
     for (const bol of allBols) {
-      if (!bol) continue;
-      if (/^[A-Z]\d{6}$/.test(bol) && bol[0] === prefix) {
-        maxCounter = Math.max(maxCounter, parseInt(bol.slice(1), 10) || 0);
-      } else if (bol.startsWith(prefix + '-')) {
-        const n = parseInt(bol.split('-').pop() || '', 10);
-        if (!isNaN(n)) maxCounter = Math.max(maxCounter, n);
-      } else if (/^[A-Z]\d+$/.test(bol) && bol[0] === prefix) {
-        const n = parseInt(bol.slice(1), 10);
-        if (!isNaN(n)) maxCounter = Math.max(maxCounter, n);
-      }
+      const n = bolSequenceNumber(bol, prefix);
+      if (n !== null) maxCounter = Math.max(maxCounter, n);
     }
-    return Array.from({ length: count }, (_, i) => `${prefix}${String(maxCounter + i + 1).padStart(6, '0')}`);
+    const taken = new Set(allBols.map(b => (b || '').trim().toUpperCase()).filter(Boolean));
+    const out: string[] = [];
+    let n = maxCounter + 1;
+    while (out.length < count) {
+      const candidate = `${prefix}${String(n).padStart(6, '0')}`;
+      if (!taken.has(candidate)) { out.push(candidate); taken.add(candidate); }
+      n++;
+    }
+    return out;
   };
 
   const updateShipmentStatus = (id: string, status: string) => {
@@ -13888,10 +13913,14 @@ export default function App() {
         return !!b && invoicedBols.has(b);
       };
 
-      // How many Completed orders the auto-hide rule is currently suppressing
-      // (i.e. would show if the toggle were on) — surfaced on the toggle button.
-      const completedHiddenCount = orders.filter(o =>
-        o.status === 'Completed'
+      // STALE = shipment date two weeks or more in the past. Display-only hide:
+      // the orders stay in state/Firestore (pruning the array would read as a
+      // delete to the autosave).
+      const staleCutoff = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 14); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+      const isStaleOrder = (o: Order) => { const sd = (o.shipmentDate || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(sd) && sd <= staleCutoff; };
+      // How many orders the stale rule is currently suppressing — shown on the button.
+      const staleHiddenCount = orders.filter(o =>
+        isStaleOrder(o)
         && !isInvoicedBol(o.bolNumber)
         && !o.hidden
       ).length;
@@ -13903,9 +13932,9 @@ export default function App() {
         if (isInvoicedBol(ord.bolNumber) && !searchTerm) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
-        // Auto-hide Completed orders unless the user opts to show them, or is
-        // searching (so a specific completed order stays findable by search).
-        if (ord.status === 'Completed' && !showCompletedOrders && !searchTerm) return false;
+        // Auto-hide stale orders unless the user opts to show them, or is
+        // searching (so a specific old order stays findable by search).
+        if (isStaleOrder(ord) && !showStaleOrders && !searchTerm) return false;
         const matchesSearch = !searchTerm ||
           ord.bolNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
           ord.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -14006,22 +14035,21 @@ export default function App() {
             exportSheets={orderExportSheets}
             exportFileName="Orders"
           >
-            {/* A search always surfaces completed orders (the auto-hide is gated on
-                !searchTerm), so while searching the toggle would be a visible no-op
-                that silently flips the stored preference — disable it and show the
-                real, effective state instead. */}
+            {/* A search always surfaces stale orders (the auto-hide is gated on
+                !searchTerm), so while searching the toggle is disabled and shows
+                the real, effective state instead. */}
             <button
-              onClick={() => setShowCompletedOrders(v => !v)}
+              onClick={() => setShowStaleOrders(v => !v)}
               disabled={!!searchTerm}
               className={`px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 transition-colors whitespace-nowrap ${searchTerm ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'}`}
               title={searchTerm
-                ? 'Completed orders are shown while searching'
-                : (showCompletedOrders ? 'Hide completed orders from the table' : 'Completed orders are hidden by default — show them')}
+                ? 'Stale orders are shown while searching'
+                : (showStaleOrders ? 'Hide orders whose shipment date is two weeks or more in the past' : 'Orders whose shipment date is two weeks or more in the past are hidden (not deleted) — show them')}
             >
-              {(showCompletedOrders || !!searchTerm) ? <EyeOff size={12} /> : <Eye size={12} />}
+              {(showStaleOrders || !!searchTerm) ? <EyeOff size={12} /> : <Eye size={12} />}
               {searchTerm
-                ? 'Completed Shown'
-                : (showCompletedOrders ? 'Hide Completed' : `Show Completed${completedHiddenCount ? ` (${completedHiddenCount})` : ''}`)}
+                ? 'Stale Shown'
+                : (showStaleOrders ? 'Hide Stale Orders' : `Show Stale Orders${staleHiddenCount ? ` (${staleHiddenCount})` : ''}`)}
             </button>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + orderCsvHeaders.join(",");
@@ -14094,7 +14122,7 @@ export default function App() {
               <Plus size={12} /> Add Order
             </button>
             <button
-              onClick={() => { if (window.confirm('Re-number any orders whose BOL prefix does not match their product group (e.g. Bulk/Liquid orders that imported as "P")? Linked shipments, invoices and return orders are updated to match. Completed orders are left as-is.')) fixBolPrefixes(); }}
+              onClick={() => { if (window.confirm('Re-number order BOLs that are wrong: a prefix that does not match the product group (e.g. Bulk/Liquid orders that imported as "P"), or an app-generated number with an extra digit (e.g. L50001080). Linked shipments, invoices and return orders are updated to match. Completed or invoiced orders are left as-is.')) fixBolPrefixes(); }}
               title="Fix BOL prefixes to match each order's product group (BOL Code)"
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
             >
@@ -14181,19 +14209,19 @@ export default function App() {
                         'No orders yet. Use "Add Order" to create new orders.'
                       ) : searchTerm ? (
                         'No orders match your search.'
-                      ) : completedHiddenCount > 0 && !showCompletedOrders ? (
-                        // Orders exist but are all completed (and auto-hidden) — say
-                        // so and offer a one-click reveal, so the empty table never
+                      ) : staleHiddenCount > 0 && !showStaleOrders ? (
+                        // Orders exist but are all stale (and auto-hidden) — say so
+                        // and offer a one-click reveal, so the empty table never
                         // reads as "your data is gone".
                         <span>
-                          {completedHiddenCount} completed {completedHiddenCount === 1 ? 'order is' : 'orders are'} hidden.{' '}
+                          {staleHiddenCount} stale {staleHiddenCount === 1 ? 'order is' : 'orders are'} hidden.{' '}
                           <button
                             type="button"
-                            onClick={() => setShowCompletedOrders(true)}
+                            onClick={() => setShowStaleOrders(true)}
                             className="underline not-italic opacity-100 hover:opacity-70"
                           >
-                            Show completed
-                          </button>{' '}to view {completedHiddenCount === 1 ? 'it' : 'them'}.
+                            Show stale orders
+                          </button>{' '}to view {staleHiddenCount === 1 ? 'it' : 'them'}.
                         </span>
                       ) : (
                         'No orders to display.'

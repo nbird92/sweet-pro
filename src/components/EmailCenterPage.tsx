@@ -199,7 +199,19 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   // An APPOINTMENT request — its own review table, separate from order
   // amendments. Legacy rows predate kind:'appointment' and carry
   // kind:'amendment' + a requested appointment time, so match on shape too.
-  const isApptRequest = (a: PoAmendment) => a.kind === 'appointment' || !!(a.requestedApptDate && a.requestedApptTime);
+  // Appointment CHANGES that the model filed as kind:'amendment' (e.g. "Move load
+  // 3083910 to 15:00 on 11/12", "Change delivery time to 18:00", "Reschedule …
+  // for 23:00 loading time") also belong here: a pickup/delivery date or time
+  // change that isn't a quantity / split / cancellation request.
+  const APPT_WORDS = /\b(\d{1,2}:\d{2}|\d{1,2}\s?(?:am|pm)|resched\w*|appointment|appt|load(?:ing)? time|delivery time|pick-?up time|eta|move (?:load|po|order|delivery|pick-?up)|afternoon|morning)\b/i;
+  const isApptRequest = (a: PoAmendment) => {
+    if (a.kind === 'appointment' || !!(a.requestedApptDate && a.requestedApptTime)) return true;
+    if (a.kind === 'cancellation' || a.cancel || a.newSplitNumber) return false;
+    const timeTalk = APPT_WORDS.test(`${a.summary || ''}`);
+    const dateChange = !!(a.newShipmentDate || a.newDeliveryDate);
+    const qtyChange = typeof a.newQuantityMt === 'number';
+    return (dateChange && (!qtyChange || timeTalk)) || (timeTalk && !qtyChange);
+  };
   // Amendment review queue — pending/unmatched first (need action), then newest.
   const sortQueue = (list: PoAmendment[]) => {
     const rank = (s: PoAmendment['status']) => (s === 'pending' ? 0 : s === 'unmatched' ? 1 : 2);
@@ -533,7 +545,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       {apptRequestsSorted.length > 0 && (
         <div className="px-6 pt-2 pb-5">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CalendarClock size={14} /> Appointment Requests</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CalendarClock size={14} /> Appointment Requests &amp; Amendments</h3>
             {pendingApptRequests > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 text-[9px] font-bold uppercase">{pendingApptRequests} to review</span>}
           </div>
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
@@ -558,14 +570,18 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
-                    <td className="p-3 text-xs font-mono font-bold whitespace-nowrap">{a.requestedApptDate || '—'}{a.requestedApptTime ? ` ${a.requestedApptTime}` : ''}</td>
+                    <td className="p-3 text-xs font-mono font-bold" title={a.summary}>
+                      {a.requestedApptDate
+                        ? <span className="whitespace-nowrap">{a.requestedApptDate}{a.requestedApptTime ? ` ${a.requestedApptTime}` : ''}</span>
+                        : <div className="max-w-[260px] truncate font-sans font-normal">{amendmentChangeText(a)}</div>}
+                    </td>
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{a.suggestedApptTime ? `${a.suggestedApptTime}` : '—'}</td>
                     <td className="p-3 text-xs">{a.apptLocation || '—'}</td>
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
                     <td className="p-3 whitespace-nowrap">
                       {a.status === 'pending' ? (
                         <div className="flex gap-2">
-                          <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800" title={a.suggestedApptTime ? `Books the suggested ${a.suggestedApptTime} (requested slot was taken), or the requested time if it has freed up` : 'Books the requested time'}>Book</button>
+                          <button onClick={() => onApplyAmendment?.(a)} className="px-2 py-0.5 rounded-full bg-emerald-700 text-white text-[9px] font-bold uppercase hover:bg-emerald-800" title={a.requestedApptDate ? (a.suggestedApptTime ? `Books the suggested ${a.suggestedApptTime} (requested slot was taken), or the requested time if it has freed up` : 'Books the requested time') : 'Applies the date change to the order'}>{a.requestedApptDate ? 'Book' : 'Apply'}</button>
                           <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
                         </div>
                       ) : a.status === 'unmatched' ? (
@@ -574,7 +590,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                           <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
                         </div>
                       ) : a.status === 'applied' ? (
-                        <span className="text-[9px] uppercase opacity-60">{a.appliedAt ? `booked ${new Date(a.appliedAt).toLocaleDateString()}` : 'booked'}</span>
+                        <span className="text-[9px] uppercase opacity-60">{a.requestedApptDate ? 'booked' : 'applied'}{a.appliedAt ? ` ${new Date(a.appliedAt).toLocaleDateString()}` : ''}</span>
                       ) : (
                         <span className="text-[9px] uppercase opacity-40">dismissed</span>
                       )}
