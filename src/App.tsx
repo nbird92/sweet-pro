@@ -2005,6 +2005,20 @@ export default function App() {
     const cust = custName ? customers.find(c => (c.name || '').trim().toUpperCase() === custName) : undefined;
     return normalizeCurrencyCode(cust?.defaultCurrency) || '';
   };
+  /** An invoice's currency: its own, else its contract's, else the linked
+   *  order's, else the customer card's Default Currency, else CAD. */
+  const invoiceCurrency = (inv: Invoice): string => {
+    const own = normalizeCurrencyCode(inv.currency);
+    if (own) return own;
+    const cn = (inv.contractNumber || inv.lineItems?.find(li => li.contractNumber)?.contractNumber || '').split(',')[0].trim();
+    const contractCur = cn ? normalizeCurrencyCode(contracts.find(c => c.contractNumber === cn)?.currency) : undefined;
+    if (contractCur) return contractCur;
+    const orderCur = normalizeCurrencyCode(orderForInvoice(inv)?.currency);
+    if (orderCur) return orderCur;
+    const custName = (inv.customer || '').trim().toUpperCase();
+    const cust = custName ? customers.find(c => (c.name || '').trim().toUpperCase() === custName) : undefined;
+    return normalizeCurrencyCode(cust?.defaultCurrency) || 'CAD';
+  };
   const withOrderCurrency = (o: Order): Order => {
     if ((o.currency || '').trim()) return o;
     const cur = orderCurrencyFallback(o);
@@ -19298,7 +19312,13 @@ export default function App() {
                 <div className="grid grid-cols-5 gap-4">
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Price/MT</label>
                     <input type="number" step="0.01" value={editingInvoiceCard.pricePerMt ?? ''} onChange={(e) => { const ppm = parseFloat(e.target.value) || 0; setEditingInvoiceCard({ ...editingInvoiceCard, pricePerMt: ppm, amount: ppm > 0 ? Math.round(ppm * (editingInvoiceCard.qty || 0) * 100) / 100 : editingInvoiceCard.amount }); }} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Currency</label>
+                    <select value={normalizeCurrencyCode(editingInvoiceCard.currency) || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, currency: e.target.value || undefined })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]">
+                      <option value="">{`Default (${invoiceCurrency({ ...editingInvoiceCard, currency: undefined })})`}</option>
+                      <option value="CAD">CAD</option>
+                      <option value="USD">USD</option>
+                    </select></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount</label>
                     <input type="number" step="0.01" value={editingInvoiceCard.amount || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, amount: parseFloat(e.target.value) || 0 })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-bold outline-none focus:border-[#141414]" /></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
                     <input type="text" value={editingInvoiceCard.papsNo || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, papsNo: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm font-mono outline-none focus:border-[#141414]" /></div>
@@ -19645,9 +19665,11 @@ export default function App() {
                 </div>
                 {/* Quantity (MT), Total Weight (KG), Price/MT and Split No. moved
                     out of the header — they live in the Line Items section below. */}
-                <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount (CAD)</label>
+                <div className="grid grid-cols-5 gap-4">
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount</label>
                     <div className="text-sm font-bold">${headerAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Currency</label>
+                    <div className="text-sm font-bold">{invoiceCurrency(inv)}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Lot Code</label>
                     <div className="text-sm font-mono">{inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) || '—'}</div></div>
                   <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>

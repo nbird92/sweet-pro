@@ -511,6 +511,7 @@ export interface Invoice {
   customsEntryNo?: string;  // Customs entry number
   reversals?: string;       // Reversal/credit reference or amount, from the sync sheet
   lotCode?: string;         // Lot code(s) from the matching shipment (by BOL), captured at Complete & Bill
+  currency?: string;        // 'CAD' | 'USD' — blank = contract / order / customer default
 }
 
 // A demurrage / wait-time / accessorial invoice issued BY a freight carrier TO Sucro
