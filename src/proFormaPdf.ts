@@ -28,6 +28,10 @@ export interface ProFormaData {
   footerLines: string[];
   /** Logo for the top-right corner (data URL) — '' for none. */
   logoDataUrl?: string;
+  /** Raw token values (also used when filling the actual template sheet). */
+  paymentTerms?: string;
+  dueDate?: string;
+  csrName?: string;
 }
 
 const BLACK = '#141414';

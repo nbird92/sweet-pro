@@ -7,9 +7,12 @@ import { checkAuth, checkGoogleConfig } from './_sheets.js';
 //   - Scalar:    {{po}}, {{customer_name}}, {{bol}}, … (replaced everywhere)
 //   - Line item: one row whose cells hold {{item_description}}, {{item_contract}},
 //                {{item_units}}, … — that row is written once per line item.
-// Flow: COPY the template (Drive) -> write line items + find/replace scalars
-// (Sheets) -> EXPORT the copy to PDF (Drive) -> DELETE the copy. Read-only to the
-// original template (it's never modified). Needs the Sheets AND Drive APIs.
+// Flow: DUPLICATE the template's first tab as a temporary tab inside the same
+// file -> write line items + find/replace scalars on that tab only -> EXPORT the
+// tab to PDF -> DELETE the tab. The template's own tab is never edited.
+// (A Drive file COPY isn't used: service accounts have no Drive storage quota,
+// so copies are refused.) Needs the Sheets AND Drive APIs, and the service
+// account as an EDITOR on the template sheet (to add/remove the temporary tab).
 //
 // Auth: optional shared secret APP_ACCESS_KEY (x-access-key header).
 
@@ -49,24 +52,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
   });
 
-  let copyId = '';
+  const copyId = sheetId; // all work happens inside the template file, on a temporary tab
+  let tempGid: number | null = null;
   try {
-    // 1. Copy the template so we never modify the original.
-    const copyResp: any = await jwt.request({
-      url: `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(sheetId)}/copy?fields=id&supportsAllDrives=true`,
-      method: 'POST',
-      data: { name: `__order_confirmation_render_${Date.now()}` },
+    // 1. Duplicate the template's first tab as a uniquely-named temporary tab.
+    const srcMeta: any = await jwt.request({
+      url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}?fields=sheets.properties(sheetId,title,index)`,
     });
-    copyId = copyResp.data?.id;
-    if (!copyId) throw new Error('Could not copy the template sheet.');
+    const srcSheets: any[] = srcMeta.data?.sheets || [];
+    const srcFirst = srcSheets[0]?.properties || {};
+    const tempName = `__render_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const dupResp: any = await jwt.request({
+      url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}:batchUpdate`,
+      method: 'POST',
+      data: { requests: [{ duplicateSheet: { sourceSheetId: srcFirst.sheetId ?? 0, insertSheetIndex: srcSheets.length, newSheetName: tempName } }] },
+    });
+    tempGid = dupResp.data?.replies?.[0]?.duplicateSheet?.properties?.sheetId ?? null;
+    if (tempGid === null) throw new Error('Could not create the temporary render tab.');
 
     // 2. First tab's gid + title.
-    const metaResp: any = await jwt.request({
-      url: `https://sheets.googleapis.com/v4/spreadsheets/${copyId}?fields=sheets.properties(sheetId,title)`,
-    });
-    const firstProps = metaResp.data?.sheets?.[0]?.properties || {};
-    const gid: number = firstProps.sheetId ?? 0;
-    const tabTitle: string = firstProps.title || 'Sheet1';
+    const gid: number = tempGid;
+    const tabTitle: string = tempName; // no spaces → safe unquoted in A1 ranges
 
     // 3. Read the grid to find the line-item template row + which column holds which field.
     const valuesResp: any = await jwt.request({
@@ -149,7 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 5. Replace scalar tokens everywhere, then right-align the numeric cells.
     const requests: any[] = Object.entries(tokens).map(([k, v]) => ({
-      findReplace: { find: `{{${k}}}`, replacement: String(v ?? ''), matchCase: false, allSheets: true },
+      findReplace: { find: `{{${k}}}`, replacement: String(v ?? ''), matchCase: false, sheetId: gid },
     }));
     for (const { r, c } of alignRightCells) {
       requests.push({
@@ -181,20 +187,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
     const pdfBuffer = Buffer.from(pdfResp.data);
 
-    // 7. Delete the working copy.
-    await jwt.request({ url: `https://www.googleapis.com/drive/v3/files/${copyId}?supportsAllDrives=true`, method: 'DELETE' }).catch(() => {});
-    copyId = '';
+    // 7. Remove the temporary tab.
+    await jwt.request({
+      url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}:batchUpdate`,
+      method: 'POST',
+      data: { requests: [{ deleteSheet: { sheetId: gid } }] },
+    }).catch(() => {});
+    tempGid = null;
 
     res.setHeader('Content-Type', 'application/pdf');
     return res.status(200).send(pdfBuffer);
   } catch (e: any) {
-    if (copyId) { try { await jwt.request({ url: `https://www.googleapis.com/drive/v3/files/${copyId}?supportsAllDrives=true`, method: 'DELETE' }); } catch { /* ignore */ } }
+    if (tempGid !== null) {
+      try {
+        await jwt.request({
+          url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}:batchUpdate`,
+          method: 'POST',
+          data: { requests: [{ deleteSheet: { sheetId: tempGid } }] },
+        });
+      } catch { /* ignore */ }
+    }
     const msg = String(e?.response?.data?.error?.message || e?.message || e);
     if (/has not been used|is disabled|service[_\s-]*disabled|accessnotconfigured/i.test(msg)) {
       return res.status(403).json({ error: `Enable the Google Sheets API AND the Google Drive API for the service account's project, then retry. (${msg})` });
     }
     if (/permission|not have access|forbidden|the caller does not have/i.test(msg)) {
-      return res.status(403).json({ error: `The service account can't access the template sheet. Share it with the service account email (GOOGLE_SERVICE_ACCOUNT_EMAIL) as a Viewer or Editor. (${msg})` });
+      return res.status(403).json({ error: `The service account can't edit the template sheet. Share it with the service account email (GOOGLE_SERVICE_ACCOUNT_EMAIL) as an EDITOR — rendering adds and removes a temporary tab. (${msg})` });
     }
     return res.status(500).json({ error: msg });
   }
