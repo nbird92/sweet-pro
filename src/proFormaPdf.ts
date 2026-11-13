@@ -26,6 +26,8 @@ export interface ProFormaData {
    *  code on purpose — it carries banking details. Empty when the sheet can't
    *  be read (the page then shows a note instead). */
   footerLines: string[];
+  /** Logo for the top-right corner (data URL) — '' for none. */
+  logoDataUrl?: string;
 }
 
 const BLACK = '#141414';
@@ -40,11 +42,27 @@ export function renderProFormaInto(doc: jsPDF, d: ProFormaData): void {
   const leftCol = M;
   const rightCol = M + half + 6;
 
-  // Title
+  // Title (left two-thirds) + logo (top-right block, like the template's W1:AF6).
+  const logoBoxW = 58, logoBoxH = 16;
+  const logoBoxX = pageWidth - M - logoBoxW, logoBoxY = 4;
+  let hasLogo = false;
+  if (d.logoDataUrl) {
+    try {
+      const props = doc.getImageProperties(d.logoDataUrl);
+      const k = Math.min(logoBoxW / props.width, logoBoxH / props.height);
+      const w = props.width * k, h = props.height * k;
+      // Contain-fit, right-aligned and vertically centred in the logo block.
+      doc.addImage(d.logoDataUrl, (props.fileType || 'PNG') as any, logoBoxX + (logoBoxW - w), logoBoxY + (logoBoxH - h) / 2, w, h);
+      hasLogo = true;
+    } catch (e) {
+      console.warn('Pro forma logo could not be drawn:', e);
+    }
+  }
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.setTextColor(BLACK);
-  doc.text('Pro Forma Invoice', pageWidth / 2, 18, { align: 'center' });
+  if (hasLogo) doc.text('Pro Forma Invoice', M, 18);
+  else doc.text('Pro Forma Invoice', pageWidth / 2, 18, { align: 'center' });
   doc.setDrawColor(BLACK);
   doc.setLineWidth(0.5);
   doc.line(M, 22, pageWidth - M, 22);

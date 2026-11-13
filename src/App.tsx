@@ -6829,6 +6829,10 @@ export default function App() {
       totalAmount: money(total),
       totalInWords: amountInWords(total, cur),
       footerLines,
+      // Logo uploaded on the Pro Forma template (QA Templates), else the first
+      // template that has one (e.g. the COA's Sucro logo).
+      logoDataUrl: qaTemplates.find(t => /pro\s*-?\s*forma/i.test(t.name || '') && t.logoDataUrl)?.logoDataUrl
+        || qaTemplates.find(t => t.logoDataUrl)?.logoDataUrl || '',
     };
   };
 
