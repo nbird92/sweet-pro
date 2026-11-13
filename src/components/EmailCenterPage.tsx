@@ -264,7 +264,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
   const apptRequestsSorted = useMemo(() => sortQueue(poAmendments.filter(isApptRequest)), [poAmendments]);
 
   /** One reading of an appointment row, shared by its Appointment / Slot check /
-   *  Booked at cells: current (old) vs requested (new) pick-up and delivery. */
+   *  cells: current (old) vs requested (new) pick-up and delivery. */
   const apptView = (a: PoAmendment) => {
     const cur = currentApptFor?.(a) || {};
     const rt = requestedTimes(a);
@@ -631,7 +631,6 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Appointment (current → requested)</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Slot check / Suggested</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Booked at</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
                   <th className="p-3 bg-[#141414]">Actions</th>
                 </tr>
@@ -693,14 +692,6 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                           ) : (
                             <span className="opacity-40">No time requested</span>
                           )}
-                        </td>
-                        <td className="p-3 text-xs whitespace-nowrap">
-                          {loc ? (
-                            <div>
-                              <div className="font-bold">{loc}{cur.bay ? <span className="font-normal opacity-70"> · {cur.bay}</span> : null}</div>
-                              {cur.carrier && <div className="text-[10px] opacity-50">{cur.carrier}</div>}
-                            </div>
-                          ) : <span className="opacity-40">Not scheduled</span>}
                         </td>
                       </>);
                     })()}
