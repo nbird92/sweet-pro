@@ -14970,6 +14970,39 @@ export default function App() {
           onReopenInbox={reopenInboxEmail}
           onRefreshInbox={loadInboxFeed}
           poAmendments={visibleAmendments}
+          currentApptFor={(a) => {
+            // The order's CURRENT appointment: its shipment-schedule row (pick-up
+            // slot date/time + delivery date), else the order's own dates.
+            const bol = (a.orderBol || '').trim().toUpperCase();
+            const order = (a.orderId ? orders.find(o => o.id === a.orderId) : undefined)
+              || (bol ? orders.find(o => (o.bolNumber || '').trim().toUpperCase() === bol) : undefined);
+            const b = bol || (order?.bolNumber || '').trim().toUpperCase();
+            const ship = b ? [...hamiltonShipments, ...vancouverShipments].find(s => (s.bol || '').trim().toUpperCase() === b && s.status !== 'Cancelled') : undefined;
+            return {
+              pickupDate: ship?.date || order?.shipmentDate,
+              pickupTime: ship?.time || order?.pickupTime,
+              deliveryDate: ship?.deliveryDate || order?.deliveryDate,
+              location: ship?.location || (ship ? (hamiltonShipments.some(x => x.id === ship.id) ? 'Hamilton' : 'Vancouver') : (order?.location || undefined)),
+              bay: ship?.bay || undefined,
+              carrier: ship?.carrier || order?.carrier || undefined,
+              shipmentId: ship?.id,
+            };
+          }}
+          slotCheck={(date, time, location, bay, excludeShipmentId) => {
+            // Is the requested pick-up slot free in the scheduler? Booked = a non-
+            // cancelled shipment at the same location, date, time (and bay, when
+            // the load has one). Also finds the next free slot that day.
+            const t = normalizeScheduleTime(time || '');
+            if (!date || !t) return null;
+            const list = /vancouver/i.test(location || '') ? vancouverShipments : hamiltonShipments;
+            const sameDay = list.filter(s => s.date === date && s.id !== excludeShipmentId && s.status !== 'Cancelled');
+            const clash = (slot: string) => sameDay.find(s => normalizeScheduleTime(s.time || '') === slot && (!bay || s.bay === bay));
+            const hit = clash(t);
+            if (!hit) return { free: true };
+            const slots = getLocationAllTimeSlots(location || 'Hamilton');
+            const nextFree = slots.find(sl => sl > t && !clash(sl));
+            return { free: false, by: hit.customer || hit.bol || 'another load', nextFree };
+          }}
           onApplyAmendment={applyAmendment}
           onDismissAmendment={dismissAmendment}
           onScanInbox={scanInboxNow}

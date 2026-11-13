@@ -38,6 +38,10 @@ interface Props {
   onRefreshInbox?: () => void;
   /** Review queue of emailed order amendments/cancellations. */
   poAmendments?: PoAmendment[];
+  /** The matched order's current appointment (pick-up date/time, delivery date). */
+  currentApptFor?: (a: PoAmendment) => { pickupDate?: string; pickupTime?: string; deliveryDate?: string; location?: string; bay?: string; carrier?: string; shipmentId?: string };
+  /** Whether a pick-up slot is free in the scheduler (null when not checkable). */
+  slotCheck?: (date: string, time: string, location?: string, bay?: string, excludeShipmentId?: string) => { free: boolean; by?: string; nextFree?: string } | null;
   onApplyAmendment?: (a: PoAmendment) => void;
   onDismissAmendment?: (a: PoAmendment) => void;
   /** Trigger an ad-hoc inbox scan now; resolves with the run summary. */
@@ -56,6 +60,43 @@ function amendmentChangeText(a: PoAmendment): string {
     parts.push(`Appt ${a.requestedApptDate} ${a.requestedApptTime} unavailable${a.suggestedApptTime ? ` → suggest ${a.suggestedApptTime}` : ' (no free slots)'}${a.apptLocation ? ` @ ${a.apptLocation}` : ''}`);
   }
   return parts.join('   ·   ') || (a.summary || 'See email');
+}
+
+/** "9pm" / "4 PM" / "21:00" / "07:00" → "HH:MM" (24h); '' when absent. */
+function toHHMM(raw: string): string {
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(raw.trim());
+  if (!m) return '';
+  let h = parseInt(m[1], 10);
+  const min = m[2] || '00';
+  const ap = (m[3] || '').toLowerCase();
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  if (h > 23 || parseInt(min, 10) > 59) return '';
+  return `${String(h).padStart(2, '0')}:${min}`;
+}
+
+const TIME_RE = '(\\d{1,2}:\\d{2}(?:\\s*(?:am|pm))?|\\d{1,2}\\s*(?:am|pm))';
+/** Requested pick-up (load) and delivery times named in an appointment email's
+ *  summary: "load time 07:00 and delivery ETA 10:00", "Change delivery time to
+ *  18:00", "Reschedule … for 23:00 loading time", "afternoon (4 PM onwards)". */
+function requestedTimes(a: PoAmendment): { pickupTime: string; deliveryTime: string } {
+  const s = a.summary || '';
+  const near = (words: string) => {
+    const before = new RegExp(`(?:${words})[^\\d]{0,25}${TIME_RE}`, 'i').exec(s);
+    if (before) return toHHMM(before[1]);
+    const after = new RegExp(`${TIME_RE}\\s*(?:${words})`, 'i').exec(s);
+    return after ? toHHMM(after[1]) : '';
+  };
+  let pickupTime = near('load(?:ing)?|pick-?\\s?up');
+  let deliveryTime = near('deliver\\w*|eta|arriv\\w*');
+  if (!pickupTime && !deliveryTime) {
+    const any = new RegExp(TIME_RE, 'i').exec(s);
+    const t = any ? toHHMM(any[1]) : '';
+    // A bare time belongs to whichever date the request moves (delivery first).
+    if (t) { if (a.newDeliveryDate || /deliver/i.test(s)) deliveryTime = t; else pickupTime = t; }
+  }
+  if (a.requestedApptTime && !pickupTime) pickupTime = a.requestedApptTime;
+  return { pickupTime, deliveryTime };
 }
 
 // Sender bucket chip for the inbox feed: customer / internal / logistics.
@@ -86,7 +127,7 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, inboxFeed = [], inboxTriage = [], onReviewFeedPo, onDismissInbox, onMarkInboxHandled, onReopenInbox, onRefreshInbox, poAmendments = [], onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, inboxFeed = [], inboxTriage = [], onReviewFeedPo, onDismissInbox, onMarkInboxHandled, onReopenInbox, onRefreshInbox, poAmendments = [], currentApptFor, slotCheck, onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [expandedImport, setExpandedImport] = useState<string | null>(null);
   const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
@@ -221,6 +262,38 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     });
   };
   const apptRequestsSorted = useMemo(() => sortQueue(poAmendments.filter(isApptRequest)), [poAmendments]);
+
+  /** One reading of an appointment row, shared by its Appointment / Slot check /
+   *  Booked at cells: current (old) vs requested (new) pick-up and delivery. */
+  const apptView = (a: PoAmendment) => {
+    const cur = currentApptFor?.(a) || {};
+    const rt = requestedTimes(a);
+    const s = a.summary || '';
+    // "Move PO … for afternoon delivery" — the model often files the new DELIVERY
+    // day as newShipmentDate; a delivery-only request never moves the pick-up.
+    const deliveryOnly = /deliver|\beta\b|arriv/i.test(s) && !/load|pick-?\s?up/i.test(s) && !a.requestedApptDate;
+    const fmt = (d?: string, t?: string) => [d || '', t || ''].filter(Boolean).join(' ') || '—';
+    const oldPickDate = a.prevShipmentDate || cur.pickupDate || '';
+    const oldPickTime = cur.pickupTime || '';
+    const oldDelDate = a.prevDeliveryDate || cur.deliveryDate || '';
+    const newPickDate = deliveryOnly ? '' : (a.newShipmentDate || a.requestedApptDate || '');
+    const newDelDate = a.newDeliveryDate || (deliveryOnly ? a.newShipmentDate : '') || '';
+    const pickTime = deliveryOnly ? '' : rt.pickupTime;
+    const wantsPick = !!(newPickDate || pickTime);
+    const wantsDel = !!(newDelDate || rt.deliveryTime);
+    const reqPickDate = newPickDate || oldPickDate;
+    const reqPickTime = pickTime || oldPickTime; // time unchanged unless one is named
+    return {
+      cur, deliveryOnly, wantsPick, wantsDel,
+      oldPick: fmt(oldPickDate, oldPickTime),
+      newPick: fmt(reqPickDate, reqPickTime),
+      oldDel: fmt(oldDelDate),
+      newDel: fmt(newDelDate || oldDelDate, rt.deliveryTime),
+      reqPickDate, pickTime,
+      // Asking for the slot it already has (e.g. "schedule confirmed").
+      pickUnchanged: !!pickTime && reqPickDate === oldPickDate && pickTime === oldPickTime,
+    };
+  };
   const amendmentsSorted = useMemo(() => sortQueue(poAmendments.filter(a => !isApptRequest(a))), [poAmendments]);
   const pendingAmendments = poAmendments.filter(a => !isApptRequest(a) && (a.status === 'pending' || a.status === 'unmatched')).length;
   const pendingApptRequests = poAmendments.filter(a => isApptRequest(a) && (a.status === 'pending' || a.status === 'unmatched')).length;
@@ -556,9 +629,9 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <th className="p-3 bg-[#141414] border-r border-white/20">From</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">PO / BOL</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Requested</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Suggested</th>
-                  <th className="p-3 bg-[#141414] border-r border-white/20">Scheduler</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Appointment (current → requested)</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Slot check / Suggested</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Booked at</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
                   <th className="p-3 bg-[#141414]">Actions</th>
                 </tr>
@@ -570,13 +643,67 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <td className="p-3 text-xs max-w-[200px] truncate" title={a.subject}>{a.fromEmail || '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
-                    <td className="p-3 text-xs font-mono font-bold" title={a.summary}>
-                      {a.requestedApptDate
-                        ? <span className="whitespace-nowrap">{a.requestedApptDate}{a.requestedApptTime ? ` ${a.requestedApptTime}` : ''}</span>
-                        : <div className="max-w-[260px] truncate font-sans font-normal">{amendmentChangeText(a)}</div>}
+                    <td className="p-3 text-xs" title={a.summary}>
+                      {(() => {
+                        const v = apptView(a);
+                        const Row = ({ label, from, to }: { label: string; from: string; to: string }) => (
+                          <div className="flex items-baseline gap-1.5 whitespace-nowrap">
+                            <span className="text-[9px] uppercase font-bold opacity-50 w-14 shrink-0">{label}</span>
+                            <span className="font-mono opacity-60">{from}</span>
+                            <span className="opacity-40">→</span>
+                            <span className={`font-mono font-bold ${from === to ? 'opacity-60' : 'text-violet-800'}`}>{to}</span>
+                          </div>
+                        );
+                        if (!v.wantsPick && !v.wantsDel) return <div className="max-w-[300px] truncate">{a.summary || amendmentChangeText(a)}</div>;
+                        return (
+                          <div className="space-y-0.5">
+                            {v.wantsPick && <Row label="Pick-up" from={v.oldPick} to={v.newPick} />}
+                            {v.wantsDel && <Row label="Delivery" from={v.oldDel} to={v.newDel} />}
+                            {a.summary && <div className="text-[10px] opacity-50 max-w-[320px] truncate">{a.summary}</div>}
+                          </div>
+                        );
+                      })()}
                     </td>
-                    <td className="p-3 text-xs font-mono whitespace-nowrap">{a.suggestedApptTime ? `${a.suggestedApptTime}` : '—'}</td>
-                    <td className="p-3 text-xs">{a.apptLocation || '—'}</td>
+                    {(() => {
+                      const v = apptView(a);
+                      const { cur } = v;
+                      const loc = cur.location || a.apptLocation;
+                      const open = a.status === 'pending' || a.status === 'unmatched';
+                      // Only check slots where the load is actually scheduled — an
+                      // unscheduled/unmatched order has no scheduler to check.
+                      const check = open && v.pickTime && !v.pickUnchanged && loc
+                        ? slotCheck?.(v.reqPickDate, v.pickTime, loc, cur.bay, cur.shipmentId) : null;
+                      return (<>
+                        <td className="p-3 text-xs whitespace-nowrap">
+                          {a.suggestedApptTime ? (
+                            <span className="font-mono"><span className="text-amber-700 font-bold">Taken</span> → suggest <b>{a.suggestedApptTime}</b></span>
+                          ) : !open ? '—'
+                          : v.pickUnchanged ? (
+                            <span className="text-emerald-700 font-bold">Already booked at {v.pickTime}</span>
+                          ) : check ? (
+                            check.free
+                              ? <span className="text-emerald-700 font-bold">{v.pickTime} open</span>
+                              : <span title={`Booked by ${check.by}`}><span className="text-red-700 font-bold">{v.pickTime} taken</span>{check.nextFree ? <> → next free <b className="font-mono">{check.nextFree}</b></> : ' — no free slot that day'}</span>
+                          ) : v.pickTime && !loc ? (
+                            <span className="opacity-60">Not scheduled — can't check the {v.pickTime} slot</span>
+                          ) : v.wantsDel && !v.pickTime ? (
+                            <span className="opacity-60">Delivery change — no pick-up slot needed</span>
+                          ) : v.wantsPick ? (
+                            <span className="opacity-60">New pick-up day — time unchanged</span>
+                          ) : (
+                            <span className="opacity-40">No time requested</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-xs whitespace-nowrap">
+                          {loc ? (
+                            <div>
+                              <div className="font-bold">{loc}{cur.bay ? <span className="font-normal opacity-70"> · {cur.bay}</span> : null}</div>
+                              {cur.carrier && <div className="text-[10px] opacity-50">{cur.carrier}</div>}
+                            </div>
+                          ) : <span className="opacity-40">Not scheduled</span>}
+                        </td>
+                      </>);
+                    })()}
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
                     <td className="p-3 whitespace-nowrap">
                       {a.status === 'pending' ? (
