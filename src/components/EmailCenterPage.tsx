@@ -686,13 +686,19 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
                     {(() => {
                       const v = apptView(a);
-                      // current → requested; just the current value when no change is asked.
+                      // Arrow system in every column: whenever the email names a value,
+                      // show current → requested ('—' when there's no current value;
+                      // greyed when it matches). Otherwise just the current value.
                       const Cell = ({ c }: { c: { from: string; to: string } }) => (
                         <td className="p-3 text-xs font-mono whitespace-nowrap">
-                          {c.to && c.from && c.to !== c.from ? (
-                            <span><span className="opacity-50">{c.from || '—'}</span> <span className="opacity-40">→</span> <b className="text-violet-800">{c.to}</b></span>
+                          {c.to ? (
+                            <span>
+                              <span className="opacity-50">{c.from || '—'}</span>
+                              <span className="opacity-40"> → </span>
+                              <b className={c.to !== c.from ? 'text-violet-800' : 'opacity-50'}>{c.to}</b>
+                            </span>
                           ) : (
-                            <span className={c.to ? 'font-bold text-violet-800' : 'opacity-60'}>{c.to || c.from || '—'}</span>
+                            <span className="opacity-60">{c.from || '—'}</span>
                           )}
                         </td>
                       );
