@@ -5,6 +5,7 @@ import { renderCoaInto } from './coaPdf';
 import { renderPackingListInto } from './packingListPdf';
 import { renderBagIdReportInto } from './bagIdReportPdf';
 import { renderScaleTicketInto } from './scaleTicketPdf';
+import { renderProFormaInto, type ProFormaData } from './proFormaPdf';
 
 export interface GenerateDocumentPackageParams {
   shipment: Shipment;
@@ -26,6 +27,8 @@ export interface GenerateDocumentPackageParams {
   coaCarrier?: { name: string; email: string };
   /** Scale Ticket Shipping/Receiving box to mark (invoice-table packages: 'shipping'). */
   scaleTicketDirection?: 'shipping' | 'receiving';
+  /** Invoice packages: a Pro Forma Invoice page, placed first. */
+  proForma?: ProFormaData;
 }
 
 /**
@@ -39,7 +42,7 @@ export interface GenerateDocumentPackageParams {
  * Each document type mirrors a template type in the QA Templates table.
  */
 export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams): { blobUrl: string; filename: string } {
-  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection, coaProduct, coaLogoDataUrl, coaCarrier } = params;
+  const { shipment, order, customer, carrier, shipFromLocation, shipToLocation, lotCodes, qaProducts, includeBagIdReport, scaleTicketDirection, coaProduct, coaLogoDataUrl, coaCarrier, proForma } = params;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
 
   // One render step per document; each draws onto the current page. addPage()
@@ -50,6 +53,7 @@ export function generateDocumentPackagePdf(params: GenerateDocumentPackageParams
     () => renderCoaInto(doc, { shipment, order, customer, shipFromLocation, shipTo: shipToLocation, lotCodes, qaProducts, product: coaProduct, carrierName: coaCarrier?.name, carrierEmail: coaCarrier ? coaCarrier.email : (carrier?.contactEmail || ''), logoDataUrl: coaLogoDataUrl }),
     () => renderPackingListInto(doc, { shipment, order, customer, shipFromLocation, shipToLocation, qaProducts }),
   ];
+  if (proForma) steps.unshift(() => renderProFormaInto(doc, proForma));
   if (includeBagIdReport) {
     steps.push(() => renderBagIdReportInto(doc, { shipment, order, customer, lotCodes, qaProducts }));
   }

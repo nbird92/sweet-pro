@@ -37,6 +37,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // otherwise inherit the template's default left alignment).
   const numericFields: string[] = Array.isArray(body.numericFields) ? body.numericFields.map(String) : [];
   const numericTokens: string[] = Array.isArray(body.numericTokens) ? body.numericTokens.map(String) : [];
+  // Optional: extra per-line-item tokens that don't use the item_ prefix (e.g.
+  // {{currency_unit_price}}, {{tax_%}}, {{Invoice_line_Amount}}). In the line-item
+  // row they're written per item, keyed by the token name itself.
+  const itemTokens: string[] = Array.isArray(body.itemTokens) ? body.itemTokens.map(String) : [];
   if (!sheetId) return res.status(400).json({ error: 'sheetId is required.' });
 
   const jwt = new JWT({
@@ -71,12 +75,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const grid: string[][] = valuesResp.data?.values || [];
     let itemRow = -1;
     const itemColField = new Map<number, string>(); // 0-based column -> item field name
-    for (let r = 0; r < grid.length && itemRow < 0; r++) {
+    // The field a cell's token names: item_<field>, or one of the extra itemTokens.
+    const cellItemField = (v: string): string | null => {
+      const m = v.match(/\{\{\s*item_(\w+)\s*\}\}/);
+      if (m) return m[1];
+      const t = v.match(/^\s*\{\{\s*([^{}]+?)\s*\}\}\s*$/);
+      if (t) { const hit = itemTokens.find(x => x.toLowerCase() === t[1].toLowerCase()); if (hit) return hit; }
+      return null;
+    };
+    // Every row that holds item tokens (a template may repeat the item row).
+    const templateItemRows: number[] = [];
+    for (let r = 0; r < grid.length; r++) {
       const row = grid[r] || [];
+      let any = false;
       for (let c = 0; c < row.length; c++) {
-        const m = String(row[c] ?? '').match(/\{\{\s*item_(\w+)\s*\}\}/);
-        if (m) { if (itemRow < 0) itemRow = r; itemColField.set(c, m[1]); }
+        const f = cellItemField(String(row[c] ?? ''));
+        if (!f) continue;
+        any = true;
+        if (itemRow < 0 || r === itemRow) { itemRow = r; itemColField.set(c, f); }
       }
+      if (any) templateItemRows.push(r);
     }
 
     // 0-based (row, col) cells to right-align after the content is written.
@@ -110,6 +128,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const val = item ? String(item[field] ?? '') : '';
           valueData.push({ range: `${tabTitle}!${colLetter(c)}${itemRow + 1 + i}`, values: [[val]] });
           if (numericFieldSet.has(field)) alignRightCells.push({ r: itemRow + i, c });
+        }
+      }
+      // Spare repeated template item rows below the written ones: blank their tokens.
+      for (const r of templateItemRows) {
+        if (r < itemRow + rowsToWrite) continue;
+        const row = grid[r] || [];
+        for (let c = 0; c < row.length; c++) {
+          if (cellItemField(String(row[c] ?? ''))) valueData.push({ range: `${tabTitle}!${colLetter(c)}${r + 1}`, values: [['']] });
         }
       }
     }

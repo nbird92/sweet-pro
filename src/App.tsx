@@ -69,6 +69,7 @@ import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCol
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { renderSheetTemplatePdf } from './utils/renderTemplate';
+import type { ProFormaData } from './proFormaPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
 import { generateDocumentPackagePdf } from './documentPackagePdf';
@@ -278,6 +279,31 @@ function bolSequenceNumber(bol: string | undefined, prefix: string): number | nu
     return isNaN(n) ? null : n;
   }
   return null;
+}
+
+/** 19260.45, 'CAD' → "Nineteen Thousand Two Hundred Sixty and 45/100 Canadian Dollars". */
+function amountInWords(amount: number, currency: string): string {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const under1000 = (n: number): string => {
+    const h = Math.floor(n / 100), r = n % 100;
+    const parts: string[] = [];
+    if (h) parts.push(`${ones[h]} Hundred`);
+    if (r) parts.push(r < 20 ? ones[r] : `${tens[Math.floor(r / 10)]}${r % 10 ? '-' + ones[r % 10] : ''}`);
+    return parts.join(' ');
+  };
+  const safe = Math.max(0, Math.round((Number(amount) || 0) * 100) / 100);
+  let whole = Math.floor(safe);
+  const cents = Math.round((safe - whole) * 100);
+  const scales = ['', 'Thousand', 'Million', 'Billion'];
+  const chunks: string[] = [];
+  for (let i = 0; whole > 0 && i < scales.length; i++, whole = Math.floor(whole / 1000)) {
+    const c = whole % 1000;
+    if (c) chunks.unshift(`${under1000(c)}${scales[i] ? ' ' + scales[i] : ''}`);
+  }
+  const cur = (currency || '').toUpperCase();
+  const curName = cur === 'USD' ? 'US Dollars' : cur === 'CAD' ? 'Canadian Dollars' : `${cur} `.trim();
+  return `${chunks.join(' ') || 'Zero'} and ${String(cents).padStart(2, '0')}/100 ${curName}`.trim();
 }
 
 /** One carrier name from a carrier field. Older transfers stored every
@@ -6630,7 +6656,7 @@ export default function App() {
   /** Build the full shipping document package (BOL + COA + Packing List + [Bag ID
    *  Report] + Scale Ticket) for a shipment and open it in the PDF preview. The Bag
    *  ID Report is included only for packaged / tote shipments. */
-  const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order, scaleTicketDirection?: 'shipping' | 'receiving') => {
+  const handleGenerateDocumentPackage = (rawShipment: Shipment, includeBagIdReport?: boolean, orderOverride?: Order, scaleTicketDirection?: 'shipping' | 'receiving', proForma?: ProFormaData) => {
     const trf = transferForShipment(rawShipment);
     if (trf) { handleGenerateDocumentPackageForTransfer(trf, rawShipment); return; }
     try {
@@ -6655,6 +6681,7 @@ export default function App() {
         qaProducts,
         includeBagIdReport: includeBag,
         scaleTicketDirection,
+        proForma,
       });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
       setPdfPreview({ url: blobUrl, filename, title: 'Document Package Preview' });
@@ -6711,8 +6738,104 @@ export default function App() {
     return realOrStub;
   };
 
+  // The "Pro Forma Invoice" template (QA Templates table) — its grid is read once
+  // (service account, else public link) so the page can print the template's own
+  // footer text. null = not loaded / unavailable.
+  const [proFormaTemplateRows, setProFormaTemplateRows] = useState<string[][] | null>(null);
+  const proFormaSheetId = useMemo(() => {
+    const t = qaTemplates.find(x => /pro\s*-?\s*forma/i.test(x.name || '') && (x.googleSheetUrl || '').trim());
+    return t ? extractSheetId(t.googleSheetUrl) : null;
+  }, [qaTemplates]);
+  useEffect(() => {
+    if (!proFormaSheetId) { setProFormaTemplateRows(null); return; }
+    let cancelled = false;
+    (async () => {
+      for (const tab of ['Order Confirmation', 'Pro Forma Invoice', 'Pro Forma', 'Sheet1']) {
+        try {
+          const csv = await fetchTabFromSheet(proFormaSheetId, tab);
+          const rows = parseCSV(csv);
+          if (rows.some(r => r.some(c => /total invoice value/i.test(c || '')))) { if (!cancelled) setProFormaTemplateRows(rows); return; }
+        } catch { /* try the next tab name */ }
+      }
+      if (!cancelled) setProFormaTemplateRows(null);
+    })();
+    return () => { cancelled = true; };
+  }, [proFormaSheetId]);
+
+  /** Pro Forma Invoice page data for an invoice (the "Pro Forma Invoice" template's
+   *  tokens). Rendered built-in, as the first page of the invoice document package. */
+  const proFormaDataForInvoice = (inv: Invoice): ProFormaData => {
+    const cur = invoiceCurrency(inv);
+    const money = (n: number) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const units = (n: number) => String(Math.round((Number(n) || 0) * 100) / 100);
+    const order = orderForInvoice(inv);
+    const customer = customers.find(c => c.name === inv.customer) || customers.find(c => (c.name || '').trim().toUpperCase() === (inv.customer || '').trim().toUpperCase());
+    const shipFrom = findDocLocation(inv.location) || findDocLocation(order?.location);
+    const { rows, headerAmount } = resolveInvoiceRows(inv);
+    const total = headerAmount > 0 ? headerAmount : effectiveInvoiceAmount(inv);
+    const cn = (inv.contractNumber || rows.find(r => r.contractNumber)?.contractNumber || '').split(',')[0].trim();
+    const contract = cn ? contracts.find(c => c.contractNumber === cn) : undefined;
+    const paymentTerms = (contract?.paymentTerms || (customer?.defaultPaymentTerms != null ? String(customer.defaultPaymentTerms) : '') || '').trim();
+    const bolDate = inv.shipmentDate || order?.shipmentDate || inv.date || '';
+    const dueDate = inv.dueDate || (() => {
+      const days = parseInt(paymentTerms.match(/\d+/)?.[0] || '0', 10);
+      if (!days || !bolDate) return '';
+      const dt = new Date(`${bolDate.slice(0, 10)}T12:00:00`);
+      if (isNaN(dt.getTime())) return '';
+      dt.setDate(dt.getDate() + days);
+      return dt.toISOString().slice(0, 10);
+    })();
+    const invoiceNo = inv.invoiceNumber || `PF-${inv.bolNumber || ''}`;
+    const csrName = customer?.csrId ? (people.find(p => p.id === customer.csrId)?.name || '') : '';
+    // The template's own text BELOW the totals (banking details, payment terms,
+    // T&Cs, signature block) — read from the sheet, never hardcoded — with its
+    // tokens filled. Rows after the TOTAL line; the amount-in-words row is drawn
+    // separately.
+    const fill: Record<string, string> = {
+      invoice_no: invoiceNo, payment_terms: paymentTerms, invoice_due_date: dueDate,
+      csr_name: csrName, currency: cur, total_invoice_amount: money(total), po: inv.po || '',
+    };
+    const footerLines: string[] = [];
+    if (proFormaTemplateRows) {
+      const totalIdx = proFormaTemplateRows.findIndex(r => r.some(c => /total invoice value/i.test(c || '')));
+      const tail = totalIdx >= 0 ? proFormaTemplateRows.slice(totalIdx + 1) : [];
+      for (const r of tail) {
+        const cells = r.map(c => String(c ?? '').trim()).filter(Boolean);
+        if (!cells.length || cells.some(c => /total_invoice_amount_written/i.test(c))) continue;
+        footerLines.push(cells.join(' ').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, k) => fill[String(k).toLowerCase()] ?? ''));
+      }
+    }
+    return {
+      invoiceNo,
+      contractNo: inv.contractNumber || Array.from(new Set(rows.map(r => r.contractNumber).filter(Boolean))).join(', '),
+      invoiceDate: inv.date || '',
+      reference: inv.po || '',
+      shipperName: shipFrom?.bolName || shipFrom?.name || inv.location || '',
+      shipperAddress: shipFrom?.address || '',
+      shipperCityProvince: shipFrom ? [shipFrom.city, shipFrom.province].filter(Boolean).join(', ') : '',
+      consigneeName: customer?.name || inv.customer || '',
+      consigneeTel: customer?.contactPhone || '',
+      consigneeEmail: customer?.contactEmail || customer?.customerServiceEmail || customer?.salesContactEmail || '',
+      bolDate,
+      currency: cur,
+      lines: rows.map(r => ({
+        description: r.item.productDisplayName || productNameToDisplay(r.item.productName) || inv.product || '',
+        contract: r.contractNumber || inv.contractNumber || '',
+        units: units(r.qtyUnits),
+        unitPrice: r.unitAmount ? money(r.unitAmount) : '',
+        tax: '',
+        amount: r.lineAmount ? money(r.lineAmount) : '',
+      })),
+      totalAmount: money(total),
+      totalInWords: amountInWords(total, cur),
+      footerLines,
+    };
+  };
+
   /** Invoice-table action: build the document package for an invoice. The Bag ID
-   *  Report is included only when THIS invoice carries packaged or tote products. */
+   *  Report is included only when THIS invoice carries packaged or tote products.
+   *  When a "Pro Forma Invoice" template is in the QA Templates table, the
+   *  rendered pro forma is merged in as the package's first pages. */
   const handleGenerateDocumentPackageForInvoice = (inv: Invoice) => {
     const shipment = resolveInvoiceShipment(inv);
     if (!shipment) {
@@ -6726,7 +6849,8 @@ export default function App() {
     // weighed quantity — not the ordered quantity.
     const scaled = scaleDocSourcesToInvoice(inv, shipment, orderOverride);
     // Invoiced loads are outbound — the Scale Ticket's Shipping box is marked.
-    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping');
+    // The Pro Forma Invoice leads the invoice package.
+    handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proFormaDataForInvoice(inv));
   };
 
   /** Transfer-table action: build the document package (BOL, COA, Packing List,
