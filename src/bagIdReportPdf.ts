@@ -3,6 +3,8 @@ import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, LotCode, QAProduct } from './types';
 import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter } from './pdfDocHelpers';
 import { sameLotCode } from './utils/lotCode';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
 
 export interface GenerateBagIdReportParams {
   shipment: Shipment;
@@ -19,6 +21,17 @@ export function renderBagIdReportInto(doc: jsPDF, {
   customer,
   lotCodes,
 }: GenerateBagIdReportParams): void {
+  const tpl = docTemplate('bagId');
+  if (tpl) {
+    // Bag slots fill with the shipment's lot numbers, 1-20 then 21-40.
+    const lots = shipment.lotNumbers && shipment.lotNumbers.length ? shipment.lotNumbers : (shipment.lotNumber ? [shipment.lotNumber] : []);
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: commonDocTokens({ shipment, order, customer }),
+      sequences: { bag_lot_number: lots },
+      logoDataUrl: tpl.logo,
+    });
+    return;
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 14;
   const contentWidth = pageWidth - M * 2;

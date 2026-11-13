@@ -2,6 +2,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Location, QAProduct, ShipToLocation } from './types';
 import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter, resolveLineWeights, BLACK } from './pdfDocHelpers';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
 
 export interface GeneratePackingListParams {
   shipment: Shipment;
@@ -21,6 +23,16 @@ export function renderPackingListInto(doc: jsPDF, {
   shipToLocation,
   qaProducts,
 }: GeneratePackingListParams): void {
+  const tpl = docTemplate('packingList');
+  if (tpl) {
+    const g = computeGoods(shipment, order, qaProducts);
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: { ...commonDocTokens({ shipment, order, customer, shipFromLocation, shipToLocation }), ...goodsTotals(g), shipper: '' },
+      items: goodsItems(g),
+      logoDataUrl: tpl.logo,
+    });
+    return;
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 14;
   const contentWidth = pageWidth - M * 2;

@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Order, Customer, Carrier, Location, QAProduct, SKU, ShipToLocation } from './types';
+import { renderTemplateGridInto, type TemplateFill } from './templateGridPdf';
+import { docTemplate } from './docTemplates';
 
 interface GenerateOrderConfirmationParams {
   order: Order;
@@ -24,6 +26,9 @@ interface GenerateOrderConfirmationParams {
    *  Without it, the raw stored productName is printed — which can be a
    *  format-only word like "Bulk". */
   displayProductName?: (item: { productKey?: string; productDisplayName?: string; productName: string }) => string;
+  /** Token values for the Order Confirmation template — when given and the
+   *  template is loaded, the page is drawn from the template. */
+  templateFill?: TemplateFill;
 }
 
 // Colors
@@ -79,9 +84,16 @@ export function generateOrderConfirmationPdf({
   reasonForReturn,
   originalBolNumber,
   displayProductName,
+  templateFill,
 }: GenerateOrderConfirmationParams): { blobUrl: string; filename: string } {
   const isReturn = documentType === 'return_order_confirmation';
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const tpl = !isReturn && templateFill ? docTemplate('orderConfirmation') : undefined;
+  if (tpl && templateFill) {
+    renderTemplateGridInto(doc, tpl.grid, { ...templateFill, logoDataUrl: templateFill.logoDataUrl || tpl.logo });
+    const filename = `Order_Confirmation_${order.bolNumber || 'draft'}_${order.customer?.replace(/[^a-zA-Z0-9]/g, '_') || 'customer'}.pdf`;
+    return { blobUrl: URL.createObjectURL(doc.output('blob')), filename };
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const contentWidth = pageWidth - 28; // 14mm margins
   const halfWidth = contentWidth / 2;

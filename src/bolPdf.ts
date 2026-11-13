@@ -3,6 +3,8 @@ import autoTable from 'jspdf-autotable';
 import type { Shipment, Order, Customer, Carrier, Location, QAProduct, ShipToLocation, LotCode } from './types';
 import { resolveLineWeights } from './pdfDocHelpers';
 import { sameLotCode } from './utils/lotCode';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
 
 interface GenerateBolParams {
   shipment: Shipment;
@@ -81,6 +83,20 @@ export function renderBolInto(doc: jsPDF, {
   qaProducts,
   lotCodes,
 }: GenerateBolParams): void {
+  // Drawn from the BOL template (QA Templates) when it's loaded.
+  const tpl = docTemplate('bol');
+  if (tpl) {
+    const g = computeGoods(shipment, order, qaProducts);
+    const st = order?.shippingTerms || '';
+    const freight = st === 'FOB' ? 'Prepaid' : (st === 'DAP' || st === 'DDP') ? 'Collect' : st === 'FCA' ? 'Third Party' : '';
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: { ...commonDocTokens({ shipment, order, customer, carrier, shipFromLocation, shipToLocation }), ...goodsTotals(g) },
+      items: goodsItems(g),
+      marks: freight ? [freight] : [],
+      logoDataUrl: tpl.logo,
+    });
+    return;
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 14;
   const contentWidth = pageWidth - M * 2;

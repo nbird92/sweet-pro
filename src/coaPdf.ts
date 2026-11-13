@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import type { Shipment, Order, Customer, Location, ShipToLocation, LotCode, QAProduct } from './types';
 import { sameLotCode } from './utils/lotCode';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
 
 interface GenerateCoaParams {
   shipment: Shipment;
@@ -340,6 +342,39 @@ export function renderCoaInto(doc: jsPDF, {
     : (qaProduct?.sugarType || '');
 
   const units = product?.units || (shipment.qty ? `${shipment.qty} MT` : '');
+  const kind = isLiquidSugar(sugarType) ? 'liquid' : 'granulated';
+  const tpl = docTemplate(kind === 'liquid' ? 'coaLiquid' : 'coaGranulated');
+  if (tpl) {
+    const joinVals = (key: keyof LotCode) =>
+      [...new Set(shipmentLotCodes.map(lc => String((lc as any)[key] ?? '').trim()).filter(Boolean))].join(', ');
+    const lotNums = shipmentLotCodes.length ? shipmentLotCodes.map(lc => lc.lotNumber).join(', ') : assignedLotNums.join(', ');
+    const maxColor = qaProduct?.maxColor != null && qaProduct.maxColor !== 0 ? String(qaProduct.maxColor) : '';
+    const originTxt = shipFromLocation?.name ? `${shipFromLocation.name.replace(/\s*\(.+\)$/, '')}, ON, Canada` : 'Hamilton, ON, Canada';
+    const destTxt = shipTo
+      ? [shipTo.city || shipTo.addressLine1, shipTo.province, shipTo.country || (shipTo.city || shipTo.province ? 'Canada' : '')].filter(Boolean).join(', ')
+      : [customer?.city, customer?.province, customer?.city || customer?.province ? 'Canada' : ''].filter(Boolean).join(', ');
+    const common = commonDocTokens({ shipment, order, customer, shipFromLocation, shipToLocation: shipTo, carrierName, carrierEmail });
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: {
+        ...common,
+        // COA customer box: name + the DELIVER-TO site address (ship-to name only).
+        deliver_name: shipTo?.name || '',
+        consignee_email: customer?.qaContractEmail || customer?.contactEmail || '',
+        trailer_number: joinVals('trailerNumber') || shipment.trailerNo || '',
+        lot_code: lotNums,
+        production_date: joinVals('date'),
+        expiration_date: '',
+        brix: joinVals('brix'), ph: joinVals('ph'), color: joinVals('color'),
+        moisture: joinVals('moisture'), ash: joinVals('ash'), sucrose: joinVals('sucrose'),
+        max_color: maxColor,
+        origin: originTxt,
+        destination: destTxt,
+      },
+      items: [{ units, description: product?.label || displayProductName }],
+      logoDataUrl: logoDataUrl || tpl.logo,
+    });
+    return;
+  }
   generateTemplateCoaPage(
     doc,
     isLiquidSugar(sugarType) ? 'liquid' : 'granulated',

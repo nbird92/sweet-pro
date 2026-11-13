@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { drawSectionHeader, drawFieldRow } from './pdfDocHelpers';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate } from './docTemplates';
 
 /** Values for the Pro Forma Invoice page — mirrors the tokens of the
  *  "Pro Forma Invoice" template in the QA Templates table. */
@@ -32,12 +34,33 @@ export interface ProFormaData {
   paymentTerms?: string;
   dueDate?: string;
   csrName?: string;
+  bolNumber?: string;
+  customerAddress?: string;
 }
 
 const BLACK = '#141414';
 
 /** Draw the Pro Forma Invoice onto the current page of `doc` (one page). */
 export function renderProFormaInto(doc: jsPDF, d: ProFormaData): void {
+  // Drawn from the Pro Forma Invoice template (QA Templates) when it's loaded.
+  const tpl = docTemplate('proForma');
+  if (tpl) {
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: {
+        invoice_no: d.invoiceNo, contract_no: d.contractNo, invoice_date: d.invoiceDate, po: d.reference,
+        shipper_name: d.shipperName, shipper_address: d.shipperAddress, shipper_city_province: d.shipperCityProvince,
+        consignee_name: d.consigneeName, consignee_tel: d.consigneeTel, consignee_email: d.consigneeEmail,
+        customer_corporate_address: d.customerAddress || '', bol_number: d.bolNumber || '', bol: d.bolNumber || '',
+        BOL_Date: d.bolDate, currency: d.currency, total_invoice_amount: d.totalAmount,
+        total_invoice_amount_written_long_form: d.totalInWords,
+        payment_terms: d.paymentTerms || '', invoice_due_date: d.dueDate || '', CSR_Name: d.csrName || '',
+      },
+      items: d.lines.map(l => ({ description: l.description, contract: l.contract, units: l.units, currency_unit_price: l.unitPrice, '$_Unit': l.unitPrice, unit_price: l.unitPrice, 'tax_%': l.tax, Invoice_line_Amount: l.amount })),
+      itemTokens: ['currency_unit_price', '$_Unit', 'unit_price', 'tax_%', 'Invoice_line_Amount'],
+      logoDataUrl: d.logoDataUrl,
+    });
+    return;
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const M = 14;

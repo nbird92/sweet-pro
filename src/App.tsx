@@ -68,7 +68,8 @@ import { auth, googleProvider } from './firebaseConfig';
 import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
-import { renderSheetTemplatePdf } from './utils/renderTemplate';
+import { setDocTemplates, type DocTemplateKey } from './docTemplates';
+import type { TemplateGrid } from './templateGridPdf';
 import type { ProFormaData } from './proFormaPdf';
 import { generateBolPdf } from './bolPdf';
 import { generateCoaPdf, isLiquidSugar, resolveCoaSugarType } from './coaPdf';
@@ -5737,26 +5738,15 @@ export default function App() {
     const shipToLocation = order.shipToLocationId ? customer?.shipToLocations?.find(l => l.id === order.shipToLocationId) : undefined;
     const filename = `Order_Confirmation_${order.bolNumber || 'draft'}_${(order.customer || 'customer').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
 
-    const tmpl = qaTemplates.find(t => t.type === 'Order Confirmation' && (t.googleSheetUrl || '').trim());
-    const sheetId = tmpl ? extractSheetId(tmpl.googleSheetUrl) : null;
-    if (sheetId) {
-      try {
-        const { tokens, lineItems } = buildOrderConfirmationTokens(order, { customer, carrier, shipperLocation, shipToLocation });
-        const blob = await renderSheetTemplatePdf({
-          sheetId, tokens, lineItems,
-          // Right-align the quantity / weight columns and the totals in the sheet.
-          numericFields: ['units', 'net', 'gross'],
-          numericTokens: ['total_units', 'total_net', 'total_gross'],
-        });
-        return { blob, filename };
-      } catch (e) {
-        console.error('Order-confirmation template render failed; using the built-in PDF:', e);
-      }
-    }
+    // Drawn by the app — from the Order Confirmation template's layout when it's
+    // loaded (instant; template edits show after a refresh), else built-in.
+    const { tokens, lineItems } = buildOrderConfirmationTokens(order, { customer, carrier, shipperLocation, shipToLocation });
     const gen = generateOrderConfirmationPdf({
       order, customer, carrier, shipperLocation, shipToLocation, qaProducts, skus,
       displayProductName: (li) => li.productDisplayName || productNameToDisplay(li.productName),
+      templateFill: { tokens, items: lineItems },
     });
+    void filename;
     const blob = await fetch(gen.blobUrl).then(r => r.blob());
     setTimeout(() => URL.revokeObjectURL(gen.blobUrl), 5000);
     return { blob, filename: gen.filename };
@@ -6738,6 +6728,57 @@ export default function App() {
     return realOrStub;
   };
 
+  // ── Document templates: load each QA template's GRID (cells, merges, sizes,
+  // borders, fonts) once — on start and whenever the Templates table changes —
+  // and register it so every document is DRAWN like its template, instantly.
+  // Template edits therefore show after a refresh.
+  const docTemplatePicks = useMemo(() => {
+    const byType = (type: string) => qaTemplates.find(t => (t.type || '') === type && (t.googleSheetUrl || '').trim());
+    const picks: Partial<Record<DocTemplateKey, QATemplate | undefined>> = {
+      bol: byType('Bill of Lading'),
+      coaLiquid: resolveCoaTemplate('Liquid'),
+      coaGranulated: resolveCoaTemplate('Granulated'),
+      packingList: byType('Packing List'),
+      bagId: byType('Bag ID Report'),
+      scaleTicket: byType('Scale Ticket'),
+      orderConfirmation: byType('Order Confirmation'),
+      proForma: qaTemplates.find(t => /pro\s*-?\s*forma/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
+    };
+    return picks;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qaTemplates, sugarTypes]);
+  const docTemplateKey = useMemo(() => JSON.stringify((Object.entries(docTemplatePicks) as Array<[string, QATemplate | undefined]>).map(([k, t]) => [k, t?.id || '', t?.googleSheetUrl || '', t?.updatedAt || '', (t?.logoDataUrl || '').length])), [docTemplatePicks]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const anyLogo = qaTemplates.find(t => t.logoDataUrl)?.logoDataUrl || '';
+      const headers: Record<string, string> = {};
+      const accessKey = (import.meta as any).env?.VITE_APP_ACCESS_KEY;
+      if (accessKey) headers['x-access-key'] = accessKey;
+      const cache = new Map<string, Promise<TemplateGrid | null>>();
+      const gridFor = (sheetId: string) => {
+        if (!cache.has(sheetId)) {
+          cache.set(sheetId, fetch(`/api/template-grid?sheetId=${encodeURIComponent(sheetId)}`, { headers })
+            .then(r => (r.ok ? r.json() : null)).catch(() => null));
+        }
+        return cache.get(sheetId)!;
+      };
+      const next: Partial<Record<DocTemplateKey, { grid: TemplateGrid; logo: string }>> = {};
+      await Promise.all((Object.entries(docTemplatePicks) as Array<[string, QATemplate | undefined]>).map(async ([key, t]) => {
+        const sheetId = t ? extractSheetId(t.googleSheetUrl) : null;
+        if (!t || !sheetId) return;
+        const grid = await gridFor(sheetId);
+        if (grid && Array.isArray(grid.cols) && grid.cols.length) next[key as DocTemplateKey] = { grid, logo: t.logoDataUrl || anyLogo };
+      }));
+      if (!cancelled) {
+        setDocTemplates(next);
+        console.log(`[templates] drawing from ${Object.keys(next).length} template(s): ${Object.keys(next).join(', ') || 'none'}`);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docTemplateKey]);
+
   // The "Pro Forma Invoice" template (QA Templates table) — its grid is read once
   // (service account, else public link) so the page can print the template's own
   // footer text. null = not loaded / unavailable.
@@ -6832,6 +6873,8 @@ export default function App() {
       paymentTerms,
       dueDate,
       csrName,
+      bolNumber: inv.bolNumber || '',
+      customerAddress: customer ? [customer.address, customer.city, customer.province, customer.postalCode].filter(Boolean).join(', ') : '',
       // Logo uploaded on the Pro Forma template (QA Templates), else the first
       // template that has one (e.g. the COA's Sucro logo).
       logoDataUrl: qaTemplates.find(t => /pro\s*-?\s*forma/i.test(t.name || '') && t.logoDataUrl)?.logoDataUrl

@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import type { Shipment, Order, Customer, Carrier, Location } from './types';
 import { BLACK } from './pdfDocHelpers';
+import { renderTemplateGridInto } from './templateGridPdf';
+import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
 
 export interface GenerateScaleTicketParams {
   shipment: Shipment;
@@ -26,6 +28,18 @@ export function renderScaleTicketInto(doc: jsPDF, {
   shipFromLocation: _shipFromLocation,
   direction,
 }: GenerateScaleTicketParams): void {
+  const tpl = docTemplate('scaleTicket');
+  if (tpl) {
+    // Scaled qty (MT) is the official on-trailer weight — printed in kg when known.
+    const scaledKg = shipment.scaledQty && shipment.scaledQty > 0 ? Math.round(shipment.scaledQty * 1000).toLocaleString() : '';
+    renderTemplateGridInto(doc, tpl.grid, {
+      tokens: { ...commonDocTokens({ shipment, order, carrier }), total_gross: scaledKg, total_net: scaledKg, tare_weight: '', item_code: '' },
+      items: [{ description: order?.product || shipment.product || '' }],
+      marks: direction === 'receiving' ? ['Receiving'] : direction === 'shipping' ? ['Shipping'] : [],
+      logoDataUrl: tpl.logo,
+    });
+    return;
+  }
   const pageWidth = doc.internal.pageSize.getWidth();
   const M = 18;
 
