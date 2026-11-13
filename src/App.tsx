@@ -25788,6 +25788,16 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Corporate Name</label>
+                    <input
+                      type="text"
+                      value={editingCustomer.corporateName || ''}
+                      onChange={(e) => setEditingCustomer({ ...editingCustomer, corporateName: e.target.value || undefined })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      placeholder="Legal / corporate entity name..."
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Customer Group</label>
                     <select
                       value={editingCustomer.customerGroupId || ''}

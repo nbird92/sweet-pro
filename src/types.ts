@@ -112,6 +112,7 @@ export interface Customer {
   defaultCurrency?: string;     // 'CAD' | 'USD' — fallback currency when no contract currency is known
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
+  corporateName?: string;      // legal / corporate entity name (e.g. for invoices and contracts)
   customerGroupId?: string;
   shipToLocations?: ShipToLocation[];
   /** Quotes saved from the Customer Quote page (Save Quote). */

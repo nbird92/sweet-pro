@@ -47,6 +47,7 @@ export function commonDocTokens(p: {
     pickup_date: s.date || o?.shipmentDate || '',
     delivery_date: s.deliveryDate || o?.deliveryDate || '',
     consignee_name: cu?.name || s.customer || '',
+    corporate_name: cu?.corporateName || cu?.name || s.customer || '',
     consignee_address: cu ? [cu.address, cu.city, cu.province, cu.postalCode].filter(Boolean).join(', ') : '',
     consignee_tel: cu?.contactPhone || '',
     consignee_email: cu?.contactEmail || '',
