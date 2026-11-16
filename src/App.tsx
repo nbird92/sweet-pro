@@ -3356,6 +3356,8 @@ export default function App() {
   const [shipmentDeleteConfirmId, setShipmentDeleteConfirmId] = useState<string | null>(null);
   const [contractInactivateConfirmId, setContractInactivateConfirmId] = useState<string | null>(null);
   const [contractColsMenuOpen, setContractColsMenuOpen] = useState(false);
+  const [invoiceColsMenuOpen, setInvoiceColsMenuOpen] = useState(false);
+  const [invoiceColDrag, setInvoiceColDrag] = useState<{ from: string; over: string | null } | null>(null);
   const [orderHideConfirmId, setOrderHideConfirmId] = useState<string | null>(null);
   const [isCreatingShipments, setIsCreatingShipments] = useState(false);
   const [shipmentCreationData, setShipmentCreationData] = useState<{ location: string; date: string; time: string; bay: string; carrier: string; orderId: string; transferId?: string }>({ location: '', date: '', time: '', bay: '', carrier: '', orderId: '' });
@@ -13711,6 +13713,37 @@ export default function App() {
     }
 
     if (activePage === 'Invoices') {
+      // Invoice table columns — order + visibility saved per user (same prefs
+      // store as every DataTable). Actions is always last and always shown.
+      const INVOICE_COLUMNS: Array<[string, string]> = [
+        ['invoiceNumber', 'Invoice No.'], ['bolNumber', 'BOL No.'], ['date', 'Date'], ['customer', 'Customer'],
+        ['product', 'Product'], ['po', 'PO No.'], ['qty', 'Qty (MT)'], ['pricePerMt', 'Price/MT'],
+        ['dueDate', 'Due Date'], ['splitNo', 'Split No.'], ['lotCode', 'Lot Code'], ['reversals', 'Reversals'],
+      ];
+      const INV_COLS_KEY = 'invoices-table';
+      const invAllKeys = INVOICE_COLUMNS.map(c => c[0]);
+      const invSavedOrder = (columnOrderStore.get(INV_COLS_KEY) || []).filter(k => invAllKeys.includes(k));
+      const invOrderedCols = [...invSavedOrder, ...invAllKeys.filter(k => !invSavedOrder.includes(k))];
+      const invHiddenCols = new Set((columnVisibilityStore.get(INV_COLS_KEY) || []).filter(k => invAllKeys.includes(k)));
+      const invShownColsRaw = invOrderedCols.filter(k => !invHiddenCols.has(k));
+      const invShownCols = invShownColsRaw.length ? invShownColsRaw : invOrderedCols;
+      const moveInvoiceCol = (from: string, to: string) => {
+        if (from === to) return;
+        const keys = invOrderedCols.filter(k => k !== from);
+        const at = keys.indexOf(to);
+        if (at < 0) return;
+        // Dropping onto a column to the right lands after it; to the left, before it.
+        const fromIdx = invOrderedCols.indexOf(from), toIdx = invOrderedCols.indexOf(to);
+        keys.splice(fromIdx < toIdx ? at + 1 : at, 0, from);
+        columnOrderStore.set(INV_COLS_KEY, keys);
+      };
+      const moveInvoiceColBy = (k: string, dir: -1 | 1) => {
+        const idx = invOrderedCols.indexOf(k), j = idx + dir;
+        if (idx < 0 || j < 0 || j >= invOrderedCols.length) return;
+        const keys = [...invOrderedCols];
+        [keys[idx], keys[j]] = [keys[j], keys[idx]];
+        columnOrderStore.set(INV_COLS_KEY, keys);
+      };
       let filteredInvoices = getSortedAndFilteredData<Invoice>(invoices, ['invoiceNumber', 'bolNumber', 'customer', 'product', 'po', 'status']);
       // Default order (no column sort chosen): newest invoice date first.
       if (!sortConfig) {
@@ -13852,12 +13885,63 @@ export default function App() {
             </button>
           </PageBanner>
 
-          <div className="px-6 pt-4">
-            <SearchInput
-              value={searchTerm}
-              onChange={setSearchTerm}
-              placeholder="Search invoices by Invoice #, BOL, Customer, PO, Product..."
-            />
+          <div className="px-6 pt-4 flex items-center gap-3">
+            <div className="flex-1">
+              <SearchInput
+                value={searchTerm}
+                onChange={setSearchTerm}
+                placeholder="Search invoices by Invoice #, BOL, Customer, PO, Product..."
+              />
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setInvoiceColsMenuOpen(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+                title="Show, hide or move columns"
+              >
+                <SlidersHorizontal size={12} /> Columns{invHiddenCols.size ? ` (${invHiddenCols.size} hidden)` : ''}
+              </button>
+              {invoiceColsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setInvoiceColsMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-40 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] w-64 max-h-[60vh] overflow-y-auto">
+                    <div className="px-3 py-2 border-b border-[#141414]/10 flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold opacity-60">Columns</span>
+                      <button
+                        onClick={() => { columnVisibilityStore.set(INV_COLS_KEY, []); columnOrderStore.set(INV_COLS_KEY, []); }}
+                        className="text-[10px] underline decoration-dotted opacity-70 hover:opacity-100"
+                      >Reset</button>
+                    </div>
+                    {invOrderedCols.map((k, idx) => {
+                      const label = INVOICE_COLUMNS.find(c => c[0] === k)?.[1] || k;
+                      const shown = !invHiddenCols.has(k);
+                      return (
+                        <div key={k} className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-[#F5F5F5]">
+                          <label className="flex items-center gap-2 flex-1 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={shown}
+                              disabled={shown && invShownCols.length <= 1}
+                              onChange={() => {
+                                const next = new Set(invHiddenCols);
+                                if (next.has(k)) next.delete(k); else next.add(k);
+                                columnVisibilityStore.set(INV_COLS_KEY, [...next]);
+                              }}
+                              className="accent-[#141414]"
+                            />
+                            <span className={shown ? '' : 'opacity-40'}>{label}</span>
+                          </label>
+                          <button disabled={idx === 0} onClick={() => moveInvoiceColBy(k, -1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move left"><ChevronUp size={12} /></button>
+                          <button disabled={idx === invOrderedCols.length - 1} onClick={() => moveInvoiceColBy(k, 1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move right"><ChevronDown size={12} /></button>
+                        </div>
+                      );
+                    })}
+                    <div className="px-3 py-2 border-t border-[#141414]/10 text-[10px] opacity-50">Tip: drag a column header to move it. Actions is always shown. Saved to your account.</div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <div className="px-6 pb-6">
           
@@ -13865,18 +13949,22 @@ export default function App() {
             <table className="w-full text-left border-collapse">
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="Invoice No." sortKey="invoiceNumber" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Date" sortKey="date" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Customer" sortKey="customer" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="PO No." sortKey="po" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Lot Code" sortKey="lotCode" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Reversals" sortKey="reversals" currentSort={sortConfig} onSort={handleSort} />
+                  {invShownCols.map(k => {
+                    const label = INVOICE_COLUMNS.find(c => c[0] === k)?.[1] || k;
+                    const isOver = invoiceColDrag && invoiceColDrag.over === k && invoiceColDrag.from !== k;
+                    return (
+                      <React.Fragment key={k}><SortableHeader label={label} sortKey={k} currentSort={sortConfig} onSort={handleSort}
+                        className={`${invoiceColDrag?.from === k ? 'opacity-40' : ''} ${isOver ? 'border-l-4 border-l-[#E4E3E0]' : ''}`}
+                        thProps={{
+                          draggable: true,
+                          title: 'Click to sort · drag to move',
+                          onDragStart: (e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', k); setInvoiceColDrag({ from: k, over: null }); },
+                          onDragOver: (e) => { if (!invoiceColDrag) return; e.preventDefault(); if (invoiceColDrag.over !== k) setInvoiceColDrag({ ...invoiceColDrag, over: k }); },
+                          onDrop: (e) => { e.preventDefault(); if (invoiceColDrag) moveInvoiceCol(invoiceColDrag.from, k); setInvoiceColDrag(null); },
+                          onDragEnd: () => setInvoiceColDrag(null),
+                        }} /></React.Fragment>
+                    );
+                  })}
                   <th className="p-4">Actions</th>
                 </tr>
               </thead>
@@ -13895,7 +13983,6 @@ export default function App() {
                     }
                     return '';
                   })();
-                  const isOverdue = calculatedDueDate && new Date(calculatedDueDate) < new Date() && i.status !== 'Paid' && i.status !== 'Cancelled';
                   // Get line items: from invoice directly, or look up linked order by BOL (memoised)
                   const linkedOrder = i.bolNumber ? ordersByBol.get(i.bolNumber) : undefined;
                   // Invoice values must come ONLY from the invoice's own line items —
@@ -13934,6 +14021,9 @@ export default function App() {
                       className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer"
                       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 56px' } as React.CSSProperties}
                       onClick={() => setViewingInvoiceCard({ ...i, dueDate: calculatedDueDate || i.dueDate || '', lineItems: invoiceLineItems, location: i.location || linkedOrder?.location || '', contractNumber: i.contractNumber || linkedOrder?.contractNumber || linkedOrder?.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || '', shippingTerms: i.shippingTerms || linkedOrder?.shippingTerms || '', papsNo: i.papsNo || linkedOrder?.papsNo || '', customsEntryNo: i.customsEntryNo || linkedOrder?.customsEntryNo || '' })}>
+                      {(() => {
+                        const cells: Record<string, React.ReactNode> = {
+                          invoiceNumber: (
                       <td className="p-4 text-xs font-mono border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         {/*
                           Uncontrolled input: defaultValue + onBlur. Typing no
@@ -13957,12 +14047,26 @@ export default function App() {
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
+                          ),
+                          bolNumber: (
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{i.bolNumber}</td>
+                          ),
+                          date: (
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.date}</td>
+                          ),
+                          customer: (
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer || invRes.customer || '—'}</td>
+                          ),
+                          product: (
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${productTitle}` : ''}>{productDisplay}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                          ),
+                          po: (
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po || invRes.po || '—'}</td>
+                          ),
+                          qty: (
                       <td className={`p-4 text-xs border-r border-[#141414]/10 font-bold ${(i.qty || 0) > 150 ? 'bg-red-50 text-red-700' : ''}`} title={(i.qty || 0) > 150 ? 'Over 150 MT — likely a x1000 / unit-vs-MT glitch. Edit the invoice to correct the quantity.' : ''}>{fmtN((i.qty || 0), 2)}{(i.qty || 0) > 150 && <span className="ml-1" title="Implausible quantity">⚠️</span>}</td>
+                          ),
+                          pricePerMt: (
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
@@ -13989,9 +14093,13 @@ export default function App() {
                           className="bg-transparent w-20 focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
-                      <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
+                          ),
+                          dueDate: (
+                      <td className="p-4 text-xs border-r border-[#141414]/10">
                         {calculatedDueDate || '—'}
                       </td>
+                          ),
+                          splitNo: (
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
@@ -14007,6 +14115,8 @@ export default function App() {
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
+                          ),
+                          lotCode: (
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         {/* Lot code from the matching shipment (by BOL). Stored on the
                             invoice at Complete & Bill; falls back to the live shipment
@@ -14025,6 +14135,8 @@ export default function App() {
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
+                          ),
+                          reversals: (
                       <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="text"
@@ -14040,6 +14152,10 @@ export default function App() {
                           className="bg-transparent w-full focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
                       </td>
+                          ),
+                        };
+                        return invShownCols.map(k => <React.Fragment key={k}>{cells[k]}</React.Fragment>);
+                      })()}
                       <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
                           <button
@@ -30799,10 +30915,11 @@ function SummaryRow({ label, value, bold, mono }: { label: string; value: React.
   );
 }
 
-function SortableHeader({ label, sortKey, currentSort, onSort, className = '' }: { label: string, sortKey: string, currentSort: { key: string, direction: 'asc' | 'desc' } | null, onSort: (key: string) => void, className?: string }) {
+function SortableHeader({ label, sortKey, currentSort, onSort, className = '', thProps }: { label: string, sortKey: string, currentSort: { key: string, direction: 'asc' | 'desc' } | null, onSort: (key: string) => void, className?: string, thProps?: React.ThHTMLAttributes<HTMLTableCellElement> }) {
   const isActive = currentSort?.key === sortKey;
   return (
     <th
+      {...thProps}
       className={`p-4 bg-[#141414] border-r border-[#E4E3E0]/20 cursor-pointer hover:bg-white/10 transition-colors ${className}`}
       onClick={() => onSort(sortKey)}
     >
