@@ -5566,6 +5566,19 @@ export default function App() {
   // Service email (Order Confirmation / BOL / Return Order Confirmation), and a
   // Logistics email that is CC'd on the shipping documents. Each value falls back
   // to the customer-level address at the call site when the location leaves it blank.
+  /** Is `kind` set to auto-send for this order's ship-to location? (Customer
+   *  card → Ship-To Locations → Auto-send.) An order with no ship-to uses the
+   *  customer's only ship-to location when there is exactly one. The Email
+   *  Center master switch (emailSettings.enabled) must also be on. */
+  const shipToAutoSend = (customerName: string | undefined, shipToLocationId: string | undefined, kind: keyof NonNullable<ShipToLocation['autoSend']>): boolean => {
+    if (!emailSettings.enabled) return false;
+    const cust = customers.find(c => c.name === customerName)
+      || customers.find(c => (c.name || '').trim().toUpperCase() === (customerName || '').trim().toUpperCase());
+    const locs = cust?.shipToLocations || [];
+    const loc = shipToLocationId ? locs.find(l => l.id === shipToLocationId) : (locs.length === 1 ? locs[0] : undefined);
+    return !!loc?.autoSend?.[kind];
+  };
+
   const shipToEmailRouting = (customer: Customer | undefined, shipToLocationId: string | undefined) => {
     const st = shipToLocationId ? customer?.shipToLocations?.find(l => l.id === shipToLocationId) : undefined;
     return {
@@ -6224,7 +6237,7 @@ export default function App() {
     setInvoices(prev => prev.some(i => i.shipmentId === ro.id && i.status === 'Credit') ? prev : [...prev, creditInvoice]);
 
     // 4. Fire the confirmation email automatically when its trigger is on.
-    if (emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
+    if (shipToAutoSend(ro.customer, ro.shipToLocationId, 'returnConfirmation')) {
       sendReturnOrderConfirmationEmail({ ...ro, bolNumber: bol, status: 'Completed' }, { triggeredBy: 'automation' });
     }
   };
@@ -9854,12 +9867,13 @@ export default function App() {
     // forget — completeAndBillOrder doesn't await them so the UI stays
     // responsive. Each send writes its own emailLog entry; failures land
     // in the log with the error message rather than blocking the bill.
-    if (emailSettings.enabled) {
+    // Per ship-to location (Customer card → Ship-To → Auto-send).
+    {
       const completedOrder: Order = { ...order, status: 'Completed' };
-      if (emailSettings.triggers.bolOnCompletedAndBilled) {
+      if (shipToAutoSend(order.customer, order.shipToLocationId, 'bol')) {
         sendBolEmail(completedOrder, { triggeredBy: 'automation' });
       }
-      if (emailSettings.triggers.coaOnCompletedAndBilled) {
+      if (shipToAutoSend(order.customer, order.shipToLocationId, 'coa')) {
         sendCoaEmail(completedOrder, { triggeredBy: 'automation' });
       }
     }
@@ -10139,7 +10153,20 @@ export default function App() {
   const applyOrderSyncResult = (preview: OrderSyncResult, current: Order[]): Order[] => {
     const updated = preview.updatedOrders ?? [];
     const updatedById = new Map(updated.map((o): [string, Order] => [o.id, o]));
-    if (preview.newOrders.length === 0 && updatedById.size === 0) return current;
+    // Every order sync: an OPEN order that carries a split number is Confirmed
+    // (new, updated or already in the table). Cancelled / Completed untouched.
+    const confirmSplit = (o: Order): Order =>
+      o.status === 'Open' && (o.splitNumber || '').trim() ? { ...o, status: 'Confirmed' } : o;
+    if (preview.newOrders.length === 0 && updatedById.size === 0) {
+      const swept = current.map(confirmSplit);
+      const changed = swept.filter((o, i) => o !== current[i]);
+      if (!changed.length) return current;
+      ordersRef.current = swept;
+      setOrders(swept);
+      saveNow(COLLECTIONS.orders, changed);
+      console.log(`%c[orderSync] ${changed.length} order(s) with a split number set to Confirmed`, 'color:#0a7');
+      return swept;
+    }
     // When a sync update REPLACES an order's BOL (matched by PO), carry the change
     // to its linked shipments / invoices / return orders so they don't orphan.
     const bolRemap = new Map<string, string>();
@@ -10183,16 +10210,18 @@ export default function App() {
     const stripInactiveLoc = (o: Order): Order =>
       isInactiveLocation(o.location) ? { ...o, location: '' } : o;
 
-    const merged = [...afterUpdates, ...freshNew].map(stripInactiveLoc);
+    const beforeConfirm = [...afterUpdates, ...freshNew].map(stripInactiveLoc);
+    const merged = beforeConfirm.map(confirmSplit);
+    const confirmedIds = merged.filter((o, i) => o !== beforeConfirm[i]).map(o => o.id);
     ordersRef.current = merged; // advance synchronously so a following sync/ingest sees these
     setOrders(merged);
     // DURABLE IMMEDIATELY — write the imported/updated orders to Firestore at
     // apply time (see the invoice apply for the rationale: state-only imports
     // that miss the autosave re-list on every future sync preview).
     {
-      const changedIds = new Set([...updated.map(o => o.id), ...freshNew.map(o => o.id)]);
+      const changedIds = new Set([...updated.map(o => o.id), ...freshNew.map(o => o.id), ...confirmedIds]);
       const toPersist = merged.filter(o => changedIds.has(o.id));
-      console.log(`%c[orderSync] applied: ${updated.length} updated, ${freshNew.length} appended, ${preview.newOrders.length - freshNew.length} dropped as duplicates`, 'color:#0a7');
+      console.log(`%c[orderSync] applied: ${updated.length} updated, ${freshNew.length} appended, ${preview.newOrders.length - freshNew.length} dropped as duplicates, ${confirmedIds.length} set to Confirmed (split number)`, 'color:#0a7');
       if (toPersist.length) saveNow(COLLECTIONS.orders, toPersist);
     }
     if (bolRemap.size) {
@@ -26145,7 +26174,14 @@ export default function App() {
                         return (
                         <tr key={loc.id} className="hover:bg-[#F9F9F9] transition-colors h-10">
                           <td className="px-3 py-0 font-mono font-bold whitespace-nowrap">{loc.locationCode}</td>
-                          <td className="px-3 py-0 font-bold truncate" title={loc.name}>{loc.name}</td>
+                          <td className="px-3 py-0 font-bold truncate" title={loc.name}>
+                            {loc.name}
+                            {(() => {
+                              const a = loc.autoSend || {};
+                              const tags = [a.orderConfirmation && 'OC', a.bol && 'BOL', a.coa && 'COA', a.returnConfirmation && 'RTN'].filter(Boolean);
+                              return tags.length ? <span className="ml-2 px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold uppercase" title="Documents auto-emailed for this location">Auto {tags.join(' · ')}</span> : null;
+                            })()}
+                          </td>
                           <td className="px-3 py-0 truncate" title={addr}>{addr || '—'}</td>
                           <td className="px-3 py-0 whitespace-nowrap">
                             {contactEmails.length
@@ -26179,6 +26215,7 @@ export default function App() {
                                   logisticsEmail: loc.logisticsEmail || '',
                                   notes: loc.notes || '',
                                   importRules: loc.importRules,
+                                  autoSend: loc.autoSend,
                                 });
                                 setShowShipToForm(true);
                               }}
@@ -26269,6 +26306,32 @@ export default function App() {
                           <input type="email" value={shipToForm.logisticsEmail || ''} onChange={(e) => setShipToForm({ ...shipToForm, logisticsEmail: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="CC'd on shipping documents" />
                         </div>
                       </div>
+
+                      {/* Per-location auto-send (moved here from the Email Center). */}
+                      {(() => {
+                        const a = shipToForm.autoSend || {};
+                        const setA = (patch: Partial<NonNullable<ShipToLocation['autoSend']>>) => setShipToForm({ ...shipToForm, autoSend: { ...a, ...patch } });
+                        const opts: Array<[keyof NonNullable<ShipToLocation['autoSend']>, string, string]> = [
+                          ['orderConfirmation', 'Order Confirmation', 'when the order is Confirmed → Order Confirmation email (else Customer Service)'],
+                          ['bol', 'Bill of Lading', 'on Complete & Bill → Customer Service email'],
+                          ['coa', 'Certificate of Analysis', 'on Complete & Bill → COA email'],
+                          ['returnConfirmation', 'Return Order Confirmation', 'when a return is completed → Customer Service email'],
+                        ];
+                        return (
+                          <div className="border border-emerald-300 bg-emerald-50/60 p-3 space-y-2">
+                            <div className="text-[10px] uppercase font-bold text-emerald-800">Auto-send documents <span className="normal-case font-normal opacity-70">— emailed automatically for orders shipping to this location</span></div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                              {opts.map(([k, label, hint]) => (
+                                <label key={k} className="flex items-start gap-2 text-xs cursor-pointer select-none">
+                                  <input type="checkbox" checked={!!a[k]} onChange={(e) => setA({ [k]: e.target.checked })} className="mt-0.5 w-4 h-4 accent-emerald-700" />
+                                  <span><span className="font-bold">{label}</span><span className="block text-[10px] opacity-60">{hint}</span></span>
+                                </label>
+                              ))}
+                            </div>
+                            {!emailSettings.enabled && <div className="text-[10px] text-amber-800 font-bold">Email sending is switched off in the Email Center — nothing auto-sends until it's on.</div>}
+                          </div>
+                        );
+                      })()}
 
                       {/* Per-SHIP-TO email import rule — when a scanned PO matches
                           THIS delivery site, these defaults beat the customer-level
@@ -29609,7 +29672,7 @@ export default function App() {
                               // Auto-send on Confirmed is opt-in via Email
                               // Center → Settings → Triggers. Phase 1 keeps
                               // sends manual (button on the order detail card).
-                              if (confirmedOrder && emailSettings.enabled && emailSettings.triggers.orderConfirmationOnConfirmed) {
+                              if (confirmedOrder && shipToAutoSend(confirmedOrder.customer, confirmedOrder.shipToLocationId, 'orderConfirmation')) {
                                 sendOrderConfirmationEmail(confirmedOrder, { triggeredBy: 'automation' });
                               }
                             }

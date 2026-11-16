@@ -72,6 +72,14 @@ export interface ShipToLocation {
   orderConfirmationEmail?: string; // where this location's Order Confirmation is sent (falls back to customerServiceEmail)
   customerServiceEmail?: string;   // where this location's BOL / Return Order Confirmation are sent (and OC when no orderConfirmationEmail)
   logisticsEmail?: string;         // CC'd on this location's shipping documents (Order Confirmation / BOL / Return Order)
+  /** Which documents are emailed AUTOMATICALLY for orders shipping to this
+   *  location (Email Center's master "enabled" switch still applies). */
+  autoSend?: {
+    orderConfirmation?: boolean;   // when the order is Confirmed
+    bol?: boolean;                 // on Complete & Bill
+    coa?: boolean;                 // on Complete & Bill
+    returnConfirmation?: boolean;  // when a return order is completed
+  };
   notes?: string;
   /** Per-SHIP-TO email-import rules — when a scanned PO matches this delivery
    *  site, these beat the customer-level importRules (a site that always takes

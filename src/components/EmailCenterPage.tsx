@@ -988,37 +988,11 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                 )}
               </div>
               <div className="border-t border-[#141414]/20 pt-4">
-                <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Auto-send triggers</div>
-                <div className="space-y-2">
-                  <ToggleRow
-                    label="Order confirmation when status → Confirmed"
-                    description="Sent to customer.customerServiceEmail. Phase 2 — wiring exists, flip on when ready."
-                    checked={emailSettings.triggers.orderConfirmationOnConfirmed}
-                    onChange={v => setTriggers({ orderConfirmationOnConfirmed: v })}
-                    compact
-                  />
-                  <ToggleRow
-                    label="Bill of Lading on Complete &amp; Bill"
-                    description="When an order is completed and billed, email the BOL PDF to customer.customerServiceEmail."
-                    checked={emailSettings.triggers.bolOnCompletedAndBilled}
-                    onChange={v => setTriggers({ bolOnCompletedAndBilled: v })}
-                    compact
-                  />
-                  <ToggleRow
-                    label="Certificate of Analysis on Complete &amp; Bill"
-                    description="Same trigger as BOL. Routed to customer.qaContractEmail when set, otherwise customerServiceEmail."
-                    checked={emailSettings.triggers.coaOnCompletedAndBilled}
-                    onChange={v => setTriggers({ coaOnCompletedAndBilled: v })}
-                    compact
-                  />
-                  <ToggleRow
-                    label="Invoice when status → Billed"
-                    description="Phase 2 — not implemented yet."
-                    checked={emailSettings.triggers.invoiceOnBilled}
-                    onChange={v => setTriggers({ invoiceOnBilled: v })}
-                    compact
-                    disabled
-                  />
+                <div className="text-[10px] uppercase font-bold opacity-50 mb-2">Auto-send</div>
+                <div className="text-xs leading-relaxed bg-[#F5F5F5] border border-[#141414]/20 p-3">
+                  Auto-send is now set <b>per ship-to location</b>: open a customer → <b>Ship-To Locations</b> → edit a location →
+                  <b> Auto-send documents</b> (Order Confirmation, Bill of Lading, Certificate of Analysis, Return Order Confirmation).
+                  The <b>Email sending enabled</b> switch above still turns all sending on or off.
                 </div>
               </div>
             </div>
