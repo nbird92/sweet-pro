@@ -24697,18 +24697,27 @@ export default function App() {
                   </div>
                   <div className="col-span-3">
                     {(() => {
+                      // Same live figures as the Contracts table (contractVolumeStats:
+                      // invoiced volume on this contract, by contract # / split prefix /
+                      // line-item contract, Cancelled/Credit handled). The stored
+                      // volumeTaken / volumeOutstanding fields drift and are not used.
                       const total = selectedContractDetail.contractVolume || 0;
-                      const taken = selectedContractDetail.volumeTaken || 0;
-                      const outstanding = selectedContractDetail.volumeOutstanding ?? (total - taken);
+                      const st = contractVolumeStats.get(selectedContractDetail.id) || { taken: 0, onOrder: 0, outstanding: total };
+                      const taken = st.taken;
                       const pct = total > 0 ? Math.min(100, Math.max(0, (taken / total) * 100)) : 0;
+                      const onPct = total > 0 ? Math.min(100 - pct, Math.max(0, (st.onOrder / total) * 100)) : 0;
+                      const f2 = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                       return (
                         <>
                           <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Volume Used</div>
-                          <div className="text-2xl font-black">{taken}<span className="text-xs opacity-50 font-bold mx-1">/</span><span className="text-sm font-bold">{total}<span className="opacity-50 text-[10px] ml-1">MT</span></span></div>
-                          <div className="mt-2 h-2 w-full bg-white/10 overflow-hidden">
-                            <div className="h-full bg-emerald-400" style={{ width: `${pct}%` }} />
+                          <div className="text-2xl font-black">{f2(taken)}<span className="text-xs opacity-50 font-bold mx-1">/</span><span className="text-sm font-bold">{f2(total)}<span className="opacity-50 text-[10px] ml-1">MT</span></span></div>
+                          <div className="mt-2 h-2 w-full bg-white/10 overflow-hidden flex">
+                            <div className="h-full bg-emerald-400" style={{ width: `${pct}%` }} title={`Invoiced ${f2(taken)} MT`} />
+                            <div className="h-full bg-amber-300/80" style={{ width: `${onPct}%` }} title={`On order ${f2(st.onOrder)} MT`} />
                           </div>
-                          <div className="mt-1 text-[10px] opacity-50">{outstanding} MT outstanding</div>
+                          <div className="mt-1 text-[10px] opacity-60">
+                            {f2(st.onOrder)} MT on order · {f2(st.outstanding)} MT outstanding
+                          </div>
                         </>
                       );
                     })()}
@@ -24747,9 +24756,16 @@ export default function App() {
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.origin || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Taken</td><td className="px-4 py-2 font-bold">{selectedContractDetail.volumeTaken || 0} MT</td></tr>
-                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Outstanding</td><td className="px-4 py-2 font-bold">{selectedContractDetail.volumeOutstanding ?? ((selectedContractDetail.contractVolume || 0) - (selectedContractDetail.volumeTaken || 0))} MT</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Margin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}/MT` : '—'}</td></tr>
+                        {(() => {
+                          const st = contractVolumeStats.get(selectedContractDetail.id) || { taken: 0, onOrder: 0, outstanding: selectedContractDetail.contractVolume || 0 };
+                          const f2 = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                          return (<>
+                            <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Taken</td><td className="px-4 py-2 font-bold">{f2(st.taken)} MT</td></tr>
+                            <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume on Order</td><td className="px-4 py-2 font-bold">{f2(st.onOrder)} MT</td></tr>
+                            <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Outstanding</td><td className="px-4 py-2 font-bold">{f2(st.outstanding)} MT</td></tr>
+                          </>);
+                        })()}
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Margin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}/MT` : '—'}</td></tr>
                       </tbody>
                     </table>
                   </div>
