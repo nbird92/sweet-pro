@@ -13873,7 +13873,6 @@ export default function App() {
                   <SortableHeader label="PO No." sortKey="po" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Qty (MT)" sortKey="qty" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Due Date" sortKey="dueDate" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Split No." sortKey="splitNo" currentSort={sortConfig} onSort={handleSort} />
                   <SortableHeader label="Lot Code" sortKey="lotCode" currentSort={sortConfig} onSort={handleSort} />
@@ -13989,21 +13988,6 @@ export default function App() {
                           placeholder="—"
                           className="bg-transparent w-20 focus:outline-none focus:bg-[#F5F5F5] px-1 -mx-1"
                         />
-                      </td>
-                      <td className="p-4 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={i.status}
-                          onChange={(e) => setInvoices(prev => prev.map(inv => inv.id === i.id ? { ...inv, status: e.target.value } : inv))}
-                          className="bg-transparent font-bold uppercase text-[10px] focus:outline-none cursor-pointer"
-                          style={{ color: getStatusColor(i.status).text }}
-                        >
-                          <option value="Open">Open</option>
-                          <option value="Sent">Sent</option>
-                          <option value="Paid">Paid</option>
-                          <option value="Overdue">Overdue</option>
-                          <option value="Cancelled">Cancelled</option>
-                          <option value="Credit">Credit</option>
-                        </select>
                       </td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${isOverdue ? 'text-red-600 font-bold' : ''}`}>
                         {calculatedDueDate || '—'}
