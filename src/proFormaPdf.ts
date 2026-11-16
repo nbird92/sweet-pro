@@ -15,6 +15,8 @@ export interface ProFormaData {
   shipperAddress: string;
   shipperCityProvince: string;
   consigneeName: string;
+  /** Customer card → Company → Corporate Name ({{corporate_name}}); falls back to the customer name. */
+  corporateName?: string;
   consigneeTel: string;
   consigneeEmail: string;
   bolDate: string;
@@ -50,6 +52,7 @@ export function renderProFormaInto(doc: jsPDF, d: ProFormaData): void {
         invoice_no: d.invoiceNo, contract_no: d.contractNo, invoice_date: d.invoiceDate, po: d.reference,
         shipper_name: d.shipperName, shipper_address: d.shipperAddress, shipper_city_province: d.shipperCityProvince,
         consignee_name: d.consigneeName, consignee_tel: d.consigneeTel, consignee_email: d.consigneeEmail,
+        corporate_name: d.corporateName || d.consigneeName,
         customer_corporate_address: d.customerAddress || '', bol_number: d.bolNumber || '', bol: d.bolNumber || '',
         BOL_Date: d.bolDate, currency: d.currency, total_invoice_amount: d.totalAmount,
         total_invoice_amount_written_long_form: d.totalInWords,
@@ -110,7 +113,7 @@ export function renderProFormaInto(doc: jsPDF, d: ProFormaData): void {
   ly = drawFieldRow(doc, 'Address', d.shipperAddress, leftCol, ly, half, 11);
   ly = drawFieldRow(doc, 'City, Province', d.shipperCityProvince, leftCol, ly, half, 11);
   ly = drawFieldRow(doc, 'BOL Date', d.bolDate, leftCol, ly, half, 11);
-  ry = drawFieldRow(doc, 'Name', d.consigneeName, rightCol, y, half, 11);
+  ry = drawFieldRow(doc, 'Name', d.corporateName || d.consigneeName, rightCol, y, half, 11);
   ry = drawFieldRow(doc, 'Tel', d.consigneeTel, rightCol, ry, half, 11);
   ry = drawFieldRow(doc, 'Email', d.consigneeEmail, rightCol, ry, half, 11);
   y = Math.max(ly, ry) + 4;

@@ -6855,6 +6855,7 @@ export default function App() {
       shipperAddress: shipFrom?.address || '',
       shipperCityProvince: shipFrom ? [shipFrom.city, shipFrom.province].filter(Boolean).join(', ') : '',
       consigneeName: customer?.name || inv.customer || '',
+      corporateName: customer?.corporateName || customer?.name || inv.customer || '',
       consigneeTel: customer?.contactPhone || '',
       consigneeEmail: customer?.contactEmail || customer?.customerServiceEmail || customer?.salesContactEmail || '',
       bolDate,
@@ -19812,51 +19813,77 @@ export default function App() {
                 <button onClick={() => setViewingInvoiceCard(null)} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                {/* Invoice-level fields */}
-                <div className="grid grid-cols-5 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice #</label>
-                    <div className="text-sm font-bold font-mono">{inv.invoiceNumber || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">BOL Number</label>
-                    <div className="text-sm font-bold">{inv.bolNumber || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
-                    <div className="text-sm font-bold font-mono">{inv.splitNo || orderForInvoice(inv)?.splitNumber || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customer</label>
-                    <div className="text-sm font-bold">{inv.customer || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PO Number</label>
-                    <div className="text-sm">{inv.po || '—'}</div></div>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Status</label>
-                    <div className="text-sm">{inv.status || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Invoice Date</label>
-                    <div className="text-sm">{inv.date || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Due Date</label>
-                    <div className="text-sm">{inv.dueDate || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Carrier</label>
-                    <div className="text-sm">{inv.carrier || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipment Date</label>
-                    <div className="text-sm">{inv.shipmentDate || orderForInvoice(inv)?.shipmentDate || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Delivery Date</label>
-                    <div className="text-sm">{inv.deliveryDate || orderForInvoice(inv)?.deliveryDate || '—'}</div></div>
-                </div>
-                {/* Quantity (MT), Total Weight (KG), Price/MT and Split No. moved
-                    out of the header — they live in the Line Items section below. */}
-                <div className="grid grid-cols-5 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Amount</label>
-                    <div className="text-sm font-bold">${headerAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Currency</label>
-                    <div className="text-sm font-bold">{invoiceCurrency(inv)}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Lot Code</label>
-                    <div className="text-sm font-mono">{inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">PAPS No.</label>
-                    <div className="text-sm font-mono">{inv.papsNo || '—'}</div></div>
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Customs Entry No.</label>
-                    <div className="text-sm font-mono">{inv.customsEntryNo || '—'}</div></div>
-                </div>
-                <div className="grid grid-cols-4 gap-4">
-                  <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Reversals</label>
-                    <div className="text-sm">{inv.reversals || '—'}</div></div>
-                </div>
+                {/* Invoice header: summary band (invoice # + status, who / what, amount
+                    due) over three evenly-gridded groups of reference fields. Quantity,
+                    weights and prices live in the Line Items section below. */}
+                {(() => {
+                  const st = (inv.status || '').trim();
+                  const pill = /paid/i.test(st) ? 'bg-emerald-100 text-emerald-800'
+                    : /cancel/i.test(st) ? 'bg-red-100 text-red-700'
+                    : /credit/i.test(st) ? 'bg-sky-100 text-sky-800'
+                    : 'bg-amber-100 text-amber-800';
+                  const order = orderForInvoice(inv);
+                  const due = inv.dueDate || '';
+                  const overdue = !!due && due < new Date().toISOString().slice(0, 10) && !/paid|cancel|credit/i.test(st);
+                  const Field = ({ label, value, mono }: { label: string; value?: string; mono?: boolean }) => (
+                    <div className="min-w-0">
+                      <div className="text-[10px] uppercase font-bold opacity-50 mb-1">{label}</div>
+                      <div className={`text-sm truncate ${mono ? 'font-mono' : ''} ${value ? '' : 'opacity-40'}`} title={value || ''}>{value || '—'}</div>
+                    </div>
+                  );
+                  const Group = ({ title, children }: { title: string; children: React.ReactNode }) => (
+                    <div className="px-5 py-4">
+                      <div className="text-[9px] uppercase font-bold tracking-widest opacity-40 mb-3">{title}</div>
+                      <div className="grid grid-cols-4 gap-x-6 gap-y-3">{children}</div>
+                    </div>
+                  );
+                  return (
+                    <div className="border border-[#141414]">
+                      <div className="flex flex-col md:flex-row md:items-stretch border-b border-[#141414]">
+                        <div className="flex-1 px-5 py-4 min-w-0">
+                          <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Invoice</div>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-2xl font-black font-mono tracking-tight">{inv.invoiceNumber || '—'}</span>
+                            {st && <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${pill}`}>{st}</span>}
+                          </div>
+                          <div className="mt-2 text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="font-bold">{inv.customer || '—'}</span>
+                            {inv.po && <><span className="opacity-30">·</span><span className="opacity-70">PO {inv.po}</span></>}
+                            {inv.bolNumber && <><span className="opacity-30">·</span><span className="opacity-70 font-mono">BOL {inv.bolNumber}</span></>}
+                          </div>
+                        </div>
+                        <div className="md:w-64 shrink-0 px-5 py-4 bg-[#F5F5F3] border-t md:border-t-0 md:border-l border-[#141414] md:text-right">
+                          <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Amount Due</div>
+                          <div className="text-2xl font-black font-mono tracking-tight">
+                            ${headerAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            <span className="ml-1.5 text-xs font-bold opacity-60 align-middle">{invoiceCurrency(inv)}</span>
+                          </div>
+                          <div className={`mt-1 text-xs ${overdue ? 'text-red-700 font-bold' : 'opacity-60'}`}>{due ? `${overdue ? 'Overdue — was due' : 'Due'} ${due}` : 'No due date'}</div>
+                        </div>
+                      </div>
+                      <div className="divide-y divide-[#141414]/10">
+                        <Group title="References">
+                          <Field label="BOL Number" value={inv.bolNumber} mono />
+                          <Field label="Split No." value={inv.splitNo || order?.splitNumber} mono />
+                          <Field label="PO Number" value={inv.po} />
+                          <Field label="Lot Code" value={inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber })} mono />
+                        </Group>
+                        <Group title="Dates">
+                          <Field label="Invoice Date" value={inv.date} />
+                          <Field label="Due Date" value={inv.dueDate} />
+                          <Field label="Shipment Date" value={inv.shipmentDate || order?.shipmentDate} />
+                          <Field label="Delivery Date" value={inv.deliveryDate || order?.deliveryDate} />
+                        </Group>
+                        <Group title="Logistics & Customs">
+                          <Field label="Carrier" value={inv.carrier} />
+                          <Field label="PAPS No." value={inv.papsNo} mono />
+                          <Field label="Customs Entry No." value={inv.customsEntryNo} mono />
+                          <Field label="Reversals" value={inv.reversals} />
+                        </Group>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Line Items & Contract Details — same layout as the order card. */}
                 <div className="border border-[#141414] overflow-hidden">
