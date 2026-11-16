@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react';
 import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2, Paperclip, CalendarClock } from 'lucide-react';
 import PageBanner from './PageBanner';
 import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from '../types';
+import { fmtN } from '../utils/fmt';
 
 interface Props {
   emailLog: EmailLog[];
@@ -54,7 +55,7 @@ function amendmentChangeText(a: PoAmendment): string {
   const parts: string[] = [];
   if (a.newShipmentDate) parts.push(`Ship ${a.prevShipmentDate || '—'} → ${a.newShipmentDate}`);
   if (a.newDeliveryDate) parts.push(`Delivery ${a.prevDeliveryDate || '—'} → ${a.newDeliveryDate}`);
-  if (typeof a.newQuantityMt === 'number') parts.push(`Qty ${a.prevQuantityMt != null ? a.prevQuantityMt.toFixed(2) : '—'} → ${a.newQuantityMt.toFixed(2)} MT`);
+  if (typeof a.newQuantityMt === 'number') parts.push(`Qty ${a.prevQuantityMt != null ? fmtN(a.prevQuantityMt, 2) : '—'} → ${fmtN(a.newQuantityMt, 2)} MT`);
   if (a.newSplitNumber) parts.push(`Split ${a.prevSplitNumber || '—'} → ${a.newSplitNumber}`);
   if (a.requestedApptDate && a.requestedApptTime) {
     parts.push(`Appt ${a.requestedApptDate} ${a.requestedApptTime} unavailable${a.suggestedApptTime ? ` → suggest ${a.suggestedApptTime}` : ' (no free slots)'}${a.apptLocation ? ` @ ${a.apptLocation}` : ''}`);
@@ -335,7 +336,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     push('Appointment time', c.apptTime.from, c.apptTime.to);
     push('Delivery date', c.delDate.from, c.delDate.to);
     push('Delivery time', c.delTime.from, c.delTime.to);
-    if (typeof a.newQuantityMt === 'number') push('Quantity', a.prevQuantityMt != null ? `${a.prevQuantityMt.toFixed(2)} MT` : '', `${a.newQuantityMt.toFixed(2)} MT`);
+    if (typeof a.newQuantityMt === 'number') push('Quantity', a.prevQuantityMt != null ? `${fmtN(a.prevQuantityMt, 2)} MT` : '', `${fmtN(a.newQuantityMt, 2)} MT`);
     if (a.newSplitNumber) push('Split', a.prevSplitNumber || '', a.newSplitNumber);
     return out;
   };
@@ -608,7 +609,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                                       <td className="p-2">{li.description || '—'}</td>
                                       <td className="p-2 font-mono">{li.itemNumber || '—'}</td>
                                       <td className="p-2 text-right font-mono">{li.quantity != null ? `${li.quantity}${li.unit ? ' ' + li.unit : ''}` : '—'}</td>
-                                      <td className="p-2 text-right font-mono">{typeof li.quantityMt === 'number' ? li.quantityMt.toFixed(3) : '—'}</td>
+                                      <td className="p-2 text-right font-mono">{typeof li.quantityMt === 'number' ? fmtN(li.quantityMt, 3) : '—'}</td>
                                       <td className="p-2 text-right font-mono">{typeof li.pricePerMt === 'number' ? `$${li.pricePerMt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}</td>
                                     </tr>
                                   ))}

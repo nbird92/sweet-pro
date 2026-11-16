@@ -3,6 +3,7 @@ import CustomerContractsTable from './CustomerContractsTable';
 import CustomerSalesByMonth, { MonthMatrix } from './CustomerSalesByMonth';
 import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2 } from 'lucide-react';
 import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup } from '../types';
+import { fmtN } from '../utils/fmt';
 
 type Tab = 'details' | 'contracts' | 'sales' | 'forecast' | 'quotes';
 
@@ -293,10 +294,10 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                       <td className="p-2">{q.origin || '—'}</td>
                       <td className="p-2">{q.isDelivered ? (q.destination || 'Delivered') : 'FCA'}{q.shippingTerms && <div className="text-[9px] opacity-50">{q.shippingTerms}</div>}</td>
                       <td className="p-2 font-mono text-right">{fmt(q.volumeMt || 0)}</td>
-                      <td className="p-2 font-mono text-right">{q.rawPriceUsdCwt != null ? q.rawPriceUsdCwt.toFixed(2) : '—'}</td>
-                      <td className="p-2 font-mono text-right">{q.fxRate != null ? q.fxRate.toFixed(4) : '—'}</td>
-                      <td className="p-2 font-mono text-right">{q.marginCadMt != null ? q.marginCadMt.toFixed(2) : '—'}</td>
-                      <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {(q.finalPriceMt || 0).toFixed(2)}</td>
+                      <td className="p-2 font-mono text-right">{q.rawPriceUsdCwt != null ? fmtN(q.rawPriceUsdCwt, 2) : '—'}</td>
+                      <td className="p-2 font-mono text-right">{q.fxRate != null ? fmtN(q.fxRate, 4) : '—'}</td>
+                      <td className="p-2 font-mono text-right">{q.marginCadMt != null ? fmtN(q.marginCadMt, 2) : '—'}</td>
+                      <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {fmtN((q.finalPriceMt || 0), 2)}</td>
                       <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                       <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${fmtDate(q.startDate)} – ${fmtDate(q.endDate)}` : '—'}</td>
                       <td className="p-2"><button onClick={() => { if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button></td>

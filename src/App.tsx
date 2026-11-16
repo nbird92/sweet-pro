@@ -105,6 +105,7 @@ import PageBanner from './components/PageBanner';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
+import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
   syncOrdersFromConfig,
@@ -3010,7 +3011,7 @@ export default function App() {
               logs.push({ ...logBase(item, po), poNumber: refPo, result: 'duplicate', note: `Demurrage invoice ${invNo} already recorded` });
             } else {
               newDemurrage.push(dem);
-              logs.push({ ...logBase(item, po), poNumber: refPo, customer: dem.customer, result: 'created', note: `Demurrage invoice ${invNo || '(no #)'} from ${dem.carrier} — ${dem.currency || '$'}${dem.amount.toFixed(2)}` });
+              logs.push({ ...logBase(item, po), poNumber: refPo, customer: dem.customer, result: 'created', note: `Demurrage invoice ${invNo || '(no #)'} from ${dem.carrier} — ${dem.currency || '$'}${fmtN(dem.amount, 2)}` });
             }
             continue;
           }
@@ -5780,7 +5781,7 @@ export default function App() {
         <tr><td><strong>BOL Number</strong></td><td>${escapeHtml(order.bolNumber || '—')}</td></tr>
         <tr><td><strong>PO Number</strong></td><td>${escapeHtml(order.po || '—')}</td></tr>
         <tr><td><strong>Product</strong></td><td>${escapeHtml(order.product || order.lineItems?.[0]?.productName || '—')}</td></tr>
-        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${fmtN(totalKg, 0)} kg</td></tr>
         <tr><td><strong>Shipment Date</strong></td><td>${escapeHtml(order.shipmentDate || '—')}</td></tr>
         <tr><td><strong>Carrier</strong></td><td>${escapeHtml(order.carrier || '—')}</td></tr>
       </table>
@@ -5875,7 +5876,7 @@ export default function App() {
         <tr><td><strong>BOL Number</strong></td><td>${escapeHtml(order.bolNumber || '—')}</td></tr>
         <tr><td><strong>PO Number</strong></td><td>${escapeHtml(order.po || '—')}</td></tr>
         <tr><td><strong>Product</strong></td><td>${escapeHtml(order.product || order.lineItems?.[0]?.productName || '—')}</td></tr>
-        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${fmtN(totalKg, 0)} kg</td></tr>
         <tr><td><strong>Shipment Date</strong></td><td>${escapeHtml(order.shipmentDate || '—')}</td></tr>
         <tr><td><strong>Carrier</strong></td><td>${escapeHtml(order.carrier || '—')}</td></tr>
       </table>
@@ -6149,7 +6150,7 @@ export default function App() {
         <tr><td><strong>Original BOL</strong></td><td>${escapeHtml(returnOrder.originalBolNumber || '—')}</td></tr>
         <tr><td><strong>PO Number</strong></td><td>${escapeHtml(returnOrder.po || '—')}</td></tr>
         <tr><td><strong>Product</strong></td><td>${escapeHtml(returnOrder.product || returnOrder.lineItems?.[0]?.productName || '—')}</td></tr>
-        <tr><td><strong>Total Weight</strong></td><td>${totalKg.toFixed(0)} kg</td></tr>
+        <tr><td><strong>Total Weight</strong></td><td>${fmtN(totalKg, 0)} kg</td></tr>
         <tr><td><strong>Reason for Return</strong></td><td>${escapeHtml(returnOrder.reasonForReturn || '—')}</td></tr>
       </table>
       <p>Thank you,<br/>${escapeHtml(emailSettings.fromName || 'Sucro Canada')}</p>
@@ -7143,7 +7144,7 @@ export default function App() {
                 <tr key={li.id} className="hover:bg-[#F9F9F9]">
                   <td className="p-2">{lineItemToShortform(li)}</td>
                   <td className="p-2 text-right font-mono">{(li.qty || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                  <td className="p-2 text-right font-mono font-bold">{(li.totalWeight || 0).toFixed(2)}</td>
+                  <td className="p-2 text-right font-mono font-bold">{fmtN((li.totalWeight || 0), 2)}</td>
                   <td className="p-2 text-center whitespace-nowrap">
                     <button type="button" onClick={() => { setEditingTransferLineIdx(idx); setTransferLineDraft({ productKey: li.productKey || '', productValue: li.productName, productLabel: li.productDisplayName || '', qtyUnits: li.qty || 0, contractNumber: li.contractNumber || '' }); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit line"><Pencil size={12} /></button>
                     <button type="button" onClick={() => { setTransferLineItems(prev => prev.filter((_, i) => i !== idx)); if (editingTransferLineIdx === idx) { setEditingTransferLineIdx(null); setTransferLineDraft({ productKey: '', productValue: '', productLabel: '', qtyUnits: 0, contractNumber: '' }); } }} className="p-1 text-red-500 hover:bg-red-50 transition-colors" title="Remove line"><Trash2 size={12} /></button>
@@ -7153,7 +7154,7 @@ export default function App() {
               <tr className="bg-[#F5F5F5] font-bold">
                 <td className="p-2">Total</td>
                 <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.qty || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                <td className="p-2 text-right font-mono">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)}</td>
+                <td className="p-2 text-right font-mono">{fmtN(transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0), 2)}</td>
                 <td className="p-2"></td>
               </tr>
             </tbody>
@@ -11553,8 +11554,8 @@ export default function App() {
         const onOrderVol = Math.max(0, outstandingVol - available - existingWeightOnContract);
         setErrorBox(
           `Not enough volume on contract ${contract.contractNumber}: `
-          + `${outstandingVol.toFixed(2)} MT outstanding − ${(onOrderVol + existingWeightOnContract).toFixed(2)} MT already on order = `
-          + `${Math.max(0, available).toFixed(2)} MT available, but this item requires ${totalWeight.toFixed(2)} MT. `
+          + `${fmtN(outstandingVol, 2)} MT outstanding − ${fmtN((onOrderVol + existingWeightOnContract), 2)} MT already on order = `
+          + `${fmtN(Math.max(0, available), 2)} MT available, but this item requires ${fmtN(totalWeight, 2)} MT. `
           + `Reduce the quantity or choose a different contract.`
         );
         return;
@@ -13933,7 +13934,7 @@ export default function App() {
                       <td className="p-4 text-xs border-r border-[#141414]/10 font-bold">{i.customer || invRes.customer || '—'}</td>
                       <td className={`p-4 text-xs border-r border-[#141414]/10 ${!productOk ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={!productOk ? `No matching product in catalog: ${productTitle}` : ''}>{productDisplay}{!productOk && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                       <td className="p-4 text-xs border-r border-[#141414]/10">{i.po || invRes.po || '—'}</td>
-                      <td className={`p-4 text-xs border-r border-[#141414]/10 font-bold ${(i.qty || 0) > 150 ? 'bg-red-50 text-red-700' : ''}`} title={(i.qty || 0) > 150 ? 'Over 150 MT — likely a x1000 / unit-vs-MT glitch. Edit the invoice to correct the quantity.' : ''}>{(i.qty || 0).toFixed(2)}{(i.qty || 0) > 150 && <span className="ml-1" title="Implausible quantity">⚠️</span>}</td>
+                      <td className={`p-4 text-xs border-r border-[#141414]/10 font-bold ${(i.qty || 0) > 150 ? 'bg-red-50 text-red-700' : ''}`} title={(i.qty || 0) > 150 ? 'Over 150 MT — likely a x1000 / unit-vs-MT glitch. Edit the invoice to correct the quantity.' : ''}>{fmtN((i.qty || 0), 2)}{(i.qty || 0) > 150 && <span className="ml-1" title="Implausible quantity">⚠️</span>}</td>
                       <td className="p-4 text-xs font-bold border-r border-[#141414]/10 font-mono" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="number"
@@ -14454,7 +14455,7 @@ export default function App() {
                         <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
                         <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || ordRes.contractNumber || '—'}</td>
-                        <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${totalWeight.toFixed(2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{(totalWeight * 1000).toFixed(0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
+                        <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${fmtN(totalWeight, 2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{fmtN((totalWeight * 1000), 0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{typeof ord.scaledQtyMt === 'number' && ord.scaledQtyMt > 0 ? ord.scaledQtyMt.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po || ordRes.po || '—'}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
@@ -14469,7 +14470,7 @@ export default function App() {
                           const priceMt = orderPricePerMt(ord, ordContract);
                           return (<>
                             <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
-                              {priceMt > 0 ? `$${priceMt.toFixed(2)}` : '—'}
+                              {priceMt > 0 ? `$${fmtN(priceMt, 2)}` : '—'}
                             </td>
                             <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
                               {ordContract?.currency || ord.currency || '—'}
@@ -14818,7 +14819,7 @@ export default function App() {
               { key: 'location', label: 'Location' },
               { key: 'netWeightKg', label: 'Net Weight (KG)', bold: true, align: 'right', sortValue: (s) => s._netWt || 0, render: (s) => s._netWt },
               { key: 'grossWeightKg', label: 'Gross Weight (KG)', align: 'right', render: (s) => s.grossWeightKg || '-' },
-              { key: 'premiumCadMt', label: 'Differential (CAD/MT)', align: 'right', mono: true, sortValue: (s) => s.premiumCadMt || 0, render: (s) => s.premiumCadMt ? s.premiumCadMt.toFixed(2) : '—' },
+              { key: 'premiumCadMt', label: 'Differential (CAD/MT)', align: 'right', mono: true, sortValue: (s) => s.premiumCadMt || 0, render: (s) => s.premiumCadMt ? fmtN(s.premiumCadMt, 2) : '—' },
               { key: 'warehouse', label: 'Warehouse', sortValue: (s) => productLogistics(s).warehouse, render: (s) => logisticsSelect(s, 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']]) },
               { key: 'commodityGroup', label: 'Commodity Group', sortValue: (s) => productLogistics(s).commodityGroup, render: (s) => logisticsSelect(s, 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']]) },
               { key: 'terminal', label: 'Terminal', sortValue: (s) => productLogistics(s).terminal, render: (s) => logisticsSelect(s, 'terminal', productTerminals(s.location).map(t => [t.terminal, t.terminal] as [string, string])) },
@@ -16936,7 +16937,7 @@ export default function App() {
               { key: 'weightPerLoadMt', label: 'Weight / Load (MT)', align: 'right', mono: true },
               {
                 key: 'costPerMt', label: 'Cost / MT', align: 'right', mono: true, bold: true,
-                render: (i) => `${i.currency || 'CAD'} $${(i.totalCostCad / (i.weightPerLoadMt || 1)).toFixed(2)}`,
+                render: (i) => `${i.currency || 'CAD'} $${fmtN((i.totalCostCad / (i.weightPerLoadMt || 1)), 2)}`,
                 sortValue: (i) => i.totalCostCad / (i.weightPerLoadMt || 1),
               },
             ]}
@@ -16949,7 +16950,7 @@ export default function App() {
             footer={
               <tr className="bg-[#F5F5F5] font-black border-t border-[#141414]">
                 <td colSpan={6} className="p-4 text-xs uppercase tracking-widest text-right border-r border-[#141414]/10">Total Supply Chain Cost / MT</td>
-                <td className="p-4 text-sm text-indigo-600 text-right">CAD ${totalCostPerMt.toFixed(2)}</td>
+                <td className="p-4 text-sm text-indigo-600 text-right">CAD ${fmtN(totalCostPerMt, 2)}</td>
               </tr>
             }
           />
@@ -17030,7 +17031,7 @@ export default function App() {
                 label: 'Fuel Surcharge (%)',
                 align: 'right',
                 mono: true,
-                render: (fs) => `${(fs.surchargePercent || 0).toFixed(2)}%`,
+                render: (fs) => `${fmtN((fs.surchargePercent || 0), 2)}%`,
                 sortValue: (fs) => fs.surchargePercent || 0,
               },
               { key: 'startDate', label: 'Start Date' },
@@ -17662,15 +17663,15 @@ export default function App() {
                       {showContractCol('customerNumber') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>}
                       {showContractCol('customerName') && <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>}
                       {showContractCol('itasName') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || itasNameByCustomerKey.get(`id:${c.customerNumber}`) || itasNameByCustomerKey.get(`name:${c.customerName}`) || '—'}</td>}
-                      {showContractCol('finalPrice') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${c.finalPrice.toFixed(2)}` : '—'}</td>}
+                      {showContractCol('finalPrice') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.finalPrice ? `${c.currency ? c.currency + ' ' : ''}$${fmtN(c.finalPrice, 2)}` : '—'}</td>}
                       {/* Raws — ALWAYS USD/cwt (the #11 quoting unit), converted from
                           the stored USD/MT. Never CAD and never per-MT. */}
                       {showContractCol('raws') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{(() => {
                         const cwt = rawPriceUsdCwt(c.rawPriceUsdMt);
-                        return cwt === null ? '—' : `USD $${cwt.toFixed(2)}`;
+                        return cwt === null ? '—' : `USD $${fmtN(cwt, 2)}`;
                       })()}</td>}
-                      {showContractCol('margin') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${c.margin.toFixed(2)}` : '—'}</td>}
-                      {showContractCol('contractVolume') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.contractVolume?.toFixed(2)}</td>}
+                      {showContractCol('margin') && <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{c.margin ? `$${fmtN(c.margin, 2)}` : '—'}</td>}
+                      {showContractCol('contractVolume') && <td className="p-3 text-xs border-r border-[#141414]/10">{fmtN(c.contractVolume, 2)}</td>}
                       {(() => {
                         // Volume Taken / on Order / Outstanding come from the
                         // contractVolumeStats memo — computed once per data change
@@ -17689,7 +17690,7 @@ export default function App() {
                                 className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
                                 title="View invoiced orders on this contract"
                               >
-                                {volumeTakenComputed.toFixed(2)}
+                                {fmtN(volumeTakenComputed, 2)}
                               </button>
                             </td>}
                             {showContractCol('volumeOnOrder') && <td className="p-3 text-xs font-bold border-r border-[#141414]/10">
@@ -17698,11 +17699,11 @@ export default function App() {
                                 className="text-blue-600 underline decoration-dotted underline-offset-2 hover:text-blue-800 cursor-pointer"
                                 title="View non-invoiced orders on this contract"
                               >
-                                {volumeOnOrderComputed.toFixed(2)}
+                                {fmtN(volumeOnOrderComputed, 2)}
                               </button>
                             </td>}
                             {showContractCol('volumeOutstanding') && <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${volumeOutstandingComputed < 0 ? 'text-red-700' : ''}`}>
-                              {volumeOutstandingComputed.toFixed(2)}
+                              {fmtN(volumeOutstandingComputed, 2)}
                             </td>}
                           </>
                         );
@@ -17754,23 +17755,23 @@ export default function App() {
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Final Price</label>
-                                  <div className="text-xs font-bold text-indigo-600">{c.currency} ${c.finalPrice.toFixed(2)}/MT</div>
+                                  <div className="text-xs font-bold text-indigo-600">{c.currency} ${fmtN(c.finalPrice, 2)}/MT</div>
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
-                                  <div className="text-xs font-bold">{c.deliveredFreight ? `$${c.deliveredFreight.toFixed(2)}/MT` : '—'}</div>
+                                  <div className="text-xs font-bold">{c.deliveredFreight ? `$${fmtN(c.deliveredFreight, 2)}/MT` : '—'}</div>
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Export Duty</label>
-                                  <div className="text-xs font-bold">{c.exportDuty ? `$${c.exportDuty.toFixed(2)}/MT` : '—'}</div>
+                                  <div className="text-xs font-bold">{c.exportDuty ? `$${fmtN(c.exportDuty, 2)}/MT` : '—'}</div>
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Pallet Charge</label>
-                                  <div className="text-xs font-bold">{c.palletCharge ? `$${c.palletCharge.toFixed(2)}/MT` : '—'}</div>
+                                  <div className="text-xs font-bold">{c.palletCharge ? `$${fmtN(c.palletCharge, 2)}/MT` : '—'}</div>
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">FX Rate</label>
-                                  <div className="text-xs font-bold">{c.fxRate?.toFixed(2) || '—'}</div>
+                                  <div className="text-xs font-bold">{fmtN(c.fxRate, 2) || '—'}</div>
                                 </div>
                                 <div className="col-span-4 space-y-1">
                                   <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
@@ -17914,7 +17915,7 @@ export default function App() {
               <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><TrendingUp size={14} /> Live ICE Sugar #11 (SB) — Yahoo Finance (delayed ~15 min)</h3>
               <div className="flex items-center gap-3">
                 {liveSugar?.fx && (
-                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">USD/CAD <span className="font-mono">{Number(liveSugar.fx.lastPrice || 0).toFixed(4)}</span></span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">USD/CAD <span className="font-mono">{fmtN(Number(liveSugar.fx.lastPrice || 0), 4)}</span></span>
                 )}
                 <span className="text-[10px] opacity-60">{liveSugar?.lastUpdated ? `as of ${new Date(liveSugar.lastUpdated).toLocaleTimeString()}` : ''}</span>
                 <button
@@ -17954,13 +17955,13 @@ export default function App() {
                       return (
                         <tr key={q.symbol} className="hover:bg-[#F9F9F9] transition-colors">
                           <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{q.name || q.symbol} <span className="font-mono opacity-50">{q.symbol}</span></td>
-                          <td className="p-3 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{Number(q.lastPrice ?? 0).toFixed(2)}</td>
-                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{chg > 0 ? '+' : ''}{chg.toFixed(2)}</td>
-                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{q.percentChange != null ? `${Number(q.percentChange).toFixed(2)}%` : '—'}</td>
-                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.open != null ? Number(q.open).toFixed(2) : '—'}</td>
-                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.high != null ? Number(q.high).toFixed(2) : '—'}</td>
-                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.low != null ? Number(q.low).toFixed(2) : '—'}</td>
-                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.previousClose != null ? Number(q.previousClose).toFixed(2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{fmtN(Number(q.lastPrice ?? 0), 2)}</td>
+                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{chg > 0 ? '+' : ''}{fmtN(chg, 2)}</td>
+                          <td className={`p-3 text-xs font-mono text-right border-r border-[#141414]/10 ${chg > 0 ? 'text-emerald-700' : chg < 0 ? 'text-red-700' : ''}`}>{q.percentChange != null ? `${fmtN(Number(q.percentChange), 2)}%` : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.open != null ? fmtN(Number(q.open), 2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.high != null ? fmtN(Number(q.high), 2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.low != null ? fmtN(Number(q.low), 2) : '—'}</td>
+                          <td className="p-3 text-xs font-mono text-right border-r border-[#141414]/10">{q.previousClose != null ? fmtN(Number(q.previousClose), 2) : '—'}</td>
                           <td className="p-3 text-xs">{q.tradeTimestamp ? new Date(q.tradeTimestamp).toLocaleString() : '—'}</td>
                         </tr>
                       );
@@ -18002,10 +18003,10 @@ export default function App() {
                     {(Object.entries(fxForwards.forwardRates) as Array<[string, { Bid: number; Mid: number; Ask: number; SpotRate: number; Points: number }]>).map(([tenor, q]) => (
                       <tr key={tenor} className="hover:bg-[#F9F9F9] transition-colors">
                         <td className="p-2.5 text-xs font-bold border-r border-[#141414]/10">{tenor.replace(/([a-z])([A-Z])/g, '$1 $2')}</td>
-                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{Number(q.Bid).toFixed(5)}</td>
-                        <td className="p-2.5 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{Number(q.Mid).toFixed(5)}</td>
-                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{Number(q.Ask).toFixed(5)}</td>
-                        <td className={`p-2.5 text-xs font-mono text-right ${q.Points < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{Number(q.Points).toFixed(2)}</td>
+                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{fmtN(Number(q.Bid), 5)}</td>
+                        <td className="p-2.5 text-xs font-mono font-bold text-right border-r border-[#141414]/10">{fmtN(Number(q.Mid), 5)}</td>
+                        <td className="p-2.5 text-xs font-mono text-right border-r border-[#141414]/10">{fmtN(Number(q.Ask), 5)}</td>
+                        <td className={`p-2.5 text-xs font-mono text-right ${q.Points < 0 ? 'text-red-700' : 'text-emerald-700'}`}>{fmtN(Number(q.Points), 2)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -18050,13 +18051,13 @@ export default function App() {
                         <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{month}{live && <span className="ml-2 text-[9px] font-mono opacity-40">{live.symbol.replace('.NYB', '')}</span>}</td>
                         <td className="p-4 text-xs border-r border-[#141414]/10">
                           {live
-                            ? <span className="text-emerald-700 font-bold" title={`Live ${live.symbol} (terminal contract)`}>{live.price.toFixed(2)}</span>
-                            : (typeof raws === 'number' ? raws.toFixed(2) : raws)}
+                            ? <span className="text-emerald-700 font-bold" title={`Live ${live.symbol} (terminal contract)`}>{fmtN(live.price, 2)}</span>
+                            : (typeof raws === 'number' ? fmtN(raws, 2) : raws)}
                         </td>
                         <td className="p-4 text-xs">
                           {liveFx != null
-                            ? <span className="text-emerald-700 font-bold" title={fwd ? `USD/CAD forward (${fwd.tenor})` : 'Live USD/CAD spot'}>{liveFx.toFixed(4)}</span>
-                            : (typeof fx === 'number' ? fx.toFixed(4) : fx)}
+                            ? <span className="text-emerald-700 font-bold" title={fwd ? `USD/CAD forward (${fwd.tenor})` : 'Live USD/CAD spot'}>{fmtN(liveFx, 4)}</span>
+                            : (typeof fx === 'number' ? fmtN(fx, 4) : fx)}
                         </td>
                       </tr>
                     );
@@ -18966,7 +18967,7 @@ export default function App() {
                           />
                           {line.key && line.differentialCadMt !== defaultDiff(line.key) && (
                             <button type="button" onClick={() => updateLine(line.id, { differentialCadMt: defaultDiff(line.key) })} className="text-[10px] underline decoration-dotted opacity-60 hover:opacity-100">
-                              Reset to product default (CAD ${defaultDiff(line.key).toFixed(2)}/MT)
+                              Reset to product default (CAD ${fmtN(defaultDiff(line.key), 2)}/MT)
                             </button>
                           )}
                         </div>
@@ -18995,34 +18996,34 @@ export default function App() {
             </div>
             
             <div className="divide-y divide-[#141414]">
-              <DataRow label={`Raw Sugar (USD/CWT)`} value={`${config.rawPriceUsdCwt.toFixed(2)}`} />
-              <DataRow label={`Ocean Freight (USD/MT)`} value={`${calculations.oceanFreightUsd.toFixed(2)}`} />
-              <DataRow label={`Total USD`} value={`${calculations.totalUsd.toFixed(2)}`} highlight />
-              <DataRow label={`Yield Multiplier`} value={`${calculations.yieldLoss.toFixed(2)}x`} />
-              <DataRow label={`Total Cost of Raws ${calculations.currencySymbol} (MT)`} value={`${calculations.totalCostOfRawsCad.toFixed(2)}`} highlight />
+              <DataRow label={`Raw Sugar (USD/CWT)`} value={`${fmtN(config.rawPriceUsdCwt, 2)}`} />
+              <DataRow label={`Ocean Freight (USD/MT)`} value={`${fmtN(calculations.oceanFreightUsd, 2)}`} />
+              <DataRow label={`Total USD`} value={`${fmtN(calculations.totalUsd, 2)}`} highlight />
+              <DataRow label={`Yield Multiplier`} value={`${fmtN(calculations.yieldLoss, 2)}x`} />
+              <DataRow label={`Total Cost of Raws ${calculations.currencySymbol} (MT)`} value={`${fmtN(calculations.totalCostOfRawsCad, 2)}`} highlight />
               
-              <DataRow label={`Margin ${calculations.currencySymbol} (MT)`} value={`${calculations.marginCadMt.toFixed(2)}`} />
-              <DataRow label={`FCA Hamilton Bulk (${calculations.currencySymbol}/MT)`} value={`${calculations.fcaHamiltonBulk.toFixed(2)}`} highlight />
+              <DataRow label={`Margin ${calculations.currencySymbol} (MT)`} value={`${fmtN(calculations.marginCadMt, 2)}`} />
+              <DataRow label={`FCA Hamilton Bulk (${calculations.currencySymbol}/MT)`} value={`${fmtN(calculations.fcaHamiltonBulk, 2)}`} highlight />
               
               {config.origin === 'Vancouver' && (
                 <>
-                  <DataRow label={`Vancouver Supply Chain Costs ${calculations.currencySymbol} (MT)`} value={`${calculations.vancouverSupplyChainCost.toFixed(2)}`} />
-                  <DataRow label={`FCA Vancouver Bulk (${calculations.currencySymbol}/MT)`} value={`${calculations.fcaVancouverBulk.toFixed(2)}`} highlight />
+                  <DataRow label={`Vancouver Supply Chain Costs ${calculations.currencySymbol} (MT)`} value={`${fmtN(calculations.vancouverSupplyChainCost, 2)}`} />
+                  <DataRow label={`FCA Vancouver Bulk (${calculations.currencySymbol}/MT)`} value={`${fmtN(calculations.fcaVancouverBulk, 2)}`} highlight />
                 </>
               )}
 
               {calculations.productPrices.filter(pp => pp.key).map(pp => (
-                <React.Fragment key={pp.id}><DataRow label={`Product Differential — ${pp.label} (${calculations.currencySymbol}/MT)`} value={`${pp.differential.toFixed(2)}`} /></React.Fragment>
+                <React.Fragment key={pp.id}><DataRow label={`Product Differential — ${pp.label} (${calculations.currencySymbol}/MT)`} value={`${fmtN(pp.differential, 2)}`} /></React.Fragment>
               ))}
               
               {config.isDelivered && (
-                <DataRow label={`Delivered Freight (${calculations.currencySymbol}/MT)`} value={`${calculations.deliveredFreight.toFixed(2)}`} />
+                <DataRow label={`Delivered Freight (${calculations.currencySymbol}/MT)`} value={`${fmtN(calculations.deliveredFreight, 2)}`} />
               )}
               {config.isExport && (
-                <DataRow label={`Export Duty (${calculations.currencySymbol}/MT)`} value={`${calculations.exportDuty.toFixed(2)}`} />
+                <DataRow label={`Export Duty (${calculations.currencySymbol}/MT)`} value={`${fmtN(calculations.exportDuty, 2)}`} />
               )}
               {config.isPalletCharge && (
-                <DataRow label={`Pallet Charge (${calculations.currencySymbol}/MT) — ${config.palletType || 'Standard'}`} value={`${calculations.palletCharge.toFixed(2)}`} />
+                <DataRow label={`Pallet Charge (${calculations.currencySymbol}/MT) — ${config.palletType || 'Standard'}`} value={`${fmtN(calculations.palletCharge, 2)}`} />
               )}
               {(config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms) && (
                 <DataRow label="Payment Terms" value={`${config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms || ''}`} />
@@ -19031,12 +19032,12 @@ export default function App() {
               <div className="p-6 bg-[#F5F5F5] grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-1">
                   <div className="text-[10px] uppercase opacity-50">Final Rate (MT)</div>
-                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}</div>
+                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${fmtN(calculations.finalMt, 2)}</div>
                   <div className="text-[10px] italic">{calculations.currencySymbol} per Metric Ton</div>
                 </div>
                 <div className="space-y-1">
                   <div className="text-[10px] uppercase opacity-50">Unit Price ({calculations.selectedSku.netWeightKg ? `${calculations.selectedSku.netWeightKg}kg` : 'MT'})</div>
-                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</div>
+                  <div className="text-2xl font-black text-[#141414]">{calculations.currencySymbol} ${fmtN(calculations.perUnit, 2)}</div>
                   <div className="text-[10px] italic">{calculations.currencySymbol} per {calculations.selectedSku.netWeightKg ? 'Unit' : 'Metric Ton'}</div>
                 </div>
               </div>
@@ -19058,9 +19059,9 @@ export default function App() {
                       {calculations.productPrices.filter(pp => pp.key).map(pp => (
                         <tr key={pp.id}>
                           <td className="p-2 font-bold">{pp.label}</td>
-                          <td className="p-2 text-right font-mono">{pp.differential.toFixed(2)}</td>
-                          <td className="p-2 text-right font-mono font-bold">{calculations.currencySymbol} ${pp.finalMt.toFixed(2)}</td>
-                          <td className="p-2 text-right font-mono">{calculations.currencySymbol} ${pp.perUnit.toFixed(2)}{pp.netKg > 0 ? ` / ${pp.netKg}kg` : ' / MT'}</td>
+                          <td className="p-2 text-right font-mono">{fmtN(pp.differential, 2)}</td>
+                          <td className="p-2 text-right font-mono font-bold">{calculations.currencySymbol} ${fmtN(pp.finalMt, 2)}</td>
+                          <td className="p-2 text-right font-mono">{calculations.currencySymbol} ${fmtN(pp.perUnit, 2)}{pp.netKg > 0 ? ` / ${pp.netKg}kg` : ' / MT'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -19596,11 +19597,11 @@ export default function App() {
                                 the Invoice Details view and never jumps to catalog/order-
                                 derived numbers. */}
                             <td className="p-3">{Number((item.qty || 0).toFixed(3))}</td>
-                            <td className="p-3">{item.qty ? (item.totalWeight / item.qty).toFixed(3) : (item.netWeightPerUnit || 0).toFixed(3)}</td>
-                            <td className="p-3 font-bold">{item.totalWeight.toFixed(2)}</td>
-                            <td className="p-3">{item.unitAmount ? `$${item.unitAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3">{item.mtAmount ? `$${item.mtAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3 font-bold">{item.lineAmount ? `$${item.lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{item.qty ? fmtN((item.totalWeight / item.qty), 3) : fmtN((item.netWeightPerUnit || 0), 3)}</td>
+                            <td className="p-3 font-bold">{fmtN(item.totalWeight, 2)}</td>
+                            <td className="p-3">{item.unitAmount ? `$${fmtN(item.unitAmount, 2)}` : '—'}</td>
+                            <td className="p-3">{item.mtAmount ? `$${fmtN(item.mtAmount, 2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{item.lineAmount ? `$${fmtN(item.lineAmount, 2)}` : '—'}</td>
                             <td className="p-3 font-mono">{item.contractNumber}</td>
                             <td className="p-3 text-center whitespace-nowrap">
                               <button
@@ -19650,10 +19651,10 @@ export default function App() {
                           <td className="p-3 font-bold">Total</td>
                           <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + lineItemUnits(i), 0)}</td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0).toFixed(2)}</td>
+                          <td className="p-3 font-bold">{fmtN((editingInvoiceCard.lineItems || []).reduce((s, i) => s + i.totalWeight, 0), 2)}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).some(i => i.lineAmount) ? `$${(editingInvoiceCard.lineItems || []).reduce((s, i) => s + (i.lineAmount || 0), 0).toFixed(2)}` : '—'}</td>
+                          <td className="p-3 font-bold">{(editingInvoiceCard.lineItems || []).some(i => i.lineAmount) ? `$${fmtN((editingInvoiceCard.lineItems || []).reduce((s, i) => s + (i.lineAmount || 0), 0), 2)}` : '—'}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
                         </tr>
@@ -19919,11 +19920,11 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{Number((qtyUnits || 0).toFixed(3))}</td>
-                            <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
-                            <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
-                            <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3">{mtAmount ? `$${mtAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3 font-bold">{lineAmount ? `$${lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{weightPerUnit ? fmtN(weightPerUnit, 3) : '—'}</td>
+                            <td className="p-3 font-bold">{fmtN(totalWeight, 2)}</td>
+                            <td className="p-3">{unitAmount ? `$${fmtN(unitAmount, 2)}` : '—'}</td>
+                            <td className="p-3">{mtAmount ? `$${fmtN(mtAmount, 2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{lineAmount ? `$${fmtN(lineAmount, 2)}` : '—'}</td>
                             <td className="p-3 font-mono">{contractNumber || '—'}</td>
                           </tr>
                         ))}
@@ -19933,10 +19934,10 @@ export default function App() {
                           <td className="p-3 font-bold">Total</td>
                           <td className="p-3 font-bold">{totalQty}</td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{totalWeightSum.toFixed(2)}</td>
+                          <td className="p-3 font-bold">{fmtN(totalWeightSum, 2)}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{totalLineAmount ? `$${totalLineAmount.toFixed(2)}` : '—'}</td>
+                          <td className="p-3 font-bold">{totalLineAmount ? `$${fmtN(totalLineAmount, 2)}` : '—'}</td>
                           <td className="p-3"></td>
                         </tr>
                       </tfoot>
@@ -20137,11 +20138,11 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{item.qty}</td>
-                            <td className="p-3">{weightPerUnit ? weightPerUnit.toFixed(3) : '—'}</td>
-                            <td className="p-3 font-bold">{totalWeight.toFixed(2)}</td>
-                            <td className="p-3">{unitAmount ? `$${unitAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3">{mtAmount ? `$${mtAmount.toFixed(2)}` : '—'}</td>
-                            <td className="p-3 font-bold">{lineAmount ? `$${lineAmount.toFixed(2)}` : '—'}</td>
+                            <td className="p-3">{weightPerUnit ? fmtN(weightPerUnit, 3) : '—'}</td>
+                            <td className="p-3 font-bold">{fmtN(totalWeight, 2)}</td>
+                            <td className="p-3">{unitAmount ? `$${fmtN(unitAmount, 2)}` : '—'}</td>
+                            <td className="p-3">{mtAmount ? `$${fmtN(mtAmount, 2)}` : '—'}</td>
+                            <td className="p-3 font-bold">{lineAmount ? `$${fmtN(lineAmount, 2)}` : '—'}</td>
                             <td className="p-3 font-mono">{contractNumber || '—'}</td>
                           </tr>
                         ))}
@@ -20151,10 +20152,10 @@ export default function App() {
                           <td className="p-3 font-bold">Total</td>
                           <td className="p-3 font-bold">{totalQty}</td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{totalWeightSum.toFixed(2)}</td>
+                          <td className="p-3 font-bold">{fmtN(totalWeightSum, 2)}</td>
                           <td className="p-3"></td>
                           <td className="p-3"></td>
-                          <td className="p-3 font-bold">{totalLineAmount ? `$${totalLineAmount.toFixed(2)}` : '—'}</td>
+                          <td className="p-3 font-bold">{totalLineAmount ? `$${fmtN(totalLineAmount, 2)}` : '—'}</td>
                           <td className="p-3"></td>
                         </tr>
                       </tfoot>
@@ -20528,7 +20529,7 @@ export default function App() {
                                 <td className="p-2">{inv.product}</td>
                                 <td className="p-2 font-mono">{inv.po || '—'}</td>
                                 <td className="p-2"><span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[9px] font-bold uppercase rounded">Invoice</span></td>
-                                <td className="p-2 text-right font-mono">${effectiveInvoiceAmount(inv).toFixed(2)}</td>
+                                <td className="p-2 text-right font-mono">${fmtN(effectiveInvoiceAmount(inv), 2)}</td>
                                 <td className="p-2">
                                   <button
                                     onClick={() => useSource(buildReturnOrderDraftFromInvoice(inv))}
@@ -20544,7 +20545,7 @@ export default function App() {
                                 <td className="p-2">{o.product || o.lineItems?.[0]?.productName || '—'}</td>
                                 <td className="p-2 font-mono">{o.po || '—'}</td>
                                 <td className="p-2"><span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 text-[9px] font-bold uppercase rounded">Order</span></td>
-                                <td className="p-2 text-right font-mono">${(o.amount || 0).toFixed(2)}</td>
+                                <td className="p-2 text-right font-mono">${fmtN((o.amount || 0), 2)}</td>
                                 <td className="p-2">
                                   <button
                                     onClick={() => useSource(buildReturnOrderDraftFromOrder(o))}
@@ -20626,8 +20627,8 @@ export default function App() {
                                 <td className="p-2">{li.productDisplayName || li.productName}</td>
                                 <td className="p-2 text-right font-mono">{li.qty}</td>
                                 <td className="p-2 text-right font-mono">{li.netWeightPerUnit}</td>
-                                <td className="p-2 text-right font-mono">{(li.totalWeight || 0).toFixed(3)}</td>
-                                <td className="p-2 text-right font-mono">{li.lineAmount ? `$${li.lineAmount.toFixed(2)}` : '—'}</td>
+                                <td className="p-2 text-right font-mono">{fmtN((li.totalWeight || 0), 3)}</td>
+                                <td className="p-2 text-right font-mono">{li.lineAmount ? `$${fmtN(li.lineAmount, 2)}` : '—'}</td>
                                 <td className="p-2 font-mono">{li.contractNumber || '—'}</td>
                               </tr>
                             ))}
@@ -20810,7 +20811,7 @@ export default function App() {
               <>
                 <DetailRow label="Carrier Code" value={fuelSurchargeDraft.carrierCode} mono />
                 <DetailRow label="Carrier" value={fuelSurchargeDraft.carrier} bold />
-                <DetailRow label="Surcharge" value={`${(fuelSurchargeDraft.surchargePercent || 0).toFixed(2)}%`} mono />
+                <DetailRow label="Surcharge" value={`${fmtN((fuelSurchargeDraft.surchargePercent || 0), 2)}%`} mono />
                 <DetailRow label="Start Date" value={fuelSurchargeDraft.startDate} />
                 <DetailRow label="End Date" value={fuelSurchargeDraft.endDate} />
               </>
@@ -21041,7 +21042,7 @@ export default function App() {
                         <SummaryRow label="PO Number" value={ord.po || '—'} mono />
                         <SummaryRow label="Contract #" value={contractNum || '—'} mono />
                         <SummaryRow label="Product(s)" value={productsList} />
-                        <SummaryRow label="Total Weight" value={`${totalWeightKg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg  (${totalWeightMT.toFixed(3)} MT)`} mono />
+                        <SummaryRow label="Total Weight" value={`${totalWeightKg.toLocaleString(undefined, { maximumFractionDigits: 0 })} kg  (${fmtN(totalWeightMT, 3)} MT)`} mono />
                         <SummaryRow label="Shipment Date" value={ord.shipmentDate || '—'} />
                         <SummaryRow label="Delivery Date" value={ord.deliveryDate || '—'} />
                         <SummaryRow label="Carrier" value={ord.carrier || '—'} />
@@ -21374,7 +21375,7 @@ export default function App() {
                   </div>
                   <div className="col-span-2">
                     <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Final Price</div>
-                    <div className="text-2xl font-black">${finalPriceCadMt.toFixed(2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
+                    <div className="text-2xl font-black">${fmtN(finalPriceCadMt, 2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
                     <div className="text-[10px] opacity-50 mt-1">{calculations.currencySymbol}</div>
                   </div>
                   <div className="col-span-3">
@@ -21422,7 +21423,7 @@ export default function App() {
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Freight Type</td><td className="px-4 py-2 font-bold">{config.freightType || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{config.volumeMt} MT</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Per Load</td><td className="px-4 py-2 font-bold">{config.volumePerLoadMt} MT</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Products</td><td className="px-4 py-2 font-bold">{calculations.productPrices.filter(pp => pp.key).map(pp => `${pp.label} (+CAD $${(pp.differentialCadMt || 0).toFixed(2)}/MT)`).join('; ') || 'Bulk (base price)'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Products</td><td className="px-4 py-2 font-bold">{calculations.productPrices.filter(pp => pp.key).map(pp => `${pp.label} (+CAD $${fmtN((pp.differentialCadMt || 0), 2)}/MT)`).join('; ') || 'Bulk (base price)'}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -21448,25 +21449,25 @@ export default function App() {
                     <tbody className="divide-y divide-[#141414]/10">
                       <tr>
                         <td className="px-4 py-2 opacity-70">Raw Price (USD/CWT)</td>
-                        <td className="px-4 py-2 text-right font-bold">USD ${config.rawPriceUsdCwt.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-right font-bold">USD ${fmtN(config.rawPriceUsdCwt, 2)}</td>
                         <td className="px-4 py-2 opacity-70"></td>
                         <td className="px-4 py-2 text-right font-bold"></td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">Ocean Freight (USD/MT)</td>
-                        <td className="px-4 py-2 text-right font-bold">USD ${config.oceanFreightUsdMt.toFixed(2)}</td>
+                        <td className="px-4 py-2 text-right font-bold">USD ${fmtN(config.oceanFreightUsdMt, 2)}</td>
                         <td className="px-4 py-2 opacity-70">Yield Loss Multiplier</td>
                         <td className="px-4 py-2 text-right font-bold">{config.yieldLossMultiplier}x</td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 opacity-70">FX Rate (USD/CAD)</td>
-                        <td className="px-4 py-2 text-right font-bold">{config.fxRate.toFixed(4)}</td>
+                        <td className="px-4 py-2 text-right font-bold">{fmtN(config.fxRate, 4)}</td>
                         <td className="px-4 py-2 opacity-70">Refining Margin</td>
-                        <td className="px-4 py-2 text-right font-bold">CAD ${config.refiningMarginCadMt.toFixed(2)}/MT</td>
+                        <td className="px-4 py-2 text-right font-bold">CAD ${fmtN(config.refiningMarginCadMt, 2)}/MT</td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">FCA {config.origin} Bulk</td>
-                        <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${(config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk).toFixed(2)}/MT</td>
+                        <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${fmtN((config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk), 2)}/MT</td>
                         <td className="px-4 py-2 opacity-70">Product Lines</td>
                         <td className="px-4 py-2 text-right font-bold">{calculations.productPrices.filter(pp => pp.key).length || '—'}</td>
                       </tr>
@@ -21474,39 +21475,39 @@ export default function App() {
                         <td className="px-4 py-2 opacity-70"></td>
                         <td className="px-4 py-2"></td>
                         <td className="px-4 py-2 opacity-70">Delivered Freight</td>
-                        <td className="px-4 py-2 text-right font-bold">{config.isDelivered ? `${calculations.currencySymbol} $${calculations.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isDelivered ? `${calculations.currencySymbol} $${fmtN(calculations.deliveredFreight, 2)}/MT` : '—'}</td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">Export Duty</td>
-                        <td className="px-4 py-2 text-right font-bold">{config.isExport ? `USD $${config.exportDutyUsdMt.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isExport ? `USD $${fmtN(config.exportDutyUsdMt, 2)}/MT` : '—'}</td>
                         <td className="px-4 py-2 opacity-70">Pallet Charge</td>
-                        <td className="px-4 py-2 text-right font-bold">{config.isPalletCharge ? `${calculations.currencySymbol} $${calculations.palletCharge.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{config.isPalletCharge ? `${calculations.currencySymbol} $${fmtN(calculations.palletCharge, 2)}/MT` : '—'}</td>
                       </tr>
                       {config.origin === 'Vancouver' && (
                         <tr>
                           <td className="px-4 py-2 opacity-70">Supply Chain Cost</td>
-                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.vancouverSupplyChainCost.toFixed(2)}/MT</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${fmtN(calculations.vancouverSupplyChainCost, 2)}/MT</td>
                           <td className="px-4 py-2 opacity-70">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</td>
-                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${fmtN(calculations.perUnit, 2)}</td>
                         </tr>
                       )}
                       {config.origin !== 'Vancouver' && (
                         <tr>
                           <td className="px-4 py-2 opacity-70">Unit Price ({confirmSku.netWeightKg ? `${confirmSku.netWeightKg}kg` : 'MT'})</td>
-                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${calculations.perUnit.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${fmtN(calculations.perUnit, 2)}</td>
                           <td className="px-4 py-2"></td>
                           <td className="px-4 py-2"></td>
                         </tr>
                       )}
                       {calculations.productPrices.filter(pp => pp.key).map(pp => (
                         <tr key={pp.id} className="bg-[#F9F9F9]">
-                          <td className="px-4 py-2 opacity-70" colSpan={3}>{pp.label} <span className="opacity-60">(contract line, +{calculations.currencySymbol} ${pp.differential.toFixed(2)}/MT)</span></td>
-                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${pp.finalMt.toFixed(2)}/MT</td>
+                          <td className="px-4 py-2 opacity-70" colSpan={3}>{pp.label} <span className="opacity-60">(contract line, +{calculations.currencySymbol} ${fmtN(pp.differential, 2)}/MT)</span></td>
+                          <td className="px-4 py-2 text-right font-bold">{calculations.currencySymbol} ${fmtN(pp.finalMt, 2)}/MT</td>
                         </tr>
                       ))}
                       <tr className="bg-[#141414] text-[#E4E3E0]">
                         <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>{calculations.productPrices.some(pp => pp.key) ? 'Base Price (Bulk)' : 'Final Price'}</td>
-                        <td className="px-4 py-3 text-right font-black text-base">{calculations.currencySymbol} ${calculations.finalMt.toFixed(2)}/MT</td>
+                        <td className="px-4 py-3 text-right font-black text-base">{calculations.currencySymbol} ${fmtN(calculations.finalMt, 2)}/MT</td>
                       </tr>
                     </tbody>
                   </table>
@@ -21558,8 +21559,8 @@ export default function App() {
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
             lines.push(`Volume: ${config.volumeMt} MT`);
             lines.push(`Currency: ${config.currency}`);
-            lines.push(`Raw Sugar (USD/CWT): $${config.rawPriceUsdCwt.toFixed(2)}`);
-            lines.push(`Ocean Freight (USD/MT): $${calculations.oceanFreightUsd.toFixed(2)}`);
+            lines.push(`Raw Sugar (USD/CWT): $${fmtN(config.rawPriceUsdCwt, 2)}`);
+            lines.push(`Ocean Freight (USD/MT): $${fmtN(calculations.oceanFreightUsd, 2)}`);
             if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
             const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
             if (emailPaymentTerms) {
@@ -21568,15 +21569,15 @@ export default function App() {
             lines.push('');
             lines.push('FINAL PRICING');
             lines.push('-------------------------------------');
-            lines.push(`Final Price: ${cs} $${calculations.finalMt.toFixed(2)}/MT`);
+            lines.push(`Final Price: ${cs} $${fmtN(calculations.finalMt, 2)}/MT`);
             if (emailProducts.length) {
               // Per-product prices (base + differential), full product names.
-              lines[lines.length - 1] = `Base Price (Bulk): ${cs} $${calculations.finalMt.toFixed(2)}/MT`;
+              lines[lines.length - 1] = `Base Price (Bulk): ${cs} $${fmtN(calculations.finalMt, 2)}/MT`;
               for (const pp of emailProducts) {
-                lines.push(`${pp.label}: ${cs} $${pp.finalMt.toFixed(2)}/MT${pp.netKg > 0 ? ` (${cs} $${pp.perUnit.toFixed(2)} per ${pp.netKg}kg)` : ''}`);
+                lines.push(`${pp.label}: ${cs} $${fmtN(pp.finalMt, 2)}/MT${pp.netKg > 0 ? ` (${cs} $${fmtN(pp.perUnit, 2)} per ${pp.netKg}kg)` : ''}`);
               }
             } else {
-              lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${calculations.perUnit.toFixed(2)}`);
+              lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${fmtN(calculations.perUnit, 2)}`);
             }
             lines.push('');
             lines.push('Please let us know if you have any questions or would like to proceed.');
@@ -22561,7 +22562,7 @@ export default function App() {
                               <td className="p-2">{s.time || '—'}</td>
                               <td className="p-2">{s.bay || '—'}</td>
                               <td className="p-2">{s.location || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(s.qty || 0).toFixed(3)}</td>
+                              <td className="p-2 text-right font-mono">{fmtN((s.qty || 0), 3)}</td>
                               <td className="p-2">{s.carrier || '—'}</td>
                             </tr>
                           ))}
@@ -22695,8 +22696,8 @@ export default function App() {
                               <td className="p-2">{inv.customer}</td>
                               <td className="p-2">{inv.product}</td>
                               <td className="p-2 font-mono">{inv.po || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(inv.qty || 0).toFixed(3)}</td>
-                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-right font-mono">{fmtN((inv.qty || 0), 3)}</td>
+                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${fmtN(inv.pricePerMt, 2)}` : '—'}</td>
                               <td className="p-2 text-right font-mono font-bold">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                               <td className="p-2">{inv.date}</td>
                             </tr>
@@ -22761,7 +22762,7 @@ export default function App() {
                               <td className="p-2">{inv.customer}</td>
                               <td className="p-2 font-mono">{inv.po || '—'}</td>
                               <td className="p-2 font-mono">{inv.contractNumber || '—'}</td>
-                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${inv.pricePerMt.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-right font-mono">{inv.pricePerMt ? `$${fmtN(inv.pricePerMt, 2)}` : '—'}</td>
                               <td className="p-2 text-right font-mono font-bold">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
@@ -22910,7 +22911,7 @@ export default function App() {
                             const weightKg = weightMt * 1000;
                             const qtyLabel = unitKg > 0
                               ? `${qty} × ${unitKg}kg`               // Totes: "30 × 1000kg"
-                              : `${weightMt.toFixed(3)} MT`;          // Bulk/Liquid: MT
+                              : `${fmtN(weightMt, 3)} MT`;          // Bulk/Liquid: MT
                             const contract = o.contractNumber || li?.contractNumber || '';
                             return (
                               <tr key={o.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
@@ -22925,7 +22926,7 @@ export default function App() {
                                 <td className="p-2 text-right font-mono">{qtyLabel}</td>
                                 <td className="p-2 text-right font-mono font-bold">
                                   {weightKg.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                  <span className="opacity-50 text-[10px] ml-1">({weightMt.toFixed(3)} MT)</span>
+                                  <span className="opacity-50 text-[10px] ml-1">({fmtN(weightMt, 3)} MT)</span>
                                 </td>
                                 <td className="p-2">{o.carrier || '—'}</td>
                               </tr>
@@ -22964,7 +22965,7 @@ export default function App() {
                                 <td className="p-2 font-mono">{o.po || '—'}</td>
                                 <td className="p-2 font-mono">{o.contractNumber || o.lineItems?.[0]?.contractNumber || '—'}</td>
                                 <td className="p-2">{o.carrier || '—'}</td>
-                                <td className="p-2 text-right font-mono font-bold">{ppm > 0 ? `$${ppm.toFixed(2)}` : '—'}</td>
+                                <td className="p-2 text-right font-mono font-bold">{ppm > 0 ? `$${fmtN(ppm, 2)}` : '—'}</td>
                                 <td className="p-2">{o.shipmentDate || '—'}</td>
                               </tr>
                             );
@@ -23110,7 +23111,7 @@ export default function App() {
                             <tr key={o.id} className="border-t border-[#141414]/5">
                               <td className="p-2 font-bold">Order</td><td className="p-2">{o.customer || '—'}</td><td className="p-2 font-mono">{o.po || '—'}</td><td className="p-2">—</td>
                               <td className="p-2">{productToShortform(o.product) || o.product || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(o.lineItems || []).reduce((s2, li) => s2 + (li.totalWeight || 0), 0).toFixed(1)}</td>
+                              <td className="p-2 text-right font-mono">{fmtN((o.lineItems || []).reduce((s2, li) => s2 + (li.totalWeight || 0), 0), 1)}</td>
                               <td className="p-2">{o.shipmentDate || o.date || '—'}</td>
                             </tr>
                           ))}
@@ -23118,7 +23119,7 @@ export default function App() {
                             <tr key={i.id} className="border-t border-[#141414]/5">
                               <td className="p-2 font-bold">Invoice</td><td className="p-2">{i.customer || '—'}</td><td className="p-2 font-mono">{i.po || '—'}</td><td className="p-2 font-mono">{i.invoiceNumber || '—'}</td>
                               <td className="p-2">{productToShortform(i.product) || i.product || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(i.qty || 0).toFixed(1)}</td>
+                              <td className="p-2 text-right font-mono">{fmtN((i.qty || 0), 1)}</td>
                               <td className="p-2">{i.date || '—'}</td>
                             </tr>
                           ))}
@@ -23155,7 +23156,7 @@ export default function App() {
                               <td className="p-2">{t.to}</td>
                               <td className="p-2">{t.product}</td>
                               <td className="p-2 font-mono">{t.po || '—'}</td>
-                              <td className="p-2 text-right font-mono">{(t.amount || 0).toFixed(3)}</td>
+                              <td className="p-2 text-right font-mono">{fmtN((t.amount || 0), 3)}</td>
                               <td className="p-2">{t.carrier || '—'}</td>
                               <td className="p-2">{t.shipmentDate}</td>
                               <td className="p-2">{t.arrivalDate || '—'}</td>
@@ -23404,7 +23405,7 @@ export default function App() {
                                 <td className="p-2">{o.customer}</td>
                                 <td className="p-2 truncate max-w-[150px]">{productToShortform(o.product)}</td>
                                 <td className="p-2">{o.po}</td>
-                                <td className="p-2 text-right font-bold">{(o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000).toFixed(0)}</td>
+                                <td className="p-2 text-right font-bold">{fmtN((o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000), 0)}</td>
                                 <td className="p-2 text-center">
                                   <button
                                     onClick={() => {
@@ -23581,7 +23582,7 @@ export default function App() {
                                       <td className="p-2">{o.customer}</td>
                                       <td className="p-2 truncate max-w-[150px]">{productToShortform(o.product)}</td>
                                       <td className="p-2">{o.po}</td>
-                                      <td className="p-2 text-right font-bold">{(o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000).toFixed(0)}</td>
+                                      <td className="p-2 text-right font-bold">{fmtN((o.lineItems.reduce((s, li) => s + li.totalWeight, 0) * 1000), 0)}</td>
                                       <td className="p-2 text-center">
                                         <button
                                           onClick={() => {
@@ -24603,8 +24604,8 @@ export default function App() {
                           {(editingContract.contractLines || []).map(cl => (
                             <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
                               <td className="p-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                              <td className="p-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
-                              <td className="p-2 text-right font-bold">${cl.finalPriceMt.toFixed(2)}</td>
+                              <td className="p-2 text-right">${fmtN(cl.differentialCadMt, 2)}</td>
+                              <td className="p-2 text-right font-bold">${fmtN(cl.finalPriceMt, 2)}</td>
                               <td className="p-2">
                                 <button onClick={() => setEditingContract({
                                   ...editingContract,
@@ -24692,7 +24693,7 @@ export default function App() {
                   </div>
                   <div className="col-span-2">
                     <div className="text-[10px] uppercase tracking-widest opacity-50 mb-1">Final Price</div>
-                    <div className="text-2xl font-black">${(selectedContractDetail.finalPrice || 0).toFixed(2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
+                    <div className="text-2xl font-black">${fmtN((selectedContractDetail.finalPrice || 0), 2)}<span className="text-xs opacity-50 font-bold ml-1">/MT</span></div>
                     <div className="text-[10px] opacity-50 mt-1">{selectedContractDetail.currency || ''}</div>
                   </div>
                   <div className="col-span-3">
@@ -24765,7 +24766,7 @@ export default function App() {
                             <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume Outstanding</td><td className="px-4 py-2 font-bold">{f2(st.outstanding)} MT</td></tr>
                           </>);
                         })()}
-                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Margin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}/MT` : '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Margin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.margin ? `$${fmtN(selectedContractDetail.margin, 2)}/MT` : '—'}</td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -24776,7 +24777,7 @@ export default function App() {
                   <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 flex justify-between items-center">
                     <h4 className="text-[10px] font-bold uppercase tracking-widest">Pricing Breakdown</h4>
                     <div className="text-[10px] uppercase tracking-widest opacity-70">
-                      Total Contract Value: <span className="font-bold opacity-100">{selectedContractDetail.currency} ${((selectedContractDetail.finalPrice || 0) * (selectedContractDetail.contractVolume || 0)).toFixed(2)}</span>
+                      Total Contract Value: <span className="font-bold opacity-100">{selectedContractDetail.currency} ${fmtN(((selectedContractDetail.finalPrice || 0) * (selectedContractDetail.contractVolume || 0)), 2)}</span>
                     </div>
                   </div>
                   <table className="w-full text-xs">
@@ -24791,24 +24792,24 @@ export default function App() {
                     <tbody className="divide-y divide-[#141414]/10">
                       <tr>
                         <td className="px-4 py-2 opacity-70">FX Rate (USD/CAD)</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.fxRate?.toFixed(4) || '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{fmtN(selectedContractDetail.fxRate, 4) || '—'}</td>
                         <td className="px-4 py-2 opacity-70">Delivered Freight</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.deliveredFreight ? `$${selectedContractDetail.deliveredFreight.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.deliveredFreight ? `$${fmtN(selectedContractDetail.deliveredFreight, 2)}/MT` : '—'}</td>
                       </tr>
                       <tr className="bg-[#F9F9F9]">
                         <td className="px-4 py-2 opacity-70">Raws (USD/cwt)</td>
                         <td className="px-4 py-2 text-right font-bold">{(() => {
                           const cwt = rawPriceUsdCwt(selectedContractDetail.rawPriceUsdMt);
-                          return cwt === null ? '—' : `USD $${cwt.toFixed(2)}`;
+                          return cwt === null ? '—' : `USD $${fmtN(cwt, 2)}`;
                         })()}</td>
                         <td className="px-4 py-2 opacity-70">Export Duty</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${selectedContractDetail.exportDuty.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${fmtN(selectedContractDetail.exportDuty, 2)}/MT` : '—'}</td>
                       </tr>
                       <tr>
                         <td className="px-4 py-2 opacity-70">Margin (CAD/MT)</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.margin ? `$${selectedContractDetail.margin.toFixed(2)}` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.margin ? `$${fmtN(selectedContractDetail.margin, 2)}` : '—'}</td>
                         <td className="px-4 py-2 opacity-70">Pallet Charge</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.palletCharge ? `$${selectedContractDetail.palletCharge.toFixed(2)}/MT` : '—'}</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.palletCharge ? `$${fmtN(selectedContractDetail.palletCharge, 2)}/MT` : '—'}</td>
                       </tr>
                       {/* Product differentials folded into the breakdown: each
                           contract line adjusts the base Final Price by its own
@@ -24821,16 +24822,16 @@ export default function App() {
                           {selectedContractDetail.contractLines.map((cl, idx) => (
                             <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                               <td className="px-4 py-2 opacity-70">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                              <td className="px-4 py-2 text-right font-bold">{cl.differentialCadMt >= 0 ? '+' : '−'}${Math.abs(cl.differentialCadMt).toFixed(2)}/MT</td>
+                              <td className="px-4 py-2 text-right font-bold">{cl.differentialCadMt >= 0 ? '+' : '−'}${fmtN(Math.abs(cl.differentialCadMt), 2)}/MT</td>
                               <td className="px-4 py-2 opacity-70">Final Price</td>
-                              <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}/MT</td>
+                              <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}/MT</td>
                             </tr>
                           ))}
                         </>
                       )}
                       <tr className="bg-[#141414] text-[#E4E3E0]">
                         <td className="px-4 py-3 uppercase text-[10px] tracking-widest font-bold opacity-70" colSpan={3}>{selectedContractDetail.contractLines && selectedContractDetail.contractLines.length > 0 ? 'Base Final Price' : 'Final Price'}</td>
-                        <td className="px-4 py-3 text-right font-black text-base">{selectedContractDetail.currency} ${(selectedContractDetail.finalPrice || 0).toFixed(2)}/MT</td>
+                        <td className="px-4 py-3 text-right font-black text-base">{selectedContractDetail.currency} ${fmtN((selectedContractDetail.finalPrice || 0), 2)}/MT</td>
                       </tr>
                     </tbody>
                   </table>
@@ -24854,8 +24855,8 @@ export default function App() {
                         {selectedContractDetail.contractLines.map((cl, idx) => (
                           <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                             <td className="px-4 py-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                            <td className="px-4 py-2 text-right">${cl.differentialCadMt.toFixed(2)}</td>
-                            <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${cl.finalPriceMt.toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right">${fmtN(cl.differentialCadMt, 2)}</td>
+                            <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -27263,7 +27264,7 @@ export default function App() {
                             <td className="px-3 py-2">{inv.product}</td>
                             <td className="px-3 py-2">{inv.po}</td>
                             <td className="px-3 py-2">{inv.date}</td>
-                            <td className="px-3 py-2 text-right font-mono">{(inv.qty || 0).toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-mono">{fmtN((inv.qty || 0), 2)}</td>
                             <td className="px-3 py-2 text-right font-mono">${effectiveInvoiceAmount(inv).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="px-3 py-2">{inv.status}</td>
                           </tr>
@@ -27272,7 +27273,7 @@ export default function App() {
                       <tfoot className="bg-[#F5F5F5] border-t border-[#141414] font-bold">
                         <tr>
                           <td className="px-3 py-2" colSpan={6}>Total ({contractInvoices.length})</td>
-                          <td className="px-3 py-2 text-right font-mono">{invQty.toFixed(2)}</td>
+                          <td className="px-3 py-2 text-right font-mono">{fmtN(invQty, 2)}</td>
                           <td className="px-3 py-2 text-right font-mono">${invAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                           <td className="px-3 py-2"></td>
                         </tr>
@@ -27377,7 +27378,7 @@ export default function App() {
                             <td className="px-3 py-2 truncate max-w-[180px]" title={productLabel}>{productLabel}</td>
                             <td className="px-3 py-2 font-mono">{ord.po}</td>
                             <td className="px-3 py-2">{ord.shipmentDate || '—'}</td>
-                            <td className="px-3 py-2 text-right font-bold">{lineQty.toFixed(2)}</td>
+                            <td className="px-3 py-2 text-right font-bold">{fmtN(lineQty, 2)}</td>
                             <td className="px-3 py-2 text-right font-bold">${(ord.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td className="px-3 py-2">
                               <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
@@ -27397,7 +27398,7 @@ export default function App() {
                     <tfoot className="bg-[#F5F5F5] border-t border-[#141414]">
                       <tr className="font-bold text-[10px] uppercase tracking-widest">
                         <td className="px-3 py-2 opacity-70" colSpan={5}>Total ({contractOrders.length} order{contractOrders.length === 1 ? '' : 's'})</td>
-                        <td className="px-3 py-2 text-right">{totalQty.toFixed(2)} MT</td>
+                        <td className="px-3 py-2 text-right">{fmtN(totalQty, 2)} MT</td>
                         <td className="px-3 py-2 text-right">${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="px-3 py-2" colSpan={2}></td>
                       </tr>
@@ -27792,10 +27793,10 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
                             <td className="p-2">{item.productDisplayName || productNameToDisplay(item.productName)}</td>
                             <td className="p-2">{lineItemUnits(item)}</td>
-                            <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
+                            <td className="p-2 font-bold">{fmtN((item.totalWeight * 1000), 0)}</td>
                             <td className="p-2">{item.contractNumber}</td>
-                            <td className="p-2">${(item.unitAmount || 0).toFixed(2)}</td>
-                            <td className="p-2">${(item.mtAmount || 0).toFixed(2)}</td>
+                            <td className="p-2">${fmtN((item.unitAmount || 0), 2)}</td>
+                            <td className="p-2">${fmtN((item.mtAmount || 0), 2)}</td>
                             <td className="p-2 font-bold">${(item.lineAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                             <td className="p-2 text-center flex gap-1 justify-center">
                               <button
@@ -28754,7 +28755,7 @@ export default function App() {
                                   <option value="">Select Contract</option>
                                   {batchContracts.map(c => (
                                     <option key={c.id} value={c.contractNumber}>
-                                      {c.contractNumber} — {c.skuName} ({c.volumeOutstanding.toFixed(1)} MT avail.)
+                                      {c.contractNumber} — {c.skuName} ({fmtN(c.volumeOutstanding, 1)} MT avail.)
                                     </option>
                                   ))}
                                 </select>
@@ -28786,11 +28787,11 @@ export default function App() {
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Volume Outstanding</div>
-                            <div className="text-xs font-bold">{selectedContract.volumeOutstanding.toFixed(1)} MT</div>
+                            <div className="text-xs font-bold">{fmtN(selectedContract.volumeOutstanding, 1)} MT</div>
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Price per MT</div>
-                            <div className="text-xs font-bold">${mtRate.toFixed(2)}</div>
+                            <div className="text-xs font-bold">${fmtN(mtRate, 2)}</div>
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Pallet Type</div>
@@ -28799,7 +28800,7 @@ export default function App() {
                           <div>
                             <div className="text-[10px] uppercase font-bold text-blue-600 mb-0.5">Batch Total Weight</div>
                             <div className={`text-xs font-bold ${totalWeightMT > selectedContract.volumeOutstanding ? 'text-red-600' : ''}`}>
-                              {totalWeightKg.toFixed(0)} KG ({totalWeightMT.toFixed(2)} MT)
+                              {fmtN(totalWeightKg, 0)} KG ({fmtN(totalWeightMT, 2)} MT)
                             </div>
                           </div>
                         </div>
@@ -28908,7 +28909,7 @@ export default function App() {
                                       />
                                     </td>
                                     <td className="p-2 text-xs font-mono text-center">
-                                      {(entryWeightMT * 1000).toFixed(0)}
+                                      {fmtN((entryWeightMT * 1000), 0)}
                                     </td>
                                     <td className="p-2">
                                       <select
@@ -28925,7 +28926,7 @@ export default function App() {
                                       </select>
                                     </td>
                                     <td className="p-2 text-xs font-mono text-right">
-                                      ${entryAmount.toFixed(2)}
+                                      ${fmtN(entryAmount, 2)}
                                     </td>
                                     <td className="p-2">
                                       <button
@@ -28958,7 +28959,7 @@ export default function App() {
                         </div>
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Order Total Weight (KG)</div>
-                          <div className="text-sm font-bold">{totalWeightKg.toFixed(0)}</div>
+                          <div className="text-sm font-bold">{fmtN(totalWeightKg, 0)}</div>
                         </div>
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Pallets</div>
@@ -28974,7 +28975,7 @@ export default function App() {
                         </div>
                         <div>
                           <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Total Amount ($)</div>
-                          <div className="text-sm font-bold">${totalAmount.toFixed(2)}</div>
+                          <div className="text-sm font-bold">${fmtN(totalAmount, 2)}</div>
                         </div>
                       </div>
 
@@ -29014,8 +29015,8 @@ export default function App() {
                               const overage = totalWeightMT - selectedContract.volumeOutstanding;
                               const proceed = window.confirm(
                                 `⚠ Contract volume warning\n\n`
-                                + `Contract ${selectedContract.contractNumber} has ${selectedContract.volumeOutstanding.toFixed(2)} MT outstanding, but this batch requires ${totalWeightMT.toFixed(2)} MT.\n\n`
-                                + `Creating this batch will exceed the contract volume by ${overage.toFixed(2)} MT.\n\n`
+                                + `Contract ${selectedContract.contractNumber} has ${fmtN(selectedContract.volumeOutstanding, 2)} MT outstanding, but this batch requires ${fmtN(totalWeightMT, 2)} MT.\n\n`
+                                + `Creating this batch will exceed the contract volume by ${fmtN(overage, 2)} MT.\n\n`
                                 + `Are you sure you want to proceed?`
                               );
                               if (!proceed) return;
@@ -29583,7 +29584,7 @@ export default function App() {
                         </div>
                         <div className="flex justify-between gap-3 text-[10px] uppercase font-bold opacity-50">
                           <span>Total Weight</span>
-                          <span className="text-sm font-black text-right">{totalWeight.toFixed(2)} MT</span>
+                          <span className="text-sm font-black text-right">{fmtN(totalWeight, 2)} MT</span>
                         </div>
                         {isCancelling && associatedShipments.length > 0 && (
                           <div className="flex justify-between text-[10px] uppercase font-bold text-red-500">
@@ -29852,8 +29853,8 @@ export default function App() {
                                 <tr key={item.id} className="hover:bg-[#F9F9F9]">
                                   <td className="p-2">{lineItemToShortform(item)}</td>
                                   <td className="p-2">{item.qty}</td>
-                                  <td className="p-2">{(item.netWeightPerUnit * 1000).toFixed(0)}</td>
-                                  <td className="p-2 font-bold">{(item.totalWeight * 1000).toFixed(0)}</td>
+                                  <td className="p-2">{fmtN((item.netWeightPerUnit * 1000), 0)}</td>
+                                  <td className="p-2 font-bold">{fmtN((item.totalWeight * 1000), 0)}</td>
                                   <td className="p-2">{item.contractNumber}</td>
                                 </tr>
                               ))}
@@ -29892,7 +29893,7 @@ export default function App() {
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Order Total Weight (KG)</div>
-                            <div className="text-sm font-bold">{order ? (totalWeight * 1000).toFixed(0) : ((transfer?.amount || 0) * 1000).toFixed(0)}</div>
+                            <div className="text-sm font-bold">{order ? fmtN((totalWeight * 1000), 0) : fmtN(((transfer?.amount || 0) * 1000), 0)}</div>
                           </div>
                           <div>
                             <div className="text-[10px] uppercase font-bold opacity-50 mb-0.5">Selected Time</div>
@@ -30259,7 +30260,7 @@ export default function App() {
                     {newTransferLegs.length === 0 && (
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase font-bold opacity-60">QTY (MT)</label>
-                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0).toFixed(2)} MT</div>
+                        <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm font-bold">{fmtN(transferLineItems.reduce((s, li) => s + (li.totalWeight || 0), 0), 2)} MT</div>
                       </div>
                     )}
                     {newTransferLegs.length > 0 && (

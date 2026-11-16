@@ -4,6 +4,7 @@ import type { Shipment, Order, Customer, Location, QAProduct, ShipToLocation } f
 import { drawDocHeader, drawSectionHeader, drawFieldRow, drawInfoField, drawDocFooter, resolveLineWeights, BLACK } from './pdfDocHelpers';
 import { renderTemplateGridInto } from './templateGridPdf';
 import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
+import { fmtN } from './utils/fmt';
 
 export interface GeneratePackingListParams {
   shipment: Shipment;
@@ -104,9 +105,9 @@ export function renderPackingListInto(doc: jsPDF, {
       rowsData.push([
         item.productDisplayName || item.productName || '',
         item.qty ? item.qty.toString() : '',
-        item.totalWeight ? item.totalWeight.toFixed(2) : '',
-        itemNet ? itemNet.toFixed(2) : '',
-        itemGross ? itemGross.toFixed(2) : '',
+        item.totalWeight ? fmtN(item.totalWeight, 2) : '',
+        itemNet ? fmtN(itemNet, 2) : '',
+        itemGross ? fmtN(itemGross, 2) : '',
       ]);
     });
   } else {
@@ -128,8 +129,8 @@ export function renderPackingListInto(doc: jsPDF, {
       'Total',
       totalUnits ? totalUnits.toString() : '',
       '',
-      totalNet ? totalNet.toFixed(2) : '',
-      totalGross ? totalGross.toFixed(2) : '',
+      totalNet ? fmtN(totalNet, 2) : '',
+      totalGross ? fmtN(totalGross, 2) : '',
     ]],
     styles: { fontSize: 8, cellPadding: 3, lineColor: [200, 200, 200], lineWidth: 0.3, textColor: [20, 20, 20] },
     headStyles: { fillColor: [240, 240, 240], textColor: [20, 20, 20], fontStyle: 'bold', fontSize: 7 },

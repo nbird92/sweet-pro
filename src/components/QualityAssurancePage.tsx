@@ -8,6 +8,7 @@ import PageBanner from './PageBanner';
 import DataTable, { ColumnOrderContext, ColumnVisibilityContext } from './DataTable';
 import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
+import { fmtN } from '../utils/fmt';
 
 interface QualityAssurancePageProps {
   qaProducts: QAProduct[];
@@ -3622,7 +3623,7 @@ export default function QualityAssurancePage({
                               <td className="p-2 text-xs">{item.unit}</td>
                               <td className="p-2 text-xs font-mono opacity-70">{(isEditing ? editData?.netWeightKg : displayData.netWeightKg) || '—'}</td>
                               <td className="p-2 text-xs">{item.supplier || '—'}</td>
-                              <td className="p-2 text-xs font-mono">{item.costPerUnit ? `${item.currency || 'CAD'} $${item.costPerUnit.toFixed(2)}` : '—'}</td>
+                              <td className="p-2 text-xs font-mono">{item.costPerUnit ? `${item.currency || 'CAD'} $${fmtN(item.costPerUnit, 2)}` : '—'}</td>
                               <td className="p-2 text-xs font-mono">{item.shrinkage != null && item.shrinkage !== 0 ? `${item.shrinkage}%` : '—'}</td>
                               <td className="p-2 text-xs italic opacity-60">{item.notes || '—'}</td>
                               {isEditing && (
@@ -3645,7 +3646,7 @@ export default function QualityAssurancePage({
                             <tr className="bg-[#E4E3E0] font-bold">
                               <td colSpan={7} className="p-2 text-xs text-right uppercase">Total Cost per Unit:</td>
                               <td className="p-2 text-xs font-mono">
-                                CAD ${displayData.billOfMaterials.reduce((sum, b) => sum + (b.costPerUnit || 0) * b.quantity, 0).toFixed(2)}
+                                CAD ${fmtN(displayData.billOfMaterials.reduce((sum, b) => sum + (b.costPerUnit || 0) * b.quantity, 0), 2)}
                               </td>
                               <td colSpan={isEditing ? 3 : 2}></td>
                             </tr>

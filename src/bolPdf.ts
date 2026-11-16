@@ -5,6 +5,7 @@ import { resolveLineWeights } from './pdfDocHelpers';
 import { sameLotCode } from './utils/lotCode';
 import { renderTemplateGridInto } from './templateGridPdf';
 import { docTemplate, commonDocTokens, computeGoods, goodsItems, goodsTotals } from './docTemplates';
+import { fmtN } from './utils/fmt';
 
 interface GenerateBolParams {
   shipment: Shipment;
@@ -255,11 +256,11 @@ export function renderBolInto(doc: jsPDF, {
       // (productDisplayName when set, falling back to bare productName).
       const description = item.productDisplayName || item.productName || '';
       lineItemsData.push([
-        lineMt ? lineMt.toFixed(2) : '',
+        lineMt ? fmtN(lineMt, 2) : '',
         units ? fmtUnits(units) : '',
         description,
-        itemNet ? itemNet.toFixed(2) : '',
-        itemGross ? itemGross.toFixed(2) : '',
+        itemNet ? fmtN(itemNet, 2) : '',
+        itemGross ? fmtN(itemGross, 2) : '',
       ]);
     });
   } else {
@@ -270,10 +271,10 @@ export function renderBolInto(doc: jsPDF, {
     // have, so it stays blank. Unscaled shipment.qty can be a truck count, so no net.
     totalNetWeight = scaledMt * 1000;
     lineItemsData.push([
-      mt ? mt.toFixed(2) : '',
+      mt ? fmtN(mt, 2) : '',
       '',
       order?.product || shipment.product || '',
-      totalNetWeight ? totalNetWeight.toFixed(2) : '',
+      totalNetWeight ? fmtN(totalNetWeight, 2) : '',
       '',
     ]);
   }
@@ -283,7 +284,7 @@ export function renderBolInto(doc: jsPDF, {
     margin: { left: M, right: M },
     head: [['Qty (MT)', 'Qty (Units)', 'Description Of Goods', 'Net Weight (Kg)', 'Gross Weight (Kg)']],
     body: lineItemsData,
-    foot: [['', '', 'Total', totalNetWeight ? totalNetWeight.toFixed(2) : '', totalGrossWeight ? totalGrossWeight.toFixed(2) : '']],
+    foot: [['', '', 'Total', totalNetWeight ? fmtN(totalNetWeight, 2) : '', totalGrossWeight ? fmtN(totalGrossWeight, 2) : '']],
     styles: {
       fontSize: 8,
       cellPadding: 2,

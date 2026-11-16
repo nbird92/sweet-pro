@@ -1,5 +1,6 @@
 import { ExternalLink } from 'lucide-react';
 import type { Contract } from '../types';
+import { fmtN } from '../utils/fmt';
 
 // The customer contracts table — shared by the customer card's Contracts tab and
 // the Sales Reports customer view so both render exactly the same table.
@@ -57,7 +58,7 @@ export default function CustomerContractsTable({ rows, label, onOpenContract, em
                 <td className="p-2">{(c.contractLines?.length ? c.contractLines.map(l => label(l.productName)) : [label(c.skuName)]).join(', ')}</td>
                 <td className="p-2">{c.origin || '—'}</td>
                 <td className="p-2 whitespace-nowrap">{fmtDate(c.startDate)} – {fmtDate(c.endDate)}</td>
-                <td className="p-2 font-mono whitespace-nowrap">{c.finalPrice ? `${c.currency || ''} ${c.finalPrice.toFixed(2)}` : '—'}</td>
+                <td className="p-2 font-mono whitespace-nowrap">{c.finalPrice ? `${c.currency || ''} ${fmtN(c.finalPrice, 2)}` : '—'}</td>
                 <td className="p-2 font-mono text-right">{fmt(c.contractVolume || 0)}</td>
                 <td className="p-2 font-mono text-right">{fmt(taken)}</td>
                 <td className="p-2 font-mono text-right">{fmt(onOrder)}</td>
