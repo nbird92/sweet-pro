@@ -19876,6 +19876,8 @@ export default function App() {
                         </Group>
                         <Group title="Logistics & Customs">
                           <Field label="Carrier" value={inv.carrier} />
+                          <Field label="Shipping Terms" value={inv.shippingTerms || order?.shippingTerms} />
+                          <Field label="Origin" value={inv.location || order?.location} />
                           <Field label="PAPS No." value={inv.papsNo} mono />
                           <Field label="Customs Entry No." value={inv.customsEntryNo} mono />
                           <Field label="Reversals" value={inv.reversals} />
@@ -19885,22 +19887,11 @@ export default function App() {
                   );
                 })()}
 
-                {/* Line Items & Contract Details — same layout as the order card. */}
+                {/* Line Items — split / product / contract live in the header and the
+                    line columns; shipping terms and origin moved to the header. */}
                 <div className="border border-[#141414] overflow-hidden">
                   <div className="bg-[#141414] text-[#E4E3E0] p-3 flex justify-between items-center">
-                    <h4 className="text-xs font-bold uppercase">Line Items &amp; Contract Details ({invRows.length})</h4>
-                  </div>
-                  <div className="bg-[#F5F5F5] p-4 grid grid-cols-4 gap-4 border-b border-[#141414]/10">
-                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Split No.</label>
-                      <div className="text-sm font-mono">{inv.splitNo || '—'}</div></div>
-                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contract #</label>
-                      <div className="text-sm font-mono font-bold">{inv.contractNumber || '—'}</div></div>
-                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Shipping Terms</label>
-                      <div className="text-sm">{inv.shippingTerms || '—'}</div></div>
-                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Location (Origin)</label>
-                      <div className="text-sm">{inv.location || '—'}</div></div>
-                    <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
-                      <div className="text-sm">{inv.product || '—'}</div></div>
+                    <h4 className="text-xs font-bold uppercase">Line Items ({invRows.length})</h4>
                   </div>
                   {invRows.length > 0 ? (() => {
                     // Reuse the effective rows computed above so this table and the
