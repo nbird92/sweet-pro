@@ -1497,6 +1497,26 @@ export function parsedRowsToOrdersConfigured(
         continue;
       }
       if (isInvoicedValue(r.invoiceNumber)) {
+        // An invoiced row never creates or fills an order — BUT the sheet is still
+        // authoritative for the BOL. When this PO already belongs to an order
+        // whose BOL differs (e.g. an app-assigned BOL on an emailed order), carry
+        // the sheet's BOL onto it. Otherwise the order keeps a BOL that matches
+        // neither the sheet nor the invoice, and lingers in the Orders table
+        // after it has been billed. Same PO-drives-BOL rule as the open-row path
+        // below; deferred when the sheet BOL already identifies a DIFFERENT order.
+        const bolI = (r.bolNumber || '').trim();
+        const poI = poKey(r.poNumber);
+        const byPo = poI ? existingOrderByPo.get(poI) : undefined;
+        const byBol = bolI ? existingOrderByBol.get(bolI.toUpperCase()) : undefined;
+        if (byPo && bolI && !updatedIds.has(byPo.id)
+            && (byPo.bolNumber || '').trim().toUpperCase() !== bolI.toUpperCase()
+            && (!byBol || byBol.id === byPo.id)) {
+          const updated = stripUndefined({ ...byPo, bolNumber: bolI });
+          result.updatedOrders!.push(updated);
+          updatedIds.add(byPo.id);
+          existingOrderByBol.set(bolI.toUpperCase(), updated);
+          continue;
+        }
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: `Already invoiced (${r.invoiceNumber.trim()})` });
         continue;
       }

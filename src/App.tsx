@@ -14220,22 +14220,9 @@ export default function App() {
     }
 
     if (activePage === 'Orders') {
-      // Pre-compute the set of BOL numbers that already have an invoice.
-      // Any order whose BOL appears in the invoices table is treated as
-      // 'completed and billed' and is filtered out of the Orders page.
-      // Only an ACTIVE invoice bills out an order. A Cancelled/Credit invoice
-      // does NOT — the order stays workable (matches removeOrdersInvoicedBy and
-      // the sheet importer, which both keep such orders). Normalise BOLs
-      // (trim/upper) so "p001" and "P001 " compare equal.
-      const invoicedBols = new Set(
-        invoices
-          .filter(inv => inv.status !== 'Cancelled' && inv.status !== 'Credit' && inv.bolNumber)
-          .map(inv => (inv.bolNumber || '').trim().toUpperCase())
-      );
-      const isInvoicedBol = (bol?: string) => {
-        const b = (bol || '').trim().toUpperCase();
-        return !!b && invoicedBols.has(b);
-      };
+      // An order billed out by an ACTIVE invoice (same BOL or numeric PO —
+      // isOrderInvoicedOut) is hidden from this page. Cancelled/Credit invoices
+      // don't bill an order out, so it stays workable.
 
       // STALE = shipment date two weeks or more in the past. Display-only hide:
       // the orders stay in state/Firestore (pruning the array would read as a
@@ -14245,7 +14232,7 @@ export default function App() {
       // How many orders the stale rule is currently suppressing — shown on the button.
       const staleHiddenCount = orders.filter(o =>
         isStaleOrder(o)
-        && !isInvoicedBol(o.bolNumber)
+        && !isOrderInvoicedOut(o)
         && !o.hidden
       ).length;
 
@@ -14253,7 +14240,11 @@ export default function App() {
         // Hide orders billed out by an ACTIVE invoice — but let a search reveal
         // one, so a billed order stays findable by explicit BOL/PO search (and a
         // Cancelled invoice no longer hides its order at all).
-        if (isInvoicedBol(ord.bolNumber) && !searchTerm) return false;
+        // Billed = an active invoice shares this order's BOL OR its numeric PO
+        // (isOrderInvoicedOut). BOL alone missed orders whose BOL differs from
+        // the sheet-imported invoice's (e.g. an app-assigned BOL), which then
+        // lingered here after billing.
+        if (isOrderInvoicedOut(ord) && !searchTerm) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
         // Auto-hide stale orders unless the user opts to show them, or is
