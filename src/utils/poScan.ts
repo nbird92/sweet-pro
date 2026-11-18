@@ -9,6 +9,9 @@
 import type { Customer, Contract, ShipToLocation } from '../types';
 
 export interface ExtractedLineItem {
+  /** PO number this line belongs to on a multi-PO schedule table (the server
+   *  splits such tables into one PO per number). */
+  poNumber?: string;
   description: string;
   itemNumber?: string;
   quantity: number;

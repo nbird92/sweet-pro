@@ -331,6 +331,7 @@ const PO_SCHEMA = {
       items: {
         type: Type.OBJECT,
         properties: {
+          poNumber: { type: Type.STRING, description: 'The PO number THIS line belongs to, when the input is a schedule/table listing several POs (a "PO#" column). Exactly as printed. Leave empty when the whole document is one PO.' },
           description: { type: Type.STRING, description: 'Product description as written on the PO.' },
           itemNumber: { type: Type.STRING, description: "The buyer's code for this product on this line — a \"Vendor Item #\", \"Material #\", \"Customer Part #\" or similar. Capture it exactly as printed (e.g. LC325X)." },
           quantity: numStr('Quantity in the document unit, as a plain decimal string (no thousands separators).'),
@@ -367,6 +368,8 @@ const PO_BATCH_SCHEMA = {
 export const SYSTEM_PROMPT = `You read a customer email or attached document received by Sucro Can, a sugar manufacturer and supplier, and extract structured data from it.
 
 A single file or email may contain MULTIPLE purchase orders — e.g. a multi-page PDF with a separate PO on each page, several POs concatenated together, OR a WEEKLY SCHEDULE / calendar table that lists many POs at once (rows or columns of Date, Load/Pick-up Time, PO #, Quantity). Return EVERY distinct purchase order, amendment, or cancellation you find as its own entry in the \`documents\` array — one entry PER PO NUMBER. If the input holds only one, return an array with a single entry. Never merge two different POs (different PO numbers) into one entry, and never split a single PO across multiple entries.
+
+MULTI-PO SCHEDULE TABLES: an email (often an internal Sucro sales/logistics note, e.g. "Below are the orders to be shipped next week") may contain a TABLE whose rows each carry their OWN PO# (columns like Customer/ITAS Name | Terminal | PO# | Product | Delivery Date | Destination | Time). Each row with a different PO# is a SEPARATE purchase order: return one documents[] entry PER ROW/PO#, each with that row's poNumber, deliveryDate, delivery time (deliveryTime on its line), product and ship-to destination. Never collapse such a table into a single PO with many line items. Always also fill each line item's poNumber with the PO# of its row.
 
 Read the WHOLE email thread, including quoted/forwarded earlier messages and any later confirmation tables — an order is frequently stated in an earlier message in the thread or restated in a logistics confirmation. A PO number may appear inside a longer composite reference (e.g. "9200195450_010_4581845008_020_01"); return the customer's actual PO number (the recognizable order number, e.g. 4581845008). Capture each PO's quantity, requested ship/pick-up date, and delivery date when the schedule provides them.
 
@@ -692,6 +695,53 @@ export function expandCallOffDoc(doc: any): any[] {
   });
 }
 
+/** Split a document whose line items belong to DIFFERENT purchase orders (a
+ *  multi-PO schedule table — e.g. "orders to be shipped next week" with a PO#
+ *  column) into one document per PO. The model sometimes returns such a table
+ *  as ONE PO with many lines; the per-line poNumber lets code undo that merge
+ *  deterministically. A document whose lines carry ≤1 distinct PO number is
+ *  returned unchanged. */
+export function splitMultiPoDoc(doc: any): any[] {
+  if (!doc || !Array.isArray(doc.lineItems)) return [doc];
+  const lines = doc.lineItems.filter((l: any) => l && typeof l === 'object');
+  const poOf = (l: any) => String(l.poNumber ?? '').trim();
+  const groups = new Map<string, any[]>();
+  for (const l of lines) {
+    const po = poOf(l);
+    if (!po) continue;
+    if (!groups.has(po)) groups.set(po, []);
+    groups.get(po)!.push(l);
+  }
+  if (groups.size < 2) return [doc];
+  // Lines without their own PO number can't be attributed — keep them with the
+  // document's own PO (or the first group) rather than drop them.
+  const orphans = lines.filter((l: any) => !poOf(l));
+  if (orphans.length) {
+    const home = groups.has(String(doc.poNumber || '').trim()) ? String(doc.poNumber).trim() : [...groups.keys()][0];
+    groups.get(home)!.push(...orphans);
+  }
+  return [...groups.entries()].map(([po, ls]) => {
+    const dates = [...new Set(ls.map((l: any) => l.deliveryDate).filter((d: any) => typeof d === 'string' && d))];
+    const times = [...new Set(ls.map((l: any) => String(l.deliveryTime || '').trim()).filter(Boolean))];
+    const out: any = {
+      ...doc,
+      poNumber: po,
+      // A schedule row is its own order, never a call-off expansion.
+      isCallOff: false,
+      lineItems: ls,
+    };
+    if (dates.length === 1) out.deliveryDate = dates[0];
+    if (times.length === 1) {
+      const t = times[0].replace(/^(\d{1,2}:\d{2})(:\d{2})?$/, '$1');
+      if (!String(out.notes || '').includes(t)) out.notes = [doc.notes, `Delivery time ${t}`].filter(Boolean).join(' · ');
+    }
+    // The original total covered every PO in the table — drop it (DELETE, not
+    // undefined: Firestore rejects undefined values).
+    delete out.totalAmount;
+    return out;
+  });
+}
+
 /** Extract ALL purchase orders found in one uploaded file via Gemini. A single
  *  file can hold several POs (e.g. one per page of a multi-page PDF), so this
  *  returns an ARRAY — one parsed object per PO, each tagged with sourceFile.
@@ -807,6 +857,8 @@ export async function extractPO(
     : (parsed && typeof parsed === 'object' ? [parsed] : []);
   return docs
     .filter(d => d && typeof d === 'object')
+    // Undo a multi-PO schedule table merged into one PO (one doc per line PO#).
+    .flatMap(d => splitMultiPoDoc(d))
     .map(d => {
       const doc = coerceDocNumbers({ sourceFile: file.name, ...d });
       // Recompute MT quantities and $/MT prices in code (never trust the LLM's
