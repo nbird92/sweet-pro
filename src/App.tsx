@@ -18748,9 +18748,10 @@ export default function App() {
     }
 
     return (
-      <main className="max-w-[1400px] mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Input Section */}
-        <div className="lg:col-span-4 space-y-4">
+      <main className="max-w-[1800px] mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Input Section — the wider column (inputs need the room; the
+            breakdown is a narrow label/value list). */}
+        <div className="lg:col-span-7 space-y-4">
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
               <Users size={14} /> Customer Selection
@@ -18773,7 +18774,7 @@ export default function App() {
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
               <DollarSign size={14} /> Market Inputs
             </h2>
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 items-start">
               <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold opacity-60">Origin</label>
                 <select
@@ -19121,7 +19122,7 @@ export default function App() {
         </div>
 
         {/* Output Section */}
-        <div className="lg:col-span-8 space-y-4">
+        <div className="lg:col-span-5 space-y-4">
           {/* Detailed Breakdown */}
           <section className="bg-white border border-[#141414] overflow-hidden shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
