@@ -1371,6 +1371,11 @@ export function parseConfiguredTab(
     if (!status && rowHasCancelKeyword(row)) {
       status = 'CANCELLED (keyword in row)';
     }
+    // The shipment log cancels a load by typing "cancelled" into its Ordered
+    // Qty cell — honour that even when a Status column is mapped and non-empty.
+    if (!isCancelledStatus(status) && /cancel|\bcxl\b|\bvoid\b/i.test(qtyRaw)) {
+      status = 'CANCELLED (quantity cell)';
+    }
 
     if (!product && tab.productFallback) product = tab.productFallback;
 
@@ -1490,9 +1495,32 @@ export function parsedRowsToOrdersConfigured(
   const invoicedBols = new Set(billedInvoices.map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
   const invoicedPos = new Set(billedInvoices.map(i => poKey(i.po)).filter(Boolean));
 
+  // PO keys still carried by a LIVE (not cancelled) sheet row. A cancelled row
+  // may only cancel an order by PO alone when no live row reuses that PO — a
+  // load is sometimes cancelled and re-booked under the same PO with a new BOL,
+  // and that re-booked order must not be cancelled.
+  const livePos = new Set(parsed.filter(r => !isCancelledStatus(r.status)).map(r => poKey(r.poNumber)).filter(Boolean));
+
   for (const r of parsed) {
     try {
       if (isCancelledStatus(r.status)) {
+        // The sheet cancelled this load. Skipping the row isn't enough: an order
+        // already imported for it would stay live forever. Cancel that order —
+        // matched by exact BOL, else by PO when no live row still uses the PO.
+        // Never touches a Completed / already-Cancelled or invoiced order.
+        const bolC = (r.bolNumber || '').trim().toUpperCase();
+        const poC = poKey(r.poNumber);
+        const target = (bolC ? existingOrderByBol.get(bolC) : undefined)
+          || (poC && !livePos.has(poC) ? existingOrderByPo.get(poC) : undefined);
+        const tBol = (target?.bolNumber || '').trim().toUpperCase();
+        const tPo = poKey(target?.po);
+        const targetInvoiced = !!target && ((tBol && invoicedBols.has(tBol)) || (tPo && invoicedPos.has(tPo)));
+        if (target && !updatedIds.has(target.id) && !targetInvoiced
+            && target.status !== 'Cancelled' && target.status !== 'Completed') {
+          result.updatedOrders!.push(stripUndefined({ ...target, status: 'Cancelled' as Order['status'] }));
+          updatedIds.add(target.id);
+          continue;
+        }
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Row marked cancelled (Status column)' });
         continue;
       }

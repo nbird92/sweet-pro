@@ -14233,6 +14233,7 @@ export default function App() {
       const staleHiddenCount = orders.filter(o =>
         isStaleOrder(o)
         && !isOrderInvoicedOut(o)
+        && o.status !== 'Cancelled'
         && !o.hidden
       ).length;
 
@@ -14245,6 +14246,9 @@ export default function App() {
         // the sheet-imported invoice's (e.g. an app-assigned BOL), which then
         // lingered here after billing.
         if (isOrderInvoicedOut(ord) && !searchTerm) return false;
+        // Cancelled orders (e.g. cancelled in the import sheet) leave the table
+        // too; a search still finds them.
+        if (ord.status === 'Cancelled' && !searchTerm) return false;
         // Hide manually-hidden orders unless the user is searching
         if (ord.hidden && !searchTerm) return false;
         // Auto-hide stale orders unless the user opts to show them, or is
