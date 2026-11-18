@@ -680,9 +680,21 @@ export default function QualityAssurancePage({
           ti: 'ti', hi: 'hi',
           unitsperpallet: 'unitsPerPallet',
         };
-        for (const f of QA_SPEC_FIELDS) alias[norm(f.csv)] = f.csv;
+        // Spec columns: the template's "specBrix"-style names, "spec brix" /
+        // "brix spec" variants, and the card's plain labels (Brix, pH, Sensorial…
+        // — also the Excel export's headers). Plain "Color" stays Max Color
+        // unless the file ALSO has a Max Color column (an Excel-export CSV), in
+        // which case it is the Color spec.
+        const headerNorm = parseCsvRow(lines[0]).map(norm);
+        const hasMaxColorCol = headerNorm.includes('maxcolor');
+        for (const f of QA_SPEC_FIELDS) {
+          const k = norm(f.key);
+          alias[norm(f.csv)] = f.csv;
+          alias[`${k}spec`] = f.csv;
+          if (k !== 'color' || hasMaxColorCol) alias[k] = f.csv;
+        }
         const known = new Set<string>(QA_CSV_FIELDS as readonly string[]);
-        const colField = parseCsvRow(lines[0]).map(norm).map(h => alias[h] || (known.has(h) ? h : ''));
+        const colField = headerNorm.map(h => alias[h] || (known.has(h) ? h : ''));
         if (!colField.includes('skuName')) { alert(`The CSV needs a product name column ("skuName", "name" or "description").\n\nFound: ${colField.filter(Boolean).join(', ') || '(none recognized)'}`); return; }
 
         const num = (v: string) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
