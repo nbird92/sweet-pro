@@ -595,6 +595,22 @@ export default function QualityAssurancePage({
   // products by Product No. (productCode) then SKU name (case-insensitive) — a
   // match updates in place, everything else is added. Adds go through
   // onAddQAProduct so the paired SKU + product-group derivation still happen.
+  // Specification fields from the product card's Specifications table, in card
+  // order. CSV columns are prefixed "spec" so e.g. specColor never collides
+  // with the existing maxColor ("color") import alias.
+  const QA_SPEC_FIELDS: Array<{ key: keyof QASpecifications; label: string; csv: string }> = [
+    { key: 'brix', label: 'Brix', csv: 'specBrix' },
+    { key: 'granulation', label: 'Granulation', csv: 'specGranulation' },
+    { key: 'color', label: 'Color', csv: 'specColor' },
+    { key: 'ash', label: 'Ash', csv: 'specAsh' },
+    { key: 'turbidity', label: 'Turbidity', csv: 'specTurbidity' },
+    { key: 'moisture', label: 'Moisture', csv: 'specMoisture' },
+    { key: 'ph', label: 'pH', csv: 'specPh' },
+    { key: 'temperature', label: 'Temperature', csv: 'specTemperature' },
+    { key: 'invert', label: 'Invert', csv: 'specInvert' },
+    { key: 'sucrose', label: 'Sucrose', csv: 'specSucrose' },
+    { key: 'sensorial', label: 'Sensorial', csv: 'specSensorial' },
+  ];
   const QA_CSV_FIELDS = ['skuName', 'productCode', 'productGroup', 'category', 'location', 'sugarType', 'productFormat', 'netWeightKg', 'grossWeightKg', 'maxColor', 'packagingSupplier', 'upcCode', 'pol', 'ti', 'hi', 'unitsPerPallet'] as const;
   const csvImportRef = useRef<HTMLInputElement>(null);
 
@@ -625,10 +641,14 @@ export default function QualityAssurancePage({
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-  const downloadQATemplate = () => downloadCsv('qa_products_template.csv', QA_CSV_FIELDS.join(','));
+  const csvHeader = [...QA_CSV_FIELDS, ...QA_SPEC_FIELDS.map(f => f.csv)].join(',');
+  const downloadQATemplate = () => downloadCsv('qa_products_template.csv', csvHeader);
   const exportQACsv = () => {
-    const lines = [QA_CSV_FIELDS.join(',')];
-    qaProducts.forEach(p => lines.push(QA_CSV_FIELDS.map(f => csvCell((p as any)[f])).join(',')));
+    const lines = [csvHeader];
+    qaProducts.forEach(p => lines.push([
+      ...QA_CSV_FIELDS.map(f => csvCell((p as any)[f])),
+      ...QA_SPEC_FIELDS.map(f => csvCell(p.specifications?.[f.key])),
+    ].join(',')));
     downloadCsv('qa_products_export.csv', lines.join('\n'));
   };
 
@@ -660,6 +680,7 @@ export default function QualityAssurancePage({
           ti: 'ti', hi: 'hi',
           unitsperpallet: 'unitsPerPallet',
         };
+        for (const f of QA_SPEC_FIELDS) alias[norm(f.csv)] = f.csv;
         const known = new Set<string>(QA_CSV_FIELDS as readonly string[]);
         const colField = parseCsvRow(lines[0]).map(norm).map(h => alias[h] || (known.has(h) ? h : ''));
         if (!colField.includes('skuName')) { alert(`The CSV needs a product name column ("skuName", "name" or "description").\n\nFound: ${colField.filter(Boolean).join(', ') || '(none recognized)'}`); return; }
@@ -706,6 +727,13 @@ export default function QualityAssurancePage({
           if (row.ti) patch.ti = num(row.ti);
           if (row.hi) patch.hi = num(row.hi);
           if (row.unitsPerPallet) patch.unitsPerPallet = num(row.unitsPerPallet);
+          // Spec columns: only non-blank cells overwrite, so a partial CSV never
+          // wipes specs already on the card.
+          const specPatch: Partial<QASpecifications> = {};
+          for (const f of QA_SPEC_FIELDS) if (row[f.csv]) (specPatch as any)[f.key] = row[f.csv];
+          if (Object.keys(specPatch).length) {
+            patch.specifications = { ...(existing?.specifications || createBlankProduct().specifications), ...specPatch } as QASpecifications;
+          }
 
           if (existing) {
             // reconcile: a CSV row can change `location`, which must not leave the
@@ -1020,6 +1048,7 @@ export default function QualityAssurancePage({
       { header: 'Location', key: 'location' },
       { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
       { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
+      ...QA_SPEC_FIELDS.map(f => ({ header: f.label, key: `spec_${f.key}` })),
     ],
     rows: qaProducts.map(p => {
       const ctx = { sugarTypes, productGroups };
@@ -1048,7 +1077,9 @@ export default function QualityAssurancePage({
           }
         }
       }
-      return { ...p, shortform, productName } as any;
+      const specCols: Record<string, string> = {};
+      for (const f of QA_SPEC_FIELDS) specCols[`spec_${f.key}`] = p.specifications?.[f.key] || '';
+      return { ...p, shortform, productName, ...specCols } as any;
     }),
   }];
   return (
