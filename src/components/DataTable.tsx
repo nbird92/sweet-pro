@@ -85,6 +85,9 @@ interface DataTableProps<T> {
   /** Optional footer row(s) — rendered inside <tfoot>. Caller supplies the
    *  full <tr>...</tr> markup so totals rows keep their custom styling. */
   footer?: React.ReactNode;
+  /** Optional totals row keyed by column key — rendered as a styled <tfoot>
+   *  row that follows the user's column order / hidden columns. */
+  footerCells?: Record<string, React.ReactNode>;
   /** When true, the table body scrolls within a bounded height and the header
    *  row stays pinned to the top. Use for long full-page lists. Default off so
    *  existing sub-tables keep their plain horizontal-overflow behaviour. */
@@ -132,6 +135,7 @@ export default function DataTable<T>({
   defaultSortKey,
   defaultSortDir = 'asc',
   footer,
+  footerCells,
   stickyHeader = false,
   storageKey,
 }: DataTableProps<T>) {
@@ -420,7 +424,23 @@ export default function DataTable<T>({
             </tr>
           )}
         </tbody>
-        {footer && <tfoot>{footer}</tfoot>}
+        {(footer || footerCells) && (
+          <tfoot>
+            {footerCells && (
+              <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                {visibleColumns.map(col => (
+                  <td
+                    key={col.key}
+                    className={`p-3 text-xs border-r border-white/10 ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : ''} ${col.mono ? 'font-mono' : ''}`}
+                  >
+                    {footerCells[col.key] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            )}
+            {footer}
+          </tfoot>
+        )}
       </table>
       </div>
       {remaining > 0 && (

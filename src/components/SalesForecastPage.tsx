@@ -170,6 +170,9 @@ export default function SalesForecastPage({
     fiscalYears.length > 0 ? fiscalYears[0].id : ''
   );
   const [forecastType, setForecastType] = useState<'Forecast' | 'Budget'>('Forecast');
+  const [timeFrame, setTimeFrame] = useState<'Annual' | 'Quarterly' | 'Monthly'>('Annual');
+  const [timeFrameQuarter, setTimeFrameQuarter] = useState(0); // 0-3
+  const [timeFrameMonth, setTimeFrameMonth] = useState(0);     // 0-11
 
   // ── Search & Sort ───────────────────────────────────────────────────────
   const [customerSearch, setCustomerSearch] = useState('');
@@ -1590,14 +1593,39 @@ export default function SalesForecastPage({
   // ── Annual totals with actuals incorporated ─────────────────────────────
   // Split into invoiced actuals (past periods) and remaining forecast (current
   // + future periods): `sales` + `forecast` = the year total.
+  // ── Time frame (customer table) ─────────────────────────────────────────
+  // Annual = the whole fiscal year; Quarterly / Monthly scope the Sales,
+  // Orders and Forecast columns to the picked fiscal quarter / month.
+  const timeFrameMonths = useMemo((): Set<number> | null => {
+    if (!selectedFY || timeFrame === 'Annual') return null;
+    if (timeFrame === 'Monthly') return new Set([timeFrameMonth]);
+    const q = selectedFY.quarters.find(x => x.quarterNumber === timeFrameQuarter + 1);
+    const idxs = q
+      ? selectedFY.periods.map((p, i) => (p.startDate >= q.startDate && p.endDate <= q.endDate ? i : -1)).filter(i => i >= 0)
+      : [];
+    return new Set(idxs.length ? idxs : [timeFrameQuarter * 3, timeFrameQuarter * 3 + 1, timeFrameQuarter * 3 + 2]);
+  }, [selectedFY, timeFrame, timeFrameQuarter, timeFrameMonth]);
+  /** Inclusive date range of the selected time frame (null = no limit). */
+  const timeFrameRange = useMemo((): { start: string; end: string } | null => {
+    if (!selectedFY || !timeFrameMonths) return null;
+    const ps = [...timeFrameMonths].map(i => selectedFY.periods[i]).filter(Boolean);
+    if (!ps.length) return null;
+    return {
+      start: ps.reduce((m, p) => (p.startDate < m ? p.startDate : m), ps[0].startDate),
+      end: ps.reduce((m, p) => (p.endDate > m ? p.endDate : m), ps[0].endDate),
+    };
+  }, [selectedFY, timeFrameMonths]);
+
   const getSalesAndForecast = useCallback(
     (cf: CustomerForecast): { sales: number; forecast: number } => {
       if (!selectedFY) return { sales: 0, forecast: cf.annualForecast };
       let sales = 0;
       let forecast = 0;
       for (const line of cf.lines) {
-        const count = cf.viewMode === 'Weekly' ? 52 : 12;
+        const weekly = cf.viewMode === 'Weekly';
+        const count = weekly ? 52 : 12;
         for (let i = 0; i < count; i++) {
+          if (timeFrameMonths && !timeFrameMonths.has(weekly ? weekMonthIdx(i) : i)) continue;
           const entry = line.entries.find((e) => e.periodIndex === i);
           const forecastVal = entry?.value ?? 0;
           const res = getCellValue(cf.customerName, line.productName, line.location, i, cf.viewMode === 'Weekly', forecastVal);
@@ -1612,7 +1640,7 @@ export default function SalesForecastPage({
       }
       return { sales, forecast };
     },
-    [selectedFY, getCellValue]
+    [selectedFY, getCellValue, timeFrameMonths, weekMonthIdx]
   );
   const getAnnualWithActuals = useCallback(
     (cf: CustomerForecast): number => {
@@ -1634,6 +1662,10 @@ export default function SalesForecastPage({
       if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
       const bol = (o.bolNumber || '').trim();
       if (bol && invoicedBols.has(bol)) continue;
+      if (timeFrameRange) {
+        const d = o.shipmentDate || o.date;
+        if (!d || d < timeFrameRange.start || d > timeFrameRange.end) continue;
+      }
       let mt = 0;
       for (const li of o.lineItems || []) {
         if (li.productName && li.totalWeight > 0) mt += li.totalWeight;
@@ -1644,7 +1676,7 @@ export default function SalesForecastPage({
       }
     }
     return map;
-  }, [orders, invoices, custKey]);
+  }, [orders, invoices, custKey, timeFrameRange]);
   const ordersOnHandFor = useCallback(
     (cf: CustomerForecast): number => ordersOnHandByCustomer.get(custKey(cf.customerName)) ?? 0,
     [ordersOnHandByCustomer, custKey]
@@ -2042,6 +2074,65 @@ export default function SalesForecastPage({
           </div>
         </div>
 
+        {/* Time Frame — scopes the customer table to a quarter / month */}
+        <div className="relative">
+          <label className="text-[10px] uppercase font-bold tracking-widest opacity-60 block mb-1">
+            Time Frame
+          </label>
+          <div className="flex gap-2">
+            <div className="relative">
+              <select
+                value={timeFrame}
+                onChange={(e) => {
+                  const tf = e.target.value as 'Annual' | 'Quarterly' | 'Monthly';
+                  // Default the period picker to the current fiscal month/quarter.
+                  if (selectedFY && currentPeriodIdx >= 0) {
+                    setTimeFrameMonth(currentPeriodIdx);
+                    const p = selectedFY.periods[currentPeriodIdx];
+                    const q = selectedFY.quarters.find(x => p.startDate >= x.startDate && p.endDate <= x.endDate);
+                    setTimeFrameQuarter(q ? q.quarterNumber - 1 : Math.floor(currentPeriodIdx / 3));
+                  }
+                  setTimeFrame(tf);
+                }}
+                className="appearance-none w-36 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+              >
+                <option value="Annual">Annual</option>
+                <option value="Quarterly">Quarterly</option>
+                <option value="Monthly">Monthly</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            {timeFrame === 'Quarterly' && (
+              <div className="relative">
+                <select
+                  value={timeFrameQuarter}
+                  onChange={(e) => setTimeFrameQuarter(Number(e.target.value))}
+                  className="appearance-none w-24 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                >
+                  {[0, 1, 2, 3].map(q => (
+                    <option key={q} value={q}>{selectedFY?.quarters.find(x => x.quarterNumber === q + 1)?.name || `Q${q + 1}`}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
+            {timeFrame === 'Monthly' && (
+              <div className="relative">
+                <select
+                  value={timeFrameMonth}
+                  onChange={(e) => setTimeFrameMonth(Number(e.target.value))}
+                  className="appearance-none w-40 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                >
+                  {(selectedFY?.periods.length ? selectedFY.periods : Array.from({ length: 12 }, (_, i) => ({ name: `Period ${i + 1}` }))).map((p, i) => (
+                    <option key={i} value={i}>{p.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Type Toggle */}
         <div className="relative">
           <label className="text-[10px] uppercase font-bold tracking-widest opacity-60 block mb-1">
@@ -2191,6 +2282,22 @@ export default function SalesForecastPage({
             },
           ]}
           rows={sortedCustomerForecasts}
+          footerCells={sortedCustomerForecasts.length > 0 ? (() => {
+            const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+            let sales = 0, orders = 0, forecast = 0;
+            for (const cf of sortedCustomerForecasts) {
+              const sf = getSalesAndForecast(cf);
+              sales += sf.sales; forecast += sf.forecast; orders += ordersOnHandFor(cf);
+            }
+            return {
+              customerNumber: 'Total',
+              customerName: `${sortedCustomerForecasts.length} customer${sortedCustomerForecasts.length === 1 ? '' : 's'}`,
+              sales: fmt(sales),
+              orders: fmt(orders),
+              forecast: fmt(forecast),
+              annual: fmt(sales + forecast),
+            };
+          })() : undefined}
           getRowKey={(cf) => cf.customerId}
           onRowClick={(cf) => openCustomerModal(cf.customerId)}
           emptyMessage="No customers found."
