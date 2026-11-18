@@ -10171,13 +10171,23 @@ export default function App() {
     }
     // When a sync update REPLACES an order's BOL (matched by PO), carry the change
     // to its linked shipments / invoices / return orders so they don't orphan.
-    const bolRemap = new Map<string, string>();
+    // Scoped by PO: the old BOL may ALSO legitimately belong to another
+    // customer's record (an order that carried a wrong BOL — e.g. Nortera
+    // 117294-012 holding Yaya's L5000999), so only records for the SAME PO (or
+    // with no PO) follow the order to its new BOL.
+    const bolRemap = new Map<string, { newBol: string; po: string }>();
     current.forEach(o => {
       const u = updatedById.get(o.id);
       const oldBol = (o.bolNumber || '').trim();
       const newBol = (u?.bolNumber || '').trim();
-      if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, newBol);
+      if (u && oldBol && newBol && oldBol !== newBol) bolRemap.set(oldBol, { newBol, po: poKey(o.po) });
     });
+    const remapBol = (bol: string | undefined, po: string | undefined): string | null => {
+      const m = bolRemap.get((bol || '').trim());
+      if (!m) return null;
+      const k = poKey(po);
+      return (!k || !m.po || k === m.po) ? m.newBol : null;
+    };
     const afterUpdates = current.map(o => updatedById.get(o.id) || o);
 
     // Never import an order that DUPLICATES one already present — by BOL or by
@@ -10227,11 +10237,11 @@ export default function App() {
       if (toPersist.length) saveNow(COLLECTIONS.orders, toPersist);
     }
     if (bolRemap.size) {
-      const remapShip = (s: Shipment) => bolRemap.has((s.bol || '').trim()) ? { ...s, bol: bolRemap.get((s.bol || '').trim())! } : s;
+      const remapShip = (s: Shipment) => { const nb = remapBol(s.bol, s.po); return nb ? { ...s, bol: nb } : s; };
       setHamiltonShipments(prev => prev.map(remapShip));
       setVancouverShipments(prev => prev.map(remapShip));
-      setInvoices(prev => prev.map(i => bolRemap.has((i.bolNumber || '').trim()) ? { ...i, bolNumber: bolRemap.get((i.bolNumber || '').trim())! } : i));
-      setReturnOrders(prev => prev.map(r => bolRemap.has((r.originalBolNumber || '').trim()) ? { ...r, originalBolNumber: bolRemap.get((r.originalBolNumber || '').trim())! } : r));
+      setInvoices(prev => prev.map(i => { const nb = remapBol(i.bolNumber, i.po); return nb ? { ...i, bolNumber: nb } : i; }));
+      setReturnOrders(prev => prev.map(r => { const nb = remapBol(r.originalBolNumber, r.po); return nb ? { ...r, originalBolNumber: nb } : r; }));
     }
     return merged;
   };

@@ -1501,6 +1501,28 @@ export function parsedRowsToOrdersConfigured(
   // and that re-booked order must not be cancelled.
   const livePos = new Set(parsed.filter(r => !isCancelledStatus(r.status)).map(r => poKey(r.poNumber)).filter(Boolean));
 
+  // A BOL match only identifies the SAME shipment when the POs agree (or one
+  // side has none). Orders sometimes carry a WRONG BOL that really belongs to
+  // another customer's load (Nortera 117294-012 held Yaya's L5000999); a
+  // BOL-only comparison then mis-reads that order as billed / as a different
+  // shipment, and it can never be cancelled or corrected from the sheet.
+  const poAgrees = (a: string | undefined, b: string | undefined) => {
+    const ka = poKey(a); const kb = poKey(b);
+    return !ka || !kb || ka === kb;
+  };
+  const invoicePosByBol = new Map<string, string[]>();
+  for (const i of billedInvoices) {
+    const b = (i.bolNumber || '').trim().toUpperCase();
+    if (!b) continue;
+    const arr = invoicePosByBol.get(b); if (arr) arr.push(i.po || ''); else invoicePosByBol.set(b, [i.po || '']);
+  }
+  const isOrderBilled = (o: Order): boolean => {
+    const op = poKey(o.po);
+    if (op && invoicedPos.has(op)) return true;
+    const ob = (o.bolNumber || '').trim().toUpperCase();
+    return !!ob && (invoicePosByBol.get(ob) || []).some(ip => poAgrees(ip, o.po));
+  };
+
   for (const r of parsed) {
     try {
       if (isCancelledStatus(r.status)) {
@@ -1510,14 +1532,16 @@ export function parsedRowsToOrdersConfigured(
         // Never touches a Completed / already-Cancelled or invoiced order.
         const bolC = (r.bolNumber || '').trim().toUpperCase();
         const poC = poKey(r.poNumber);
-        const target = (bolC ? existingOrderByBol.get(bolC) : undefined)
+        const byBolC = bolC ? existingOrderByBol.get(bolC) : undefined;
+        const target = (byBolC && poAgrees(byBolC.po, r.poNumber) ? byBolC : undefined)
           || (poC && !livePos.has(poC) ? existingOrderByPo.get(poC) : undefined);
-        const tBol = (target?.bolNumber || '').trim().toUpperCase();
-        const tPo = poKey(target?.po);
-        const targetInvoiced = !!target && ((tBol && invoicedBols.has(tBol)) || (tPo && invoicedPos.has(tPo)));
-        if (target && !updatedIds.has(target.id) && !targetInvoiced
+        if (target && !updatedIds.has(target.id) && !isOrderBilled(target)
             && target.status !== 'Cancelled' && target.status !== 'Completed') {
-          result.updatedOrders!.push(stripUndefined({ ...target, status: 'Cancelled' as Order['status'] }));
+          // The sheet is authoritative for the BOL — take it as well.
+          const sheetBol = (r.bolNumber || '').trim();
+          const patch: Partial<Order> = { status: 'Cancelled' };
+          if (sheetBol && sheetBol.toUpperCase() !== (target.bolNumber || '').trim().toUpperCase()) patch.bolNumber = sheetBol;
+          result.updatedOrders!.push(stripUndefined({ ...target, ...patch }));
           updatedIds.add(target.id);
           continue;
         }
@@ -1538,7 +1562,7 @@ export function parsedRowsToOrdersConfigured(
         const byBol = bolI ? existingOrderByBol.get(bolI.toUpperCase()) : undefined;
         if (byPo && bolI && !updatedIds.has(byPo.id)
             && (byPo.bolNumber || '').trim().toUpperCase() !== bolI.toUpperCase()
-            && (!byBol || byBol.id === byPo.id)) {
+            && (!byBol || byBol.id === byPo.id || !poAgrees(byBol.po, r.poNumber))) {
           const updated = stripUndefined({ ...byPo, bolNumber: bolI });
           result.updatedOrders!.push(updated);
           updatedIds.add(byPo.id);
@@ -1683,7 +1707,10 @@ export function parsedRowsToOrdersConfigured(
       // fill any blanks. Defer to an exact-BOL match only when the imported BOL
       // already identifies a DIFFERENT order (so a PO spanning several BOLs isn't
       // mis-assigned to the wrong shipment).
-      if (orderByPo && (!orderByBol || orderByBol.id === orderByPo.id)) {
+      // The sheet BOL is taken even when another order holds it under a
+      // DIFFERENT PO (that order's BOL is the wrong one); we only defer to the
+      // BOL match when it is the same PO split across several BOLs.
+      if (orderByPo && (!orderByBol || orderByBol.id === orderByPo.id || !poAgrees(orderByBol.po, r.poNumber))) {
         if (updatedIds.has(orderByPo.id)) {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
           continue;
@@ -1704,6 +1731,10 @@ export function parsedRowsToOrdersConfigured(
 
       // Exact BOL match (a different order than the PO match, or no PO match) —
       // the unique shipment identifier; fill in only its blank fields.
+      if (orderByBol && !poAgrees(orderByBol.po, r.poNumber)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: `BOL is on order PO ${orderByBol.po} (different PO) — check the BOL in the sheet or the order` });
+        continue;
+      }
       if (orderByBol) {
         if (updatedIds.has(orderByBol.id)) {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, poNumber: r.poNumber, reason: 'Existing order already updated earlier in this run' });
