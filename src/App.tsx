@@ -13099,6 +13099,7 @@ export default function App() {
                   <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Completed Totals — {new Date().getFullYear()}</h3>
                   <div className="flex gap-6 text-[10px]">
                     <span>Total Volume: <strong>{Math.round(grandVolume).toLocaleString()} MT</strong></span>
+                    <span title={`Total volume ÷ ${chronoWeeks.length} week${chronoWeeks.length === 1 ? '' : 's'} (Week 1 to the current week)`}>Weekly Average: <strong>{Math.round(grandVolume / Math.max(chronoWeeks.length, 1)).toLocaleString()} MT</strong></span>
                     <span>Total Tolling: <strong>CAD ${Math.round(grandTolling).toLocaleString()}</strong></span>
                   </div>
                 </div>
