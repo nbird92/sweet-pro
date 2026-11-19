@@ -636,24 +636,31 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
               <input type="text" value={lead.customerName} onChange={(e) => setLead({ ...lead, customerName: e.target.value })}
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" placeholder="Enter customer name" /></div>
             <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
-              <select value={lead.product} onChange={(e) => setLead({ ...lead, product: e.target.value })}
-                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
-                <option value="">Select product</option>
-                {(() => {
-                  const label = (n: string) => (toShortform ? (toShortform(n) || n) : n);
-                  const opts = [
-                    ...leadQaProducts.map(qp => ({ key: qp.id, value: qp.skuName, label: label(qp.skuName) })),
-                    ...leadSkus.map(s => ({ key: s.id, value: s.name, label: label(s.name) })),
-                  ].sort((a, b) => a.label.localeCompare(b.label));
-                  return opts.map(o => <option key={o.key} value={o.value}>{o.label}</option>);
-                })()}
-                {/* Keep an already-saved product visible when editing an old lead. */}
-                {lead.product
-                  && !leadQaProducts.some(qp => qp.skuName === lead.product)
-                  && !leadSkus.some(s => s.name === lead.product) && (
-                  <option value={lead.product}>{(toShortform ? (toShortform(lead.product) || lead.product) : lead.product)} (inactive)</option>
-                )}
-              </select></div>
+              {(() => {
+                // Keyed by catalog id: names ("Bulk") are shared by many products,
+                // so selecting by name saved/showed the wrong one.
+                const label = (n: string) => (toShortform ? (toShortform(n) || n) : n);
+                const opts = [
+                  ...leadQaProducts.map(qp => ({ key: qp.id, value: qp.skuName, label: label(qp.skuName) })),
+                  ...leadSkus.map(s => ({ key: s.id, value: s.name, label: label(s.name) })),
+                ].sort((a, b) => a.label.localeCompare(b.label));
+                const selKey = (lead.productKey && opts.some(o => o.key === lead.productKey) && lead.productKey)
+                  || opts.find(o => o.value === lead.product)?.key
+                  || (lead.product ? '_saved' : '');
+                return (
+                  <select value={selKey} onChange={(e) => {
+                    const o = opts.find(x => x.key === e.target.value);
+                    if (o) setLead({ ...lead, product: o.value, productKey: o.key });
+                    else if (!e.target.value) setLead({ ...lead, product: '', productKey: '' });
+                  }}
+                    className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                    <option value="">Select product</option>
+                    {opts.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                    {/* Keep an already-saved product visible when editing an old lead. */}
+                    {selKey === '_saved' && <option value="_saved">{label(lead.product)} (inactive)</option>}
+                  </select>
+                );
+              })()}</div>
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Volume (MT)</label>
@@ -16185,7 +16192,16 @@ export default function App() {
             const d = (l.createdAt || '').slice(0, 10); return !!d && d >= leadFy.startDate && d <= leadFy.endDate;
           })
         : salesLeads;
-      const filteredLeads = getSortedAndFilteredData<SalesLead>(leadsInFy, ['customerName', 'product', 'location', 'status']);
+      // Full catalog Product Name for a lead: by its saved catalog key, else the
+      // stored name expanded to its long form.
+      const leadProductOpts = buildOrderProductOptions();
+      const leadProductName = (l: SalesLead) =>
+        (l.productKey && leadProductOpts.find(o => o.key === l.productKey)?.label)
+        || productToLongform(l.product) || l.product || '';
+      const filteredLeads = getSortedAndFilteredData<SalesLead>(
+        leadsInFy.map(l => ({ ...l, product: leadProductName(l) })),
+        ['customerName', 'product', 'location', 'status'],
+      ).map(l => salesLeads.find(x => x.id === l.id) || l);
 
       const leadExportSheets = (): SheetSpec[] => [{
         sheetName: 'Sales Leads',
@@ -16206,6 +16222,7 @@ export default function App() {
         ],
         rows: salesLeads.map(l => ({
           ...l,
+          product: leadProductName(l),
           salesPersonName: people.find(p => p.id === l.salespersonId)?.name || '',
           followUpCount: (l.followUps || []).length,
         })),
@@ -16275,7 +16292,7 @@ export default function App() {
                           {lead.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
                         </td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.customerName}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.product}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{leadProductName(lead)}</td>
                         <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.volume}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{lead.location}</td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>

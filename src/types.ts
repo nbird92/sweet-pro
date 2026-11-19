@@ -1302,6 +1302,9 @@ export interface SalesLead {
   source?: string;
   /** Quotes saved for this prospect from the Customer Quote page. */
   savedQuotes?: SavedQuote[];
+  /** Catalog key (QA product id, else SKU id) of the selected product —
+   *  `product` holds the format-only catalog name ("Bulk"), shared by many. */
+  productKey?: string;
   /** FiscalYear.id the lead belongs to. Unset = derived from createdAt. */
   fiscalYearId?: string;
 }
