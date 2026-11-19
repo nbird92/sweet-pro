@@ -95,6 +95,31 @@ interface DataTableProps<T> {
   /** localStorage key for the saved column order. Defaults to the title.
    *  Pass an explicit key when two tables could share a title. */
   storageKey?: string;
+  /** 'card' (default) — sub-table with its own black title banner.
+   *  'page' — the page's main table inside <PageShell>: no title banner (the
+   *  page banner already has it); a slim strip shows the record count, reset
+   *  and the Columns menu instead. */
+  variant?: 'card' | 'page';
+  /** Per-row action buttons, drawn in a fixed last "Actions" column (not
+   *  draggable / hideable). Clicks inside it never trigger onRowClick.
+   *  Use <RowAction> for uniform icons. */
+  rowActions?: (row: T) => React.ReactNode;
+}
+
+/** Standard row action icon button for DataTable's Actions column. */
+export function RowAction({ icon, title, onClick, tone = 'default' }: {
+  icon: React.ReactNode; title: string; onClick: () => void;
+  tone?: 'default' | 'danger' | 'success' | 'info';
+}) {
+  const hover = tone === 'danger' ? 'hover:bg-red-500 hover:text-white'
+    : tone === 'success' ? 'hover:bg-emerald-600 hover:text-white'
+    : tone === 'info' ? 'hover:bg-blue-600 hover:text-white'
+    : 'hover:bg-[#141414] hover:text-[#E4E3E0]';
+  return (
+    <button onClick={(e) => { e.stopPropagation(); onClick(); }} title={title} className={`p-1 transition-colors ${hover}`}>
+      {icon}
+    </button>
+  );
 }
 
 const ORDER_PREFIX = 'dt-colorder:';
@@ -138,6 +163,8 @@ export default function DataTable<T>({
   footerCells,
   stickyHeader = false,
   storageKey,
+  variant = 'card',
+  rowActions,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey || null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir);
@@ -284,32 +311,25 @@ export default function DataTable<T>({
   };
 
   const isCustomized = order.length > 0 || hidden.length > 0;
-
-  return (
-    <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
-      {/* Banner */}
-      <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          {icon}
-          <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
-          <span className="text-[10px] opacity-50 font-mono">{rows.length} records</span>
-          {isCustomized && (
-            <button
-              onClick={() => { persistOrder([]); persistHidden([]); }}
-              title="Reset column order & visibility"
-              className="text-[9px] uppercase tracking-widest opacity-50 hover:opacity-100 flex items-center gap-1 transition-opacity"
-            >
-              <RotateCcw size={10} /> reset columns
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+  const resetBtn = isCustomized ? (
+    <button
+      onClick={() => { persistOrder([]); persistHidden([]); }}
+      title="Reset column order & visibility"
+      className="text-[9px] uppercase tracking-widest opacity-50 hover:opacity-100 flex items-center gap-1 transition-opacity"
+    >
+      <RotateCcw size={10} /> reset columns
+    </button>
+  ) : null;
+  const columnsPicker = (dark: boolean) => (
+    <>
           {/* Show / hide columns picker */}
           <div className="relative" ref={pickerRef}>
             <button
               onClick={() => setPickerOpen(o => !o)}
               title="Show / hide columns"
-              className="px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
+              className={dark
+                ? 'px-3 py-1.5 bg-white/10 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap'
+                : 'px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#F5F5F5] transition-colors whitespace-nowrap'}
             >
               <SlidersHorizontal size={12} /> Columns
               {hidden.length > 0 && (
@@ -339,6 +359,22 @@ export default function DataTable<T>({
               </div>
             )}
           </div>
+    </>
+  );
+  const colCount = visibleColumns.length + (rowActions ? 1 : 0);
+
+  return (
+    <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+      {variant === 'card' ? (
+      <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          {icon}
+          <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
+          <span className="text-[10px] opacity-50 font-mono">{rows.length} records</span>
+          {resetBtn}
+        </div>
+        <div className="flex items-center gap-2">
+          {columnsPicker(true)}
           {onAdd && (
             <button
               onClick={onAdd}
@@ -349,6 +385,22 @@ export default function DataTable<T>({
           )}
         </div>
       </div>
+      ) : (
+      <div className="px-4 py-2 flex justify-between items-center border-b border-[#141414] bg-white">
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] opacity-50 font-mono">{rows.length} records</span>
+          {resetBtn}
+        </div>
+        <div className="flex items-center gap-2">
+          {columnsPicker(false)}
+          {onAdd && (
+            <button onClick={onAdd} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors whitespace-nowrap">
+              <Plus size={12} /> {addLabel}
+            </button>
+          )}
+        </div>
+      </div>
+      )}
 
       {/* Table. With stickyHeader the body scrolls within a bounded height and
           the header row stays pinned; otherwise it keeps the original
@@ -388,6 +440,7 @@ export default function DataTable<T>({
                 </th>
               );
             })}
+            {rowActions && <th className={`p-3 select-none ${stickyHeader ? 'bg-[#F5F5F5]' : ''}`}>Actions</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-[#141414]/10">
@@ -414,11 +467,16 @@ export default function DataTable<T>({
                   </td>
                 );
               })}
+              {rowActions && (
+                <td className="p-3 text-xs whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center gap-1">{rowActions(row)}</div>
+                </td>
+              )}
             </tr>
           ))}
           {sorted.length === 0 && (
             <tr>
-              <td colSpan={visibleColumns.length} className="p-8 text-center text-xs opacity-50 italic">
+              <td colSpan={colCount} className="p-8 text-center text-xs opacity-50 italic">
                 {emptyMessage}
               </td>
             </tr>
@@ -436,6 +494,7 @@ export default function DataTable<T>({
                     {footerCells[col.key] ?? ''}
                   </td>
                 ))}
+                {rowActions && <td className="p-3" />}
               </tr>
             )}
             {footer}
