@@ -405,6 +405,18 @@ export interface Location {
   organicAuditCertifier?: string;
   organicAuditReport?: QADocument;
   organicAuditCertificate?: QADocument;
+  /** Person.id (department 'QA') — this location's QA manager. */
+  qaManagerId?: string;
+  // Kosher certification
+  kosherCertStartDate?: string;
+  kosherCertEndDate?: string;
+  kosherCertifier?: string;
+  kosherCertificate?: QADocument;
+  // Halal certification
+  halalCertStartDate?: string;
+  halalCertEndDate?: string;
+  halalCertifier?: string;
+  halalCertificate?: QADocument;
 }
 
 export const INITIAL_LOCATIONS: Location[] = [
@@ -1312,6 +1324,19 @@ export interface SampleRequest {
   status: 'Pending' | 'Shipped' | 'Delivered' | 'Cancelled';
   followUps: SampleRequestFollowUp[];
   createdAt: string;
+  /** Person.id (department 'QA') at the sample's location who ships it. */
+  qaRepId?: string;
+  /** Sample is to be mailed/couriered to the address below. */
+  mailSample?: boolean;
+  /** Ship-to / mailing address for the sample. */
+  attention?: string;
+  address?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
+  /** When the request was last emailed to the QA rep (Submit Sample Request). */
+  requestedAt?: string;
 }
 
 export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];

@@ -231,6 +231,10 @@ export default function QualityAssurancePage({
   const gfsiCertRef = useRef<HTMLInputElement>(null);
   const organicReportRef = useRef<HTMLInputElement>(null);
   const organicCertRef = useRef<HTMLInputElement>(null);
+  // Kosher / Halal certificates share one hidden file input; this says which.
+  const certFileRef = useRef<HTMLInputElement>(null);
+  const [certUploadField, setCertUploadField] = useState<'kosherCertificate' | 'halalCertificate' | null>(null);
+  const [isUploadingCert, setIsUploadingCert] = useState<'kosherCertificate' | 'halalCertificate' | null>(null);
 
   // Template state
   const [showTemplateModal, setShowTemplateModal] = useState(false);
@@ -330,7 +334,7 @@ export default function QualityAssurancePage({
   // Generic audit document upload handler
   const handleAuditDocUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
-    field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate',
+    field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate' | 'kosherCertificate' | 'halalCertificate',
     setLoading: (v: boolean) => void
   ) => {
     const file = e.target.files?.[0];
@@ -351,9 +355,11 @@ export default function QualityAssurancePage({
     }
   };
 
-  const deleteAuditDoc = (field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate') => {
+  const deleteAuditDoc = (field: 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate' | 'kosherCertificate' | 'halalCertificate') => {
     if (!editLocationData) return;
-    const updated = { ...editLocationData, [field]: undefined };
+    // DELETE the key — Firestore rejects undefined values.
+    const updated = { ...editLocationData } as Location;
+    delete (updated as any)[field];
     setEditLocationData(updated);
     onUpdateLocations(locations.map(l => l.id === updated.id ? updated : l));
     setSelectedLocation(updated);
@@ -2303,6 +2309,7 @@ export default function QualityAssurancePage({
       <input type="file" ref={gfsiCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditCertificate', setIsUploadingGfsiCert)} />
       <input type="file" ref={organicReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditReport', setIsUploadingOrganicReport)} />
       <input type="file" ref={organicCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditCertificate', setIsUploadingOrganicCert)} />
+      <input type="file" ref={certFileRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => { const f = certUploadField; if (f) handleAuditDocUpload(e, f, v => setIsUploadingCert(v ? f : null)); }} />
 
       {/* Location Detail Card Modal */}
       <AnimatePresence>
@@ -2365,6 +2372,20 @@ export default function QualityAssurancePage({
                           <option value="No">No</option>
                         </select>
                       </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">QA Manager</label>
+                        <select
+                          value={editLocationData.qaManagerId || ''}
+                          onChange={(e) => setEditLocationData({ ...editLocationData, qaManagerId: e.target.value })}
+                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
+                          title="QA department people (People table)"
+                        >
+                          <option value="">— None —</option>
+                          {people.filter(p => p.department === 'QA').sort((a, b) => a.name.localeCompare(b.name)).map(p => (
+                            <option key={p.id} value={p.id}>{p.name}{p.defaultLocation ? ` (${p.defaultLocation})` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 gap-4">
@@ -2383,6 +2404,7 @@ export default function QualityAssurancePage({
                           </span>
                         </div>
                       </div>
+                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">QA Manager</div><div className="text-xs font-bold">{people.find(p => p.id === selectedLocation.qaManagerId)?.name || '—'}</div></div>
                     </div>
                   )}
                 </div>
@@ -2554,6 +2576,73 @@ export default function QualityAssurancePage({
                     </div>
                   );
                 })()}
+
+                {/* Sections 4–5: Kosher / Halal certificates */}
+                {([
+                  { title: 'Kosher Certificate', pre: 'kosher', doc: 'kosherCertificate' },
+                  { title: 'Halal Certificate', pre: 'halal', doc: 'halalCertificate' },
+                ] as const).map(sec => {
+                  const data: any = isEditingLocation ? editLocationData : selectedLocation;
+                  const startK = `${sec.pre}CertStartDate`, endK = `${sec.pre}CertEndDate`, certK = `${sec.pre}Certifier`;
+                  const doc = data[sec.doc] as QADocument | undefined;
+                  const end = data[endK] as string | undefined;
+                  const expired = !!end && end < new Date().toISOString().slice(0, 10);
+                  return (
+                    <div key={sec.pre} className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 flex items-center justify-between">
+                        <span>{sec.title}</span>
+                        {end && <span className={`px-2 py-0.5 text-[9px] ${expired ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>{expired ? 'Expired' : 'Valid'}</span>}
+                      </div>
+                      {isEditingLocation ? (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</label>
+                            <input type="date" value={data[startK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [startK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">End Date</label>
+                            <input type="date" value={data[endK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [endK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</label>
+                            <input value={data[certK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [certK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying agency" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-4">
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data[startK] || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data[endK] || '—'}</div></div>
+                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data[certK] || '—'}</div></div>
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        <div className="text-[10px] uppercase font-bold opacity-40">Certificate</div>
+                        {doc ? (
+                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
+                            <div className="flex items-center gap-3">
+                              <FileText size={16} className="text-[#141414]/50" />
+                              <div>
+                                <div className="text-xs font-bold">{doc.filename}</div>
+                                <div className="text-[10px] opacity-50">Uploaded {new Date(doc.uploadedAt).toLocaleDateString()}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <a href={doc.url} download={doc.filename} target="_blank" rel="noreferrer" className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
+                              {isEditingLocation && <button onClick={() => deleteAuditDoc(sec.doc)} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
+                        )}
+                        {isEditingLocation && !doc && (
+                          <button onClick={() => { setCertUploadField(sec.doc); setTimeout(() => certFileRef.current?.click(), 0); }} disabled={isUploadingCert === sec.doc} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
+                            {isUploadingCert === sec.doc ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingCert === sec.doc ? 'Uploading...' : 'Upload Certificate'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
 
                 {/* Action Buttons */}
                 <div className="flex gap-4 pt-2">

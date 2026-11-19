@@ -366,6 +366,194 @@ function toDateInputValue(v?: string): string {
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
 // ============================
+/** Add / Edit Sample Request menu (shared). Customers + sales-lead prospects,
+ *  mailing address with a Mail Sample tick box, the QA representative at the
+ *  sample's location who ships it, dated follow-ups (the salesperson is emailed
+ *  a reminder on the follow-up date by the follow-up-reminders cron), and a
+ *  Submit Sample Request action that opens a pre-filled email to the QA rep. */
+function SampleRequestModal({ sample, setSample, title, onSave, onSubmitRequest, onClose, customers, leads, productOptions, activeLocations, locations, salesPeople, qaPeople }: {
+  sample: SampleRequest; setSample: (s: SampleRequest) => void; title: string;
+  onSave: () => void; onSubmitRequest: () => void; onClose: () => void;
+  customers: Customer[]; leads: SalesLead[];
+  productOptions: Array<{ key: string; value: string; label: string; location?: string }>;
+  activeLocations: Location[]; locations: Location[]; salesPeople: Person[]; qaPeople: Person[];
+}) {
+  const [fuDate, setFuDate] = React.useState('');
+  const [fuDesc, setFuDesc] = React.useState('');
+  const loc = locations.find(l => l.name === sample.location);
+  const qaAtLoc = qaPeople.filter(p => p.defaultLocation === sample.location || p.id === loc?.qaManagerId);
+  const qaOther = qaPeople.filter(p => !qaAtLoc.includes(p));
+  const field = 'w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none';
+  const lbl = 'text-[10px] uppercase font-bold opacity-50';
+
+  const pickCustomer = (name: string) => {
+    const next: SampleRequest = { ...sample, customer: name };
+    const c = customers.find(x => x.name === name);
+    const l = c ? undefined : leads.find(x => x.customerName === name);
+    // Prefill the mailing address only when it is still empty.
+    if (c && !sample.address && !sample.city) {
+      if (c.address) next.address = c.address;
+      if (c.city) next.city = c.city;
+      if (c.province) next.province = c.province;
+      if (c.postalCode) next.postalCode = c.postalCode;
+    }
+    if (l?.contactName && !sample.attention) next.attention = l.contactName;
+    if (l?.salespersonId && !sample.salespersonId) next.salespersonId = l.salespersonId;
+    if (c?.salespersonId && !sample.salespersonId) next.salespersonId = c.salespersonId;
+    setSample(next);
+  };
+  const pickLocation = (name: string) => {
+    const l = locations.find(x => x.name === name);
+    const stillValid = qaPeople.some(p => p.id === sample.qaRepId && (p.defaultLocation === name || p.id === l?.qaManagerId));
+    // Default the QA rep to the location's QA manager when the current pick doesn't belong there.
+    setSample({ ...sample, location: name, qaRepId: stillValid ? sample.qaRepId : (l?.qaManagerId || qaPeople.find(p => p.defaultLocation === name)?.id || '') });
+  };
+
+  return (
+    <motion.div className="fixed inset-0 bg-black/50 flex items-center-safe justify-center z-50 overflow-y-auto p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+          <h3 className="text-xs font-bold uppercase tracking-widest">{title}</h3>
+          <button onClick={onClose} className="hover:opacity-70"><X size={18} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className={lbl}>Customer</label>
+              <select value={sample.customer} onChange={e => pickCustomer(e.target.value)} className={field}>
+                <option value="">Select customer...</option>
+                <optgroup label="Customers">
+                  {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </optgroup>
+                {leads.length > 0 && (
+                  <optgroup label="Sales Leads (prospects)">
+                    {leads.map(l => <option key={l.id} value={l.customerName}>{l.customerName} — lead</option>)}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Shipment Date</label>
+              <input type="date" value={sample.shipmentDate} onChange={e => setSample({ ...sample, shipmentDate: e.target.value })} className={field} />
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Sample Product</label>
+              <select value={sample.sampleProduct} onChange={e => setSample({ ...sample, sampleProduct: e.target.value })} className={field}>
+                <option value="">Select product...</option>
+                {productOptions.map(o => <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Location</label>
+              <select value={sample.location} onChange={e => pickLocation(e.target.value)} className={field}>
+                <option value="">Select location...</option>
+                {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>QA Representative (ships sample)</label>
+              <select value={sample.qaRepId || ''} onChange={e => setSample({ ...sample, qaRepId: e.target.value })} className={field} disabled={!sample.location} title={sample.location ? '' : 'Pick a location first'}>
+                <option value="">{sample.location ? 'Select QA rep...' : 'Select a location first'}</option>
+                {qaAtLoc.length > 0 && (
+                  <optgroup label={`QA — ${sample.location}`}>
+                    {qaAtLoc.map(p => <option key={p.id} value={p.id}>{p.name}{p.id === loc?.qaManagerId ? ' (QA Manager)' : ''}</option>)}
+                  </optgroup>
+                )}
+                {qaOther.length > 0 && (
+                  <optgroup label="Other QA">
+                    {qaOther.map(p => <option key={p.id} value={p.id}>{p.name}{p.defaultLocation ? ` (${p.defaultLocation})` : ''}</option>)}
+                  </optgroup>
+                )}
+              </select>
+              {sample.location && qaAtLoc.length === 0 && <div className="text-[9px] text-amber-700">No QA people assigned to {sample.location} — set a QA Manager on the location or a Default Location on the person.</div>}
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Sales Person</label>
+              <select value={sample.salespersonId} onChange={e => setSample({ ...sample, salespersonId: e.target.value })} className={field}>
+                <option value="">Select salesperson...</option>
+                {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Status</label>
+              <select value={sample.status} onChange={e => setSample({ ...sample, status: e.target.value as SampleRequest['status'] })} className={field}>
+                <option value="Pending">Pending</option>
+                <option value="Shipped">Shipped</option>
+                <option value="Delivered">Delivered</option>
+                <option value="Cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Mailing address */}
+          <div className="border-t border-[#141414]/10 pt-4 space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold uppercase">
+              <input type="checkbox" checked={!!sample.mailSample} onChange={e => setSample({ ...sample, mailSample: e.target.checked })} className="w-4 h-4 accent-[#141414]" />
+              Mail Sample
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1 col-span-2"><label className={lbl}>Attention</label>
+                <input value={sample.attention || ''} onChange={e => setSample({ ...sample, attention: e.target.value })} className={field} placeholder="Recipient name" /></div>
+              <div className="space-y-1 col-span-2"><label className={lbl}>Address</label>
+                <input value={sample.address || ''} onChange={e => setSample({ ...sample, address: e.target.value })} className={field} placeholder="Street address" /></div>
+              <div className="space-y-1"><label className={lbl}>City</label>
+                <input value={sample.city || ''} onChange={e => setSample({ ...sample, city: e.target.value })} className={field} /></div>
+              <div className="space-y-1"><label className={lbl}>Province / State</label>
+                <input value={sample.province || ''} onChange={e => setSample({ ...sample, province: e.target.value })} className={field} /></div>
+              <div className="space-y-1"><label className={lbl}>Postal / Zip Code</label>
+                <input value={sample.postalCode || ''} onChange={e => setSample({ ...sample, postalCode: e.target.value })} className={field} /></div>
+              <div className="space-y-1"><label className={lbl}>Country</label>
+                <input value={sample.country || ''} onChange={e => setSample({ ...sample, country: e.target.value })} className={field} placeholder="Canada" /></div>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className={lbl}>Notes</label>
+            <textarea value={sample.notes || ''} onChange={e => setSample({ ...sample, notes: e.target.value })} className={`${field} h-20`} placeholder="Additional notes..." />
+          </div>
+
+          {/* Follow-ups — the salesperson gets an email reminder on each date. */}
+          <div className="border-t border-[#141414]/10 pt-4 space-y-2">
+            <label className={lbl}>Follow-ups</label>
+            {(sample.followUps || []).map(fu => (
+              <div key={fu.id} className="flex items-center gap-2 bg-[#F5F5F5] border border-[#141414]/10 p-2">
+                <button onClick={() => setSample({ ...sample, followUps: sample.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f) })}>
+                  {fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}
+                </button>
+                <span className={`text-xs flex-1 ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</span>
+                <span className="text-[10px] opacity-50 font-mono">{fu.date}</span>
+                <button onClick={() => setSample({ ...sample, followUps: sample.followUps.filter(f => f.id !== fu.id) })} className="p-0.5 hover:text-red-600"><Trash2 size={12} /></button>
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <input type="date" value={fuDate} onChange={e => setFuDate(e.target.value)} className="bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" title="Follow-up date — the salesperson is emailed a reminder that day" />
+              <input type="text" value={fuDesc} onChange={e => setFuDesc(e.target.value)} placeholder="Follow-up description..." className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none"
+                onKeyDown={e => { if (e.key === 'Enter') (e.currentTarget.nextElementSibling as HTMLButtonElement | null)?.click(); }} />
+              <button onClick={() => {
+                if (!fuDesc.trim()) return;
+                setSample({ ...sample, followUps: [...(sample.followUps || []), { id: `SRF-${Date.now()}`, date: fuDate || new Date().toISOString().slice(0, 10), description: fuDesc.trim(), completed: false }] });
+                setFuDesc(''); setFuDate('');
+              }} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80"><Plus size={12} /></button>
+            </div>
+            <div className="text-[9px] opacity-50">The selected sales person is emailed a reminder on each follow-up date.</div>
+          </div>
+          {sample.requestedAt && <div className="text-[10px] opacity-60">Last submitted to QA {new Date(sample.requestedAt).toLocaleString()}</div>}
+        </div>
+        <div className="flex border-t border-[#141414]">
+          <button onClick={onSave} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Save</button>
+          <button onClick={onSubmitRequest} disabled={!sample.customer}
+            title="Save and open a pre-filled email to the QA representative requesting the sample"
+            className="flex-1 py-4 border-l border-[#141414] bg-emerald-600 text-white font-bold text-xs uppercase hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+            <Send size={14} /> Submit Sample Request
+          </button>
+          <button onClick={onClose} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform, onCreateCustomer }: {
   lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string;
   /** Convert this lead into a Customer (Edit mode only). */
@@ -733,6 +921,8 @@ export default function App() {
   const [newLeadFollowUp, setNewLeadFollowUp] = useState<Record<string, { date: string; description: string; infoSent: string }>>({});
   const [showAddSampleModal, setShowAddSampleModal] = useState(false);
   const [editingSampleRequest, setEditingSampleRequest] = useState<SampleRequest | null>(null);
+  /** Submit Sample Request email draft (to the QA rep). */
+  const [sampleEmail, setSampleEmail] = useState<{ sampleId: string; to: string; cc: string; subject: string; body: string } | null>(null);
   const [newSampleData, setNewSampleData] = useState<SampleRequest>({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [isAddingTransfer, setIsAddingTransfer] = useState(false);
@@ -11823,6 +12013,47 @@ export default function App() {
     setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
 
+  /** Open the Submit Sample Request email: addressed to the sample's QA rep,
+   *  CC the salesperson, body pre-filled with every detail of the request. */
+  const openSampleRequestEmail = (sr: SampleRequest) => {
+    const qaRep = people.find(p => p.id === sr.qaRepId);
+    const sales = people.find(p => p.id === sr.salespersonId);
+    const product = productToShortform(sr.sampleProduct) || sr.sampleProduct || '(product not set)';
+    const isLead = !customers.some(c => c.name === sr.customer);
+    const addr = [sr.address, [sr.city, sr.province].filter(Boolean).join(', '), sr.postalCode, sr.country].filter(Boolean);
+    const lines: string[] = [];
+    lines.push(`Hi ${qaRep?.name?.split(' ')[0] || 'QA team'},`);
+    lines.push('');
+    lines.push(`Please prepare and ship the following sample${sr.shipmentDate ? ` by ${sr.shipmentDate}` : ''}:`);
+    lines.push('');
+    lines.push('SAMPLE REQUEST');
+    lines.push('-------------------------------------');
+    lines.push(`Customer: ${sr.customer}${isLead ? ' (prospect)' : ''}`);
+    lines.push(`Product: ${product}`);
+    if (sr.location) lines.push(`Ship from: ${sr.location}`);
+    if (sr.shipmentDate) lines.push(`Ship date: ${sr.shipmentDate}`);
+    lines.push(`Delivery: ${sr.mailSample ? 'MAIL / courier the sample' : 'Not mailed (pick-up / hand delivery)'}`);
+    if (addr.length || sr.attention) {
+      lines.push('');
+      lines.push('Ship to:');
+      if (sr.attention) lines.push(`  Attn: ${sr.attention}`);
+      lines.push(`  ${sr.customer}`);
+      addr.forEach(a => lines.push(`  ${a}`));
+    }
+    if (sales) lines.push('', `Sales person: ${sales.name}${sales.email ? ` <${sales.email}>` : ''}`);
+    if (sr.notes) lines.push('', `Notes: ${sr.notes}`);
+    lines.push('', 'Please reply once the sample has shipped, with the tracking number if it was mailed.');
+    lines.push('', 'Thanks,', user?.displayName || 'Sweet Pro');
+    if (user?.email) lines.push(user.email);
+    setSampleEmail({
+      sampleId: sr.id,
+      to: qaRep?.email || '',
+      cc: sales?.email && sales.email !== qaRep?.email ? sales.email : '',
+      subject: `Sample Request — ${sr.customer} — ${product}${sr.shipmentDate ? ` — ship ${sr.shipmentDate}` : ''}`,
+      body: lines.join('\n'),
+    });
+  };
+
   /** Sales Lead → Customer. Builds a customer from everything on the lead
    *  (including unsaved edits in the open modal), moves the lead's saved quotes
    *  to the customer card, and marks the lead Closed Won. If a customer with the
@@ -16075,200 +16306,108 @@ export default function App() {
             </div>
           </div>
 
-          {/* Add Sample Request Modal */}
+          {/* Add / Edit Sample Request menu (shared component) */}
           <AnimatePresence>
-            {showAddSampleModal && (
-              <motion.div className="fixed inset-0 bg-black/50 flex items-center-safe justify-center z-50 overflow-y-auto p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
-                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
-                  <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                    <h3 className="text-xs font-bold uppercase tracking-widest">Add Sample Request</h3>
-                    <button onClick={() => setShowAddSampleModal(false)} className="hover:opacity-70"><X size={18} /></button>
-                  </div>
-                  <div className="p-6 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Customer</label>
-                        <select value={newSampleData.customer} onChange={e => setNewSampleData({ ...newSampleData, customer: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select customer...</option>
-                          {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Shipment Date</label>
-                        <input type="date" value={newSampleData.shipmentDate} onChange={e => setNewSampleData({ ...newSampleData, shipmentDate: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Sample Product</label>
-                        <select value={newSampleData.sampleProduct} onChange={e => setNewSampleData({ ...newSampleData, sampleProduct: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select product...</option>
-                          {buildOrderProductOptions(newSampleData.sampleProduct, { selectableOnly: true }).map(o => (
-                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
-                        <select value={newSampleData.location} onChange={e => setNewSampleData({ ...newSampleData, location: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select location...</option>
-                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Sales Person</label>
-                        <select value={newSampleData.salespersonId} onChange={e => setNewSampleData({ ...newSampleData, salespersonId: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select salesperson...</option>
-                          {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Status</label>
-                        <select value={newSampleData.status} onChange={e => setNewSampleData({ ...newSampleData, status: e.target.value as SampleRequest['status'] })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="Pending">Pending</option>
-                          <option value="Shipped">Shipped</option>
-                          <option value="Delivered">Delivered</option>
-                          <option value="Cancelled">Cancelled</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
-                      <textarea value={newSampleData.notes || ''} onChange={e => setNewSampleData({ ...newSampleData, notes: e.target.value })}
-                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none h-20" placeholder="Additional notes..." />
-                    </div>
-                  </div>
-                  <div className="flex border-t border-[#141414]">
-                    <button onClick={() => {
-                      if (!newSampleData.customer) { alert('Please select a customer'); return; }
-                      setSampleRequests(prev => [...prev, { ...newSampleData, id: `SR-${Date.now()}`, createdAt: new Date().toISOString() }]);
-                      setShowAddSampleModal(false);
-                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Save</button>
-                    <button onClick={() => setShowAddSampleModal(false)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
-                  </div>
-                </motion.div>
-              </motion.div>
-            )}
+            {(showAddSampleModal || editingSampleRequest) && (() => {
+              const isNew = showAddSampleModal && !editingSampleRequest;
+              const sample = isNew ? newSampleData : editingSampleRequest!;
+              const setSample = (sr: SampleRequest) => isNew ? setNewSampleData(sr) : setEditingSampleRequest(sr);
+              const close = () => { setShowAddSampleModal(false); setEditingSampleRequest(null); };
+              // Persist (append when new) and return the stored record.
+              const persist = (): SampleRequest | null => {
+                if (!sample.customer) { alert('Please select a customer'); return null; }
+                const rec: SampleRequest = isNew ? { ...sample, id: `SR-${Date.now()}`, createdAt: new Date().toISOString() } : sample;
+                if (isNew) setSampleRequests(prev => [...prev, rec]);
+                else setSampleRequests(prev => prev.map(s => s.id === rec.id ? rec : s));
+                saveNow(COLLECTIONS.sampleRequests, [rec]);
+                return rec;
+              };
+              return (
+                <React.Fragment key={isNew ? 'new-sample' : sample.id}>
+                <SampleRequestModal
+                  sample={sample}
+                  setSample={setSample}
+                  title={isNew ? 'Add Sample Request' : 'Edit Sample Request'}
+                  customers={customersSorted}
+                  leads={quoteLeads}
+                  productOptions={buildOrderProductOptions(sample.sampleProduct, { selectableOnly: true })}
+                  activeLocations={activeLocations}
+                  locations={locations}
+                  salesPeople={salesPeople}
+                  qaPeople={people.filter(pp => pp.department === 'QA').sort((a, b) => a.name.localeCompare(b.name))}
+                  onClose={close}
+                  onSave={() => { if (persist()) close(); }}
+                  onSubmitRequest={() => {
+                    const rec = persist();
+                    if (!rec) return;
+                    close();
+                    openSampleRequestEmail(rec);
+                  }}
+                />
+                </React.Fragment>
+              );
+            })()}
           </AnimatePresence>
 
-          {/* Edit Sample Request Modal */}
+          {/* Submit Sample Request — pre-filled email to the QA rep (like Email Quote) */}
           <AnimatePresence>
-            {editingSampleRequest && (
-              <motion.div className="fixed inset-0 bg-black/50 flex items-center-safe justify-center z-50 overflow-y-auto p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <motion.div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
-                  initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}>
+            {sampleEmail && (
+              <div className="fixed inset-0 z-[300] flex items-center-safe justify-center p-6 bg-[#141414]/90 backdrop-blur-md overflow-y-auto">
+                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                  className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] max-w-2xl w-full overflow-hidden max-h-[90vh] flex flex-col">
                   <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-                    <h3 className="text-xs font-bold uppercase tracking-widest">Edit Sample Request</h3>
-                    <button onClick={() => setEditingSampleRequest(null)} className="hover:opacity-70"><X size={18} /></button>
+                    <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Mail size={16} /> Submit Sample Request</h3>
+                    <button onClick={() => setSampleEmail(null)} className="hover:opacity-70"><X size={18} /></button>
                   </div>
-                  <div className="p-6 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Customer</label>
-                        <select value={editingSampleRequest.customer} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, customer: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select customer...</option>
-                          {customersSorted.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Shipment Date</label>
-                        <input type="date" value={editingSampleRequest.shipmentDate} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, shipmentDate: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none" />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Sample Product</label>
-                        <select value={editingSampleRequest.sampleProduct} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, sampleProduct: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select product...</option>
-                          {/* buildOrderProductOptions renders the naming-formula Product
-                              Name and already emits a ghost option for a saved value no
-                              longer in the catalog, so a retired product stays visible. */}
-                          {buildOrderProductOptions(editingSampleRequest.sampleProduct, { selectableOnly: true }).map(o => (
-                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Location</label>
-                        <select value={editingSampleRequest.location} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, location: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select location...</option>
-                          {activeLocations.map(l => <option key={l.id} value={l.name}>{l.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Sales Person</label>
-                        <select value={editingSampleRequest.salespersonId} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, salespersonId: e.target.value })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="">Select salesperson...</option>
-                          {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Status</label>
-                        <select value={editingSampleRequest.status} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, status: e.target.value as SampleRequest['status'] })}
-                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none">
-                          <option value="Pending">Pending</option>
-                          <option value="Shipped">Shipped</option>
-                          <option value="Delivered">Delivered</option>
-                          <option value="Cancelled">Cancelled</option>
-                        </select>
-                      </div>
+                  <div className="p-6 space-y-3 overflow-y-auto flex-1">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">From</label>
+                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm text-[#141414]/70">{user?.displayName || 'Sweet Pro'}{user?.email ? ` <${user.email}>` : ''}</div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-50">Notes</label>
-                      <textarea value={editingSampleRequest.notes || ''} onChange={e => setEditingSampleRequest({ ...editingSampleRequest, notes: e.target.value })}
-                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none h-20" placeholder="Additional notes..." />
+                      <label className="text-[10px] uppercase font-bold opacity-60">To (QA Representative)</label>
+                      <input type="email" value={sampleEmail.to} onChange={e => setSampleEmail({ ...sampleEmail, to: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white outline-none" placeholder="qa@example.com" />
+                      {!sampleEmail.to && <div className="text-[9px] text-amber-700">No QA representative email — pick a QA rep on the sample request or type an address.</div>}
                     </div>
-                    {/* Follow-ups */}
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold opacity-50">Follow-ups</label>
-                      {editingSampleRequest.followUps.map(fu => (
-                        <div key={fu.id} className="flex items-center gap-2 bg-[#F5F5F5] border border-[#141414]/10 p-2">
-                          <button onClick={() => {
-                            const updated = editingSampleRequest.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
-                            setEditingSampleRequest({ ...editingSampleRequest, followUps: updated });
-                          }}>
-                            {fu.completed ? <CheckCircle2 size={14} className="text-green-600" /> : <div className="w-3.5 h-3.5 border border-[#141414] rounded-sm" />}
-                          </button>
-                          <span className={`text-xs flex-1 ${fu.completed ? 'line-through opacity-50' : ''}`}>{fu.description}</span>
-                          <span className="text-[10px] opacity-40">{fu.date}</span>
-                          <button onClick={() => setEditingSampleRequest({ ...editingSampleRequest, followUps: editingSampleRequest.followUps.filter(f => f.id !== fu.id) })}
-                            className="p-0.5 hover:text-red-600"><Trash2 size={12} /></button>
-                        </div>
-                      ))}
-                      <div className="flex gap-2">
-                        <input type="text" placeholder="Follow-up description..." id="sampleFollowUpDesc"
-                          className="flex-1 bg-[#F5F5F5] border border-[#141414] p-2 text-xs outline-none" />
-                        <button onClick={() => {
-                          const desc = (document.getElementById('sampleFollowUpDesc') as HTMLInputElement)?.value;
-                          if (!desc) return;
-                          setEditingSampleRequest({
-                            ...editingSampleRequest,
-                            followUps: [...editingSampleRequest.followUps, { id: `SRF-${Date.now()}`, date: new Date().toISOString().split('T')[0], description: desc, completed: false }]
-                          });
-                          (document.getElementById('sampleFollowUpDesc') as HTMLInputElement).value = '';
-                        }} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase hover:bg-opacity-80">
-                          <Plus size={12} />
-                        </button>
-                      </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">CC</label>
+                      <input type="email" value={sampleEmail.cc} onChange={e => setSampleEmail({ ...sampleEmail, cc: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white outline-none" placeholder="cc@example.com" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Subject</label>
+                      <input type="text" value={sampleEmail.subject} onChange={e => setSampleEmail({ ...sampleEmail, subject: e.target.value })}
+                        className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:bg-white outline-none" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold opacity-60">Email Body</label>
+                      <textarea value={sampleEmail.body} onChange={e => setSampleEmail({ ...sampleEmail, body: e.target.value })}
+                        className="w-full bg-white border border-[#141414] p-4 text-xs font-mono leading-relaxed h-[300px] outline-none" />
                     </div>
                   </div>
-                  <div className="flex border-t border-[#141414]">
-                    <button onClick={() => {
-                      setSampleRequests(sampleRequests.map(s => s.id === editingSampleRequest.id ? editingSampleRequest : s));
-                      setEditingSampleRequest(null);
-                    }} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors">Save</button>
-                    <button onClick={() => setEditingSampleRequest(null)} className="flex-1 py-4 border-l border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
+                  <div className="p-4 border-t border-[#141414]/10 flex gap-3">
+                    <button disabled={!sampleEmail.to} onClick={() => {
+                      const cc = sampleEmail.cc ? `&cc=${encodeURIComponent(sampleEmail.cc)}` : '';
+                      window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(sampleEmail.to)}${cc}&su=${encodeURIComponent(sampleEmail.subject)}&body=${encodeURIComponent(sampleEmail.body)}`, '_blank');
+                      // Stamp the request as submitted to QA.
+                      const cur = sampleRequests.find(s => s.id === sampleEmail.sampleId);
+                      if (cur) {
+                        const stamped = { ...cur, requestedAt: new Date().toISOString() };
+                        setSampleRequests(prev => prev.map(s => s.id === stamped.id ? stamped : s));
+                        saveNow(COLLECTIONS.sampleRequests, [stamped]);
+                      }
+                      setSampleEmail(null);
+                    }} className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2 disabled:opacity-50">
+                      <Send size={14} /> Send via Gmail
+                    </button>
+                    <button onClick={() => { navigator.clipboard.writeText(sampleEmail.body); alert('Email body copied to clipboard!'); }}
+                      className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Copy Body</button>
+                    <button onClick={() => setSampleEmail(null)}
+                      className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
                 </motion.div>
-              </motion.div>
+              </div>
             )}
           </AnimatePresence>
           </div>
