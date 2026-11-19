@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useMemo, useContext } from 'react';
 import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat, NamingFormula, FormulaToken } from '../types';
 import { resolveProductName, resolveShortForm } from '../utils/namingFormulaResolver';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown, Package, Building2, ClipboardList, Boxes, Layers, DollarSign, Pencil as PencilIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 import PageBanner from './PageBanner';
+import { ToolbarSearch } from './PageShell';
 import DataTable, { ColumnOrderContext, ColumnVisibilityContext } from './DataTable';
 import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
@@ -37,6 +38,13 @@ interface QualityAssurancePageProps {
   /** Card-only mode: save the product's Default Differential (CAD/MT) — the one
    *  edit the Products page allows on the card (adds a Differential tab). */
   onSaveDifferential?: (skuId: string, value: number) => void;
+  /** 'products' — the Products page: the one product table (+ CSV, Add
+   *  Product, product card with every edit). 'qa' (default) — the QA page's
+   *  remaining reference tables (formats, naming, groups, sugar types, templates). */
+  mode?: 'qa' | 'products';
+  /** Save a catalog product (SKU) — used by the product table's logistics
+   *  dropdowns (Warehouse / Commodity Group / Terminal) in products mode. */
+  onUpdateSku?: (sku: SKU) => void;
 }
 
 function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
@@ -115,7 +123,10 @@ export default function QualityAssurancePage({
   cardOnlyProductId,
   onCardClose,
   onSaveDifferential,
+  mode = 'qa',
+  onUpdateSku,
 }: QualityAssurancePageProps) {
+  const productsMode = mode === 'products';
   // Auto-populate: create QA entries for any SKUs not already tracked
   useEffect(() => {
     if (cardOnlyProductId) return; // card-only mount (Products page): no side effects
@@ -401,6 +412,11 @@ export default function QualityAssurancePage({
   const sortValueFor = (p: QAProduct, key: string): string | number => {
     if (key === 'productName') return displayNameFor(p);
     if (key === 'shortform') return shortformFor(p);
+    if (key === 'premiumCadMt') return skus.find(s => s.id === p.skuId)?.premiumCadMt || 0;
+    if (key === 'warehouse' || key === 'commodityGroup' || key === 'terminal' || key === 'terminalName') {
+      const sk = skus.find(s => s.id === p.skuId);
+      return (sk as any)?.[key] || (p as any)[key] || '';
+    }
     const v = (p as any)[key];
     return v == null ? '' : v;
   };
@@ -428,6 +444,57 @@ export default function QualityAssurancePage({
     );
   };
 
+  // ── Catalog (SKU) columns shown on the Products page ──────────────────────
+  // Differential + logistics live on the SKU; legacy logistics values still on
+  // the QA record show until the product is edited.
+  const skuOf = (p: QAProduct) => skus.find(s => s.id === p.skuId);
+  const logisticsOf = (p: QAProduct) => {
+    const sk = skuOf(p);
+    return {
+      warehouse: sk?.warehouse || p.warehouse || '',
+      commodityGroup: sk?.commodityGroup || p.commodityGroup || '',
+      terminal: sk?.terminal || p.terminal || '',
+      terminalName: sk?.terminalName || p.terminalName || '',
+    };
+  };
+  // Terminals for a product's location (exact name, else a UNIQUE prefix).
+  const terminalsFor = (locName?: string) => {
+    const n = (locName || '').trim().toLowerCase();
+    if (!n) return [];
+    const exact = locations.find(l => l.name.trim().toLowerCase() === n);
+    if (exact) return exact.terminalNames || [];
+    const pre = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
+    return pre.length === 1 ? (pre[0].terminalNames || []) : [];
+  };
+  const saveLogistics = (p: QAProduct, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', value: string) => {
+    const base = skuOf(p);
+    if (!base || !onUpdateSku) return;
+    const cur = logisticsOf(p);
+    const next: SKU = { ...base, ...cur, [field]: value };
+    const terms = terminalsFor(base.location || p.location);
+    if (field === 'terminal') next.terminalName = terms.find(t => t.terminal === value)?.terminalName || (value ? cur.terminalName : '');
+    if (field === 'terminalName') next.terminal = terms.find(t => t.terminalName === value)?.terminal || (value ? cur.terminal : '');
+    onUpdateSku(next);
+  };
+  const logisticsSelect = (p: QAProduct, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', options: Array<[string, string]>) => {
+    const value = logisticsOf(p)[field];
+    return (
+      <select value={value} onClick={(e) => e.stopPropagation()} onChange={(e) => saveLogistics(p, field, e.target.value)}
+        className="bg-white border border-[#141414]/30 px-1 py-0.5 text-[11px] outline-none focus:border-[#141414]">
+        <option value="">—</option>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
+      </select>
+    );
+  };
+  const skuColumns: Array<{ key: string; label: string; cell: (p: QAProduct) => React.ReactNode; tdClass?: string }> = [
+    { key: 'premiumCadMt', label: 'Differential (CAD/MT)', tdClass: 'font-mono text-right', cell: (p) => { const v = skuOf(p)?.premiumCadMt; return v ? fmtN(v, 2) : '—'; } },
+    { key: 'warehouse', label: 'Warehouse', cell: (p) => logisticsSelect(p, 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']]) },
+    { key: 'commodityGroup', label: 'Commodity Group', cell: (p) => logisticsSelect(p, 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']]) },
+    { key: 'terminal', label: 'Terminal', cell: (p) => logisticsSelect(p, 'terminal', terminalsFor(skuOf(p)?.location || p.location).map(t => [t.terminal, t.terminal] as [string, string])) },
+    { key: 'terminalName', label: 'Terminal Name', cell: (p) => logisticsSelect(p, 'terminalName', terminalsFor(skuOf(p)?.location || p.location).map(t => [t.terminalName, t.terminalName] as [string, string])) },
+  ];
+
   // ── QA table column definitions + hide/reorder (mirrors the Lab table) ────
   type QaCol = { key: string; label: string; cell: (p: QAProduct, pg?: ProductGroup) => React.ReactNode; tdClass?: string };
   const qaColumns: QaCol[] = [
@@ -448,6 +515,7 @@ export default function QualityAssurancePage({
     { key: 'location', label: 'Location', cell: (p) => p.location },
     { key: 'netWeightKg', label: 'Net Weight (KG)', cell: (p) => p.netWeightKg ?? '-' },
     { key: 'grossWeightKg', label: 'Gross Weight (KG)', cell: (p) => p.grossWeightKg ?? '-' },
+    ...(productsMode ? skuColumns : []),
   ];
   const colOrderStore = useContext(ColumnOrderContext);
   const colVisStore = useContext(ColumnVisibilityContext);
@@ -1102,13 +1170,19 @@ export default function QualityAssurancePage({
   }];
   return (
     <div>
-      {!cardOnlyProductId && (
+      {!cardOnlyProductId && !productsMode && (
       <PageBanner
         icon={<CheckCircle2 size={18} />}
         title="Quality Assurance"
-        count={qaProducts.length}
+      />
+      )}
+      {!cardOnlyProductId && productsMode && (
+      <PageBanner
+        icon={<Package size={18} />}
+        title="Product Catalog"
+        count={sorted.length}
         exportSheets={qaExportSheets}
-        exportFileName="Quality_Assurance"
+        exportFileName="Products"
       >
         <button
           onClick={downloadQATemplate}
@@ -1140,12 +1214,12 @@ export default function QualityAssurancePage({
         <input ref={csvImportRef} type="file" accept=".csv" onChange={handleImportQACSV} className="sr-only" />
       </PageBanner>
       )}
-    <div className={cardOnlyProductId ? '' : 'p-6 space-y-4'}>
-      {!cardOnlyProductId && (<>
+    {!cardOnlyProductId && productsMode && (<>
 
-      {/* Search + column controls */}
-      <div className="flex items-center gap-2">
-        <div className="flex-1"><SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by name, product group, ID, or location..." /></div>
+      {/* Search + column controls (standard toolbar row) */}
+      <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
+        <ToolbarSearch value={searchTerm} onChange={setSearchTerm} placeholder="Search products by name, product group, ID or location…" />
+        <div className="ml-auto" />
         <div className="relative">
           <button
             type="button"
@@ -1193,9 +1267,10 @@ export default function QualityAssurancePage({
       </div>
 
       {/* Product Table */}
+      <div className="p-6">
       <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
         <div className="overflow-auto max-h-[calc(100vh-13rem)]">
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 {visibleQaColumns.map(c => (
@@ -1254,78 +1329,12 @@ export default function QualityAssurancePage({
           )}
         </div>
       </div>
-
-      {/* Locations Table */}
-      <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-        <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
-          <h3 className="text-xs font-bold uppercase tracking-widest">Locations</h3>
-          <button
-            onClick={() => {
-              // Collision-proof id — NEVER derived from list length (see isNewLocation).
-              const id = `LOC-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-              const newLoc: Location = { id, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 };
-              // NOT added to the list yet — it enters on Save (and a Cancel/close
-              // discards it instead of stranding a blank row).
-              setSelectedLocation(newLoc);
-              setEditLocationData({ ...newLoc });
-              setIsEditingLocation(true);
-              setIsNewLocation(true);
-            }}
-            className="px-3 py-1 bg-white text-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors"
-          >
-            <Plus size={12} /> Add New Location
-          </button>
-        </div>
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
-              <th className="p-4 border-r border-[#141414]/10">Code</th>
-              <th className="p-4 border-r border-[#141414]/10">Name</th>
-              <th className="p-4 border-r border-[#141414]/10">Address</th>
-              <th className="p-4 border-r border-[#141414]/10">City</th>
-              <th className="p-4 border-r border-[#141414]/10">Province</th>
-              <th className="p-4 border-r border-[#141414]/10">Postal Code</th>
-              <th className="p-4 border-r border-[#141414]/10 text-center">Active</th>
-              <th className="p-4">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#141414]/10">
-            {locations.map(loc => {
-              const isActive = loc.active !== false; // undefined defaults to active
-              return (
-                <tr key={loc.id} className={`hover:bg-[#F9F9F9] transition-colors cursor-pointer group ${isActive ? '' : 'opacity-50'}`} onClick={() => openLocationDetail(loc)}>
-                  <td className="p-4 text-xs font-bold font-mono border-r border-[#141414]/10 w-20">{loc.locationCode || '—'}</td>
-                  <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{loc.name || '—'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.address || '—'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.city || '—'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.province || '—'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10">{loc.postalCode || '—'}</td>
-                  <td className="p-4 text-xs border-r border-[#141414]/10 text-center" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isActive}
-                      onChange={(e) => onUpdateLocations(locations.map(l => l.id === loc.id ? { ...l, active: e.target.checked } : l))}
-                      className="w-4 h-4 cursor-pointer"
-                      title={isActive ? 'Active — shown in location dropdowns' : 'Inactive — hidden from location dropdowns'}
-                    />
-                  </td>
-                  <td className="p-4 text-xs">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onUpdateLocations(locations.filter(l => l.id !== loc.id)); }}
-                      className="p-1.5 text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-            {locations.length === 0 && (
-              <tr><td colSpan={8} className="p-12 text-center text-xs opacity-50 italic">No locations added yet.</td></tr>
-            )}
-          </tbody>
-        </table>
       </div>
+
+    </>)}
+    <div className={cardOnlyProductId || productsMode ? '' : 'p-6 space-y-4'}>
+      {!cardOnlyProductId && !productsMode && (<>
+      {/* Locations moved to the Supply Chain page (location card). */}
 
       {/* Packaging Formats — standardized DataTable + DetailModal. */}
       <DataTable<PackagingFormat>
@@ -2305,367 +2314,6 @@ export default function QualityAssurancePage({
         )}
       </AnimatePresence>
 
-      {/* Hidden file inputs for audit documents */}
-      <input type="file" ref={gfsiReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditReport', setIsUploadingGfsiReport)} />
-      <input type="file" ref={gfsiCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'gfsiAuditCertificate', setIsUploadingGfsiCert)} />
-      <input type="file" ref={organicReportRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditReport', setIsUploadingOrganicReport)} />
-      <input type="file" ref={organicCertRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => handleAuditDocUpload(e, 'organicAuditCertificate', setIsUploadingOrganicCert)} />
-      <input type="file" ref={certFileRef} className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => { const f = certUploadField; if (f) handleAuditDocUpload(e, f, v => setIsUploadingCert(v ? f : null)); }} />
-
-      {/* Location Detail Card Modal */}
-      <AnimatePresence>
-        {selectedLocation && editLocationData && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-3xl w-full overflow-hidden max-h-[90vh] overflow-y-auto"
-            >
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Location: {(isEditingLocation ? editLocationData : selectedLocation).name || 'New Location'}</h3>
-                <button onClick={closeLocationDetail} className="hover:rotate-90 transition-transform"><X size={20} /></button>
-              </div>
-              <div className="p-6 space-y-4">
-                {/* Section 1: Location Details */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Location Details</div>
-                  {isEditingLocation ? (
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Location Code</label>
-                        <input value={editLocationData.locationCode || ''} onChange={(e) => setEditLocationData({ ...editLocationData, locationCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="e.g. 100" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Name</label>
-                        <input value={editLocationData.name || ''} onChange={(e) => setEditLocationData({ ...editLocationData, name: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Location Name" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">BOL Name</label>
-                        <input value={editLocationData.bolName || ''} onChange={(e) => setEditLocationData({ ...editLocationData, bolName: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Legal shipper name for BOL / Packing List" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Address</label>
-                        <input value={editLocationData.address || ''} onChange={(e) => setEditLocationData({ ...editLocationData, address: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Address" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">City</label>
-                        <input value={editLocationData.city || ''} onChange={(e) => setEditLocationData({ ...editLocationData, city: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="City" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Province</label>
-                        <input value={editLocationData.province || ''} onChange={(e) => setEditLocationData({ ...editLocationData, province: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Province" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</label>
-                        <input value={editLocationData.postalCode || ''} onChange={(e) => setEditLocationData({ ...editLocationData, postalCode: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Postal Code" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Active</label>
-                        <select
-                          value={editLocationData.active === false ? 'No' : 'Yes'}
-                          onChange={(e) => setEditLocationData({ ...editLocationData, active: e.target.value === 'Yes' })}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          title="Inactive locations are hidden from all location dropdowns across the app"
-                        >
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">QA Manager</label>
-                        <select
-                          value={editLocationData.qaManagerId || ''}
-                          onChange={(e) => setEditLocationData({ ...editLocationData, qaManagerId: e.target.value })}
-                          className="w-full bg-white border border-[#141414] p-2 text-xs outline-none"
-                          title="QA department people (People table)"
-                        >
-                          <option value="">— None —</option>
-                          {people.filter(p => p.department === 'QA').sort((a, b) => a.name.localeCompare(b.name)).map(p => (
-                            <option key={p.id} value={p.id}>{p.name}{p.defaultLocation ? ` (${p.defaultLocation})` : ''}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 gap-4">
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Code</div><div className="text-xs font-bold font-mono">{selectedLocation.locationCode || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Name</div><div className="text-xs font-bold">{selectedLocation.name || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">BOL Name</div><div className="text-xs font-bold">{selectedLocation.bolName || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Address</div><div className="text-xs font-bold">{selectedLocation.address || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">City</div><div className="text-xs font-bold">{selectedLocation.city || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Province</div><div className="text-xs font-bold">{selectedLocation.province || '—'}</div></div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Postal Code</div><div className="text-xs font-bold">{selectedLocation.postalCode || '—'}</div></div>
-                      <div>
-                        <div className="text-[10px] uppercase font-bold opacity-50 mb-1">Active</div>
-                        <div className="text-xs font-bold">
-                          <span className={`px-2 py-0.5 text-[10px] font-bold uppercase ${selectedLocation.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                            {selectedLocation.active !== false ? 'Yes' : 'No'}
-                          </span>
-                        </div>
-                      </div>
-                      <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">QA Manager</div><div className="text-xs font-bold">{people.find(p => p.id === selectedLocation.qaManagerId)?.name || '—'}</div></div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Section 2: GFSI Audit */}
-                {(() => {
-                  const data = isEditingLocation ? editLocationData : selectedLocation;
-                  return (
-                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">GFSI Audit</div>
-                      {isEditingLocation ? (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified Start Date</label>
-                            <input type="date" value={editLocationData.gfsiAuditStartDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditStartDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified End Date</label>
-                            <input type="date" value={editLocationData.gfsiAuditEndDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditEndDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Audit Certifier</label>
-                            <input value={editLocationData.gfsiAuditCertifier || ''} onChange={(e) => setEditLocationData({ ...editLocationData, gfsiAuditCertifier: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying body" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data.gfsiAuditStartDate || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data.gfsiAuditEndDate || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data.gfsiAuditCertifier || '—'}</div></div>
-                        </div>
-                      )}
-                      {/* Audit Report */}
-                      <div className="space-y-1">
-                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Report</div>
-                        {data.gfsiAuditReport ? (
-                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
-                            <div className="flex items-center gap-3">
-                              <FileText size={16} className="text-[#141414]/50" />
-                              <div>
-                                <div className="text-xs font-bold">{data.gfsiAuditReport.filename}</div>
-                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.gfsiAuditReport.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <a href={data.gfsiAuditReport.url} download={data.gfsiAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No report uploaded</div>
-                        )}
-                        {isEditingLocation && !data.gfsiAuditReport && (
-                          <button onClick={() => gfsiReportRef.current?.click()} disabled={isUploadingGfsiReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
-                            {isUploadingGfsiReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiReport ? 'Uploading...' : 'Upload Report'}
-                          </button>
-                        )}
-                      </div>
-                      {/* Audit Certificate */}
-                      <div className="space-y-1">
-                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Certificate</div>
-                        {data.gfsiAuditCertificate ? (
-                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
-                            <div className="flex items-center gap-3">
-                              <FileText size={16} className="text-[#141414]/50" />
-                              <div>
-                                <div className="text-xs font-bold">{data.gfsiAuditCertificate.filename}</div>
-                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.gfsiAuditCertificate.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <a href={data.gfsiAuditCertificate.url} download={data.gfsiAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('gfsiAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
-                        )}
-                        {isEditingLocation && !data.gfsiAuditCertificate && (
-                          <button onClick={() => gfsiCertRef.current?.click()} disabled={isUploadingGfsiCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
-                            {isUploadingGfsiCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingGfsiCert ? 'Uploading...' : 'Upload Certificate'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Section 3: Organic Audit */}
-                {(() => {
-                  const data = isEditingLocation ? editLocationData : selectedLocation;
-                  return (
-                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Organic Audit</div>
-                      {isEditingLocation ? (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified Start Date</label>
-                            <input type="date" value={editLocationData.organicAuditStartDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditStartDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certified End Date</label>
-                            <input type="date" value={editLocationData.organicAuditEndDate || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditEndDate: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Audit Certifier</label>
-                            <input value={editLocationData.organicAuditCertifier || ''} onChange={(e) => setEditLocationData({ ...editLocationData, organicAuditCertifier: e.target.value })} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying body" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data.organicAuditStartDate || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data.organicAuditEndDate || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data.organicAuditCertifier || '—'}</div></div>
-                        </div>
-                      )}
-                      {/* Organic Report */}
-                      <div className="space-y-1">
-                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Report</div>
-                        {data.organicAuditReport ? (
-                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
-                            <div className="flex items-center gap-3">
-                              <FileText size={16} className="text-[#141414]/50" />
-                              <div>
-                                <div className="text-xs font-bold">{data.organicAuditReport.filename}</div>
-                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.organicAuditReport.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <a href={data.organicAuditReport.url} download={data.organicAuditReport.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditReport')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No report uploaded</div>
-                        )}
-                        {isEditingLocation && !data.organicAuditReport && (
-                          <button onClick={() => organicReportRef.current?.click()} disabled={isUploadingOrganicReport} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
-                            {isUploadingOrganicReport ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicReport ? 'Uploading...' : 'Upload Report'}
-                          </button>
-                        )}
-                      </div>
-                      {/* Organic Certificate */}
-                      <div className="space-y-1">
-                        <div className="text-[10px] uppercase font-bold opacity-40">Audit Certificate</div>
-                        {data.organicAuditCertificate ? (
-                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
-                            <div className="flex items-center gap-3">
-                              <FileText size={16} className="text-[#141414]/50" />
-                              <div>
-                                <div className="text-xs font-bold">{data.organicAuditCertificate.filename}</div>
-                                <div className="text-[10px] opacity-50">Uploaded {new Date(data.organicAuditCertificate.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <a href={data.organicAuditCertificate.url} download={data.organicAuditCertificate.filename} className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc('organicAuditCertificate')} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
-                        )}
-                        {isEditingLocation && !data.organicAuditCertificate && (
-                          <button onClick={() => organicCertRef.current?.click()} disabled={isUploadingOrganicCert} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
-                            {isUploadingOrganicCert ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingOrganicCert ? 'Uploading...' : 'Upload Certificate'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Sections 4–5: Kosher / Halal certificates */}
-                {([
-                  { title: 'Kosher Certificate', pre: 'kosher', doc: 'kosherCertificate' },
-                  { title: 'Halal Certificate', pre: 'halal', doc: 'halalCertificate' },
-                ] as const).map(sec => {
-                  const data: any = isEditingLocation ? editLocationData : selectedLocation;
-                  const startK = `${sec.pre}CertStartDate`, endK = `${sec.pre}CertEndDate`, certK = `${sec.pre}Certifier`;
-                  const doc = data[sec.doc] as QADocument | undefined;
-                  const end = data[endK] as string | undefined;
-                  const expired = !!end && end < new Date().toISOString().slice(0, 10);
-                  return (
-                    <div key={sec.pre} className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2 flex items-center justify-between">
-                        <span>{sec.title}</span>
-                        {end && <span className={`px-2 py-0.5 text-[9px] ${expired ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>{expired ? 'Expired' : 'Valid'}</span>}
-                      </div>
-                      {isEditingLocation ? (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</label>
-                            <input type="date" value={data[startK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [startK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">End Date</label>
-                            <input type="date" value={data[endK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [endK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</label>
-                            <input value={data[certK] || ''} onChange={(e) => setEditLocationData({ ...editLocationData, [certK]: e.target.value } as Location)} className="w-full bg-white border border-[#141414] p-2 text-xs outline-none" placeholder="Certifying agency" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-3 gap-4">
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Start Date</div><div className="text-xs font-bold">{data[startK] || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">End Date</div><div className="text-xs font-bold">{data[endK] || '—'}</div></div>
-                          <div><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Certifier</div><div className="text-xs font-bold">{data[certK] || '—'}</div></div>
-                        </div>
-                      )}
-                      <div className="space-y-1">
-                        <div className="text-[10px] uppercase font-bold opacity-40">Certificate</div>
-                        {doc ? (
-                          <div className="flex items-center justify-between bg-white border border-[#141414]/10 p-3">
-                            <div className="flex items-center gap-3">
-                              <FileText size={16} className="text-[#141414]/50" />
-                              <div>
-                                <div className="text-xs font-bold">{doc.filename}</div>
-                                <div className="text-[10px] opacity-50">Uploaded {new Date(doc.uploadedAt).toLocaleDateString()}</div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <a href={doc.url} download={doc.filename} target="_blank" rel="noreferrer" className="p-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download"><Download size={14} /></a>
-                              {isEditingLocation && <button onClick={() => deleteAuditDoc(sec.doc)} className="p-1.5 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No certificate uploaded</div>
-                        )}
-                        {isEditingLocation && !doc && (
-                          <button onClick={() => { setCertUploadField(sec.doc); setTimeout(() => certFileRef.current?.click(), 0); }} disabled={isUploadingCert === sec.doc} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors disabled:opacity-50">
-                            {isUploadingCert === sec.doc ? <RefreshSpinner /> : <Upload size={12} />} {isUploadingCert === sec.doc ? 'Uploading...' : 'Upload Certificate'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Action Buttons */}
-                <div className="flex gap-4 pt-2">
-                  {isEditingLocation ? (
-                    <>
-                      <button onClick={saveLocationChanges} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors">
-                        <CheckCircle2 size={16} /> Save Changes
-                      </button>
-                      <button onClick={() => { if (isNewLocation) { closeLocationDetail(); } else { setIsEditingLocation(false); setEditLocationData({ ...selectedLocation }); } }} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Cancel</button>
-                    </>
-                  ) : (
-                    <>
-                      <button onClick={() => setIsEditingLocation(true)} className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors">Edit Location</button>
-                      <button onClick={closeLocationDetail} className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors">Close</button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
       </>)}
 
       {/* Hidden file inputs */}
@@ -2937,60 +2585,58 @@ export default function QualityAssurancePage({
       {/* Product Detail Card Modal */}
       <AnimatePresence>
         {selectedProduct && displayData && !productModalMinimized && (
-          <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/40 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-[#141414]/80 backdrop-blur-md" onClick={() => { if (!isEditing) closeDetail(); }}>
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.97, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
+              exit={{ scale: 0.97, opacity: 0 }}
               onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              className={`bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] overflow-hidden overflow-y-auto transition-colors ${productModalMaximized ? 'w-full h-full max-w-full max-h-full' : 'max-w-3xl w-full max-h-[90vh]'}`}
+              className="bg-[#E4E3E0] border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] w-full max-w-[95vw] xl:max-w-7xl h-[90vh] flex flex-col"
             >
-              {/* Header */}
-              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center sticky top-0 z-10">
-                <h3 className="text-xs font-bold uppercase tracking-widest">
-                  {/* Title uses the resolved Product Name (same value as the
-                      Product Name (Auto) row in Product Details). Falls back
-                      to skuName / productFormat when no naming rule resolves. */}
-                  Product QA: {(() => {
+              {/* Header — same as the customer card */}
+              <div className="bg-[#141414] text-[#E4E3E0] px-5 py-4 flex justify-between items-start shrink-0">
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest opacity-60">Product Summary · {displayData.productCode || displayData.id}</div>
+                  <h3 className="text-lg font-bold mt-0.5">{(() => {
                     const resolved = resolveProductName(namingFormulas, displayData, { sugarTypes, productGroups });
                     if (resolved && resolved.trim()) return resolved;
                     if (displayData.productFormat && displayData.sugarType) {
                       return `${displayData.netWeightKg ? `${displayData.netWeightKg}kg ` : ''}${displayData.productFormat} ${displayData.sugarType} ${displayData.category} ${displayData.maxColor || 0}`;
                     }
                     return displayData.skuName || displayData.productFormat || '—';
-                  })()}
-                </h3>
-                <div className="flex items-center gap-1">
-                  {!cardOnlyProductId && <button onClick={(e) => { e.stopPropagation(); setProductModalMinimized(true); }} className="p-1 hover:bg-white/20 transition-colors" title="Minimize"><Minus size={16} /></button>}
-                  <button onClick={(e) => { e.stopPropagation(); setProductModalMaximized(!productModalMaximized); }} className="p-1 hover:bg-white/20 transition-colors" title={productModalMaximized ? 'Restore' : 'Maximize'}>{productModalMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-                  <button onClick={closeDetail} className="p-1 hover:bg-white/20 transition-colors" title="Close"><X size={16} /></button>
+                  })()}</h3>
+                  <div className="text-[11px] opacity-60 mt-0.5">{[displayData.location, displayData.productGroup, displayData.sugarType, displayData.category].filter(Boolean).join(' · ')}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isEditing && <span className="px-2 py-1 bg-amber-400 text-[#141414] text-[10px] font-bold uppercase tracking-widest">Editing</span>}
+                  {!isEditing && !cardOnlyProductId && (
+                    <button onClick={() => setIsEditing(true)} className="flex items-center gap-1.5 px-3 py-1.5 border border-[#E4E3E0]/40 text-[10px] uppercase font-bold tracking-widest hover:bg-white/10"><Pencil size={12} /> Edit Product</button>
+                  )}
+                  <button onClick={closeDetail} className="p-1 hover:bg-white/20" title="Close"><X size={18} /></button>
                 </div>
               </div>
 
-              {/* Tabs — like the customer card */}
-              <div className="flex border-b border-[#141414] bg-[#F5F5F5] sticky top-[52px] z-10">
+              {/* Tabs — same bar as the customer card */}
+              <div className="flex border-b border-[#141414] bg-white shrink-0 overflow-x-auto">
                 {([
-                  ['details', 'Product Details'],
-                  ['specs', 'Specs'],
-                  ['packaging', 'Packaging'],
-                  ['bom', 'BOM'],
-                  ...(onSaveDifferential ? [['differential', 'Differential']] : []),
-                ] as Array<[ProductCardTab, string]>).map(([id, label]) => (
-                  <button
-                    key={id}
-                    onClick={() => setProductCardTab(id)}
-                    className={`px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest border-r border-[#141414]/10 transition-colors ${productCardTab === id ? 'bg-white text-[#141414] border-b-2 border-b-[#141414] -mb-px' : 'opacity-50 hover:opacity-100'}`}
-                  >
-                    {label}
+                  ['details', 'Product Details', <Package size={13} />],
+                  ['specs', 'Specs', <ClipboardList size={13} />],
+                  ['packaging', 'Packaging', <Boxes size={13} />],
+                  ['bom', 'Bill of Materials', <Layers size={13} />],
+                  ...(onSaveDifferential ? [['differential', 'Differential', <DollarSign size={13} />]] : []),
+                ] as Array<[ProductCardTab, string, React.ReactNode]>).map(([id, label, icon]) => (
+                  <button key={id} onClick={() => setProductCardTab(id)}
+                    className={`flex items-center gap-1.5 px-5 py-3 text-[11px] uppercase font-bold tracking-widest border-r border-[#141414]/20 whitespace-nowrap transition-colors ${productCardTab === id ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-gray-100 opacity-70'}`}>
+                    {icon}{label}
                   </button>
                 ))}
               </div>
 
-              <div className="p-6 space-y-4">
+              <div className="flex-1 overflow-auto p-5 space-y-5">
                 {productCardTab === 'details' && (<>
                 {/* Section 0: Product Details (editable - syncs back to Products table) */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Details</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Product Details</div>
                   {isEditing ? (
                     <>
                     <div className="grid grid-cols-3 gap-4">
@@ -3181,8 +2827,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 1: Approvers */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Approvers</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Approvers</div>
                   <div className="grid grid-cols-3 gap-4">
                     <div>
                       <label className="block text-[10px] uppercase font-bold opacity-50 mb-1">Approver QA</label>
@@ -3235,8 +2881,8 @@ export default function QualityAssurancePage({
                 </>)}
                 {productCardTab === 'specs' && (<>
                 {/* Section 2: Product Specifications */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Specifications</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Product Specifications</div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                       <thead>
@@ -3321,8 +2967,8 @@ export default function QualityAssurancePage({
                 </>)}
                 {productCardTab === 'packaging' && (<>
                 {/* Section 3: Packaging Supplier */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging Supplier</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Packaging Supplier</div>
                   {isEditing ? (
                     <select
                       value={editData?.packagingSupplier || ''}
@@ -3338,8 +2984,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 4: Packaging Pictures */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging Pictures</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Packaging Pictures</div>
                   {displayData.packagingPictureUrls.length > 0 ? (
                     <div className="grid grid-cols-4 gap-3">
                       {displayData.packagingPictureUrls.map((url, idx) => (
@@ -3373,8 +3019,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 5: Packaging Artwork */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Packaging Artwork</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Packaging Artwork</div>
                   {displayData.artworkUrl ? (
                     <div className="flex items-center gap-4">
                       <div className="border border-[#141414]/10 bg-white p-2">
@@ -3452,8 +3098,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 6: UPC Code */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">UPC Code</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">UPC Code</div>
                   {isEditing ? (
                     <input
                       value={editData?.upcCode || ''}
@@ -3467,8 +3113,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 7: UPC Image */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">UPC Image</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">UPC Image</div>
                   {displayData.upcImageUrl ? (
                     <div className="flex items-center gap-4">
                       <div className="border border-[#141414]/10 bg-white p-2">
@@ -3494,8 +3140,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 8: Ti-Hi / Pallet Configuration (for packaged products) */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Pallet Configuration (Ti × Hi)</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Pallet Configuration (Ti × Hi)</div>
                   {isEditing ? (
                     <div className="grid grid-cols-3 gap-4">
                       <div>
@@ -3554,8 +3200,8 @@ export default function QualityAssurancePage({
                 </>)}
                 {productCardTab === 'specs' && (<>
                 {/* Section 9: Spec Sheets */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Spec Sheets</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Spec Sheets</div>
                   {(displayData.specSheets || []).length > 0 ? (
                     <div className="space-y-2">
                       {(displayData.specSheets || []).map(doc => (
@@ -3599,8 +3245,8 @@ export default function QualityAssurancePage({
                 </div>
 
                 {/* Section 10: Certificates */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                  <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Product Certificates</div>
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
+                  <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Product Certificates</div>
                   {(displayData.certificates || []).length > 0 ? (
                     <div className="space-y-2">
                       {(displayData.certificates || []).map(doc => (
@@ -3650,8 +3296,8 @@ export default function QualityAssurancePage({
                   const draft = diffDraft ?? String(stored);
                   const dirty = (parseFloat(draft || '0') || 0) !== stored;
                   return (
-                    <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">Default Differential</div>
+                    <div className="bg-white border border-[#141414] p-4 space-y-3">
+                      <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Default Differential</div>
                       {sku ? (
                         <>
                           <div className="flex items-center gap-2">
@@ -3681,7 +3327,7 @@ export default function QualityAssurancePage({
 
                 {productCardTab === 'bom' && (<>
                 {/* Bill of Materials */}
-                <div className="bg-[#F5F5F5] p-4 border border-[#141414]/10 space-y-3">
+                <div className="bg-white border border-[#141414] p-4 space-y-3">
                   <div className="flex justify-between items-center border-b border-[#141414]/10 pb-2">
                     <div className="text-[10px] uppercase font-bold opacity-50">Bill of Materials</div>
                     {isEditing && (
@@ -3794,7 +3440,7 @@ export default function QualityAssurancePage({
                   {/* BOM Add/Edit Form */}
                   {showBomForm && editingBomItem && isEditing && (
                     <div className="bg-white p-4 border border-[#141414]/20 space-y-3 mt-2">
-                      <div className="text-[10px] uppercase font-bold opacity-50 border-b border-[#141414]/10 pb-2">
+                      <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">
                         {editingBomItem.materialName ? 'Edit Material' : 'Add Material'}
                       </div>
                       <div className="grid grid-cols-3 gap-3">
@@ -3893,19 +3539,20 @@ export default function QualityAssurancePage({
 
                 </>)}
 
-                {/* Action Buttons */}
-                <div className="flex gap-4 pt-2">
+              </div>
+              {/* Footer actions (fixed below the tabs' scroll area) */}
+              <div className="shrink-0 border-t border-[#141414] bg-white px-5 py-3 flex gap-3">
                   {isEditing ? (
                     <>
                       <button
                         onClick={saveChanges}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
+                        className="flex-1 py-2.5 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
                       >
                         <CheckCircle2 size={16} /> Save Changes
                       </button>
                       <button
                         onClick={() => { setIsEditing(false); setEditData(selectedProduct ? { ...selectedProduct, specifications: { ...selectedProduct.specifications }, packagingPictureUrls: [...selectedProduct.packagingPictureUrls], packagingPictureFilenames: [...selectedProduct.packagingPictureFilenames], artworkApprovals: [...selectedProduct.artworkApprovals] } : null); }}
-                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
+                        className="flex-1 py-2.5 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                       >
                         Cancel
                       </button>
@@ -3914,7 +3561,7 @@ export default function QualityAssurancePage({
                     <>
                       {cardOnlyProductId && (
                         <div className="flex-[2] text-[10px] opacity-60 self-center">
-                          Product details are edited on the Quality Assurance page.
+                          Product details are edited on the Products page.
                         </div>
                       )}
                       {/* Delete moved here from the table's old Actions column —
@@ -3926,26 +3573,19 @@ export default function QualityAssurancePage({
                             closeDetail();
                           }
                         }}
-                        className="px-6 py-4 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center-safe justify-center gap-2"
+                        className="px-6 py-2.5 border border-red-500 text-red-600 text-xs font-bold uppercase hover:bg-red-500 hover:text-white transition-colors flex items-center-safe justify-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
                       </button>}
-                      {!cardOnlyProductId && <button
-                        onClick={() => setIsEditing(true)}
-                        className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center-safe justify-center gap-2 hover:bg-opacity-80 transition-colors"
-                      >
-                        Edit Product
-                      </button>}
                       <button
                         onClick={closeDetail}
-                        className="flex-1 py-4 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
+                        className="flex-1 py-2.5 border border-[#141414] text-xs font-bold uppercase hover:bg-[#F5F5F5] transition-colors"
                       >
                         Close
                       </button>
                     </>
                   )}
                 </div>
-              </div>
             </motion.div>
           </div>
         )}

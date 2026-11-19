@@ -104,6 +104,7 @@ const ReportsPage = lazy(() => import('./components/ReportsPage'));
 const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarrierReport'));
 import PageBanner from './components/PageBanner';
 import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle } from './components/PageShell';
+import LocationCard from './components/LocationCard';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
@@ -912,17 +913,9 @@ export default function App() {
   // DetailModal state for the standardized Vendors table.
   const [vendorDraft, setVendorDraft] = useState<Vendor | null>(null);
   const [vendorMode, setVendorMode] = useState<'view' | 'edit' | 'add'>('view');
-  // Read-only detail modal for the standardized Products (SKUs) table.
-  // Products are edited on the QA page, so this is view-only.
-  const [skuDetail, setSkuDetail] = useState<SKU | null>(null);
-  const [skuDiffDraft, setSkuDiffDraft] = useState<string | null>(null);
-  // Products page: tab, the QA product card opened from a row, per-row differential drafts.
-  const [productsTab, setProductsTab] = useState<'products' | 'differentials'>('products');
-  const [productCardQaId, setProductCardQaId] = useState<string | null>(null);
-  const [diffDrafts, setDiffDrafts] = useState<Record<string, string>>({});
-  // Detail modal for the standardized Locations table (Supply Chain page).
-  // Core fields are read-only (edited on QA), but bays stay editable here.
-  const [locationDetail, setLocationDetail] = useState<Location | null>(null);
+  // Location card (Supply Chain page) — the one place locations are viewed and
+  // edited (merged from the old QA location card + Supply Chain detail).
+  const [locationCard, setLocationCard] = useState<{ loc: Location; isNew: boolean } | null>(null);
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -12882,7 +12875,7 @@ export default function App() {
   const renderContent = () => {
     // The QA page — mounted in full on the Quality Assurance page, or card-only
     // (just one product's tabbed card) from the Products page.
-    const qaPageElement = (extra?: { cardOnlyProductId?: string; onCardClose?: () => void; onSaveDifferential?: (skuId: string, value: number) => void }) => (
+    const qaPageElement = (extra?: { cardOnlyProductId?: string; onCardClose?: () => void; onSaveDifferential?: (skuId: string, value: number) => void; mode?: 'qa' | 'products'; onUpdateSku?: (sku: SKU) => void }) => (
       <QualityAssurancePage
         {...(extra || {})}
           qaProducts={qaProducts}
@@ -15212,490 +15205,22 @@ export default function App() {
     }
 
     if (activePage === 'Products') {
-      const filteredSkus = getSortedAndFilteredData<SKU>(skus, ['name', 'productGroup', 'id', 'location']);
-      const filteredProductGroups = getSortedAndFilteredData<ProductGroup>(productGroups, ['name', 'id']);
-
-      // Enrich each SKU with the computed display values the table shows
-      // (product name, shortform, packaging format, sugar type, group color)
-      // so the standardized DataTable can render + sort them. The table is
-      // read-only — products are edited on the Quality Assurance page.
-      const enrichedSkus = filteredSkus.map(s => {
-        const pg = productGroups.find(g => g.name === s.productGroup);
-        const qaMatch = qaProducts.find(q => q.skuId === s.id);
-        const productFormat = qaMatch?.productFormat || s.productFormat || '—';
-        const sugarType = qaMatch?.sugarType || s.sugarType || '—';
-        const netWt = s.netWeightKg || s.netWeight;
-        const productAttrs = buildProductAttrs(s, qaMatch || null);
-        let shortform = resolveShortFormRule(namingFormulas, productAttrs, { sugarTypes, productGroups }) || '';
-        if (!shortform.trim()) {
-          shortform = '—';
-          if (sugarType === 'Molasses') {
-            shortform = 'MOL';
-          } else {
-            const st = sugarTypes.find(t => t.name === sugarType);
-            if (st) {
-              const co = s.category === 'Conventional' ? 'C' : 'B';
-              if (s.productGroup === 'Bulk') {
-                shortform = `${st.abbreviation}${co}${s.maxColor}`;
-              } else {
-                const wt = netWt ? `${netWt}kg ` : '';
-                shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
-              }
-            }
-          }
-        }
-        const productName = productToName(s) || ((productFormat !== '—' && sugarType !== '—')
-          ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
-          : '—');
-        return { ...s, _pgColor: pg?.color as string | undefined, _productFormat: productFormat, _sugarType: sugarType, _netWt: netWt, _shortform: shortform, _productName: productName };
-      });
-      type EnrichedSku = typeof enrichedSkus[number];
-
-      // Logistics fields now live on the PRODUCT (SKU); legacy values still on
-      // the QA record show until the product is edited here.
-      const productLogistics = (sk: SKU) => {
-        const qa = qaProducts.find(q => q.skuId === sk.id);
-        return {
-          warehouse: sk.warehouse || qa?.warehouse || '',
-          commodityGroup: sk.commodityGroup || qa?.commodityGroup || '',
-          terminal: sk.terminal || qa?.terminal || '',
-          terminalName: sk.terminalName || qa?.terminalName || '',
-        };
+      // The ONE product table: QA product records merged with their catalog SKU
+      // (differential + logistics columns). Rows open the product card, where
+      // every product field is edited (details, specs, packaging, BOM,
+      // differential). Rendered by the QA component in products mode.
+      const saveSku = (updated: SKU) => {
+        setSkus(prev => prev.map(x => x.id === updated.id ? updated : x));
+        saveNow(COLLECTIONS.products, [updated]);
       };
-      // Terminals for a product's location (exact name, else a UNIQUE prefix —
-      // never guess between Hamilton (Sherman) and Hamilton (Ferguson)).
-      const productTerminals = (locName?: string) => {
-        const n = (locName || '').trim().toLowerCase();
-        if (!n) return [];
-        const exact = locations.find(l => l.name.trim().toLowerCase() === n);
-        if (exact) return exact.terminalNames || [];
-        const pre = locations.filter(l => l.name.trim().toLowerCase().startsWith(n));
-        return pre.length === 1 ? (pre[0].terminalNames || []) : [];
-      };
-      const saveLogistics = (skuId: string, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', value: string) => {
-        const base = skus.find(x => x.id === skuId);
-        if (!base) return;
-        const cur = productLogistics(base);
-        const next: SKU = { ...base, ...cur, [field]: value };
-        // Terminal + Terminal Name move together (pick one, the other follows).
-        const terms = productTerminals(base.location);
-        if (field === 'terminal') next.terminalName = terms.find(t => t.terminal === value)?.terminalName || (value ? cur.terminalName : '');
-        if (field === 'terminalName') next.terminal = terms.find(t => t.terminalName === value)?.terminal || (value ? cur.terminal : '');
-        setSkus(prev => prev.map(x => x.id === skuId ? next : x));
-        saveNow(COLLECTIONS.products, [next]);
-      };
-      const logisticsSelect = (sk: SKU, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', options: Array<[string, string]>) => {
-        const value = productLogistics(sk)[field];
-        return (
-          <select
-            value={value}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => saveLogistics(sk.id, field, e.target.value)}
-            className="bg-white border border-[#141414]/30 px-1 py-0.5 text-[11px] outline-none focus:border-[#141414]"
-          >
-            <option value="">—</option>
-            {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
-          </select>
-        );
-      };
-
-      const productExportSheets = (): SheetSpec[] => [
-        {
-          sheetName: 'Products',
-          title: 'Product Catalog',
-          subtitle: `Generated ${new Date().toLocaleDateString()} | ${skus.length} products`,
-          columns: [
-            { header: 'Prod No.', key: 'productCode' },
-            { header: 'Product Name', key: 'productName' },
-            { header: 'Packaging Format', key: 'productFormat' },
-            { header: 'Product Group', key: 'productGroup' },
-            { header: 'Sugar Type', key: 'sugarType' },
-            { header: 'Shortform', key: 'shortform' },
-            { header: 'Conv./Organic', key: 'category' },
-            { header: 'Max Color', key: 'maxColor' },
-            { header: 'Location', key: 'location' },
-            { header: 'Net Weight (KG)', key: 'netWeightKg', format: 'number' },
-            { header: 'Gross Weight (KG)', key: 'grossWeightKg', format: 'number' },
-          ],
-          rows: skus.map(s => {
-            const qaMatch = qaProducts.find(q => q.skuId === s.id);
-            const productFormat = qaMatch?.productFormat || s.productFormat || '';
-            const sugarType = qaMatch?.sugarType || s.sugarType || '';
-            const netWt = s.netWeightKg || s.netWeight;
-            let shortform = '';
-            if (sugarType === 'Molasses') {
-              shortform = 'MOL';
-            } else {
-              const st = sugarTypes.find(t => t.name === sugarType);
-              if (st) {
-                const co = s.category === 'Conventional' ? 'C' : 'B';
-                if (s.productGroup === 'Bulk') {
-                  shortform = `${st.abbreviation}${co}${s.maxColor}`;
-                } else {
-                  const wt = netWt ? `${netWt}kg ` : '';
-                  shortform = `${wt}${st.abbreviation}${co}${s.maxColor}`;
-                }
-              }
-            }
-            const productName = productToName(s) || ((productFormat && sugarType)
-              ? `${netWt ? `${netWt}kg ` : ''}${productFormat} ${sugarType} ${s.category} ${s.maxColor || 0}`
-              : '');
-            return {
-              ...s,
-              productName,
-              productFormat,
-              sugarType,
-              shortform,
-              netWeightKg: netWt,
-              grossWeightKg: s.grossWeightKg || ''
-            };
-          }),
+      return qaPageElement({
+        mode: 'products',
+        onUpdateSku: saveSku,
+        onSaveDifferential: (skuId, v) => {
+          const base = skus.find(x => x.id === skuId);
+          if (base) saveSku({ ...base, premiumCadMt: v });
         },
-      ];
-      return (
-        <div>
-          <PageBanner
-            icon={<Package size={18} />}
-            title="Product Catalog"
-            count={filteredSkus.length}
-            exportSheets={productExportSheets}
-            exportFileName="Products"
-          />
-          <div className="p-6 space-y-8">
-
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search products by name, group, location or ID..." 
-          />
-          
-          {/* Tabs */}
-          <div className="flex border-b border-[#141414]">
-            {([['products', 'Products'], ['differentials', 'Differentials']] as const).map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setProductsTab(id)}
-                className={`px-5 py-2.5 text-[10px] font-bold uppercase tracking-widest transition-colors ${productsTab === id ? 'bg-[#141414] text-[#E4E3E0]' : 'hover:bg-[#141414]/5 opacity-60'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {productsTab === 'products' && (<>
-          <div className="bg-[#FFF9E6] border border-[#141414]/20 p-3 text-xs text-[#141414]/70 italic">
-            Click a product to open its product card. Only differentials (Differentials tab, or the card's Differential tab) and the Warehouse, Commodity Group, Terminal and Terminal Name columns are edited here — all other product edits are made on the <span className="font-bold">Quality Assurance</span> page.
-          </div>
-
-          {/* Products — standardized read-only DataTable. Rows open a view-only
-              DetailModal (no Edit/Delete: products are edited on the QA page).
-              Replaces the old expandable-row detail panel. */}
-          <DataTable<EnrichedSku>
-            title="Products"
-            icon={<Package size={14} />}
-            columns={[
-              { key: 'productCode', label: 'Prod No.', mono: true, bold: true, render: (s) => s.productCode || '—' },
-              { key: 'productName', label: 'Product Name', bold: true, sortValue: (s) => s._productName, render: (s) => s._productName },
-              { key: 'productFormat', label: 'Packaging Format', sortValue: (s) => s._productFormat, render: (s) => s._productFormat },
-              {
-                key: 'productGroup', label: 'Product Group',
-                render: (s) => (
-                  <span className="px-2 py-0.5 border border-[#141414]/10 text-[10px] font-bold" style={{ backgroundColor: s._pgColor }}>
-                    {s.productGroup}
-                  </span>
-                ),
-              },
-              { key: 'sugarType', label: 'Sugar Type', bold: true, sortValue: (s) => s._sugarType, render: (s) => s._sugarType },
-              { key: 'shortform', label: 'Shortform', mono: true, bold: true, sortValue: (s) => s._shortform, render: (s) => s._shortform },
-              { key: 'category', label: 'Conv./Organic', bold: true },
-              { key: 'maxColor', label: 'Max Color', bold: true, align: 'right' },
-              { key: 'location', label: 'Location' },
-              { key: 'netWeightKg', label: 'Net Weight (KG)', bold: true, align: 'right', sortValue: (s) => s._netWt || 0, render: (s) => s._netWt },
-              { key: 'grossWeightKg', label: 'Gross Weight (KG)', align: 'right', render: (s) => s.grossWeightKg || '-' },
-              { key: 'premiumCadMt', label: 'Differential (CAD/MT)', align: 'right', mono: true, sortValue: (s) => s.premiumCadMt || 0, render: (s) => s.premiumCadMt ? fmtN(s.premiumCadMt, 2) : '—' },
-              { key: 'warehouse', label: 'Warehouse', sortValue: (s) => productLogistics(s).warehouse, render: (s) => logisticsSelect(s, 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']]) },
-              { key: 'commodityGroup', label: 'Commodity Group', sortValue: (s) => productLogistics(s).commodityGroup, render: (s) => logisticsSelect(s, 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']]) },
-              { key: 'terminal', label: 'Terminal', sortValue: (s) => productLogistics(s).terminal, render: (s) => logisticsSelect(s, 'terminal', productTerminals(s.location).map(t => [t.terminal, t.terminal] as [string, string])) },
-              { key: 'terminalName', label: 'Terminal Name', sortValue: (s) => productLogistics(s).terminalName, render: (s) => logisticsSelect(s, 'terminalName', productTerminals(s.location).map(t => [t.terminalName, t.terminalName] as [string, string])) },
-            ]}
-            rows={enrichedSkus}
-            getRowKey={(s) => s.id}
-            onRowClick={(s) => {
-              // Open the tabbed product card (QA record); products without a QA
-              // record fall back to the read-only detail view.
-              const qa = qaProducts.find(q => q.skuId === s.id);
-              if (qa) setProductCardQaId(qa.id); else setSkuDetail(s);
-            }}
-            emptyMessage="No products yet. Add products on the Quality Assurance page."
-            defaultSortKey="productName"
-          />
-
-          </>)}
-
-          {productsTab === 'differentials' && (
-            <DataTable<EnrichedSku>
-              title="Differentials"
-              icon={<DollarSign size={14} />}
-              storageKey="product-differentials"
-              columns={[
-                { key: 'productCode', label: 'Prod No.', mono: true, bold: true, render: (s) => s.productCode || '—' },
-                { key: 'productName', label: 'Product Name', bold: true, sortValue: (s) => s._productName, render: (s) => s._productName },
-                { key: 'shortform', label: 'Shortform', mono: true, bold: true, sortValue: (s) => s._shortform, render: (s) => s._shortform },
-                { key: 'productGroup', label: 'Product Group' },
-                { key: 'location', label: 'Location' },
-                {
-                  key: 'premiumCadMt', label: 'Default Differential (CAD/MT)', align: 'right', sortValue: (s) => s.premiumCadMt || 0,
-                  render: (s) => {
-                    const stored = s.premiumCadMt || 0;
-                    const draft = diffDrafts[s.id] ?? String(stored);
-                    const dirty = (parseFloat(draft || '0') || 0) !== stored;
-                    return (
-                      <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="number" step="0.01" value={draft}
-                          onFocus={(e) => e.target.select()}
-                          onChange={(e) => setDiffDrafts(prev => ({ ...prev, [s.id]: e.target.value }))}
-                          onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget.nextElementSibling as HTMLButtonElement | null)?.click(); }}
-                          className="w-28 bg-white border border-[#141414]/30 px-2 py-1 text-xs font-mono text-right outline-none focus:border-[#141414]"
-                        />
-                        <button
-                          disabled={!dirty}
-                          onClick={() => {
-                            const v = parseFloat(draft) || 0;
-                            const base = skus.find(x => x.id === s.id);
-                            if (!base) return;
-                            const updated = { ...base, premiumCadMt: v };
-                            setSkus(prev => prev.map(x => x.id === s.id ? updated : x));
-                            saveNow(COLLECTIONS.products, [updated]);
-                            setDiffDrafts(prev => { const n = { ...prev }; delete n[s.id]; return n; });
-                          }}
-                          className="px-2.5 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase disabled:opacity-20"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    );
-                  },
-                },
-              ]}
-              rows={enrichedSkus}
-              getRowKey={(s) => s.id}
-              emptyMessage="No products yet."
-              defaultSortKey="productName"
-            />
-          )}
-
-          {/* Tabbed product card (same card as the QA page). */}
-          {productCardQaId && qaPageElement({
-            cardOnlyProductId: productCardQaId,
-            onCardClose: () => setProductCardQaId(null),
-            // The one card edit allowed from the Products page.
-            onSaveDifferential: (skuId, v) => {
-              const base = skus.find(x => x.id === skuId);
-              if (!base) return;
-              const updated = { ...base, premiumCadMt: v };
-              setSkus(prev => prev.map(x => x.id === skuId ? updated : x));
-              saveNow(COLLECTIONS.products, [updated]);
-            },
-          })}
-
-          {/* Read-only product detail (view mode only). */}
-          <DetailModal
-            tableName="Products"
-            icon={<Package size={14} />}
-            isOpen={!!skuDetail}
-            mode="view"
-            onClose={() => { setSkuDetail(null); setSkuDiffDraft(null); }}
-          >
-            {skuDetail && (() => {
-              const s = skuDetail;
-              const qaP = qaProducts.find(q => q.skuId === s.id);
-              return (
-                <div className="space-y-6">
-                  {/* Row 1: Basic product info */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">Net Weight (KG)</label>
-                          <div className="text-xs font-bold">{s.netWeightKg || s.netWeight}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">Gross Weight (KG)</label>
-                          <div className="text-xs font-bold">{s.grossWeightKg || '-'}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">Max Color</label>
-                          <div className="text-xs font-bold">{s.maxColor}</div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold opacity-50">Brix</label>
-                          <div className="text-xs font-bold">{s.brix}</div>
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] uppercase font-bold opacity-50">Default Differential (CAD/MT) <span className="normal-case font-normal opacity-70">— editable</span></label>
-                        {(() => {
-                          const stored = skus.find(x => x.id === s.id)?.premiumCadMt ?? s.premiumCadMt ?? 0;
-                          const draft = skuDiffDraft ?? String(stored);
-                          const dirty = parseFloat(draft || '0') !== stored;
-                          return (
-                            <div className="flex items-center gap-2">
-                              <input type="number" step="0.01" value={draft} onFocus={(e) => e.target.select()}
-                                onChange={(e) => setSkuDiffDraft(e.target.value)}
-                                className="w-32 bg-white border border-[#141414] px-2 py-1.5 text-xs font-bold font-mono outline-none focus:ring-2 focus:ring-[#141414]/10" />
-                              <button disabled={!dirty} onClick={() => {
-                                const v = parseFloat(draft) || 0;
-                                const base = skus.find(x => x.id === s.id);
-                                if (!base) return;
-                                const updated = { ...base, premiumCadMt: v };
-                                setSkus(prev => prev.map(x => x.id === s.id ? updated : x));
-                                saveNow(COLLECTIONS.products, [updated]);
-                                setSkuDetail({ ...s, premiumCadMt: v });
-                                setSkuDiffDraft(null);
-                              }} className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase disabled:opacity-30">Save</button>
-                              {!dirty && <span className="text-[10px] opacity-50">Used as the product differential in quotes</span>}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-50">Product Description</label>
-                      <div className="text-xs opacity-70 whitespace-pre-wrap">{s.description || 'No description provided.'}</div>
-                    </div>
-                  </div>
-
-                  {/* Row 2: QA Specifications */}
-                  {qaP && qaP.specifications && (
-                    <div className="space-y-2">
-                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Specifications</h4>
-                      <div className="grid grid-cols-6 gap-3">
-                        {(['brix', 'granulation', 'color', 'ash', 'turbidity', 'moisture'] as const).map(spec => (
-                          <div key={spec} className="space-y-0.5">
-                            <label className="text-[10px] uppercase font-bold opacity-40">{spec}</label>
-                            <div className="text-xs font-bold">{qaP.specifications[spec] || '-'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Row 3: Ti-Hi / Pallet Config */}
-                  {qaP && (qaP.ti || qaP.hi) && (
-                    <div className="space-y-2">
-                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Pallet Configuration</h4>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="space-y-0.5">
-                          <label className="text-[10px] uppercase font-bold opacity-40">Ti</label>
-                          <div className="text-xs font-bold">{qaP.ti || '-'}</div>
-                        </div>
-                        <div className="space-y-0.5">
-                          <label className="text-[10px] uppercase font-bold opacity-40">Hi</label>
-                          <div className="text-xs font-bold">{qaP.hi || '-'}</div>
-                        </div>
-                        <div className="space-y-0.5">
-                          <label className="text-[10px] uppercase font-bold opacity-40">Units per Pallet</label>
-                          <div className="text-xs font-bold">{qaP.unitsPerPallet || '-'}</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Row 4: Spec Sheets & Certificates */}
-                  {qaP && ((qaP.specSheets && qaP.specSheets.length > 0) || (qaP.certificates && qaP.certificates.length > 0)) && (
-                    <div className="grid grid-cols-2 gap-6">
-                      {/* Spec Sheets */}
-                      <div className="space-y-2">
-                        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Spec Sheets</h4>
-                        {qaP.specSheets && qaP.specSheets.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {qaP.specSheets.map((doc: QADocument) => (
-                              <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
-                                  <span className="text-xs font-bold truncate">{doc.filename}</span>
-                                </div>
-                                <div className="flex items-center gap-1 flex-shrink-0">
-                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
-                                    <Download size={12} />
-                                  </a>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No spec sheets</div>
-                        )}
-                      </div>
-
-                      {/* Certificates */}
-                      <div className="space-y-2">
-                        <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Certificates</h4>
-                        {qaP.certificates && qaP.certificates.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {qaP.certificates.map((doc: QADocument) => (
-                              <div key={doc.id} className="flex items-center justify-between bg-white border border-[#141414]/10 px-3 py-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <FileText size={14} className="text-[#141414]/40 flex-shrink-0" />
-                                  <span className="text-xs font-bold truncate">{doc.filename}</span>
-                                </div>
-                                <div className="flex items-center gap-1 flex-shrink-0">
-                                  <a href={doc.url} download={doc.filename} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Download">
-                                    <Download size={12} />
-                                  </a>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="text-xs opacity-40 italic">No certificates</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Row 5: Packaging Pictures & Artwork */}
-                  {qaP && ((qaP.packagingPictureUrls && qaP.packagingPictureUrls.length > 0) || qaP.artworkUrl || qaP.upcImageUrl) && (
-                    <div className="space-y-2">
-                      <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-50 border-b border-[#141414]/10 pb-1">Images</h4>
-                      <div className="flex gap-4 flex-wrap">
-                        {qaP.packagingPictureUrls && qaP.packagingPictureUrls.map((url: string, idx: number) => (
-                          <div key={idx} className="space-y-1">
-                            <img src={url} alt={`Packaging ${idx + 1}`} className="w-24 h-24 object-cover border border-[#141414]/20" />
-                            <div className="text-[9px] opacity-40 text-center">Packaging</div>
-                          </div>
-                        ))}
-                        {qaP.artworkUrl && (
-                          <div className="space-y-1">
-                            <img src={qaP.artworkUrl} alt="Artwork" className="w-24 h-24 object-cover border border-[#141414]/20" />
-                            <div className="text-[9px] opacity-40 text-center">Artwork</div>
-                          </div>
-                        )}
-                        {qaP.upcImageUrl && (
-                          <div className="space-y-1">
-                            <img src={qaP.upcImageUrl} alt="UPC" className="w-24 h-24 object-cover border border-[#141414]/20" />
-                            <div className="text-[9px] opacity-40 text-center">UPC</div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Link to QA page */}
-                  {qaP && (
-                    <div className="text-[10px] opacity-40 italic pt-2 border-t border-[#141414]/10">
-                      To edit product details, spec sheets, certificates, or images, go to the Quality Assurance page.
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </DetailModal>
-          </div>
-        </div>
-      );
+      });
     }
 
     if (activePage === 'Email Center') {
@@ -17209,13 +16734,14 @@ export default function App() {
             );
           })()}
 
-          {/* Locations — standardized DataTable. Core fields are read-only
-              (locations are managed on the QA page). Row click opens a detail
-              modal holding the read-only fields, the appointment-schedule
-              button, and the still-editable Bays list. */}
+          {/* Locations — the ONE locations table (merged from the QA page). Rows
+              open the location card (customer-card style, tabbed) where every
+              field is edited: details, QA manager, bays, terminals, appointment
+              hours, audits and certificates. */}
           <DataTable<Location>
             title="Locations"
             icon={<Globe size={14} />}
+            storageKey="Locations"
             columns={[
               { key: 'locationCode', label: 'Code', mono: true, bold: true, widthClass: 'w-20', render: (l) => l.locationCode || '—' },
               { key: 'name', label: 'Name', bold: true, render: (l) => l.name || '—' },
@@ -17224,186 +16750,47 @@ export default function App() {
               { key: 'city', label: 'City', render: (l) => l.city || '—' },
               { key: 'province', label: 'Province', render: (l) => l.province || '—' },
               { key: 'postalCode', label: 'Postal Code', render: (l) => l.postalCode || '—' },
+              { key: 'qaManagerId', label: 'QA Manager', sortValue: (l) => people.find(p => p.id === l.qaManagerId)?.name || '', render: (l) => people.find(p => p.id === l.qaManagerId)?.name || '—' },
+              { key: 'bays', label: 'Bays', align: 'right', sortValue: (l) => l.bays?.length || 0, render: (l) => <span className="font-mono">{l.bays?.length || 0}</span> },
               {
-                key: 'bays', label: 'Bays', align: 'right', sortable: false,
-                render: (l) => <span className="font-mono">{l.bays?.length || 0}</span>,
+                key: 'active', label: 'Active', align: 'center', sortValue: (l) => (l.active === false ? 0 : 1),
+                render: (l) => (
+                  <input type="checkbox" checked={l.active !== false} onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => { const upd = { ...l, active: e.target.checked }; setLocations(prev => prev.map(x => x.id === l.id ? upd : x)); saveNow(COLLECTIONS.locations, [upd]); }}
+                    className="w-4 h-4 cursor-pointer" title={l.active !== false ? 'Active — shown in location dropdowns' : 'Inactive — hidden from location dropdowns'} />
+                ),
               },
             ]}
             rows={locations}
             getRowKey={(l) => l.id}
-            onRowClick={(l) => setLocationDetail(l)}
-            emptyMessage="No locations yet. Add locations on the Quality Assurance page."
+            onRowClick={(l) => setLocationCard({ loc: l, isNew: false })}
+            onAdd={() => setLocationCard({
+              // Collision-proof id — never derived from the list length.
+              loc: { id: `LOC-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, locationCode: '', name: '', address: '', city: '', province: '', postalCode: '', bays: [], appointmentStartTime: '06:00', appointmentEndTime: '18:00', appointmentDuration: 30 },
+              isNew: true,
+            })}
+            addLabel="Add Location"
+            emptyMessage='No locations yet. Click "Add Location" to create one.'
             defaultSortKey="name"
           />
 
-          <DetailModal
-            tableName="Locations"
-            icon={<Globe size={14} />}
-            isOpen={!!locationDetail}
-            mode="view"
-            onClose={() => setLocationDetail(null)}
-          >
-            {locationDetail && (() => {
-              // Read the live record so bay edits reflect immediately.
-              const liveLoc = locations.find(l => l.id === locationDetail.id) || locationDetail;
-              return (
-                <div className="space-y-5">
-                  <DetailRow label="Code" value={liveLoc.locationCode} mono bold />
-                  <DetailRow label="Name" value={liveLoc.name} bold />
-                  <DetailRow label="BOL Name" value={liveLoc.bolName || '—'} />
-                  <DetailRow label="Address" value={liveLoc.address} />
-                  <DetailRow label="City" value={liveLoc.city} />
-                  <DetailRow label="Province" value={liveLoc.province} />
-                  <DetailRow label="Postal Code" value={liveLoc.postalCode} />
-                  <div className="pt-1">
-                    <button
-                      onClick={() => setEditingAppointmentSchedule({ ...liveLoc })}
-                      className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-2 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors"
-                    >
-                      <Clock size={12} /> Appointment Schedule
-                    </button>
-                  </div>
-                  <div className="space-y-3 pt-2 border-t border-[#141414]/10">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-[10px] uppercase font-bold opacity-50">Bays</h4>
-                      <button
-                        onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, bays: [...l.bays, ''] } : l))}
-                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-colors"
-                      >
-                        <Plus size={10} /> Add Bay
-                      </button>
-                    </div>
-                    <p className="text-[9px] opacity-50">Click the product groups each bay handles — the scan-PO menu auto-selects the matching bay for a load (e.g. a Liquid order books the bay tagged Liquid; a Bulk order the bay tagged Bulk). A bay can handle several groups.</p>
-                    <div className="space-y-2">
-                      {liveLoc.bays.map((bay, idx) => {
-                        const raw = liveLoc.bayProductGroups?.[bay];
-                        const bayGroups: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
-                        const setBayGroups = (next: string[]) => setLocations(locations.map(l => {
-                          if (l.id !== liveLoc.id) return l;
-                          const groups = { ...(l.bayProductGroups || {}) };
-                          if (next.length) groups[bay] = next; else delete groups[bay];
-                          return { ...l, bayProductGroups: groups };
-                        }));
-                        return (
-                        <div key={idx} className="bg-white border border-[#141414]/15 p-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                          <input
-                            type="text"
-                            value={bay}
-                            onChange={(e) => setLocations(locations.map(l => {
-                              if (l.id !== liveLoc.id) return l;
-                              // Renaming a bay carries its product-group assignments along.
-                              const groups = { ...(l.bayProductGroups || {}) };
-                              if (groups[bay] !== undefined) { groups[e.target.value] = groups[bay]; delete groups[bay]; }
-                              return { ...l, bays: l.bays.map((b, i) => i === idx ? e.target.value : b), bayProductGroups: groups };
-                            }))}
-                            className="w-44 bg-[#F5F5F5] border border-[#141414]/20 p-2 text-xs font-bold"
-                            placeholder={`Bay ${idx + 1} Name`}
-                          />
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[9px] uppercase font-bold opacity-40">Handles:</span>
-                            {productGroups.map(g => {
-                              const active = bayGroups.includes(g.name);
-                              return (
-                                <button
-                                  key={g.id}
-                                  type="button"
-                                  onClick={() => setBayGroups(active ? bayGroups.filter(x => x !== g.name) : [...bayGroups, g.name])}
-                                  className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase border transition-colors ${active ? 'bg-violet-700 text-white border-violet-700' : 'bg-white text-[#141414]/60 border-[#141414]/25 hover:border-[#141414]'}`}
-                                  title={active ? `This bay handles ${g.name} loads — click to remove` : `Click to assign ${g.name} loads to this bay`}
-                                >
-                                  {g.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <button
-                            onClick={() => setLocations(locations.map(l => {
-                              if (l.id !== liveLoc.id) return l;
-                              const groups = { ...(l.bayProductGroups || {}) };
-                              delete groups[bay];
-                              return { ...l, bays: l.bays.filter((_, i) => i !== idx), bayProductGroups: groups };
-                            }))}
-                            className="ml-auto p-2 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
-                            title="Delete bay"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                        );
-                      })}
-                      {liveLoc.bays.length === 0 && (
-                        <div className="text-center text-[10px] opacity-40 italic py-4">No bays added yet.</div>
-                      )}
-                    </div>
-                  </div>
-                  {/* Terminal Names — a repeatable list of { terminal, terminalName }
-                      pairs. Each row has two columns: Terminal (code) + Terminal Name. */}
-                  <div className="space-y-3 pt-2 border-t border-[#141414]/10">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-[10px] uppercase font-bold opacity-50">Terminal Names</h4>
-                      <button
-                        onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: [...(l.terminalNames || []), { terminal: '', terminalName: '' }] } : l))}
-                        className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[8px] font-bold uppercase flex items-center gap-1 hover:bg-opacity-80 transition-colors"
-                      >
-                        <Plus size={10} /> Add Terminal Name
-                      </button>
-                    </div>
-                    {(liveLoc.terminalNames || []).length > 0 && (
-                      <div className="flex gap-2 items-center text-[9px] uppercase font-bold opacity-40">
-                        <div className="w-28 px-1">Terminal</div>
-                        <div className="flex-1 px-1">Terminal Name</div>
-                        <div className="w-28 px-1">Warehouse</div>
-                        <div className="w-8" />
-                      </div>
-                    )}
-                    <div className="space-y-2">
-                      {(liveLoc.terminalNames || []).map((tn, idx) => (
-                        <div key={idx} className="flex gap-2 items-center">
-                          <input
-                            type="text"
-                            value={tn.terminal}
-                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, terminal: e.target.value } : t) } : l))}
-                            className="w-28 bg-white border border-[#141414]/20 p-2 text-xs font-mono"
-                            placeholder="Terminal"
-                          />
-                          <input
-                            type="text"
-                            value={tn.terminalName}
-                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, terminalName: e.target.value } : t) } : l))}
-                            className="flex-1 bg-white border border-[#141414]/20 p-2 text-xs"
-                            placeholder="Terminal Name"
-                          />
-                          {/* Warehouse pairs this terminal with a product type — a Stock
-                              Request picks the terminal whose warehouse matches the
-                              ordered product's QA Warehouse. Values mirror the QA product
-                              Warehouse dropdown so they compare cleanly. */}
-                          <select
-                            value={tn.warehouse || ''}
-                            onChange={(e) => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).map((t, i) => i === idx ? { ...t, warehouse: e.target.value || undefined } : t) } : l))}
-                            className="w-28 bg-white border border-[#141414]/20 p-2 text-xs"
-                          >
-                            <option value="">Warehouse</option>
-                            <option value="Liquid">Liquid</option>
-                            <option value="DRY">DRY</option>
-                          </select>
-                          <button
-                            onClick={() => setLocations(locations.map(l => l.id === liveLoc.id ? { ...l, terminalNames: (l.terminalNames || []).filter((_, i) => i !== idx) } : l))}
-                            className="w-8 p-2 hover:bg-red-500 hover:text-white transition-colors"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      ))}
-                      {(liveLoc.terminalNames || []).length === 0 && (
-                        <div className="text-center text-[10px] opacity-40 italic py-4">No terminal names added yet.</div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-[10px] opacity-40 italic">Manage location details on the Quality Assurance page.</div>
-                </div>
-              );
-            })()}
-          </DetailModal>
+          {locationCard && (
+            <React.Fragment key={locationCard.loc.id}>
+            <LocationCard
+              location={locations.find(l => l.id === locationCard.loc.id) || locationCard.loc}
+              isNew={locationCard.isNew}
+              people={people}
+              productGroups={productGroups}
+              onSave={(loc) => {
+                setLocations(prev => prev.some(x => x.id === loc.id) ? prev.map(x => x.id === loc.id ? loc : x) : [...prev, loc]);
+                saveNow(COLLECTIONS.locations, [loc]);
+                if (locationCard.isNew) setLocationCard({ loc, isNew: false });
+              }}
+              onDelete={(id) => { recordUserDeletes(COLLECTIONS.locations, [id]); setLocations(prev => prev.filter(x => x.id !== id)); }}
+              onClose={() => setLocationCard(null)}
+            />
+            </React.Fragment>
+          )}
 
           {/* Vancouver Supply Chain — standardized table. Row click opens the
               existing edit modal (retitled to the Detail convention); delete
