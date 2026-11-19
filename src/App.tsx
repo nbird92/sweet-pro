@@ -366,8 +366,10 @@ function toDateInputValue(v?: string): string {
 // ============================
 // SALES LEAD MODAL (extracted to prevent remount on every keystroke)
 // ============================
-function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform }: {
+function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform, onCreateCustomer }: {
   lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string;
+  /** Convert this lead into a Customer (Edit mode only). */
+  onCreateCustomer?: () => void;
   qaProducts: QAProduct[]; skus: SKU[]; locations: Location[]; salesPeople: Person[];
   /** App's shortform renderer — raw SKU/QA names are format-only ("Bulk"/"Tote"),
    *  so dropdown labels render through this (values stay the stored names). */
@@ -559,6 +561,13 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
           </div>
 
           <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
+            {onCreateCustomer && (
+              <button onClick={onCreateCustomer} disabled={!lead.customerName?.trim()}
+                title="Create a customer from this lead's details and move its saved quotes to the customer card"
+                className="mr-auto px-4 py-2 bg-emerald-600 text-white text-xs font-bold uppercase hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                <Plus size={12} /> Create New Customer
+              </button>
+            )}
             <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
             <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">
               {title.includes('Edit') ? 'Save Changes' : 'Create Lead'}</button>
@@ -718,6 +727,8 @@ export default function App() {
   const [editingInvLineIdx, setEditingInvLineIdx] = useState<number | null>(null);
   const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingLeadCard, setEditingLeadCard] = useState<SalesLead | null>(null);
+  /** Sales Leads page fiscal-year filter ('' = all years), by lead createdAt. */
+  const [leadFiscalYearId, setLeadFiscalYearId] = useState('');
   const [newLeadData, setNewLeadData] = useState<SalesLead>({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
   const [newLeadFollowUp, setNewLeadFollowUp] = useState<Record<string, { date: string; description: string; infoSent: string }>>({});
   const [showAddSampleModal, setShowAddSampleModal] = useState(false);
@@ -11812,6 +11823,66 @@ export default function App() {
     setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
 
+  /** Sales Lead → Customer. Builds a customer from everything on the lead
+   *  (including unsaved edits in the open modal), moves the lead's saved quotes
+   *  to the customer card, and marks the lead Closed Won. If a customer with the
+   *  same name already exists, the quotes are moved onto that customer instead. */
+  const createCustomerFromLead = (lead: SalesLead) => {
+    const name = (lead.customerName || '').trim();
+    if (!name) return;
+    if (!user || !lastSynced) {
+      setErrorBox("The app hasn't finished syncing with the server yet, so the customer could NOT be created. Wait for the sync to complete and try again.");
+      return;
+    }
+    const quotes = lead.savedQuotes || [];
+    const existing = customers.find(c => (c.name || '').trim().toLowerCase() === name.toLowerCase());
+    let target: Customer;
+    if (existing) {
+      if (!window.confirm(`A customer named "${existing.name}" already exists.${quotes.length ? ` Move this lead's ${quotes.length} saved quote(s) to that customer` : ' Link this lead to that customer'} and mark the lead Closed Won?`)) return;
+      const have = new Set((existing.savedQuotes || []).map(q => q.id));
+      target = { ...existing, savedQuotes: [...quotes.filter(q => !have.has(q.id)), ...(existing.savedQuotes || [])] };
+      const t = target;
+      setCustomers(prev => prev.map(c => c.id === existing.id ? t : c));
+    } else {
+      if (!window.confirm(`Create customer "${name}" from this sales lead${quotes.length ? ` and move its ${quotes.length} saved quote(s) to the customer card` : ''}?`)) return;
+      const custNum = getNextCustomerNumber(customers);
+      const salesperson = people.find(p => p.id === lead.salespersonId);
+      const noteLines = [
+        `Created from sales lead on ${new Date().toISOString().slice(0, 10)}.`,
+        lead.contactName ? `Contact: ${lead.contactName}` : '',
+        lead.product ? `Product interest: ${lead.product}${lead.volume ? ` (${lead.volume} MT)` : ''}` : (lead.volume ? `Volume: ${lead.volume} MT` : ''),
+        lead.source ? `Lead source: ${lead.source}` : '',
+        salesperson ? `Salesperson: ${salesperson.name}` : '',
+        lead.notes ? `Notes: ${lead.notes}` : '',
+        ...(lead.followUps || []).map(f => `Follow-up ${f.date}${f.completed ? ' (done)' : ''}: ${f.description}${f.infoSent ? ` (info sent: ${f.infoSent})` : ''}`),
+      ].filter(Boolean);
+      const contactEmail = (lead.contactEmail || '').trim();
+      const contactPhone = (lead.contactPhone || '').trim();
+      target = {
+        id: `CUST-${custNum}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        customerNumber: custNum,
+        defaultLocation: activeLocationName(lead.location) || lead.location || 'Hamilton',
+        defaultMargin: 250,
+        notes: noteLines.join('\n'),
+        ...(contactEmail ? { contactEmail, salesContactEmail: contactEmail } : {}),
+        ...(contactPhone ? { contactPhone } : {}),
+        ...(lead.salespersonId ? { salespersonId: lead.salespersonId } : {}),
+        ...(quotes.length ? { savedQuotes: quotes } : {}),
+      };
+      const t = target;
+      setCustomers(prev => [...prev, t]);
+    }
+    saveNow(COLLECTIONS.customers, [target]);
+    // The quotes now live on the customer card — clear them from the lead.
+    const { savedQuotes: _moved, ...rest } = lead;
+    const wonLead: SalesLead = { ...rest, status: 'Closed Won' };
+    setSalesLeads(prev => prev.map(l => l.id === lead.id ? wonLead : l));
+    saveNow(COLLECTIONS.salesLeads, [wonLead]);
+    setEditingLeadCard(null);
+    setErrorBox(`${existing ? `Linked to existing customer "${target.name}"` : `Customer "${target.name}" (No. ${target.customerNumber}) created`}${quotes.length ? `, and ${quotes.length} saved quote(s) moved to the customer card` : ''}. The sales lead is now Closed Won.`);
+  };
+
   const addCustomer = () => {
     const custNum = getNextCustomerNumber(customers);
     const id = `CUST-${custNum}`;
@@ -15763,7 +15834,13 @@ export default function App() {
 
     if (activePage === 'Sales Leads') {
       const salesPeople = people.filter(p => p.department === 'sales');
-      const filteredLeads = getSortedAndFilteredData<SalesLead>(salesLeads, ['customerName', 'product', 'location', 'status']);
+      // Fiscal-year filter (by the lead's createdAt date). Undated leads only
+      // show under "All fiscal years".
+      const leadFy = fiscalYears.find(fy => fy.id === leadFiscalYearId);
+      const leadsInFy = leadFy
+        ? salesLeads.filter(l => { const d = (l.createdAt || '').slice(0, 10); return !!d && d >= leadFy.startDate && d <= leadFy.endDate; })
+        : salesLeads;
+      const filteredLeads = getSortedAndFilteredData<SalesLead>(leadsInFy, ['customerName', 'product', 'location', 'status']);
 
       const leadExportSheets = (): SheetSpec[] => [{
         sheetName: 'Sales Leads',
@@ -15807,7 +15884,22 @@ export default function App() {
           </PageBanner>
           <div className="p-6 space-y-4">
 
-          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search leads by customer, product, location, status..." />
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search leads by customer, product, location, status..." />
+            </div>
+            <select
+              value={leadFiscalYearId}
+              onChange={(e) => setLeadFiscalYearId(e.target.value)}
+              title="Show sales leads created in a fiscal year"
+              className="bg-white border border-[#141414] px-3 py-2 text-xs font-bold uppercase outline-none shrink-0"
+            >
+              <option value="">All fiscal years</option>
+              {[...fiscalYears].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map(fy => (
+                <option key={fy.id} value={fy.id}>{fy.name}</option>
+              ))}
+            </select>
+          </div>
 
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -15895,6 +15987,7 @@ export default function App() {
           <AnimatePresence>
             {editingLeadCard && (
               <SalesLeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
+                onCreateCustomer={() => createCustomerFromLead(editingLeadCard)}
                 qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople} toShortform={productToShortform}
                 newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                 onSubmit={() => {
