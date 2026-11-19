@@ -55,7 +55,9 @@ export function PageToolbar({ search, filters, toolbarRight }: Pick<PageShellPro
     <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
       {search && <ToolbarSearch {...search} />}
       {filters && <div className="flex flex-wrap items-center gap-3">{filters}</div>}
-      {toolbarRight && <div className="ml-auto flex items-center gap-3">{toolbarRight}</div>}
+      {/* Right end of the toolbar — the ONE place a page's Columns button lives.
+          Page-mode DataTables portal their Columns menu into this slot. */}
+      <div data-page-toolbar-slot="" className="ml-auto flex items-center gap-3">{toolbarRight}</div>
     </div>
   );
 }

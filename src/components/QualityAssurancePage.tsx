@@ -2884,7 +2884,7 @@ export default function QualityAssurancePage({
                 <div className="bg-white border border-[#141414] p-4 space-y-3">
                   <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Product Specifications</div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="std-table w-full text-left border-collapse">
                       <thead>
                         <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                           <th className="p-3 border-r border-white/10">Brix</th>
@@ -3367,7 +3367,7 @@ export default function QualityAssurancePage({
                   {/* BOM Table */}
                   {(displayData.billOfMaterials && displayData.billOfMaterials.length > 0) ? (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
+                      <table className="std-table w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                             <th className="p-2">Material</th>

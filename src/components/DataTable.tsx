@@ -15,7 +15,8 @@
 //
 // The component is intentionally generic — pass columns + rows + onRowClick.
 
-import React, { useMemo, useState, useCallback, useContext, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useContext, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, RotateCcw, SlidersHorizontal, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
 // Optional cross-table column-order store. When an ancestor provides this
@@ -173,6 +174,13 @@ export default function DataTable<T>({
   renderExpanded,
   canExpand,
 }: DataTableProps<T>) {
+  // Page mode: the page toolbar's right-hand slot (see PageToolbar), where the
+  // Columns menu is portalled. null → no toolbar on this page; keep the strip.
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (variant !== 'page') { setToolbarSlot(null); return; }
+    setToolbarSlot(document.querySelector<HTMLElement>('[data-page-toolbar-slot]'));
+  }, [variant]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const toggleExpanded = (k: string) => setExpanded(prev => {
     const n = new Set(prev);
@@ -398,6 +406,19 @@ export default function DataTable<T>({
           )}
         </div>
       </div>
+      ) : toolbarSlot ? (
+        <>
+          {/* Columns menu goes to the right end of the page toolbar — the one
+              place every page keeps its Columns button. */}
+          {createPortal(<div className="flex items-center gap-3">{resetBtn}{columnsPicker(false)}</div>, toolbarSlot)}
+          {onAdd && (
+            <div className="px-4 py-2 flex justify-end border-b border-[#141414] bg-white">
+              <button onClick={onAdd} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors whitespace-nowrap">
+                <Plus size={12} /> {addLabel}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
       <div className="px-4 py-2 flex justify-between items-center border-b border-[#141414] bg-white">
         <div className="flex items-center gap-3">

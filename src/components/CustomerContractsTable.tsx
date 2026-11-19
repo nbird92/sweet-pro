@@ -33,7 +33,7 @@ export default function CustomerContractsTable({ rows, label, onOpenContract, em
 }) {
   return (
     <div className="bg-white border border-[#141414] overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
+      <table className="std-table w-full text-xs border-collapse">
         <thead>
           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
             {['Contract #', 'Status', 'Product', 'Origin', 'Term', 'Price', 'Volume (MT)', 'Taken', 'On Order', 'Balance', 'Progress'].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}

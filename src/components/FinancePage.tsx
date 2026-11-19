@@ -378,7 +378,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears, monthTer
                     <p className="text-xs text-gray-500 italic">No quarters added.</p>
                   ) : (
                     <div className="bg-white border border-[#141414] overflow-hidden">
-                      <table className="w-full text-left border-collapse">
+                      <table className="std-table w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                             <th className="p-2 border-r border-[#E4E3E0]/20">Quarter Name</th>
@@ -457,7 +457,7 @@ export default function FinancePage({ fiscalYears, onUpdateFiscalYears, monthTer
                     <p className="text-xs text-gray-500 italic">No periods added.</p>
                   ) : (
                     <div className="bg-white border border-[#141414] overflow-hidden">
-                      <table className="w-full text-left border-collapse">
+                      <table className="std-table w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                             <th className="p-2 border-r border-[#E4E3E0]/20">Period Name</th>

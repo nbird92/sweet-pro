@@ -621,7 +621,7 @@ export default function SalesStatsPage({ invoices, orders, customers, contracts,
             </div>
           </div>
         ) : (
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead>
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 {rowFields.map(f => (

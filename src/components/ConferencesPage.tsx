@@ -490,7 +490,7 @@ export default function ConferencesPage({
             <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 bg-gray-50"><p>No meetings scheduled yet</p></div>
           ) : (
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-              <table className="w-full text-left border-collapse">
+              <table className="std-table w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <MSortHeader field="date" label="Date" />
@@ -655,7 +655,7 @@ export default function ConferencesPage({
             <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 bg-gray-50"><p>No follow-ups yet. Add follow-ups from meeting details above.</p></div>
           ) : (
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
-              <table className="w-full text-left border-collapse">
+              <table className="std-table w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <FSortHeader field="status" label="Status" />

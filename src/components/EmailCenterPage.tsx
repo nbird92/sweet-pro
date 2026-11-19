@@ -457,7 +457,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           </div>
         </div>
         <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[520px]">
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <th className="p-3 bg-[#141414] border-r border-white/20 w-6"></th>
@@ -547,7 +547,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             )}
           </div>
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[460px]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 bg-[#141414] border-r border-white/20 w-6"></th>
@@ -661,7 +661,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           </div>
         </div>
         <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[420px]">
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead className="sticky top-0 z-10">
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <th className="p-3 bg-[#141414] border-r border-white/20">Imported</th>
@@ -712,7 +712,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             {pendingApptRequests > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 text-[9px] font-bold uppercase">{pendingApptRequests} to review</span>}
           </div>
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
@@ -804,7 +804,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             {pendingAmendments > 0 && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[9px] font-bold uppercase">{pendingAmendments} to review</span>}
           </div>
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
@@ -886,7 +886,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       {/* Log table */}
       <div className="px-6 pb-6">
         <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead>
               <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                 <th className="p-3 border-r border-white/20">When</th>

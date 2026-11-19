@@ -105,6 +105,7 @@ const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarr
 import PageBanner from './components/PageBanner';
 import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle, PageToolbar } from './components/PageShell';
 import LocationCard from './components/LocationCard';
+import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
@@ -764,7 +765,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
             <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Saved Quotes ({(lead.savedQuotes || []).length})</h4>
             {(lead.savedQuotes || []).length > 0 ? (
               <div className="overflow-x-auto border border-[#141414]/20">
-                <table className="w-full text-xs border-collapse">
+                <table className="std-table w-full text-xs border-collapse">
                   <thead>
                     <tr className="bg-[#141414] text-[#E4E3E0] text-[9px] uppercase tracking-widest">
                       {['Saved', 'Product', 'Origin → Dest.', 'Volume (MT)', 'Raw (USD/CWT)', 'FX', 'Margin (CAD/MT)', 'Price / MT', 'Total', 'Period', ''].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}
@@ -7408,7 +7409,7 @@ export default function App() {
         <h4 className="text-[10px] uppercase font-bold tracking-widest opacity-60">Line Items</h4>
         {/* Entry table — same dark-headed layout as the order menus. */}
         <div className="border border-[#141414]">
-          <table className="w-full text-left border-collapse">
+          <table className="std-table w-full text-left border-collapse">
             <thead className="bg-[#141414] text-[#E4E3E0]">
               <tr className="text-[10px] uppercase font-bold">
                 <th className="p-3">Product</th>
@@ -14690,6 +14691,9 @@ export default function App() {
     }
 
     if (activePage === 'Orders') {
+      const ORDER_COLUMN_LABELS: Record<string, string> = { bolNumber: 'BOL No.', customer: 'Customer', shipToName: 'Ship To', product: 'Product', contractNumber: 'Contract #', totalWeight: 'Order Total Weight (KG)', scaledQtyMt: 'Scaled QTY (MT)', po: 'PO No.', shipmentDate: 'Shipment Date', deliveryDate: 'Delivery Date', carrier: 'Carrier', pricePerMt: 'Price/MT', currency: 'Currency', status: 'Status', location: 'Location', splitNumber: 'Split No.', completeBill: 'Complete & Bill' };
+      const ORDER_COLUMN_SORT: Record<string, string> = { bolNumber: 'bolNumber', customer: 'customer', shipToName: 'shipToName', product: 'product', contractNumber: 'contractNumber', totalWeight: 'totalWeight', scaledQtyMt: 'scaledQtyMt', po: 'po', shipmentDate: 'shipmentDate', deliveryDate: 'deliveryDate', carrier: 'carrier', pricePerMt: 'pricePerMt', currency: 'currency', status: 'status', location: 'location', splitNumber: 'splitNumber', completeBill: 'status' };
+      const orderCols = makeColumnLayout('orders-table', Object.keys(ORDER_COLUMN_LABELS), columnOrderStore, columnVisibilityStore);
       // An order billed out by an ACTIVE invoice (same BOL or numeric PO —
       // isOrderInvoicedOut) is hidden from this page. Cancelled/Credit invoices
       // don't bill an order out, so it stays workable.
@@ -14822,6 +14826,7 @@ export default function App() {
             count={filteredOrders.length}
             exportSheets={orderExportSheets}
             exportFileName="Orders"
+            toolbarRight={<ColumnsMenu layout={orderCols} labels={ORDER_COLUMN_LABELS} />}
             search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search orders by BOL, customer, product, PO or carrier…' }}
             filters={
               // A search always surfaces stale orders (the auto-hide is gated on
@@ -14962,30 +14967,16 @@ export default function App() {
             <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Customer" sortKey="customer" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Ship To" sortKey="shipToName" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Product" sortKey="product" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Contract #" sortKey="contractNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Order Total Weight (KG)" sortKey="totalWeight" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Scaled QTY (MT)" sortKey="scaledQtyMt" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="PO No." sortKey="po" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Delivery Date" sortKey="deliveryDate" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Carrier" sortKey="carrier" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Price/MT" sortKey="pricePerMt" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Currency" sortKey="currency" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Status" sortKey="status" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Location" sortKey="location" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Split No." sortKey="splitNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
-                  <SortableHeader label="Complete & Bill" sortKey="status" currentSort={orderSortConfig} onSort={handleOrderSort} />
+                  {orderCols.shown.map(k => (
+                    <React.Fragment key={k}><SortableHeader label={ORDER_COLUMN_LABELS[k]} sortKey={ORDER_COLUMN_SORT[k]} currentSort={orderSortConfig} onSort={handleOrderSort} /></React.Fragment>
+                  ))}
                   <th className="p-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#141414]/10">
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={18} className="p-6 text-center text-xs font-bold opacity-40 italic">
+                    <td colSpan={orderCols.shown.length + 1} className="p-6 text-center text-xs font-bold opacity-40 italic">
                       {orders.length === 0 ? (
                         'No orders yet. Use "Add Order" to create new orders.'
                       ) : searchTerm ? (
@@ -15033,36 +15024,60 @@ export default function App() {
                   // Unified resolver: fill any blank display cell from the same
                   // BOL/PO's invoice / shipment / lot-code record (display-only).
                   const ordRes = resolveRecord({ bol: ord.bolNumber, po: ord.po });
+                  // Price/MT prefers the matching contract's finalPrice (robust
+                  // match: comma lists, line-item contracts, split-number
+                  // prefixes), then the order's own amount ÷ total weight.
+                  const ordContract = contractForOrder(ord);
+                  const priceMt = orderPricePerMt(ord, ordContract);
                   return (
                     <React.Fragment key={ord.id}>
                       <tr className="hover:bg-[#F9F9F9] transition-colors group cursor-pointer" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 52px' } as React.CSSProperties} onClick={() => setViewingOrderCard({ ...ord })}>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer || ordRes.customer || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
-                        <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || ordRes.contractNumber || '—'}</td>
-                        <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${fmtN(totalWeight, 2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{fmtN((totalWeight * 1000), 0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{typeof ord.scaledQtyMt === 'number' && ord.scaledQtyMt > 0 ? ord.scaledQtyMt.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po || ordRes.po || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || ordRes.carrier || '—'}</td>
                         {(() => {
-                          // Price/MT prefers the matching contract's finalPrice
-                          // (robust match: comma lists, line-item contracts, and
-                          // split-number prefixes), then falls back to the order's
-                          // own amount ÷ total weight.
-                          const ordContract = contractForOrder(ord);
-                          const priceMt = orderPricePerMt(ord, ordContract);
-                          return (<>
-                            <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
-                              {priceMt > 0 ? `$${fmtN(priceMt, 2)}` : '—'}
-                            </td>
-                            <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
-                              {ordContract?.currency || ord.currency || '—'}
-                            </td>
-                          </>);
-                        })()}
+                          const cells: Record<string, React.ReactNode> = {
+                            bolNumber: (
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.bolNumber}</td>
+                            ),
+                            customer: (
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{ord.customer || ordRes.customer || '—'}</td>
+                            ),
+                            shipToName: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{shipToName}</td>
+                            ),
+                            product: (
+                        <td className={`p-3 text-xs border-r border-[#141414]/10 truncate max-w-[180px] ${productUnmatched ? 'bg-red-50 text-red-700 font-bold' : ''}`} title={productUnmatched ? `No matching product in catalog: ${ord.product || ord.lineItems.map(li => li.productName).join(', ')}` : productDisplay}>{productDisplay}{productUnmatched && <span className="ml-1" title="No matching SKU">⚠️</span>}</td>
+                            ),
+                            contractNumber: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.contractNumber || ord.lineItems.map(li => li.contractNumber).filter(Boolean).join(', ') || ordRes.contractNumber || '—'}</td>
+                            ),
+                            totalWeight: (
+                        <td className={`p-3 text-xs font-bold border-r border-[#141414]/10 ${totalWeight > 150 ? 'bg-red-50 text-red-700' : ''}`} title={totalWeight > 150 ? `${fmtN(totalWeight, 2)} MT — over 150 MT, likely a x1000 / unit-vs-MT glitch. Edit the order line to correct it.` : ''}>{fmtN((totalWeight * 1000), 0)}{totalWeight > 150 && <span className="ml-1" title="Implausible weight">⚠️</span>}</td>
+                            ),
+                            scaledQtyMt: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{typeof ord.scaledQtyMt === 'number' && ord.scaledQtyMt > 0 ? ord.scaledQtyMt.toLocaleString(undefined, { maximumFractionDigits: 3 }) : '—'}</td>
+                            ),
+                            po: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.po || ordRes.po || '—'}</td>
+                            ),
+                            shipmentDate: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.shipmentDate || '—'}</td>
+                            ),
+                            deliveryDate: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.deliveryDate || '—'}</td>
+                            ),
+                            carrier: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{ord.carrier || ordRes.carrier || '—'}</td>
+                            ),
+                            pricePerMt: (
+                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10 font-mono">
+                          {priceMt > 0 ? `$${fmtN(priceMt, 2)}` : '—'}
+                        </td>
+                            ),
+                            currency: (
+                        <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">
+                          {ordContract?.currency || ord.currency || '—'}
+                        </td>
+                            ),
+                            status: (
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={ord.status}
@@ -15095,8 +15110,14 @@ export default function App() {
                             {ord.status === 'Completed' && <option value="Completed">Completed</option>}
                           </select>
                         </td>
+                            ),
+                            location: (
                         <td className="p-3 text-xs border-r border-[#141414]/10">{ord.location || ordRes.location || '—'}</td>
+                            ),
+                            splitNumber: (
                         <td className="p-3 text-xs border-r border-[#141414]/10 font-mono">{ord.splitNumber || ordRes.splitNo || '—'}</td>
+                            ),
+                            completeBill: (
                         <td className="p-3 text-xs border-r border-[#141414]/10" onClick={(e) => e.stopPropagation()}>
                           {ord.status === 'Confirmed' ? (
                             <button
@@ -15119,6 +15140,10 @@ export default function App() {
                             <span className="text-[8px] uppercase font-bold opacity-30">—</span>
                           )}
                         </td>
+                            ),
+                          };
+                          return orderCols.shown.map(k => <React.Fragment key={k}>{cells[k]}</React.Fragment>);
+                        })()}
                         <td className="p-4 text-xs" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center gap-2">
                           <button
@@ -16427,7 +16452,7 @@ export default function App() {
               </div>
             </div>
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[600px]">
-              <table className="w-full text-left border-collapse">
+              <table className="std-table w-full text-left border-collapse">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <th className="p-3 bg-[#141414] w-6"></th>
@@ -17904,7 +17929,7 @@ export default function App() {
 
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="std-table w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <th className="p-4 border-r border-white/10">Month</th>
@@ -20389,7 +20414,7 @@ export default function App() {
                     />
                     {searchTerm && (
                       <div className="border border-[#141414]/30 max-h-64 overflow-y-auto">
-                        <table className="w-full text-xs">
+                        <table className="std-table w-full text-xs">
                           <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
                             <tr>
                               <th className="p-2 text-left">BOL</th>
@@ -22244,7 +22269,7 @@ export default function App() {
                               {orderSyncTabHeaders && (
                                 <>
                                   <div className="border border-[#141414]/20 overflow-x-auto max-h-48">
-                                    <table className="text-[10px] w-full">
+                                    <table className="std-table text-[10px] w-full">
                                       <thead className="bg-[#141414] text-[#E4E3E0] sticky top-0">
                                         <tr>{orderSyncTabHeaders.map((h, i) => <th key={i} className="p-1 text-left border-r border-white/10 whitespace-nowrap">{columnLetter(i)}: {h || <span className="opacity-50">(blank)</span>}</th>)}</tr>
                                       </thead>
@@ -24474,7 +24499,7 @@ export default function App() {
 
                   {(editingContract.contractLines || []).length > 0 && (
                     <div className="border border-[#141414]/10 overflow-hidden">
-                      <table className="w-full">
+                      <table className="std-table w-full">
                         <thead>
                           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase">
                             <th className="p-2 text-left">Product</th>
@@ -27581,7 +27606,7 @@ export default function App() {
                     </div>
                   </div>
                   <div className="border border-[#141414]">
-                    <table className="w-full text-left border-collapse">
+                    <table className="std-table w-full text-left border-collapse">
                       <thead className="bg-[#141414] text-[#E4E3E0]">
                         <tr className="text-[10px] uppercase font-bold">
                           <th className="p-3">Product</th>
