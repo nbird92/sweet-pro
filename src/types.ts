@@ -1302,6 +1302,8 @@ export interface SalesLead {
   source?: string;
   /** Quotes saved for this prospect from the Customer Quote page. */
   savedQuotes?: SavedQuote[];
+  /** FiscalYear.id the lead belongs to. Unset = derived from createdAt. */
+  fiscalYearId?: string;
 }
 
 export const INITIAL_SALES_LEADS: SalesLead[] = [];

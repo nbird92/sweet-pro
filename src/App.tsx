@@ -584,10 +584,11 @@ function SampleRequestModal({ sample, setSample, title, onSave, onSubmitRequest,
   );
 }
 
-function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform, onCreateCustomer }: {
+function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, skus, locations, salesPeople, newLeadFollowUp, setNewLeadFollowUp, toShortform, onCreateCustomer, fiscalYears = [] }: {
   lead: SalesLead; setLead: (l: SalesLead) => void; onSubmit: () => void; onClose: () => void; title: string;
   /** Convert this lead into a Customer (Edit mode only). */
   onCreateCustomer?: () => void;
+  fiscalYears?: FiscalYear[];
   qaProducts: QAProduct[]; skus: SKU[]; locations: Location[]; salesPeople: Person[];
   /** App's shortform renderer — raw SKU/QA names are format-only ("Bulk"/"Tote"),
    *  so dropdown labels render through this (values stay the stored names). */
@@ -674,12 +675,27 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
                 <option value="Closed Lost">Closed Lost</option>
               </select></div>
           </div>
+          <div className="grid grid-cols-2 gap-4">
           <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Sales Person</label>
             <select value={lead.salespersonId} onChange={(e) => setLead({ ...lead, salespersonId: e.target.value })}
               className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
               <option value="">Select salesperson</option>
               {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select></div>
+          <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Fiscal Year</label>
+            {(() => {
+              // Saved pick, else the fiscal year the lead's created date falls in.
+              const d = (lead.createdAt || new Date().toISOString()).slice(0, 10);
+              const derived = fiscalYears.find(fy => d >= fy.startDate && d <= fy.endDate)?.id || '';
+              return (
+                <select value={lead.fiscalYearId || derived} onChange={(e) => setLead({ ...lead, fiscalYearId: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                  <option value="">Select fiscal year</option>
+                  {[...fiscalYears].sort((a, b) => b.startDate.localeCompare(a.startDate)).map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
+                </select>
+              );
+            })()}</div>
+          </div>
           <div className="grid grid-cols-3 gap-4">
             <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Contact Name</label>
               <input type="text" value={lead.contactName || ''} onChange={(e) => setLead({ ...lead, contactName: e.target.value })}
@@ -16164,7 +16180,10 @@ export default function App() {
       // show under "All fiscal years".
       const leadFy = fiscalYears.find(fy => fy.id === leadFiscalYearId);
       const leadsInFy = leadFy
-        ? salesLeads.filter(l => { const d = (l.createdAt || '').slice(0, 10); return !!d && d >= leadFy.startDate && d <= leadFy.endDate; })
+        ? salesLeads.filter(l => {
+            if (l.fiscalYearId && fiscalYears.some(fy => fy.id === l.fiscalYearId)) return l.fiscalYearId === leadFy.id;
+            const d = (l.createdAt || '').slice(0, 10); return !!d && d >= leadFy.startDate && d <= leadFy.endDate;
+          })
         : salesLeads;
       const filteredLeads = getSortedAndFilteredData<SalesLead>(leadsInFy, ['customerName', 'product', 'location', 'status']);
 
@@ -16298,7 +16317,7 @@ export default function App() {
           {/* Add Lead Modal */}
           <AnimatePresence>
             {showAddLeadModal && (
-                <SalesLeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" onClose={() => setShowAddLeadModal(false)}
+                <SalesLeadModal lead={newLeadData} setLead={setNewLeadData} title="Add Sales Lead" fiscalYears={fiscalYears} onClose={() => setShowAddLeadModal(false)}
                   qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople} toShortform={productToShortform}
                   newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
                   onSubmit={() => {
@@ -16312,7 +16331,7 @@ export default function App() {
           {/* Edit Lead Card Modal */}
           <AnimatePresence>
             {editingLeadCard && (
-              <SalesLeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" onClose={() => setEditingLeadCard(null)}
+              <SalesLeadModal lead={editingLeadCard} setLead={setEditingLeadCard as (l: SalesLead) => void} title="Edit Sales Lead" fiscalYears={fiscalYears} onClose={() => setEditingLeadCard(null)}
                 onCreateCustomer={() => createCustomerFromLead(editingLeadCard)}
                 qaProducts={qaProducts} skus={skus} locations={locations} salesPeople={salesPeople} toShortform={productToShortform}
                 newLeadFollowUp={newLeadFollowUp} setNewLeadFollowUp={setNewLeadFollowUp}
