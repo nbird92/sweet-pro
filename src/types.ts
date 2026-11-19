@@ -1288,6 +1288,8 @@ export interface SalesLead {
   followUps: SalesLeadFollowUp[];
   createdAt: string;
   source?: string;
+  /** Quotes saved for this prospect from the Customer Quote page. */
+  savedQuotes?: SavedQuote[];
 }
 
 export const INITIAL_SALES_LEADS: SalesLead[] = [];

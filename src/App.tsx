@@ -11061,6 +11061,29 @@ export default function App() {
     if (cur === 'CAD' || cur === 'USD') setOrderCurrency(cur);
   };
 
+  // Prospects from the Sales Leads table, offered in the Customer Quote picker so
+  // quotes can go to potential new customers. Excludes Closed Lost leads and any
+  // lead whose company is already a customer (the customer record wins), one
+  // entry per company name.
+  const quoteLeads = useMemo(() => {
+    const custNames = new Set(customers.map(c => (c.name || '').trim().toLowerCase()).filter(Boolean));
+    const seen = new Set<string>();
+    const out: SalesLead[] = [];
+    for (const l of salesLeads) {
+      const name = (l.customerName || '').trim();
+      const k = name.toLowerCase();
+      if (!name || l.status === 'Closed Lost' || custNames.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      out.push(l);
+    }
+    return out.sort((a, b) => a.customerName.localeCompare(b.customerName, undefined, { sensitivity: 'base' }));
+  }, [salesLeads, customers]);
+  /** The sales lead behind the quote's selected name, when it isn't a customer. */
+  const selectedQuoteLead = useMemo(
+    () => customers.some(c => c.name === customer) ? undefined : quoteLeads.find(l => l.customerName === customer),
+    [customers, customer, quoteLeads],
+  );
+
   // Signed-in user's Person record (matched by email) and their Default Location.
   // Applied ONCE per session as the starting Shipment Schedule location and
   // Customer Quote origin; the user can still change either afterwards.
@@ -11872,6 +11895,10 @@ export default function App() {
       setErrorBox("The app hasn't finished syncing with the server yet, so it's read-only right now and this contract could NOT be saved. Wait for the sync status to show a recent sync (reload if it's stuck), then create the contract again so it's stored to Firestore.");
       return;
     }
+    if (selectedQuoteLead) {
+      setErrorBox(`${customer} is a sales lead, not a customer yet. Add them on the Customers page first, then create the contract.`);
+      return;
+    }
     const selectedSku = skus.find(s => s.id === selectedSkuId) || skus[0];
     const selectedCustomer = customers.find(c => c.name === customer) || customers[0];
     if (!selectedSku || !selectedCustomer) {
@@ -11934,8 +11961,9 @@ export default function App() {
       return;
     }
     const cust = customers.find(c => c.name === customer);
+    const lead = cust ? undefined : selectedQuoteLead;
     const sku = skus.find(s => s.id === selectedSkuId) || skus[0];
-    if (!cust || !sku) { setErrorBox('Select a customer and product before saving the quote.'); return; }
+    if ((!cust && !lead) || !sku) { setErrorBox('Select a customer and product before saving the quote.'); return; }
     const quote: SavedQuote = {
       id: `QUOTE-${Date.now()}`,
       savedAt: new Date().toISOString(),
@@ -11952,13 +11980,22 @@ export default function App() {
       rawPriceUsdCwt: config.rawPriceUsdCwt,
       fxRate: config.fxRate,
       marginCadMt: config.refiningMarginCadMt,
-      paymentTerms: config.paymentTerms || cust.defaultPaymentTerms || undefined,
+      paymentTerms: config.paymentTerms || cust?.defaultPaymentTerms || undefined,
       startDate: config.contractStartDate || undefined,
       endDate: config.contractEndDate || undefined,
     };
-    const updated: Customer = { ...cust, savedQuotes: [quote, ...(cust.savedQuotes || [])] };
-    setCustomers(prev => prev.map(c => c.id === cust.id ? updated : c));
-    saveNow(COLLECTIONS.customers, [updated]);
+    // Firestore rejects undefined values — drop them.
+    (Object.keys(quote) as (keyof SavedQuote)[]).forEach(k => { if (quote[k] === undefined) delete quote[k]; });
+    if (lead) {
+      // A prospect's quotes are kept on its Sales Lead record.
+      const updatedLead: SalesLead = { ...lead, savedQuotes: [quote, ...(lead.savedQuotes || [])] };
+      setSalesLeads(prev => prev.map(l => l.id === lead.id ? updatedLead : l));
+      saveNow(COLLECTIONS.salesLeads, [updatedLead]);
+    } else if (cust) {
+      const updated: Customer = { ...cust, savedQuotes: [quote, ...(cust.savedQuotes || [])] };
+      setCustomers(prev => prev.map(c => c.id === cust.id ? updated : c));
+      saveNow(COLLECTIONS.customers, [updated]);
+    }
     setQuoteSavedFlash(true);
     window.setTimeout(() => setQuoteSavedFlash(false), 2500);
   };
@@ -18765,8 +18802,20 @@ export default function App() {
               }}
               className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
             >
-              {[...customers].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              <optgroup label="Customers">
+                {[...customers].sort((a, b) => (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              </optgroup>
+              {quoteLeads.length > 0 && (
+                <optgroup label="Sales Leads (prospects)">
+                  {quoteLeads.map(l => <option key={l.id} value={l.customerName}>{l.customerName} — lead</option>)}
+                </optgroup>
+              )}
             </select>
+            {selectedQuoteLead && (
+              <div className="mt-2 text-[10px] uppercase font-bold tracking-widest text-amber-700">
+                Sales lead{selectedQuoteLead.contactName ? ` · ${selectedQuoteLead.contactName}` : ''}{selectedQuoteLead.contactEmail ? ` · ${selectedQuoteLead.contactEmail}` : ''} — add as a customer before creating a contract
+              </div>
+            )}
           </section>
 
 
@@ -19449,7 +19498,7 @@ export default function App() {
               <>
                 <button onClick={() => {
                   const selectedCust = customers.find(c => c.name === customer);
-                  setEmailTo(selectedCust?.salesContactEmail || selectedCust?.contactEmail || '');
+                  setEmailTo(selectedCust?.salesContactEmail || selectedCust?.contactEmail || selectedQuoteLead?.contactEmail || '');
                   setEmailCc('');
                   const sku = skus.find(s => s.id === selectedSkuId) || skus[0];
                   setEmailSubject(`Quote - ${customer} - ${sku?.name || ''} - ${config.volumeMt} MT`);
