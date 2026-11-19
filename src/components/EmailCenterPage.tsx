@@ -118,6 +118,7 @@ const TYPE_LABELS: Record<EmailDocumentType, string> = {
   coa: 'Certificate of Analysis',
   invoice: 'Invoice',
   return_order_confirmation: 'Return Order Confirmation',
+  sample_request: 'Sample Request',
 };
 
 const STATUS_STYLES: Record<EmailStatus, string> = {

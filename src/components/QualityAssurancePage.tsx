@@ -2151,6 +2151,7 @@ export default function QualityAssurancePage({
                     <option value="Packing List">Packing List</option>
                     <option value="Order Confirmation">Order Confirmation</option>
                     <option value="Return Order Confirmation">Return Order Confirmation</option>
+                    <option value="Sample Request">Sample Request</option>
                     <option value="Other">Other</option>
                   </select>
                 </div>

@@ -11,7 +11,7 @@ import { resolveLineWeights } from './pdfDocHelpers';
 
 export type DocTemplateKey =
   | 'bol' | 'coaLiquid' | 'coaGranulated' | 'packingList' | 'bagId'
-  | 'scaleTicket' | 'orderConfirmation' | 'proForma';
+  | 'scaleTicket' | 'orderConfirmation' | 'proForma' | 'sampleRequest';
 
 const registry: Partial<Record<DocTemplateKey, { grid: TemplateGrid; logo: string }>> = {};
 

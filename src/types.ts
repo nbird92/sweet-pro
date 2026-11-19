@@ -786,7 +786,7 @@ export const INITIAL_SHIPPING_TERMS: ShippingTerm[] = [
 /* COAs, invoices) + their audit log. Powered by Resend.                  */
 /* ====================================================================== */
 
-export type EmailDocumentType = 'order_confirmation' | 'bol' | 'coa' | 'invoice' | 'return_order_confirmation';
+export type EmailDocumentType = 'order_confirmation' | 'bol' | 'coa' | 'invoice' | 'return_order_confirmation' | 'sample_request';
 export type EmailStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'bounced';
 
 export interface EmailLog {
@@ -1341,6 +1341,12 @@ export interface SampleRequest {
   country?: string;
   /** When the request was last emailed to the QA rep (Submit Sample Request). */
   requestedAt?: string;
+  /** How many samples to send. */
+  numberOfSamples?: number;
+  /** Weight of each sample, kg. */
+  sampleWeightKg?: number;
+  /** Courier tracking number once mailed. */
+  trackingNumber?: string;
 }
 
 export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];
@@ -1348,7 +1354,7 @@ export const INITIAL_SAMPLE_REQUESTS: SampleRequest[] = [];
 export interface QATemplate {
   id: string;
   name: string;
-  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Bag ID Report' | 'Scale Ticket' | 'Order Confirmation' | 'Return Order Confirmation' | 'Other';
+  type: 'Bill of Lading' | 'Certificate of Analysis' | 'Packing List' | 'Bag ID Report' | 'Scale Ticket' | 'Order Confirmation' | 'Return Order Confirmation' | 'Sample Request' | 'Other';
   googleSheetUrl: string;
   description?: string;
   /** Logo printed on documents built from this template (e.g. the COA's top-right

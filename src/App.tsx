@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { generateSampleRequestPdf } from './sampleRequestPdf';
 import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import {
   Calculator,
@@ -498,6 +499,21 @@ function SampleRequestModal({ sample, setSample, title, onSave, onSubmitRequest,
                 <option value="Cancelled">Cancelled</option>
               </select>
             </div>
+            <div className="space-y-1">
+              <label className={lbl}>Number of Samples</label>
+              <select value={sample.numberOfSamples ?? ''} onChange={e => setSample({ ...sample, numberOfSamples: e.target.value ? Number(e.target.value) : undefined })} className={field}>
+                <option value="">Select...</option>
+                {Array.from({ length: 20 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={lbl}>Sample Weight (kg)</label>
+              <input type="number" min={0} step="0.01" value={sample.sampleWeightKg ?? ''} onChange={e => setSample({ ...sample, sampleWeightKg: e.target.value === '' ? undefined : Number(e.target.value) })} className={field} placeholder="e.g. 1" />
+            </div>
+            <div className="space-y-1 col-span-2">
+              <label className={lbl}>Tracking Number</label>
+              <input value={sample.trackingNumber || ''} onChange={e => setSample({ ...sample, trackingNumber: e.target.value })} className={field} placeholder="Courier tracking #" />
+            </div>
           </div>
 
           {/* Mailing address */}
@@ -936,6 +952,7 @@ export default function App() {
   const [showAddSampleModal, setShowAddSampleModal] = useState(false);
   const [editingSampleRequest, setEditingSampleRequest] = useState<SampleRequest | null>(null);
   /** Submit Sample Request email draft (to the QA rep). */
+  const [sampleEmailSending, setSampleEmailSending] = useState(false);
   const [sampleEmail, setSampleEmail] = useState<{ sampleId: string; to: string; cc: string; subject: string; body: string } | null>(null);
   const [newSampleData, setNewSampleData] = useState<SampleRequest>({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
@@ -7019,6 +7036,9 @@ export default function App() {
       scaleTicket: byType('Scale Ticket'),
       orderConfirmation: byType('Order Confirmation'),
       proForma: qaTemplates.find(t => /pro\s*-?\s*forma/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
+      // The Sample Request form: type "Sample Request", else any template named "…sample…".
+      sampleRequest: byType('Sample Request')
+        || qaTemplates.find(t => /sample/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
     };
     return picks;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -12029,6 +12049,58 @@ export default function App() {
 
   /** Open the Submit Sample Request email: addressed to the sample's QA rep,
    *  CC the salesperson, body pre-filled with every detail of the request. */
+  /** Token values + labelled fields for the Sample Request form (QA Templates
+   *  "Sample Request" template). Token names are case-insensitive {{tokens}}. */
+  const sampleRequestFormData = (sr: SampleRequest) => {
+    const qaRep = people.find(p => p.id === sr.qaRepId);
+    const sales = people.find(p => p.id === sr.salespersonId);
+    const product = (sr.sampleProductKey
+      && buildOrderProductOptions().find(o => o.key === sr.sampleProductKey)?.label)
+      || sr.sampleProduct || '';
+    const loc = locations.find(l => l.name === sr.location);
+    const cityProv = [sr.city, sr.province].filter(Boolean).join(', ');
+    const fullAddress = [sr.address, cityProv, sr.postalCode, sr.country].filter(Boolean).join(', ');
+    const today = new Date().toISOString().slice(0, 10);
+    const qty = sr.numberOfSamples != null ? String(sr.numberOfSamples) : '';
+    const kg = sr.sampleWeightKg != null ? String(sr.sampleWeightKg) : '';
+    const totalKg = sr.numberOfSamples && sr.sampleWeightKg ? String(Math.round(sr.numberOfSamples * sr.sampleWeightKg * 100) / 100) : '';
+    const v: Record<string, string> = {
+      customer: sr.customer || '', product, location: sr.location || '',
+      ship_date: sr.shipmentDate || '', number_of_samples: qty, sample_weight_kg: kg, total_weight_kg: totalKg,
+      tracking_number: sr.trackingNumber || '', mail_sample: sr.mailSample ? 'Yes' : 'No',
+      attention: sr.attention || '', address: sr.address || '', city: sr.city || '', province: sr.province || '',
+      postal_code: sr.postalCode || '', country: sr.country || '', city_province: cityProv, full_address: fullAddress,
+      qa_rep: qaRep?.name || '', qa_rep_email: qaRep?.email || '',
+      sales_person: sales?.name || '', sales_person_email: sales?.email || '',
+      requested_by: user?.displayName || '', requested_by_email: user?.email || '',
+      notes: sr.notes || '', status: sr.status || '', request_id: sr.id || '', date: today,
+      ship_from_address: loc ? [loc.address, [loc.city, loc.province].filter(Boolean).join(', ')].filter(Boolean).join(', ') : '',
+    };
+    // Aliases so common spellings in the sheet also fill.
+    const alias: Record<string, string> = {
+      customer_name: 'customer', company: 'customer', sample_product: 'product', product_name: 'product',
+      ship_from: 'location', shipment_date: 'ship_date', shipping_date: 'ship_date',
+      num_samples: 'number_of_samples', no_of_samples: 'number_of_samples', sample_qty: 'number_of_samples', quantity: 'number_of_samples', qty: 'number_of_samples',
+      sample_weight: 'sample_weight_kg', weight_kg: 'sample_weight_kg', weight: 'sample_weight_kg',
+      tracking: 'tracking_number', tracking_no: 'tracking_number',
+      attn: 'attention', contact: 'attention', contact_name: 'attention', street: 'address', street_address: 'address',
+      state: 'province', postal: 'postal_code', zip: 'postal_code', zip_code: 'postal_code', ship_to_address: 'full_address',
+      qa_representative: 'qa_rep', salesperson: 'sales_person', sales_rep: 'sales_person',
+      request_date: 'date', today: 'date', comments: 'notes',
+    };
+    const tokens: Record<string, string> = { ...v };
+    for (const [a, k] of Object.entries(alias)) tokens[a] = v[k];
+    const fields = [
+      ['Date', v.date], ['Customer', v.customer], ['Product', v.product], ['Number of Samples', qty],
+      ['Sample Weight (kg)', kg], ['Total Weight (kg)', totalKg], ['Ship From', v.location], ['Ship Date', v.ship_date],
+      ['Mail Sample', v.mail_sample], ['Attention', v.attention], ['Ship To Address', fullAddress],
+      ['Tracking Number', v.tracking_number], ['QA Representative', v.qa_rep], ['Sales Person', v.sales_person],
+      ['Requested By', [v.requested_by, v.requested_by_email].filter(Boolean).join(' — ')], ['Notes', v.notes],
+    ].map(([label, value]) => ({ label, value }));
+    const filename = `Sample_Request_${(sr.customer || 'customer').replace(/[^a-zA-Z0-9]/g, '_')}_${v.ship_date || today}.pdf`;
+    return { tokens, fields, filename, marks: sr.mailSample ? ['Mail Sample'] : [] };
+  };
+
   const openSampleRequestEmail = (sr: SampleRequest) => {
     const qaRep = people.find(p => p.id === sr.qaRepId);
     const sales = people.find(p => p.id === sr.salespersonId);
@@ -12051,6 +12123,9 @@ export default function App() {
     lines.push(`Product: ${product}`);
     if (sr.location) lines.push(`Ship from: ${sr.location}`);
     if (sr.shipmentDate) lines.push(`Ship date: ${sr.shipmentDate}`);
+    if (sr.numberOfSamples) lines.push(`Number of samples: ${sr.numberOfSamples}`);
+    if (sr.sampleWeightKg) lines.push(`Sample weight: ${sr.sampleWeightKg} kg${sr.numberOfSamples && sr.numberOfSamples > 1 ? ' each' : ''}`);
+    if (sr.trackingNumber) lines.push(`Tracking number: ${sr.trackingNumber}`);
     lines.push(`Delivery: ${sr.mailSample ? 'MAIL / courier the sample' : 'Not mailed (pick-up / hand delivery)'}`);
     if (addr.length || sr.attention) {
       lines.push('');
@@ -12061,7 +12136,8 @@ export default function App() {
     }
     if (sales) lines.push('', `Sales person: ${sales.name}${sales.email ? ` <${sales.email}>` : ''}`);
     if (sr.notes) lines.push('', `Notes: ${sr.notes}`);
-    lines.push('', 'Please reply once the sample has shipped, with the tracking number if it was mailed.');
+    lines.push('', 'The Sample Request form is attached.');
+    lines.push('Please reply once the sample has shipped, with the tracking number if it was mailed.');
     lines.push('', 'Thanks,', user?.displayName || 'Sweet Pro');
     if (user?.email) lines.push(user.email);
     setSampleEmail({
@@ -16381,7 +16457,7 @@ export default function App() {
                   <div className="p-6 space-y-3 overflow-y-auto flex-1">
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">From</label>
-                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm text-[#141414]/70">{user?.displayName || 'Sweet Pro'}{user?.email ? ` <${user.email}>` : ''}</div>
+                      <div className="w-full bg-[#F5F5F5] border border-[#141414]/30 p-2 text-sm text-[#141414]/70">{emailSettings.fromName || 'Sweet Pro'}{emailSettings.fromAddress ? ` <${emailSettings.fromAddress}>` : ''}{user?.email ? ` · CC ${user.email}` : ''}</div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold opacity-60">To (QA Representative)</label>
@@ -16406,22 +16482,50 @@ export default function App() {
                     </div>
                   </div>
                   <div className="p-4 border-t border-[#141414]/10 flex gap-3">
-                    <button disabled={!sampleEmail.to} onClick={() => {
-                      const cc = sampleEmail.cc ? `&cc=${encodeURIComponent(sampleEmail.cc)}` : '';
-                      window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(sampleEmail.to)}${cc}&su=${encodeURIComponent(sampleEmail.subject)}&body=${encodeURIComponent(sampleEmail.body)}`, '_blank');
-                      // Stamp the request as submitted to QA.
+                    <button disabled={!sampleEmail.to || sampleEmailSending} onClick={async () => {
                       const cur = sampleRequests.find(s => s.id === sampleEmail.sampleId);
-                      if (cur) {
+                      if (!cur) { setErrorBox('Sample request not found.'); return; }
+                      setSampleEmailSending(true);
+                      try {
+                        const form = sampleRequestFormData(cur);
+                        const pdf = generateSampleRequestPdf(form);
+                        const escHtml = (t: string) => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+                        const toList = sampleEmail.to.split(/[,;]+/).map(a => a.trim()).filter(Boolean);
+                        const ccList = [...toList.slice(1), ...sampleEmail.cc.split(/[,;]+/).map(a => a.trim()).filter(Boolean)];
+                        if (user?.email && !ccList.some(a => a.toLowerCase() === user.email!.toLowerCase()) && toList[0]?.toLowerCase() !== user.email.toLowerCase()) ccList.push(user.email);
+                        const result = await runEmailSend({
+                          type: 'sample_request',
+                          customerName: cur.customer,
+                          recipientTo: toList[0] || '',
+                          recipientCc: ccList,
+                          subject: sampleEmail.subject,
+                          html: `<div style="font-family:Arial,sans-serif;font-size:13px;color:#141414;white-space:pre-wrap;">${escHtml(sampleEmail.body)}</div>`,
+                          pdfBlob: pdf.blob,
+                          filename: pdf.filename,
+                          idempotencyRecordId: cur.id,
+                          triggeredBy: 'manual',
+                        });
+                        if (!result.success) { setErrorBox(`Sample request email failed: ${result.error || 'unknown error'}`); return; }
+                        // Stamp the request as submitted to QA.
                         const stamped = { ...cur, requestedAt: new Date().toISOString() };
                         setSampleRequests(prev => prev.map(s => s.id === stamped.id ? stamped : s));
                         saveNow(COLLECTIONS.sampleRequests, [stamped]);
+                        setSampleEmail(null);
+                        setErrorBox(`Sample request sent to ${toList.join(', ')}${emailSettings.testMode ? ` (TEST MODE → ${emailSettings.testAddress})` : ''} with the Sample Request form attached.`);
+                      } catch (e: any) {
+                        setErrorBox(`Sample request email failed: ${e?.message || String(e)}`);
+                      } finally {
+                        setSampleEmailSending(false);
                       }
-                      setSampleEmail(null);
                     }} className="flex-1 py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2 disabled:opacity-50">
-                      <Send size={14} /> Send via Gmail
+                      <Send size={14} /> {sampleEmailSending ? 'Sending…' : 'Send Email'}
                     </button>
-                    <button onClick={() => { navigator.clipboard.writeText(sampleEmail.body); alert('Email body copied to clipboard!'); }}
-                      className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Copy Body</button>
+                    <button onClick={() => {
+                      const cur = sampleRequests.find(s => s.id === sampleEmail.sampleId);
+                      if (!cur) return;
+                      const pdf = generateSampleRequestPdf(sampleRequestFormData(cur));
+                      window.open(URL.createObjectURL(pdf.blob), '_blank');
+                    }} className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Preview Form</button>
                     <button onClick={() => setSampleEmail(null)}
                       className="px-6 py-3 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
                   </div>
