@@ -513,6 +513,48 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
             </div>
           </div>
 
+          {/* Saved Quotes — quotes saved for this prospect from the Customer
+              Quote page (Save Quote with this lead selected). */}
+          <div className="border-t border-[#141414]/10 pt-4">
+            <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Saved Quotes ({(lead.savedQuotes || []).length})</h4>
+            {(lead.savedQuotes || []).length > 0 ? (
+              <div className="overflow-x-auto border border-[#141414]/20">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-[#141414] text-[#E4E3E0] text-[9px] uppercase tracking-widest">
+                      {['Saved', 'Product', 'Origin → Dest.', 'Volume (MT)', 'Price / MT', 'Total', 'Period', ''].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(lead.savedQuotes || []).map(q => (
+                      <tr key={q.id} className="border-b border-gray-200 hover:bg-gray-50 align-top">
+                        <td className="p-2 whitespace-nowrap">
+                          {q.savedAt ? new Date(q.savedAt).toLocaleDateString() : '—'}
+                          {q.savedBy && <div className="text-[9px] opacity-50">{q.savedBy}</div>}
+                        </td>
+                        <td className="p-2 font-bold">{q.product}</td>
+                        <td className="p-2 whitespace-nowrap">
+                          {q.origin || '—'} → {q.isDelivered ? (q.destination || 'Delivered') : 'FCA'}
+                          {(q.shippingTerms || q.paymentTerms) && <div className="text-[9px] opacity-50">{[q.shippingTerms, q.paymentTerms].filter(Boolean).join(' · ')}</div>}
+                        </td>
+                        <td className="p-2 font-mono text-right">{fmtN(q.volumeMt || 0, 0)}</td>
+                        <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {fmtN(q.finalPriceMt || 0, 2)}</td>
+                        <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                        <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${q.startDate || '?'} – ${q.endDate || 'TBD'}` : '—'}</td>
+                        <td className="p-2">
+                          <button onClick={() => { if (window.confirm('Remove this saved quote? (Applied when you click Save Changes.)')) setLead({ ...lead, savedQuotes: (lead.savedQuotes || []).filter(x => x.id !== q.id) }); }}
+                            className="p-0.5 hover:bg-red-100 text-red-400" title="Remove quote"><Trash2 size={12} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-xs opacity-50 italic">No saved quotes yet. On the Customer Quote page, pick this lead under "Sales Leads (prospects)" and click Save Quote.</div>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 pt-4 border-t border-[#141414]/10">
             <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>
             <button onClick={onSubmit} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors">
