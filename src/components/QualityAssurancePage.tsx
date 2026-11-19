@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useContext } from 'react';
 import { QAProduct, QADocument, QASpecifications, ArtworkApproval, SKU, Person, ProductGroup, Location, Vendor, QATemplate, BOMItem, SugarType, PackagingFormat, NamingFormula, FormulaToken } from '../types';
 import { resolveProductName, resolveShortForm } from '../utils/namingFormulaResolver';
-import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown, Package, Building2, ClipboardList, Boxes, Layers, DollarSign, Pencil as PencilIcon } from 'lucide-react';
+import { Plus, X, Trash2, Upload, Send, CheckCircle2, AlertCircle, Clock, Image, ChevronDown, ChevronUp, Download, Mail, FileText, ExternalLink, Pencil, Minimize2, Maximize2, Minus, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown, Package, Building2, ClipboardList, Boxes, Layers, DollarSign, Pencil as PencilIcon, Truck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { uploadQAFile, deleteQAFile } from '../firebaseStorage';
 import PageBanner from './PageBanner';
@@ -208,7 +208,7 @@ export default function QualityAssurancePage({
   const [productModalMaximized, setProductModalMaximized] = useState(false);
   const [productModalMinimized, setProductModalMinimized] = useState(false);
   // Product card tabs (like the customer card).
-  type ProductCardTab = 'details' | 'specs' | 'packaging' | 'bom' | 'differential';
+  type ProductCardTab = 'details' | 'specs' | 'packaging' | 'bom' | 'stock' | 'differential';
   const [productCardTab, setProductCardTab] = useState<ProductCardTab>('details');
   const [diffDraft, setDiffDraft] = useState<string | null>(null);
 
@@ -489,10 +489,11 @@ export default function QualityAssurancePage({
   };
   const skuColumns: Array<{ key: string; label: string; cell: (p: QAProduct) => React.ReactNode; tdClass?: string }> = [
     { key: 'premiumCadMt', label: 'Differential (CAD/MT)', tdClass: 'font-mono text-right', cell: (p) => { const v = skuOf(p)?.premiumCadMt; return v ? fmtN(v, 2) : '—'; } },
-    { key: 'warehouse', label: 'Warehouse', cell: (p) => logisticsSelect(p, 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']]) },
-    { key: 'commodityGroup', label: 'Commodity Group', cell: (p) => logisticsSelect(p, 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']]) },
-    { key: 'terminal', label: 'Terminal', cell: (p) => logisticsSelect(p, 'terminal', terminalsFor(skuOf(p)?.location || p.location).map(t => [t.terminal, t.terminal] as [string, string])) },
-    { key: 'terminalName', label: 'Terminal Name', cell: (p) => logisticsSelect(p, 'terminalName', terminalsFor(skuOf(p)?.location || p.location).map(t => [t.terminalName, t.terminalName] as [string, string])) },
+    // Display only — edited on the product card's Stock Request Info tab.
+    { key: 'warehouse', label: 'Warehouse', cell: (p) => logisticsOf(p).warehouse || '—' },
+    { key: 'commodityGroup', label: 'Commodity Group', cell: (p) => logisticsOf(p).commodityGroup || '—' },
+    { key: 'terminal', label: 'Terminal', tdClass: 'font-mono', cell: (p) => logisticsOf(p).terminal || '—' },
+    { key: 'terminalName', label: 'Terminal Name', cell: (p) => logisticsOf(p).terminalName || '—' },
   ];
 
   // ── QA table column definitions + hide/reorder (mirrors the Lab table) ────
@@ -2623,6 +2624,7 @@ export default function QualityAssurancePage({
                   ['specs', 'Specs', <ClipboardList size={13} />],
                   ['packaging', 'Packaging', <Boxes size={13} />],
                   ['bom', 'Bill of Materials', <Layers size={13} />],
+                  ...(onUpdateSku ? [['stock', 'Stock Request Info', <Truck size={13} />]] : []),
                   ...(onSaveDifferential ? [['differential', 'Differential', <DollarSign size={13} />]] : []),
                 ] as Array<[ProductCardTab, string, React.ReactNode]>).map(([id, label, icon]) => (
                   <button key={id} onClick={() => setProductCardTab(id)}
@@ -3290,6 +3292,47 @@ export default function QualityAssurancePage({
                 </div>
 
                 </>)}
+                {productCardTab === 'stock' && onUpdateSku && selectedProduct && (() => {
+                  // Warehouse / Commodity Group / Terminal feed Stock Requests.
+                  // Saved straight to the product (catalog SKU) on change.
+                  const sku = skus.find(x => x.id === selectedProduct.skuId);
+                  const cur = logisticsOf(selectedProduct);
+                  const terms = terminalsFor(sku?.location || selectedProduct.location);
+                  const sel = (label: string, field: 'warehouse' | 'commodityGroup' | 'terminal' | 'terminalName', options: Array<[string, string]>, hint: string) => {
+                    const value = cur[field];
+                    return (
+                      <div>
+                        <label className="block text-[10px] uppercase tracking-widest font-bold opacity-50 mb-1">{label}</label>
+                        <select value={value} onChange={(e) => saveLogistics(selectedProduct, field, e.target.value)} disabled={!sku}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm outline-none focus:bg-white disabled:opacity-50">
+                          <option value="">—</option>
+                          {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                          {value && !options.some(([v]) => v === value) && <option value={value}>{value}</option>}
+                        </select>
+                        <p className="text-[10px] opacity-50 mt-1">{hint}</p>
+                      </div>
+                    );
+                  };
+                  return (
+                    <div className="bg-white border border-[#141414] p-4 space-y-3">
+                      <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-2">Stock Request Info</div>
+                      {sku ? (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {sel('Warehouse', 'warehouse', [['Liquid', 'Liquid'], ['DRY', 'DRY']], 'Storage warehouse — picks the matching terminal on stock requests.')}
+                            {sel('Commodity Group', 'commodityGroup', [['WHT', 'WHT'], ['LIQ SUCROS', 'LIQ SUCROS']], 'CMY code printed on stock requests.')}
+                            {sel('Terminal', 'terminal', terms.map(t => [t.terminal, t.terminal] as [string, string]), `Terminals at ${sku.location || selectedProduct.location || 'the product location'} (set on the location card).`)}
+                            {sel('Terminal Name', 'terminalName', terms.map(t => [t.terminalName, t.terminalName] as [string, string]), 'Picking a terminal fills its name, and vice versa.')}
+                          </div>
+                          <p className="text-[10px] opacity-50">Changes save immediately.</p>
+                        </>
+                      ) : (
+                        <p className="text-xs opacity-60 italic">No product record is linked to this QA product.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {productCardTab === 'differential' && onSaveDifferential && selectedProduct && (() => {
                   const sku = skus.find(x => x.id === selectedProduct.skuId);
                   const stored = sku?.premiumCadMt || 0;
