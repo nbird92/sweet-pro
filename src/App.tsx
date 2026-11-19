@@ -522,7 +522,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
                 <table className="w-full text-xs border-collapse">
                   <thead>
                     <tr className="bg-[#141414] text-[#E4E3E0] text-[9px] uppercase tracking-widest">
-                      {['Saved', 'Product', 'Origin → Dest.', 'Volume (MT)', 'Price / MT', 'Total', 'Period', ''].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}
+                      {['Saved', 'Product', 'Origin → Dest.', 'Volume (MT)', 'Raw (USD/CWT)', 'FX', 'Margin (CAD/MT)', 'Price / MT', 'Total', 'Period', ''].map(h => <th key={h} className="p-2 text-left whitespace-nowrap">{h}</th>)}
                     </tr>
                   </thead>
                   <tbody>
@@ -538,6 +538,9 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
                           {(q.shippingTerms || q.paymentTerms) && <div className="text-[9px] opacity-50">{[q.shippingTerms, q.paymentTerms].filter(Boolean).join(' · ')}</div>}
                         </td>
                         <td className="p-2 font-mono text-right">{fmtN(q.volumeMt || 0, 0)}</td>
+                        <td className="p-2 font-mono text-right">{q.rawPriceUsdCwt != null ? fmtN(q.rawPriceUsdCwt, 2) : '—'}</td>
+                        <td className="p-2 font-mono text-right">{q.fxRate != null ? fmtN(q.fxRate, 4) : '—'}</td>
+                        <td className="p-2 font-mono text-right">{q.marginCadMt != null ? fmtN(q.marginCadMt, 2) : '—'}</td>
                         <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {fmtN(q.finalPriceMt || 0, 2)}</td>
                         <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                         <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${q.startDate || '?'} – ${q.endDate || 'TBD'}` : '—'}</td>
