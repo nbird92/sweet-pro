@@ -11,3 +11,27 @@
     @apply font-sans antialiased;
   }
 }
+
+/* ── Standard table header ─────────────────────────────────────────────────
+   Add className="std-table" to a hand-built <table> to give it the same
+   header row as <DataTable>: light grey, dark text, thin dividers, black rule
+   underneath. Unlayered, so it wins over the Tailwind utilities written on
+   the old dark header rows (no need to rewrite each <th>). */
+.std-table > thead > tr {
+  background: #F5F5F5;
+  color: #141414;
+  border-bottom: 1px solid #141414;
+}
+.std-table > thead > tr > th {
+  background: #F5F5F5;
+  color: #141414;
+  border-right-color: rgb(20 20 20 / 0.1);
+  padding: 0.75rem;
+}
+.std-table > thead > tr > th.cursor-pointer:hover,
+.std-table > thead > tr > th[draggable="true"]:hover {
+  background: #EBEBEB;
+}
+.std-table > thead > tr > th.border-l-4 {
+  border-left-color: #141414;
+}

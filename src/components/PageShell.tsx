@@ -107,11 +107,14 @@ export function ToolbarSelect({ label, value, onChange, options }: {
 }
 
 /** Standard on/off toolbar toggle (e.g. "Show previous weeks", "Show hidden"). */
-export function ToolbarToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+export function ToolbarToggle({ label, checked, onChange, disabled, title, icon }: {
+  label: React.ReactNode; checked: boolean; onChange: (v: boolean) => void;
+  disabled?: boolean; title?: string; icon?: React.ReactNode;
+}) {
   return (
-    <button onClick={() => onChange(!checked)}
-      className={`px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase tracking-widest transition-colors ${checked ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-white hover:bg-[#F5F5F5]'}`}>
-      {label}
+    <button onClick={() => onChange(!checked)} disabled={disabled} title={title}
+      className={`px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 whitespace-nowrap transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${checked ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-white hover:bg-[#F5F5F5]'}`}>
+      {icon}{label}
     </button>
   );
 }

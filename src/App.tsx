@@ -82,7 +82,7 @@ import type { EmailDocumentType, CustomerImportRules } from './types';
 // <Suspense> at the renderContent() call site.
 const EmailCenterPage = lazy(() => import('./components/EmailCenterPage'));
 const ReturnOrdersPage = lazy(() => import('./components/ReturnOrdersPage'));
-import DataTable, { ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
+import DataTable, { RowAction, ColumnOrderContext, type ColumnOrderStore, ColumnVisibilityContext, type ColumnVisibilityStore } from './components/DataTable';
 import DetailModal, { DetailRow, DetailField } from './components/DetailModal';
 import CustomerSummaryModal from './components/CustomerSummaryModal';
 import { CommodityConfig, INITIAL_SKUS, INITIAL_EMAIL_SETTINGS, EmailLog, EmailSettings, ReturnOrder, CustomerGroup, SKU, Customer, SupplyChainComponent, FreightRate, Contract, ContractLine, Shipment, Carrier, Location, Transfer, TransferLeg, Invoice, DemurrageInvoice, ProductGroup, Order, OrderLineItem, Conference, Person, QAProduct, QADocument, FuelSurcharge, Vendor, ChepPalletMovement, SalesLead, SalesLeadFollowUp, QATemplate, SampleRequest, SampleRequestFollowUp, SugarType, LotCode, FiscalYear, CustomerForecast, SavedQuote, PackagingFormat, NamingFormula, ShipToLocation, ShippingTerm, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage, TollingFee, MONTH_TERMINALS } from './types';
@@ -103,6 +103,7 @@ const HamiltonScheduleSyncModal = lazy(() => import('./components/HamiltonSchedu
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
 const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarrierReport'));
 import PageBanner from './components/PageBanner';
+import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle } from './components/PageShell';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
@@ -13403,43 +13404,19 @@ export default function App() {
         rows: locationShipments.map(sh => ({ ...sh, product: productToShortform(sh.product) })) as any[],
       }];
       return (
-        <div>
-          <PageBanner
+        <PageShell
             icon={<Calendar size={18} />}
             title="Shipment Schedule"
             count={filteredShipments.length}
             exportSheets={shipmentExportSheets}
             exportFileName={`${locationName}_Shipments`}
-          >
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] uppercase font-bold text-[#E4E3E0]/60">Location</label>
-              <select
-                value={scheduleLocation}
-                onChange={(e) => setScheduleLocation(e.target.value)}
-                className="bg-[#E4E3E0] text-[#141414] border border-[#E4E3E0] px-3 py-1.5 text-xs font-bold focus:outline-none"
-              >
-                {activeLocations.map(loc => <option key={loc.id} value={loc.name}>{loc.name}</option>)}
-              </select>
-            </div>
-            <div className="relative">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 pointer-events-none" />
-              <input
-                type="text"
-                value={scheduleSearch}
-                onChange={(e) => setScheduleSearch(e.target.value)}
-                placeholder="Search customer, product, PO, BOL, carrier, trailer, lot…"
-                className="bg-[#E4E3E0] text-[#141414] placeholder:text-[#141414]/40 border border-[#E4E3E0] pl-7 pr-6 py-1.5 text-xs font-bold focus:outline-none w-72"
-              />
-              {scheduleSearch && (
-                <button onClick={() => setScheduleSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#141414]/40 hover:text-[#141414]" title="Clear search">
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-            <button onClick={() => setShowPreviousWeeks(!showPreviousWeeks)}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
-              {showPreviousWeeks ? 'Hide Previous Weeks' : 'Show Previous Weeks'}
-            </button>
+            search={{ value: scheduleSearch, onChange: setScheduleSearch, placeholder: 'Search customer, product, PO, BOL, carrier, trailer, lot…' }}
+            filters={<>
+              <ToolbarSelect label="Location" value={scheduleLocation} onChange={setScheduleLocation}
+                options={activeLocations.map(loc => ({ value: loc.name, label: loc.name }))} />
+              <ToolbarToggle label="Show previous weeks" checked={showPreviousWeeks} onChange={setShowPreviousWeeks} />
+            </>}
+          actions={<>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + shipmentCsvHeaders.join(",");
                 const link = document.createElement("a");
@@ -13466,8 +13443,8 @@ export default function App() {
               className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap">
               <Plus size={12} /> Add Shipment
             </button>
-          </PageBanner>
-          <div className="p-4 space-y-3">
+                    </>}
+        >
 
           <div className="space-y-2">
             {searchingSchedule && visibleWeeks.length === 0 && (
@@ -13673,8 +13650,7 @@ export default function App() {
               );
             })}
           </div>
-          </div>
-        </div>
+        </PageShell>
       );
     }
 
@@ -13732,14 +13708,14 @@ export default function App() {
         },
       ];
       return (
-        <div>
-          <PageBanner
+        <PageShell
             icon={<Users size={18} />}
             title="Customer Directory"
             count={filteredCustomers.length}
             exportSheets={customerExportSheets}
             exportFileName="Customers"
-          >
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search customers by name, default location or ID…' }}
+          actions={<>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + customerTplHeaders.join(",");
                 const link = document.createElement("a");
@@ -13769,15 +13745,10 @@ export default function App() {
             >
               <Plus size={12} /> Add Customer
             </button>
-          </PageBanner>
+                    </>}
+        >
 
-          <div className="p-6 space-y-4">
 
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search customers by name, default location or ID..."
-          />
 
           {/* Customers — standardized DataTable. Rows open the existing Edit
               Customer modal (a maximize/minimize window holding the full field
@@ -13790,7 +13761,9 @@ export default function App() {
               Customer stays in the PageBanner alongside Template / Import / CSV;
               Delete moves into the edit modal footer. */}
           <DataTable<Customer>
+            variant="page"
             title="Customers"
+            storageKey="Customers"
             icon={<Users size={14} />}
             stickyHeader
             columns={[
@@ -13912,8 +13885,7 @@ export default function App() {
               defaultSortKey="groupCode"
             />
           </div>
-          </div>
-        </div>
+        </PageShell>
       );
     }
 
@@ -14337,14 +14309,65 @@ export default function App() {
         rows: invoices.map(inv => ({ ...inv, product: productToShortform(inv.product), lotCode: inv.lotCode || lotCodeFromShipment({ shipmentId: inv.shipmentId, bol: inv.bolNumber }) })) as any[],
       }];
       return (
-        <div className="space-y-0">
-          <PageBanner
+        <PageShell
             icon={<DollarSign size={18} />}
             title="Customer Invoices"
             count={filteredInvoices.length}
             exportSheets={invoiceExportSheets}
             exportFileName="Invoices"
-          >
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search invoices by Invoice #, BOL, Customer, PO, Product…' }}
+            toolbarRight={<>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setInvoiceColsMenuOpen(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
+                title="Show, hide or move columns"
+              >
+                <SlidersHorizontal size={12} /> Columns{invHiddenCols.size ? ` (${invHiddenCols.size} hidden)` : ''}
+              </button>
+              {invoiceColsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setInvoiceColsMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1 z-40 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] w-64 max-h-[60vh] overflow-y-auto">
+                    <div className="px-3 py-2 border-b border-[#141414]/10 flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold opacity-60">Columns</span>
+                      <button
+                        onClick={() => { columnVisibilityStore.set(INV_COLS_KEY, []); columnOrderStore.set(INV_COLS_KEY, []); }}
+                        className="text-[10px] underline decoration-dotted opacity-70 hover:opacity-100"
+                      >Reset</button>
+                    </div>
+                    {invOrderedCols.map((k, idx) => {
+                      const label = INVOICE_COLUMNS.find(c => c[0] === k)?.[1] || k;
+                      const shown = !invHiddenCols.has(k);
+                      return (
+                        <div key={k} className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-[#F5F5F5]">
+                          <label className="flex items-center gap-2 flex-1 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={shown}
+                              disabled={shown && invShownCols.length <= 1}
+                              onChange={() => {
+                                const next = new Set(invHiddenCols);
+                                if (next.has(k)) next.delete(k); else next.add(k);
+                                columnVisibilityStore.set(INV_COLS_KEY, [...next]);
+                              }}
+                              className="accent-[#141414]"
+                            />
+                            <span className={shown ? '' : 'opacity-40'}>{label}</span>
+                          </label>
+                          <button disabled={idx === 0} onClick={() => moveInvoiceColBy(k, -1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move left"><ChevronUp size={12} /></button>
+                          <button disabled={idx === invOrderedCols.length - 1} onClick={() => moveInvoiceColBy(k, 1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move right"><ChevronDown size={12} /></button>
+                        </div>
+                      );
+                    })}
+                    <div className="px-3 py-2 border-t border-[#141414]/10 text-[10px] opacity-50">Tip: drag a column header to move it. Actions is always shown. Saved to your account.</div>
+                  </div>
+                </>
+              )}
+            </div>
+            </>}
+          actions={<>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + invoiceCsvHeaders.join(",");
                 const link = document.createElement("a");
@@ -14395,70 +14418,13 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
-          </PageBanner>
+                    </>}
+        >
 
-          <div className="px-6 pt-4 flex items-center gap-3">
-            <div className="flex-1">
-              <SearchInput
-                value={searchTerm}
-                onChange={setSearchTerm}
-                placeholder="Search invoices by Invoice #, BOL, Customer, PO, Product..."
-              />
-            </div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setInvoiceColsMenuOpen(v => !v)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
-                title="Show, hide or move columns"
-              >
-                <SlidersHorizontal size={12} /> Columns{invHiddenCols.size ? ` (${invHiddenCols.size} hidden)` : ''}
-              </button>
-              {invoiceColsMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-30" onClick={() => setInvoiceColsMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1 z-40 bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] w-64 max-h-[60vh] overflow-y-auto">
-                    <div className="px-3 py-2 border-b border-[#141414]/10 flex items-center justify-between">
-                      <span className="text-[10px] uppercase font-bold opacity-60">Columns</span>
-                      <button
-                        onClick={() => { columnVisibilityStore.set(INV_COLS_KEY, []); columnOrderStore.set(INV_COLS_KEY, []); }}
-                        className="text-[10px] underline decoration-dotted opacity-70 hover:opacity-100"
-                      >Reset</button>
-                    </div>
-                    {invOrderedCols.map((k, idx) => {
-                      const label = INVOICE_COLUMNS.find(c => c[0] === k)?.[1] || k;
-                      const shown = !invHiddenCols.has(k);
-                      return (
-                        <div key={k} className="flex items-center gap-2 px-3 py-1 text-xs hover:bg-[#F5F5F5]">
-                          <label className="flex items-center gap-2 flex-1 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={shown}
-                              disabled={shown && invShownCols.length <= 1}
-                              onChange={() => {
-                                const next = new Set(invHiddenCols);
-                                if (next.has(k)) next.delete(k); else next.add(k);
-                                columnVisibilityStore.set(INV_COLS_KEY, [...next]);
-                              }}
-                              className="accent-[#141414]"
-                            />
-                            <span className={shown ? '' : 'opacity-40'}>{label}</span>
-                          </label>
-                          <button disabled={idx === 0} onClick={() => moveInvoiceColBy(k, -1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move left"><ChevronUp size={12} /></button>
-                          <button disabled={idx === invOrderedCols.length - 1} onClick={() => moveInvoiceColBy(k, 1)} className="p-0.5 hover:bg-[#141414]/10 disabled:opacity-20" title="Move right"><ChevronDown size={12} /></button>
-                        </div>
-                      );
-                    })}
-                    <div className="px-3 py-2 border-t border-[#141414]/10 text-[10px] opacity-50">Tip: drag a column header to move it. Actions is always shown. Saved to your account.</div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="px-6 pb-6">
+          <div>
           
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   {invShownCols.map(k => {
@@ -14727,7 +14693,7 @@ export default function App() {
             </div>
           )}
           </div>
-        </div>
+        </PageShell>
       );
     }
 
@@ -14858,30 +14824,28 @@ export default function App() {
         rows: buildOrderRows(),
       }];
       return (
-        <div className="space-y-0">
-          <PageBanner
+        <PageShell
             icon={<ShoppingCart size={18} />}
             title="Orders"
             count={filteredOrders.length}
             exportSheets={orderExportSheets}
             exportFileName="Orders"
-          >
-            {/* A search always surfaces stale orders (the auto-hide is gated on
-                !searchTerm), so while searching the toggle is disabled and shows
-                the real, effective state instead. */}
-            <button
-              onClick={() => setShowStaleOrders(v => !v)}
-              disabled={!!searchTerm}
-              className={`px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 transition-colors whitespace-nowrap ${searchTerm ? 'opacity-40 cursor-not-allowed' : 'hover:bg-white/10'}`}
-              title={searchTerm
-                ? 'Stale orders are shown while searching'
-                : (showStaleOrders ? 'Hide orders whose shipment date is two weeks or more in the past' : 'Orders whose shipment date is two weeks or more in the past are hidden (not deleted) — show them')}
-            >
-              {(showStaleOrders || !!searchTerm) ? <EyeOff size={12} /> : <Eye size={12} />}
-              {searchTerm
-                ? 'Stale Shown'
-                : (showStaleOrders ? 'Hide Stale Orders' : `Show Stale Orders${staleHiddenCount ? ` (${staleHiddenCount})` : ''}`)}
-            </button>
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search orders by BOL, customer, product, PO or carrier…' }}
+            filters={
+              // A search always surfaces stale orders (the auto-hide is gated on
+              // !searchTerm), so while searching the toggle is disabled.
+              <ToolbarToggle
+                checked={showStaleOrders || !!searchTerm}
+                onChange={setShowStaleOrders}
+                disabled={!!searchTerm}
+                icon={(showStaleOrders || !!searchTerm) ? <Eye size={12} /> : <EyeOff size={12} />}
+                label={searchTerm ? 'Stale shown' : `Show stale orders${!showStaleOrders && staleHiddenCount ? ` (${staleHiddenCount})` : ''}`}
+                title={searchTerm
+                  ? 'Stale orders are shown while searching'
+                  : (showStaleOrders ? 'Hide orders whose shipment date is two weeks or more in the past' : 'Orders whose shipment date is two weeks or more in the past are hidden (not deleted) — show them')}
+              />
+            }
+          actions={<>
             <button onClick={() => {
                 const csvContent = "data:text/csv;charset=utf-8," + orderCsvHeaders.join(",");
                 const link = document.createElement("a");
@@ -14997,19 +14961,13 @@ export default function App() {
             >
               <X size={12} /> Clear All
             </button>
-          </PageBanner>
+                    </>}
+        >
 
-          <div className="px-6 pt-4">
-            <SearchInput
-              value={searchTerm}
-              onChange={setSearchTerm}
-              placeholder="Search orders by BOL, customer, product, PO or carrier..."
-            />
-          </div>
-          <div className="px-6 pb-6">
+          <div>
 
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="BOL No." sortKey="bolNumber" currentSort={orderSortConfig} onSort={handleOrderSort} />
@@ -15249,7 +15207,7 @@ export default function App() {
             </div>
           )}
           </div>
-        </div>
+        </PageShell>
       );
     }
 
@@ -16228,108 +16186,66 @@ export default function App() {
         })),
       }];
       return (
-        <div>
-          <PageBanner
-            icon={<TrendingUp size={18} />}
-            title="Sales Leads"
-            count={filteredLeads.length}
-            exportSheets={leadExportSheets}
-            exportFileName="Sales_Leads"
-          >
-            <button onClick={() => {
+        <PageShell
+          icon={<TrendingUp size={18} />}
+          title="Sales Leads"
+          count={filteredLeads.length}
+          exportSheets={leadExportSheets}
+          exportFileName="Sales_Leads"
+          actions={
+            <BannerButton primary icon={<Plus size={12} />} onClick={() => {
               setNewLeadData({ id: '', customerName: '', product: '', volume: 0, location: '', salespersonId: '', contactName: '', contactEmail: '', contactPhone: '', notes: '', status: 'New', followUps: [], createdAt: '' });
               setShowAddLeadModal(true);
-            }}
-              className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap">
-              <Plus size={12} /> Add Lead
-            </button>
-          </PageBanner>
-          <div className="p-6 space-y-4">
-
-          <div className="flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search leads by customer, product, location, status..." />
-            </div>
-            <select
-              value={leadFiscalYearId}
-              onChange={(e) => setLeadFiscalYearId(e.target.value)}
-              title="Show sales leads created in a fiscal year"
-              className="bg-white border border-[#141414] px-3 py-2 text-xs font-bold uppercase outline-none shrink-0"
-            >
-              <option value="">All fiscal years</option>
-              {[...fiscalYears].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map(fy => (
-                <option key={fy.id} value={fy.id}>{fy.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                  <th className="p-3 w-8"></th>
-                  <SortableHeader label="Customer" sortKey="customerName" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Product" sortKey="product" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Volume (MT)" sortKey="volume" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Sales Person" sortKey="salespersonId" currentSort={sortConfig} onSort={handleSort} />
-                  <SortableHeader label="Status" sortKey="status" currentSort={sortConfig} onSort={handleSort} />
-                  <th className="p-3 border-r border-[#E4E3E0]/20">Follow-ups</th>
-                  <th className="p-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {filteredLeads.length === 0 && (
-                  <tr><td colSpan={9} className="p-6 text-center text-xs font-bold opacity-40 italic">No sales leads yet. Click "Add Lead" to create one.</td></tr>
-                )}
-                {filteredLeads.map(lead => {
-                  const salesperson = people.find(p => p.id === lead.salespersonId);
-                  const isExpanded = expandedRows.has(lead.id);
-                  return (
-                    <React.Fragment key={lead.id}>
-                      <tr className="hover:bg-[#F9F9F9] transition-colors cursor-pointer" onClick={() => setEditingLeadCard({ ...lead })}>
-                        <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleRow(lead.id); }}>
-                          {lead.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
-                        </td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.customerName}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{leadProductName(lead)}</td>
-                        <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{lead.volume}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.location}</td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>
-                        <td className="p-3 border-r border-[#141414]/10">
-                          <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(lead.status).bg, color: getStatusColor(lead.status).text }}>{lead.status}</span>
-                        </td>
-                        <td className="p-3 text-xs border-r border-[#141414]/10">{lead.followUps.filter(f => !f.completed).length}/{lead.followUps.length}</td>
-                        <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => setEditingLeadCard({ ...lead })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
-                            <button onClick={() => { recordUserDeletes(COLLECTIONS.salesLeads, [lead.id]); setSalesLeads(salesLeads.filter(l => l.id !== lead.id)); }} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                      {isExpanded && lead.followUps.length > 0 && lead.followUps.map(fu => (
-                        <tr key={fu.id} className="bg-[#F9F9F9]">
-                          <td className="p-2 pl-6"></td>
-                          <td className="p-2 text-[10px] opacity-60" colSpan={2}>
-                            <button onClick={() => {
-                              const updatedFollowUps = lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
-                              setSalesLeads(salesLeads.map(l => l.id === lead.id ? { ...l, followUps: updatedFollowUps } : l));
-                            }} className="inline-flex items-center gap-1">
-                              {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
-                              <span className={fu.completed ? 'line-through' : ''}>{fu.description}</span>
-                            </button>
-                          </td>
-                          <td className="p-2 text-[10px] opacity-60">{fu.date}</td>
-                          <td className="p-2 text-[10px] opacity-60" colSpan={2}>{fu.infoSent || '—'}</td>
-                          <td colSpan={3}></td>
-                        </tr>
-                      ))}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+            }}>Add Lead</BannerButton>
+          }
+          search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search leads by customer, product, location, status…' }}
+          filters={
+            <ToolbarSelect label="Fiscal Year" value={leadFiscalYearId} onChange={setLeadFiscalYearId}
+              options={[{ value: '', label: 'All fiscal years' }, ...[...fiscalYears].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map(fy => ({ value: fy.id, label: fy.name }))]} />
+          }
+        >
+          <DataTable<SalesLead>
+            variant="page"
+            title="Sales Leads"
+            storageKey="salesLeads"
+            rows={filteredLeads}
+            getRowKey={l => l.id}
+            onRowClick={l => setEditingLeadCard({ ...l })}
+            emptyMessage='No sales leads yet. Click "Add Lead" to create one.'
+            canExpand={l => (l.followUps || []).length > 0}
+            renderExpanded={lead => (
+              <div className="px-12 py-2 space-y-1">
+                {lead.followUps.map(fu => (
+                  <div key={fu.id} className="flex items-center gap-4 text-[10px]">
+                    <button onClick={() => {
+                      const updatedFollowUps = lead.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
+                      setSalesLeads(salesLeads.map(l => l.id === lead.id ? { ...l, followUps: updatedFollowUps } : l));
+                    }} className="inline-flex items-center gap-1 min-w-[240px] text-left">
+                      {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
+                      <span className={fu.completed ? 'line-through opacity-60' : ''}>{fu.description}</span>
+                    </button>
+                    <span className="font-mono opacity-60">{fu.date}</span>
+                    <span className="opacity-60">{fu.infoSent || '—'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            columns={[
+              { key: 'customerName', label: 'Customer', bold: true },
+              { key: 'product', label: 'Product', sortValue: l => leadProductName(l), render: l => leadProductName(l) || '—' },
+              { key: 'volume', label: 'Volume (MT)', align: 'right', mono: true, bold: true, sortValue: l => l.volume || 0 },
+              { key: 'location', label: 'Location', render: l => l.location || '—' },
+              { key: 'salespersonId', label: 'Sales Person', sortValue: l => people.find(p => p.id === l.salespersonId)?.name || '', render: l => people.find(p => p.id === l.salespersonId)?.name || '—' },
+              { key: 'status', label: 'Status', render: l => <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(l.status).bg, color: getStatusColor(l.status).text }}>{l.status}</span> },
+              { key: 'followUps', label: 'Follow-ups', sortValue: l => (l.followUps || []).filter(f => !f.completed).length, render: l => `${(l.followUps || []).filter(f => !f.completed).length}/${(l.followUps || []).length}` },
+            ]}
+            rowActions={lead => (
+              <>
+                <RowAction icon={<Edit2 size={14} />} title="Edit" onClick={() => setEditingLeadCard({ ...lead })} />
+                <RowAction icon={<Trash2 size={14} />} title="Delete" tone="danger" onClick={() => { recordUserDeletes(COLLECTIONS.salesLeads, [lead.id]); setSalesLeads(salesLeads.filter(l => l.id !== lead.id)); }} />
+              </>
+            )}
+          />
 
           {/* Add Lead Modal */}
           <AnimatePresence>
@@ -16360,82 +16276,54 @@ export default function App() {
           </AnimatePresence>
 
           {/* ─── Sample Requests Table ─── */}
-          <div className="pt-6">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold uppercase tracking-tighter">Sample Requests</h2>
-              <button onClick={() => {
-                setNewSampleData({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
-                setShowAddSampleModal(true);
-              }}
-                className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase flex items-center gap-2 hover:bg-opacity-80 transition-colors">
-                <Plus size={14} /> Add Sample Request
-              </button>
-            </div>
-
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
-                    <th className="p-3 w-8"></th>
-                    <SortableHeader label="Customer" sortKey="customer" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Shipment Date" sortKey="shipmentDate" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Sample Product" sortKey="sampleProduct" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Location" sortKey="location" currentSort={sortConfig} onSort={handleSort} />
-                    <SortableHeader label="Sales Person" sortKey="salespersonId" currentSort={sortConfig} onSort={handleSort} />
-                    <th className="p-3 border-r border-[#E4E3E0]/20">Follow-ups</th>
-                    <th className="p-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {sampleRequests.length === 0 && (
-                    <tr><td colSpan={8} className="p-6 text-center text-xs font-bold opacity-40 italic">No sample requests yet. Click "Add Sample Request" to create one.</td></tr>
-                  )}
-                  {sampleRequests.map(sr => {
-                    const salesperson = people.find(p => p.id === sr.salespersonId);
-                    const isExpanded = expandedRows.has(sr.id);
-                    return (
-                      <React.Fragment key={sr.id}>
-                        <tr className="hover:bg-[#F9F9F9] transition-colors cursor-pointer" onClick={() => setEditingSampleRequest({ ...sr })}>
-                          <td className="p-3" onClick={(e) => { e.stopPropagation(); toggleRow(sr.id); }}>
-                            {sr.followUps.length > 0 && (isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
-                          </td>
-                          <td className="p-3 text-xs font-bold border-r border-[#141414]/10">{sr.customer}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.shipmentDate || '—'}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.sampleProduct}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.location}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{salesperson?.name || '—'}</td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{sr.followUps.filter(f => !f.completed).length}/{sr.followUps.length}</td>
-                          <td className="p-3 text-xs" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => setEditingSampleRequest({ ...sr })} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
-                              <button onClick={() => { recordUserDeletes(COLLECTIONS.sampleRequests, [sr.id]); setSampleRequests(sampleRequests.filter(s => s.id !== sr.id)); }} className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
-                            </div>
-                          </td>
-                        </tr>
-                        {isExpanded && sr.followUps.length > 0 && sr.followUps.map(fu => (
-                          <tr key={fu.id} className="bg-[#F9F9F9]">
-                            <td className="p-2 pl-6"></td>
-                            <td className="p-2 text-[10px] opacity-60" colSpan={2}>
-                              <button onClick={() => {
-                                const updatedFollowUps = sr.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
-                                setSampleRequests(sampleRequests.map(s => s.id === sr.id ? { ...s, followUps: updatedFollowUps } : s));
-                              }} className="inline-flex items-center gap-1">
-                                {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
-                                <span className={fu.completed ? 'line-through' : ''}>{fu.description}</span>
-                              </button>
-                            </td>
-                            <td className="p-2 text-[10px] opacity-60">{fu.date}</td>
-                            <td className="p-2 text-[10px] opacity-60" colSpan={2}>—</td>
-                            <td colSpan={2}></td>
-                          </tr>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable<SampleRequest>
+            title="Sample Requests"
+            icon={<FileText size={14} />}
+            storageKey="sampleRequests"
+            rows={sampleRequests}
+            getRowKey={sr => sr.id}
+            onRowClick={sr => setEditingSampleRequest({ ...sr })}
+            onAdd={() => {
+              setNewSampleData({ id: '', customer: '', shipmentDate: '', sampleProduct: '', location: '', salespersonId: '', notes: '', status: 'Pending', followUps: [], createdAt: '' });
+              setShowAddSampleModal(true);
+            }}
+            addLabel="Add Sample Request"
+            emptyMessage='No sample requests yet. Click "Add Sample Request" to create one.'
+            canExpand={sr => (sr.followUps || []).length > 0}
+            renderExpanded={sr => (
+              <div className="px-12 py-2 space-y-1">
+                {sr.followUps.map(fu => (
+                  <div key={fu.id} className="flex items-center gap-4 text-[10px]">
+                    <button onClick={() => {
+                      const updatedFollowUps = sr.followUps.map(f => f.id === fu.id ? { ...f, completed: !f.completed } : f);
+                      setSampleRequests(sampleRequests.map(x => x.id === sr.id ? { ...x, followUps: updatedFollowUps } : x));
+                    }} className="inline-flex items-center gap-1 min-w-[240px] text-left">
+                      {fu.completed ? <CheckCircle2 size={12} className="text-green-600" /> : <div className="w-3 h-3 border border-[#141414] rounded-sm" />}
+                      <span className={fu.completed ? 'line-through opacity-60' : ''}>{fu.description}</span>
+                    </button>
+                    <span className="font-mono opacity-60">{fu.date}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            columns={[
+              { key: 'customer', label: 'Customer', bold: true },
+              { key: 'shipmentDate', label: 'Shipment Date', render: sr => sr.shipmentDate || '—' },
+              { key: 'sampleProduct', label: 'Sample Product', render: sr => sr.sampleProduct || '—' },
+              { key: 'numberOfSamples', label: '# Samples', align: 'right', mono: true, sortValue: sr => sr.numberOfSamples || 0, render: sr => sr.numberOfSamples ?? '—' },
+              { key: 'location', label: 'Location', render: sr => sr.location || '—' },
+              { key: 'salespersonId', label: 'Sales Person', sortValue: sr => people.find(p => p.id === sr.salespersonId)?.name || '', render: sr => people.find(p => p.id === sr.salespersonId)?.name || '—' },
+              { key: 'status', label: 'Status', render: sr => <span className="px-2 py-0.5 rounded-full font-bold uppercase text-[8px]" style={{ backgroundColor: getStatusColor(sr.status).bg, color: getStatusColor(sr.status).text }}>{sr.status}</span> },
+              { key: 'trackingNumber', label: 'Tracking #', mono: true, render: sr => sr.trackingNumber || '—' },
+              { key: 'followUps', label: 'Follow-ups', sortValue: sr => (sr.followUps || []).filter(f => !f.completed).length, render: sr => `${(sr.followUps || []).filter(f => !f.completed).length}/${(sr.followUps || []).length}` },
+            ]}
+            rowActions={sr => (
+              <>
+                <RowAction icon={<Edit2 size={14} />} title="Edit" onClick={() => setEditingSampleRequest({ ...sr })} />
+                <RowAction icon={<Trash2 size={14} />} title="Delete" tone="danger" onClick={() => { recordUserDeletes(COLLECTIONS.sampleRequests, [sr.id]); setSampleRequests(sampleRequests.filter(x => x.id !== sr.id)); }} />
+              </>
+            )}
+          />
 
           {/* Add / Edit Sample Request menu (shared component) */}
           <AnimatePresence>
@@ -16569,8 +16457,7 @@ export default function App() {
               </div>
             )}
           </AnimatePresence>
-          </div>
-        </div>
+        </PageShell>
       );
     }
 

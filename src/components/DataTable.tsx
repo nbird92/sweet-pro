@@ -16,7 +16,7 @@
 // The component is intentionally generic — pass columns + rows + onRowClick.
 
 import React, { useMemo, useState, useCallback, useContext, useRef, useEffect } from 'react';
-import { Plus, RotateCcw, SlidersHorizontal, Check } from 'lucide-react';
+import { Plus, RotateCcw, SlidersHorizontal, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
 // Optional cross-table column-order store. When an ancestor provides this
 // context (App does, backed by Firestore-synced per-user prefs), DataTable reads
@@ -104,6 +104,11 @@ interface DataTableProps<T> {
    *  draggable / hideable). Clicks inside it never trigger onRowClick.
    *  Use <RowAction> for uniform icons. */
   rowActions?: (row: T) => React.ReactNode;
+  /** Expandable rows: content drawn full-width under a row when its chevron
+   *  (fixed first column) is toggled. */
+  renderExpanded?: (row: T) => React.ReactNode;
+  /** Which rows can expand (default: all, when renderExpanded is set). */
+  canExpand?: (row: T) => boolean;
 }
 
 /** Standard row action icon button for DataTable's Actions column. */
@@ -165,7 +170,15 @@ export default function DataTable<T>({
   storageKey,
   variant = 'card',
   rowActions,
+  renderExpanded,
+  canExpand,
 }: DataTableProps<T>) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (k: string) => setExpanded(prev => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
   const [sortKey, setSortKey] = useState<string | null>(defaultSortKey || null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir);
   // How many rows are currently painted. Grows via the "Show more" control.
@@ -361,7 +374,7 @@ export default function DataTable<T>({
           </div>
     </>
   );
-  const colCount = visibleColumns.length + (rowActions ? 1 : 0);
+  const colCount = visibleColumns.length + (rowActions ? 1 : 0) + (renderExpanded ? 1 : 0);
 
   return (
     <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
@@ -409,6 +422,7 @@ export default function DataTable<T>({
       <table className="w-full text-left border-collapse">
         <thead className={stickyHeader ? 'sticky top-0 z-10' : ''}>
           <tr className="bg-[#F5F5F5] text-[#141414] text-[10px] uppercase tracking-widest border-b border-[#141414]">
+            {renderExpanded && <th className={`p-3 w-8 ${stickyHeader ? 'bg-[#F5F5F5]' : ''}`} />}
             {visibleColumns.map(col => {
               const sortable = col.sortable !== false;
               const isActive = sortKey === col.key;
@@ -444,9 +458,13 @@ export default function DataTable<T>({
           </tr>
         </thead>
         <tbody className="divide-y divide-[#141414]/10">
-          {visibleRows.map(row => (
+          {visibleRows.map(row => {
+            const rk = getRowKey(row);
+            const expandable = !!renderExpanded && (canExpand ? canExpand(row) : true);
+            const isOpen = expandable && expanded.has(rk);
+            return (
+            <React.Fragment key={rk}>
             <tr
-              key={getRowKey(row)}
               onClick={() => onRowClick?.(row)}
               // content-visibility lets the browser skip render/layout for rows
               // scrolled off-screen; contain-intrinsic-size keeps the scrollbar
@@ -454,6 +472,11 @@ export default function DataTable<T>({
               style={{ contentVisibility: 'auto', containIntrinsicSize: '0 44px' } as React.CSSProperties}
               className={`hover:bg-[#F9F9F9] transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
             >
+              {renderExpanded && (
+                <td className="p-3 w-8" onClick={e => { e.stopPropagation(); if (expandable) toggleExpanded(rk); }}>
+                  {expandable && (isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                </td>
+              )}
               {visibleColumns.map(col => {
                 const value = col.render
                   ? col.render(row)
@@ -473,7 +496,14 @@ export default function DataTable<T>({
                 </td>
               )}
             </tr>
-          ))}
+            {isOpen && (
+              <tr className="bg-[#F9F9F9]">
+                <td colSpan={colCount} className="p-0">{renderExpanded!(row)}</td>
+              </tr>
+            )}
+            </React.Fragment>
+            );
+          })}
           {sorted.length === 0 && (
             <tr>
               <td colSpan={colCount} className="p-8 text-center text-xs opacity-50 italic">
@@ -486,6 +516,7 @@ export default function DataTable<T>({
           <tfoot>
             {footerCells && (
               <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                {renderExpanded && <td className="p-3" />}
                 {visibleColumns.map(col => (
                   <td
                     key={col.key}
