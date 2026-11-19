@@ -388,7 +388,7 @@ export default function DataTable<T>({
       ) : (
       <div className="px-4 py-2 flex justify-between items-center border-b border-[#141414] bg-white">
         <div className="flex items-center gap-3">
-          <span className="text-[10px] opacity-50 font-mono">{rows.length} records</span>
+          {/* The record count lives in the page banner — not repeated here. */}
           {resetBtn}
         </div>
         <div className="flex items-center gap-2">
