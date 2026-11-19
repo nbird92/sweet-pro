@@ -1324,6 +1324,10 @@ export interface SampleRequest {
   status: 'Pending' | 'Shipped' | 'Delivered' | 'Cancelled';
   followUps: SampleRequestFollowUp[];
   createdAt: string;
+  /** Catalog key (QA product id, else SKU id) of the selected sample product.
+   *  `sampleProduct` then holds that product's full display name. Needed
+   *  because catalog names are format-only ("Bulk") and shared by many products. */
+  sampleProductKey?: string;
   /** Person.id (department 'QA') at the sample's location who ships it. */
   qaRepId?: string;
   /** Sample is to be mailed/couriered to the address below. */

@@ -439,10 +439,24 @@ function SampleRequestModal({ sample, setSample, title, onSave, onSubmitRequest,
             </div>
             <div className="space-y-1">
               <label className={lbl}>Sample Product</label>
-              <select value={sample.sampleProduct} onChange={e => setSample({ ...sample, sampleProduct: e.target.value })} className={field}>
-                <option value="">Select product...</option>
-                {productOptions.map(o => <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>)}
-              </select>
+              {/* Keyed by catalog id: option VALUES ("Bulk") are shared by many
+                  products, so selecting by value saved the wrong product. */}
+              {(() => {
+                const byKey = sample.sampleProductKey ? productOptions.find(o => o.key === sample.sampleProductKey) : undefined;
+                const byLabel = !byKey && sample.sampleProduct ? productOptions.find(o => o.label === sample.sampleProduct) : undefined;
+                const selKey = byKey?.key || byLabel?.key || (sample.sampleProduct ? '_legacy' : '');
+                return (
+                  <select value={selKey} onChange={e => {
+                    const o = productOptions.find(x => x.key === e.target.value);
+                    if (o) setSample({ ...sample, sampleProductKey: o.key, sampleProduct: o.label });
+                    else if (!e.target.value) { const { sampleProductKey: _k, ...rest } = sample; setSample({ ...rest, sampleProduct: '' }); }
+                  }} className={field}>
+                    <option value="">Select product...</option>
+                    {selKey === '_legacy' && <option value="_legacy">{sample.sampleProduct} (re-select)</option>}
+                    {productOptions.filter(o => !o.key.startsWith('_ghost-')).map(o => <option key={o.key} value={o.key}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>)}
+                  </select>
+                );
+              })()}
             </div>
             <div className="space-y-1">
               <label className={lbl}>Location</label>
@@ -12018,7 +12032,12 @@ export default function App() {
   const openSampleRequestEmail = (sr: SampleRequest) => {
     const qaRep = people.find(p => p.id === sr.qaRepId);
     const sales = people.find(p => p.id === sr.salespersonId);
-    const product = productToShortform(sr.sampleProduct) || sr.sampleProduct || '(product not set)';
+    // The exact product picked in the menu: its catalog key → current Product
+    // Name, else the stored name. Never resolve the bare name ("Bulk") — that
+    // lands on whichever catalog item shares it (the wrong product).
+    const product = (sr.sampleProductKey
+      && buildOrderProductOptions().find(o => o.key === sr.sampleProductKey)?.label)
+      || sr.sampleProduct || '(product not set)';
     const isLead = !customers.some(c => c.name === sr.customer);
     const addr = [sr.address, [sr.city, sr.province].filter(Boolean).join(', '), sr.postalCode, sr.country].filter(Boolean);
     const lines: string[] = [];
