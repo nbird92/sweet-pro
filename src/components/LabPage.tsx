@@ -3,6 +3,7 @@ import { LotCode, SugarType, Person, ProductGroup, Shipment, Transfer, Customer,
 import { Plus, X, Trash2, Search, Upload, Download, FlaskConical, ShieldAlert, FileText, ChevronDown, ChevronUp, SlidersHorizontal, RotateCcw, ArrowUp, ArrowDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import { PageToolbar, ToolbarSelect } from './PageShell';
 import type { SheetSpec } from '../utils/exportExcel';
 import { samePoNumber } from '../utils/poNumber';
 
@@ -803,36 +804,49 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
         exportFileName="Hamilton_Lab"
       >
         <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
-        <div className="px-4 py-2 flex items-center gap-2">
-          <label className="text-[10px] uppercase font-bold text-[#E4E3E0]/60 whitespace-nowrap">Sugar Type</label>
-          <select
-            value={filterSugarType}
-            onChange={(e) => setFilterSugarType(e.target.value)}
-            className="bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 px-2 py-1 text-xs focus:outline-none"
+        <button
+          onClick={handleDownloadTemplate}
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
+        >
+          <Download size={12} /> Template
+        </button>
+        <button
+          onClick={() => csvInputRef.current?.click()}
+          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
+        >
+          <Upload size={12} /> Import CSV
+        </button>
+        {onSyncLotCodes && (
+          <button
+            onClick={onSyncLotCodes}
+            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
           >
-            {sugarTypes.map(st => <option key={st.id} value={st.name}>{st.name}</option>)}
-          </select>
-          <div className="relative ml-1">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search lot #, BOL, PO, customer, trailer…"
-              className="bg-[#2a2a2a] text-[#E4E3E0] placeholder:text-[#E4E3E0]/40 border border-[#E4E3E0]/20 pl-7 pr-6 py-1 text-xs focus:outline-none focus:border-[#E4E3E0]/50 w-64"
-            />
-            {search && (
-              <button onClick={() => setSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#E4E3E0]/40 hover:text-[#E4E3E0]" title="Clear search">
-                <X size={12} />
-              </button>
-            )}
-          </div>
+            <FileText size={12} /> Sync Lot Codes
+          </button>
+        )}
+        <button
+          onClick={openAdd}
+          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
+        >
+          <Plus size={12} /> + Add Lot Code
+        </button>
+        <button
+          onClick={() => setClearAllConfirm(true)}
+          className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-colors whitespace-nowrap"
+        >
+          <ShieldAlert size={12} /> Clear All
+        </button>
+      </PageBanner>
+      <PageToolbar
+        search={{ value: search, onChange: setSearch, placeholder: 'Search lot #, BOL, PO, customer, trailer…' }}
+        filters={<ToolbarSelect label="Sugar Type" value={filterSugarType} onChange={setFilterSugarType} options={sugarTypes.map(st => ({ value: st.name, label: st.name }))} />}
+        toolbarRight={<>
           {/* Column show/hide + reorder — persisted per sugar-type layout. */}
-          <div className="relative ml-1">
+          <div className="relative">
             <button
               type="button"
               onClick={() => setShowColumnsMenu(v => !v)}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-[#2a2a2a] text-[#E4E3E0] border border-[#E4E3E0]/20 text-[10px] font-bold uppercase hover:border-[#E4E3E0]/50 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] transition-colors whitespace-nowrap"
               title="Show, hide and reorder columns"
             >
               <SlidersHorizontal size={12} /> Columns{hiddenKeys.length ? ` (${hiddenKeys.length} hidden)` : ''}
@@ -873,40 +887,8 @@ export default function LabPage({ lotCodes, sugarTypes, people, productGroups, c
               </>
             )}
           </div>
-        </div>
-        <button
-          onClick={handleDownloadTemplate}
-          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
-        >
-          <Download size={12} /> Template
-        </button>
-        <button
-          onClick={() => csvInputRef.current?.click()}
-          className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
-        >
-          <Upload size={12} /> Import CSV
-        </button>
-        {onSyncLotCodes && (
-          <button
-            onClick={onSyncLotCodes}
-            className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
-          >
-            <FileText size={12} /> Sync Lot Codes
-          </button>
-        )}
-        <button
-          onClick={openAdd}
-          className="px-4 py-2 bg-white/10 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/20 transition-colors whitespace-nowrap"
-        >
-          <Plus size={12} /> + Add Lot Code
-        </button>
-        <button
-          onClick={() => setClearAllConfirm(true)}
-          className="px-4 py-2 text-red-400 text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-red-500/20 transition-colors whitespace-nowrap"
-        >
-          <ShieldAlert size={12} /> Clear All
-        </button>
-      </PageBanner>
+        </>}
+      />
     <div className="p-6 space-y-4">
 
       {/* Lot Code Testing Log — grouped into ISO weeks (newest first) with

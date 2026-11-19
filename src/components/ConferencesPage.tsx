@@ -3,6 +3,7 @@ import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDeta
 import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
+import { PageToolbar } from './PageShell';
 import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
@@ -781,8 +782,10 @@ export default function ConferencesPage({
           <Plus size={12} /> Add Conference
         </button>
       </PageBanner>
+      <PageToolbar
+        search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search conferences by name or location…' }}
+      />
     <main className="flex-1 p-6 overflow-auto">
-      <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search conferences by name or location..." />
 
       {/* Conferences — standardized DataTable. Row click drills into the
           conference detail view (which has its own Edit / Delete buttons), so
@@ -790,6 +793,7 @@ export default function ConferencesPage({
           PageBanner. */}
       <div className="mt-6">
         <DataTable<Conference>
+          variant="page"
           title="Conferences"
           icon={<MapPin size={14} />}
           columns={[

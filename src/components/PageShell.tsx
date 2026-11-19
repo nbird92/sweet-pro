@@ -35,20 +35,27 @@ export interface PageShellProps {
 }
 
 export default function PageShell({ icon, title, count, exportSheets, exportFileName, actions, search, filters, toolbarRight, children }: PageShellProps) {
-  const hasToolbar = !!(search || filters || toolbarRight);
   return (
     <div>
       <PageBanner icon={icon} title={title} count={count} exportSheets={exportSheets} exportFileName={exportFileName}>
         {actions}
       </PageBanner>
-      {hasToolbar && (
-        <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
-          {search && <ToolbarSearch {...search} />}
-          {filters && <div className="flex flex-wrap items-center gap-3">{filters}</div>}
-          {toolbarRight && <div className="ml-auto flex items-center gap-3">{toolbarRight}</div>}
-        </div>
-      )}
+      <PageToolbar search={search} filters={filters} toolbarRight={toolbarRight} />
       <div className="p-6 space-y-6">{children}</div>
+    </div>
+  );
+}
+
+/** The standard toolbar row on its own — for pages that keep their own
+ *  <PageBanner> (drop it directly under the banner). Renders nothing when
+ *  there is no search / filter content. */
+export function PageToolbar({ search, filters, toolbarRight }: Pick<PageShellProps, 'search' | 'filters' | 'toolbarRight'>) {
+  if (!(search || filters || toolbarRight)) return null;
+  return (
+    <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
+      {search && <ToolbarSearch {...search} />}
+      {filters && <div className="flex flex-wrap items-center gap-3">{filters}</div>}
+      {toolbarRight && <div className="ml-auto flex items-center gap-3">{toolbarRight}</div>}
     </div>
   );
 }

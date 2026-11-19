@@ -103,7 +103,7 @@ const HamiltonScheduleSyncModal = lazy(() => import('./components/HamiltonSchedu
 const ReportsPage = lazy(() => import('./components/ReportsPage'));
 const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarrierReport'));
 import PageBanner from './components/PageBanner';
-import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle } from './components/PageShell';
+import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle, PageToolbar } from './components/PageShell';
 import LocationCard from './components/LocationCard';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
@@ -14019,13 +14019,11 @@ export default function App() {
               <Plus size={12} /> New Transfer
             </button>
           </PageBanner>
+          <PageToolbar
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search transfers by number, origin, destination, carrier, lot code…' }}
+          />
           <div className="p-6 space-y-4">
 
-          <SearchInput
-            value={searchTerm}
-            onChange={setSearchTerm}
-            placeholder="Search transfers by number, origin, destination, carrier, lot code..."
-          />
 
           {/* Transfers — standardized DataTable. Rows open the existing Edit
               Transfer modal (Delete now lives in that modal's footer). The
@@ -14034,6 +14032,7 @@ export default function App() {
               Orders inline status); each stops click propagation so it doesn't
               also open the edit modal. */}
           <DataTable<Transfer>
+            variant="page"
             title="Inventory Transfers"
             icon={<ArrowRightLeft size={14} />}
             columns={[
@@ -15523,13 +15522,16 @@ export default function App() {
               <Plus size={12} /> Add Vendor
             </button>
           </PageBanner>
+          <PageToolbar
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search vendors by number, name or category…' }}
+          />
           <div className="p-6 space-y-4">
 
-          <SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search vendors by number, name or category..." />
 
           {/* Vendors — standardized DataTable + DetailModal. Replaces the old
               fully-inline-editable table (every cell an input) + trash column. */}
           <DataTable<Vendor>
+            variant="page"
             title="Vendors"
             icon={<Briefcase size={14} />}
             columns={[
@@ -17463,15 +17465,9 @@ export default function App() {
               <X size={12} /> Clear All
             </button>
           </PageBanner>
-
-          <div className="px-6 pt-4 flex items-center gap-2">
-            <div className="flex-1">
-              <SearchInput
-                value={searchTerm}
-                onChange={setSearchTerm}
-                placeholder="Search contracts by number, customer, SKU, origin or destination..."
-              />
-            </div>
+          <PageToolbar
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search contracts by number, customer, SKU, origin or destination…' }}
+            toolbarRight={<>
             <div className="relative">
               <button
                 type="button"
@@ -17509,11 +17505,13 @@ export default function App() {
                 </>
               )}
             </div>
-          </div>
+            </>}
+          />
+
 
           <div className="px-6 py-4">
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[calc(100vh-13rem)]">
-            <table className="w-full text-left border-collapse">
+            <table className="std-table w-full text-left border-collapse">
               <thead className="sticky top-0 z-20">
                 <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                   <SortableHeader label="Contract No." sortKey="contractNumber" currentSort={sortConfig} onSort={handleSort} className="min-w-[160px]" />
@@ -18255,22 +18253,13 @@ export default function App() {
               <Trash2 size={12} /> Clear All
             </button>
           </PageBanner>
+          <PageToolbar
+            search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search by split, customer, terminal, PO, packing, warehouse or CMY…' }}
+            filters={<ToolbarSelect label="Product Group" value={stockGroupFilter} onChange={setStockGroupFilter} options={[{ value: '', label: 'All Groups' }, ...productGroups.map(pg => ({ value: pg.name, label: pg.name }))]} />}
+          />
           <div className="p-6 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-              <div className="flex-1"><SearchInput value={searchTerm} onChange={setSearchTerm} placeholder="Search by split, customer, terminal, PO, packing, warehouse or CMY..." /></div>
-              <div className="flex items-center gap-2 whitespace-nowrap">
-                <label className="text-[10px] uppercase font-bold opacity-50">Product Group</label>
-                <select
-                  value={stockGroupFilter}
-                  onChange={(e) => setStockGroupFilter(e.target.value)}
-                  className="bg-white border border-[#141414] px-3 py-2 text-xs outline-none"
-                >
-                  <option value="">All Groups</option>
-                  {productGroups.map(pg => <option key={pg.id} value={pg.name}>{pg.name}</option>)}
-                </select>
-              </div>
-            </div>
             <DataTable<StockRow>
+              variant="page"
               title="Stock Requests"
               icon={<Boxes size={14} />}
               stickyHeader

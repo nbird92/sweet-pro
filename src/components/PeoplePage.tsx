@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Person, Location, PERMISSION_GROUPS } from '../types';
 import { Plus, Users } from 'lucide-react';
 import PageBanner from './PageBanner';
+import { PageToolbar } from './PageShell';
 import DataTable from './DataTable';
 import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
@@ -104,17 +105,16 @@ export default function PeoplePage({
           <Plus size={12} /> Add Person
         </button>
       </PageBanner>
+      <PageToolbar
+        search={{ value: searchTerm, onChange: setSearchTerm, placeholder: 'Search by name, email or department…' }}
+      />
     <main className="flex-1 p-6 overflow-auto">
 
-      <SearchInput
-        value={searchTerm}
-        onChange={setSearchTerm}
-        placeholder="Search by name, email, or department..."
-      />
 
       {/* People — standardized DataTable + DetailModal. */}
       <div className="mt-6">
         <DataTable<Person>
+          variant="page"
           title="People"
           icon={<Users size={14} />}
           columns={[
