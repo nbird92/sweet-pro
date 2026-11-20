@@ -7,6 +7,13 @@ import { PageToolbar } from './PageShell';
 import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
 
+/** "2026-11-21T09:30" → "Nov 21, 9:30 AM". */
+const fmtReminder = (v?: string) => {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? v : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
 interface ConferencesPageProps {
   conferences: Conference[];
   customers: Customer[];
@@ -39,6 +46,8 @@ export default function ConferencesPage({
   const [editingMeeting, setEditingMeeting] = useState<ConferenceMeeting | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedMeeting, setExpandedMeeting] = useState<string | null>(null);
+  // Scheduled Meetings: table list or daily calendar (days × hourly slots).
+  const [meetingView, setMeetingView] = useState<'table' | 'calendar'>('table');
   const [editingConference, setEditingConference] = useState<Conference | null>(null);
 
   const [newConference, setNewConference] = useState<Partial<Conference>>({
@@ -151,27 +160,29 @@ export default function ConferencesPage({
     if (editingConference) setEditingConference(prev => ({ ...prev!, attendees: prev!.attendees.filter(a => a.id !== attendeeId) }));
   };
 
-  const handleAddMeeting = () => {
-    if (!selectedConference || !newMeeting.date || !newMeeting.time || !newMeeting.location) { alert('Please fill in date, time, and location'); return; }
-    const isNewCustomer = newMeeting.customerId === '__NEW_CUSTOMER__';
-    let meetingName = newMeeting.meetingName || '';
-    if (newMeeting.customerId && newMeeting.customerId !== '__NEW_CUSTOMER__' && !meetingName) {
-      const customer = customers.find(c => c.id === newMeeting.customerId);
+  const handleAddMeeting = (override?: Partial<ConferenceMeeting>) => {
+    const nm = override || newMeeting;
+    if (!selectedConference || !nm.date || !nm.time || !nm.location) { alert('Please fill in date, start time, and location'); return; }
+    if (nm.endTime && nm.endTime < nm.time) { alert('End time must be after the start time'); return; }
+    const isNewCustomer = nm.customerId === '__NEW_CUSTOMER__';
+    let meetingName = nm.meetingName || '';
+    if (nm.customerId && nm.customerId !== '__NEW_CUSTOMER__' && !meetingName) {
+      const customer = customers.find(c => c.id === nm.customerId);
       meetingName = customer ? customer.name : 'Meeting';
     }
     if (isNewCustomer && !meetingName) {
       meetingName = 'New Customer Meeting';
     }
     // Ensure owner is also in attendees
-    let attendees = [...(newMeeting.attendees || [])];
-    if (newMeeting.meetingOwner && !attendees.includes(newMeeting.meetingOwner)) {
-      attendees = [newMeeting.meetingOwner, ...attendees];
+    let attendees = [...(nm.attendees || [])];
+    if (nm.meetingOwner && !attendees.includes(nm.meetingOwner)) {
+      attendees = [nm.meetingOwner, ...attendees];
     }
     const meeting: ConferenceMeeting = {
-      id: `MTG-${Date.now()}`, conferenceId: selectedConference.id, date: newMeeting.date!, time: newMeeting.time!,
-      meetingName, meetingOwner: newMeeting.meetingOwner || undefined, attendees,
-      customerAttendees: [], customerAttendeeDetails: newMeeting.customerAttendeeDetails || [],
-      location: newMeeting.location!, notes: newMeeting.notes, customerId: isNewCustomer ? '' : newMeeting.customerId, followUps: [],
+      id: `MTG-${Date.now()}`, conferenceId: selectedConference.id, date: nm.date!, time: nm.time!, endTime: nm.endTime || undefined,
+      meetingName, meetingOwner: nm.meetingOwner || undefined, attendees,
+      customerAttendees: [], customerAttendeeDetails: nm.customerAttendeeDetails || [],
+      location: nm.location!, notes: nm.notes, customerId: isNewCustomer ? '' : nm.customerId, followUps: nm.followUps || [],
     };
     const updatedConference: Conference = { ...selectedConference, meetings: [...selectedConference.meetings, meeting] };
     onAddMeeting(selectedConference.id, meeting);
@@ -179,7 +190,7 @@ export default function ConferencesPage({
 
     // Create a Sales Lead if "New Customer" was selected
     if (isNewCustomer && onCreateSalesLead) {
-      const customerContactName = (newMeeting.customerAttendeeDetails || []).map(ca => ca.name).join(', ');
+      const customerContactName = (nm.customerAttendeeDetails || []).map(ca => ca.name).join(', ');
       const leadFollowUps: SalesLeadFollowUp[] = (meeting.followUps || []).map(fu => ({
         id: `SLFU-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         date: fu.createdAt || meeting.date,
@@ -193,8 +204,8 @@ export default function ConferencesPage({
         product: '',
         volume: 0,
         location: '',
-        salespersonId: newMeeting.meetingOwner || '',
-        notes: `Contact info: ${(newMeeting.customerAttendeeDetails || []).map(ca => `${ca.name} (${ca.email}${ca.phone ? ', ' + ca.phone : ''})`).join('; ')}`,
+        salespersonId: nm.meetingOwner || '',
+        notes: `Contact info: ${(nm.customerAttendeeDetails || []).map(ca => `${ca.name} (${ca.email}${ca.phone ? ', ' + ca.phone : ''})`).join('; ')}`,
         status: 'New',
         followUps: leadFollowUps,
         createdAt: new Date().toISOString(),
@@ -207,20 +218,22 @@ export default function ConferencesPage({
     resetMeetingForm();
   };
 
-  const handleEditMeeting = () => {
-    if (!selectedConference || !editingMeeting) return;
-    if (!editingMeeting.date || !editingMeeting.time || !editingMeeting.location) { alert('Please fill in date, time, and location'); return; }
-    if (editingMeeting.customerId && !editingMeeting.meetingName) {
-      const customer = customers.find(c => c.id === editingMeeting.customerId);
-      editingMeeting.meetingName = customer ? customer.name : 'Meeting';
+  const handleEditMeeting = (override?: Partial<ConferenceMeeting>) => {
+    const em = (override as ConferenceMeeting) || editingMeeting;
+    if (!selectedConference || !em) return;
+    if (!em.date || !em.time || !em.location) { alert('Please fill in date, start time, and location'); return; }
+    if (em.endTime && em.endTime < em.time) { alert('End time must be after the start time'); return; }
+    if (em.customerId && !em.meetingName) {
+      const customer = customers.find(c => c.id === em.customerId);
+      em.meetingName = customer ? customer.name : 'Meeting';
     }
     // Ensure owner is also in attendees
-    if (editingMeeting.meetingOwner && !(editingMeeting.attendees || []).includes(editingMeeting.meetingOwner)) {
-      editingMeeting.attendees = [editingMeeting.meetingOwner, ...(editingMeeting.attendees || [])];
+    if (em.meetingOwner && !(em.attendees || []).includes(em.meetingOwner)) {
+      em.attendees = [em.meetingOwner, ...(em.attendees || [])];
     }
     const updatedConference: Conference = {
       ...selectedConference,
-      meetings: selectedConference.meetings.map(m => m.id === editingMeeting.id ? editingMeeting : m),
+      meetings: selectedConference.meetings.map(m => m.id === em.id ? em : m),
     };
     onUpdateConference(updatedConference);
     setSelectedConference(updatedConference);
@@ -483,10 +496,26 @@ export default function ConferencesPage({
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-bold text-lg">Scheduled Meetings ({meetings.length})</h2>
+            <div className="flex border border-[#141414]">
+              {(['table', 'calendar'] as const).map(v => (
+                <button key={v} onClick={() => setMeetingView(v)}
+                  className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${meetingView === v ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-white hover:bg-[#F5F5F5]'}`}>
+                  {v === 'table' ? <FileText size={12} /> : <Clock size={12} />}{v === 'table' ? 'Table' : 'Calendar'}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="mb-4"><SearchInput value={meetingSearch} onChange={setMeetingSearch} placeholder="Search meetings by name, customer, attendee, owner, location..." /></div>
 
-          {meetings.length === 0 ? (
+          {meetingView === 'calendar' ? (
+            <MeetingCalendar
+              days={conferenceDates}
+              meetings={sortedMeetings}
+              customers={customers}
+              getPersonName={getPersonName}
+              onOpen={(meeting) => { setEditingMeeting({ ...meeting, customerAttendeeDetails: meeting.customerAttendeeDetails || [], followUps: meeting.followUps || [] }); setShowEditMeetingModal(true); }}
+            />
+          ) : meetings.length === 0 ? (
             <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 bg-gray-50"><p>No meetings scheduled yet</p></div>
           ) : (
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-hidden">
@@ -494,7 +523,8 @@ export default function ConferencesPage({
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <MSortHeader field="date" label="Date" />
-                    <MSortHeader field="time" label="Time" />
+                    <MSortHeader field="time" label="Start" />
+                    <th className="p-3 border-r border-[#E4E3E0]/20">End</th>
                     <MSortHeader field="meetingName" label="Meeting" />
                     <MSortHeader field="customer" label="Customer" />
                     <MSortHeader field="owner" label="Owner" />
@@ -506,7 +536,7 @@ export default function ConferencesPage({
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
                   {sortedMeetings.length === 0 && (
-                    <tr><td colSpan={9} className="p-6 text-center text-xs font-bold opacity-40 italic">No meetings match your search.</td></tr>
+                    <tr><td colSpan={10} className="p-6 text-center text-xs font-bold opacity-40 italic">No meetings match your search.</td></tr>
                   )}
                   {sortedMeetings.map(meeting => {
                     const customer = meeting.customerId ? customers.find(c => c.id === meeting.customerId) : null;
@@ -520,6 +550,7 @@ export default function ConferencesPage({
                         <tr className={`hover:bg-[#F5F5F5] transition-colors ${isExpanded ? 'bg-[#F5F5F5]' : ''}`}>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.date ? new Date(meeting.date + 'T00:00:00').toLocaleDateString() : '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.time || '—'}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.endTime || '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.meetingName || 'Untitled'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10">{customer?.name || '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10">
@@ -557,7 +588,7 @@ export default function ConferencesPage({
                         {/* Expanded Meeting Detail */}
                         <AnimatePresence>
                           {isExpanded && (
-                            <tr><td colSpan={9} className="p-0">
+                            <tr><td colSpan={10} className="p-0">
                               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                                 className="overflow-hidden bg-[#F9F9F9] border-t border-[#141414]/10">
                                 <div className="p-6 space-y-4">
@@ -663,12 +694,14 @@ export default function ConferencesPage({
                     <FSortHeader field="meeting" label="Meeting" />
                     <FSortHeader field="owner" label="Meeting Owner" />
                     <FSortHeader field="customer" label="Customer" />
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Assigned To</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Reminder</th>
                     <th className="p-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
                   {sortedFollowUps.length === 0 && (
-                    <tr><td colSpan={6} className="p-6 text-center text-xs font-bold opacity-40 italic">No follow-ups match your search.</td></tr>
+                    <tr><td colSpan={8} className="p-6 text-center text-xs font-bold opacity-40 italic">No follow-ups match your search.</td></tr>
                   )}
                   {sortedFollowUps.map(item => {
                     const isEditing = editingFollowUp?.followUp.id === item.followUp.id;
@@ -698,6 +731,8 @@ export default function ConferencesPage({
                           {item.ownerId ? <span className="bg-purple-100 text-purple-900 px-1.5 py-0.5 rounded text-[10px] font-bold">{item.ownerName}</span> : '—'}
                         </td>
                         <td className="p-3 text-xs border-r border-[#141414]/10">{item.customerName}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10">{getPersonName(item.followUp.assigneeId || item.ownerId) || '—'}</td>
+                        <td className="p-3 text-xs border-r border-[#141414]/10 whitespace-nowrap">{fmtReminder(item.followUp.reminderAt)}</td>
                         <td className="p-3 text-xs">
                           <div className="flex items-center gap-1">
                             <button onClick={() => { setEditingFollowUp({ meetingId: item.meetingId, followUp: item.followUp }); setEditingFollowUpText(item.followUp.text); }}
@@ -943,14 +978,121 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
 // ============================
 // MEETING MODAL
 // ============================
+/** Daily calendar for a conference: one column per conference day, one row
+ *  per hour. Meetings are blocks placed by start time and sized by duration
+ *  (end time, else 1 hour); overlapping meetings share the column side by side.
+ *  Click a meeting to edit it. */
+function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
+  days: string[]; meetings: ConferenceMeeting[]; customers: Customer[];
+  getPersonName: (id: string) => string; onOpen: (m: ConferenceMeeting) => void;
+}) {
+  const ROW = 56; // px per hour
+  const toMin = (t?: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : NaN; };
+  const span = (m: ConferenceMeeting) => {
+    const start = toMin(m.time);
+    let end = toMin(m.endTime);
+    if (!Number.isFinite(end) || end <= start) end = start + 60;
+    return { start, end };
+  };
+  const timed = meetings.filter(m => Number.isFinite(toMin(m.time)));
+  // Hour range: 7 AM – 6 PM, widened to fit every meeting.
+  let first = 7, last = 18;
+  for (const m of timed) {
+    const { start, end } = span(m);
+    first = Math.min(first, Math.floor(start / 60));
+    last = Math.max(last, Math.ceil(end / 60));
+  }
+  last = Math.min(24, Math.max(last, first + 1));
+  const hours = Array.from({ length: last - first }, (_, i) => first + i);
+  const hourLabel = (h: number) => `${((h + 11) % 12) + 1} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
+  const dayLabel = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const untimed = meetings.filter(m => !Number.isFinite(toMin(m.time)));
+
+  if (!days.length) return <div className="text-center py-8 text-gray-500 border border-dashed border-gray-300 bg-gray-50"><p>Set the conference start and end dates to see the calendar.</p></div>;
+
+  return (
+    <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
+      <div className="min-w-max" style={{ display: 'grid', gridTemplateColumns: `64px repeat(${days.length}, minmax(180px, 1fr))` }}>
+        {/* Header row */}
+        <div className="bg-[#F5F5F5] border-b border-r border-[#141414] sticky left-0 z-10" />
+        {days.map(d => (
+          <div key={d} className="bg-[#F5F5F5] border-b border-r border-[#141414] border-r-[#141414]/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest">
+            {dayLabel(d)}
+            <span className="ml-2 opacity-50 normal-case font-mono">{meetings.filter(m => m.date === d).length}</span>
+          </div>
+        ))}
+        {/* Hour labels */}
+        <div className="border-r border-[#141414] bg-white sticky left-0 z-10">
+          {hours.map(h => (
+            <div key={h} className="border-b border-[#141414]/10 text-[10px] font-mono opacity-60 text-right pr-2 pt-1" style={{ height: ROW }}>{hourLabel(h)}</div>
+          ))}
+        </div>
+        {/* Day columns */}
+        {days.map(d => {
+          const dayMeetings = timed.filter(m => m.date === d).map(m => ({ m, ...span(m) })).sort((a, b) => a.start - b.start || a.end - b.end);
+          // Greedy lanes so overlapping meetings sit side by side.
+          const laneEnds: number[] = [];
+          const placed = dayMeetings.map(x => {
+            let lane = laneEnds.findIndex(e => e <= x.start);
+            if (lane < 0) { lane = laneEnds.length; laneEnds.push(x.end); } else laneEnds[lane] = x.end;
+            return { ...x, lane };
+          });
+          const lanes = Math.max(1, laneEnds.length);
+          return (
+            <div key={d} className="relative border-r border-[#141414]/10" style={{ height: hours.length * ROW }}>
+              {hours.map((h, i) => <div key={h} className="absolute left-0 right-0 border-b border-[#141414]/10" style={{ top: (i + 1) * ROW - 1 }} />)}
+              {placed.map(({ m, start, end, lane }) => {
+                const customer = m.customerId ? customers.find(c => c.id === m.customerId)?.name : '';
+                const open = (m.followUps || []).filter(f => !f.completed).length;
+                return (
+                  <button key={m.id} onClick={() => onOpen(m)}
+                    title={`${m.meetingName || 'Meeting'} · ${m.time}${m.endTime ? `–${m.endTime}` : ''}${m.location ? ` · ${m.location}` : ''}`}
+                    className="absolute text-left bg-purple-100 border border-purple-400 border-l-4 border-l-purple-700 hover:bg-purple-200 transition-colors px-1.5 py-1 overflow-hidden"
+                    style={{ top: ((start - first * 60) / 60) * ROW + 1, height: Math.max(22, ((end - start) / 60) * ROW - 2), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}>
+                    <div className="text-[10px] font-mono opacity-70">{m.time}{m.endTime ? `–${m.endTime}` : ''}</div>
+                    <div className="text-[11px] font-bold leading-tight truncate">{m.meetingName || 'Untitled'}</div>
+                    {customer && <div className="text-[10px] truncate opacity-80">{customer}</div>}
+                    {m.location && <div className="text-[10px] truncate opacity-60">{m.location}</div>}
+                    {m.meetingOwner && <div className="text-[10px] truncate opacity-60">{getPersonName(m.meetingOwner)}</div>}
+                    {open > 0 && <div className="text-[9px] font-bold uppercase text-amber-700">{open} follow-up{open === 1 ? '' : 's'}</div>}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+      {untimed.length > 0 && (
+        <div className="border-t border-[#141414] p-3 text-xs">
+          <span className="font-bold uppercase text-[10px] tracking-widest opacity-60 mr-2">No start time:</span>
+          {untimed.map(m => <button key={m.id} onClick={() => onOpen(m)} className="mr-2 underline">{m.meetingName || 'Untitled'}</button>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLabel, customers, salesPeople, conferenceDates }: {
-  title: string; meeting: Partial<ConferenceMeeting>; setMeeting: (m: any) => void; onSubmit: () => void; onClose: () => void;
+  title: string; meeting: Partial<ConferenceMeeting>; setMeeting: (m: any) => void; onSubmit: (final: Partial<ConferenceMeeting>) => void; onClose: () => void;
   submitLabel: string; customers: Customer[]; salesPeople: Person[]; conferenceDates: string[];
 }) {
   // Fully local state for customer attendee management to avoid stale closure / prop round-trip issues
   const [localCustAttendees, setLocalCustAttendees] = useState<CustomerAttendeeDetail[]>(meeting.customerAttendeeDetails || []);
   const [custInput, setCustInput] = useState({ name: '', email: '', phone: '' });
   const [editingAttendeeId, setEditingAttendeeId] = useState<string | null>(null);
+  // New follow-up being typed in the menu.
+  const [fuDraft, setFuDraft] = useState({ text: '', assigneeId: '', reminderAt: '' });
+  const addFollowUpDraft = () => {
+    if (!fuDraft.text.trim()) return;
+    const fu: MeetingFollowUp = {
+      id: `FU-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: fuDraft.text.trim(), completed: false,
+      createdAt: new Date().toISOString(),
+      ...(fuDraft.assigneeId ? { assigneeId: fuDraft.assigneeId } : {}),
+      ...(fuDraft.reminderAt ? { reminderAt: fuDraft.reminderAt } : {}),
+    };
+    setMeeting({ ...meeting, followUps: [...(meeting.followUps || []), fu] });
+    setFuDraft({ text: '', assigneeId: '', reminderAt: '' });
+  };
 
   const toggleInternalAttendee = (personId: string) => {
     const current = meeting.attendees || [];
@@ -974,9 +1116,13 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
   };
   // Ensure local attendees are always synced to parent before submit
   const handleSubmit = () => {
-    setMeeting({ ...meeting, customerAttendeeDetails: localCustAttendees });
-    // Use setTimeout to ensure state update is processed before onSubmit reads it
-    setTimeout(onSubmit, 0);
+    const pending: MeetingFollowUp[] = fuDraft.text.trim() ? [{
+      id: `FU-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: fuDraft.text.trim(), completed: false, createdAt: new Date().toISOString(),
+      ...(fuDraft.assigneeId ? { assigneeId: fuDraft.assigneeId } : {}), ...(fuDraft.reminderAt ? { reminderAt: fuDraft.reminderAt } : {}),
+    }] : [];
+    const final = { ...meeting, customerAttendeeDetails: localCustAttendees, followUps: [...(meeting.followUps || []), ...pending] };
+    setMeeting(final);
+    onSubmit(final); // save exactly what's in the menu (no stale-state timer)
   };
 
   return (
@@ -994,9 +1140,14 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
                 className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
                 <option value="">Select a date</option>
                 {conferenceDates.map(d => <option key={d} value={d}>{new Date(d + 'T00:00:00').toLocaleDateString()}</option>)}</select></div>
-            <div><label className="text-xs font-bold uppercase block mb-1">Time*</label>
-              <input type="time" value={meeting.time || ''} onChange={(e) => setMeeting({ ...meeting, time: e.target.value })}
-                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><label className="text-xs font-bold uppercase block mb-1">Start Time*</label>
+                <input type="time" value={meeting.time || ''} onChange={(e) => setMeeting({ ...meeting, time: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+              <div><label className="text-xs font-bold uppercase block mb-1">End Time</label>
+                <input type="time" value={meeting.endTime || ''} min={meeting.time || undefined} onChange={(e) => setMeeting({ ...meeting, endTime: e.target.value })}
+                  className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+            </div>
           </div>
 
           <div><label className="text-xs font-bold uppercase block mb-1">Location*</label>
@@ -1090,6 +1241,45 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
           <div><label className="text-xs font-bold uppercase block mb-1">Notes</label>
             <textarea value={meeting.notes || ''} onChange={(e) => setMeeting({ ...meeting, notes: e.target.value })}
               placeholder="Additional notes..." rows={3} className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+
+          {/* Follow-ups — each can carry a reminder date + time; the assignee
+              (else the meeting owner) is emailed automatically at that time. */}
+          <div>
+            <label className="text-xs font-bold uppercase block mb-1">Follow-Ups</label>
+            <div className="space-y-2">
+              {(meeting.followUps || []).map((fu: MeetingFollowUp) => {
+                const upd = (patch: Partial<MeetingFollowUp>) => setMeeting({ ...meeting, followUps: (meeting.followUps || []).map((f: MeetingFollowUp) => f.id === fu.id ? { ...f, ...patch } : f) });
+                return (
+                  <div key={fu.id} className="bg-gray-50 border border-gray-200 p-2 grid grid-cols-12 gap-2 items-center text-xs">
+                    <button onClick={() => upd({ completed: !fu.completed })} className="col-span-1 flex justify-center" title={fu.completed ? 'Mark open' : 'Mark done'}>
+                      {fu.completed ? <CheckSquare size={16} className="text-emerald-600" /> : <Square size={16} className="text-gray-400" />}
+                    </button>
+                    <input value={fu.text} onChange={(e) => upd({ text: e.target.value })} className={`col-span-5 px-2 py-1 border border-[#141414]/30 bg-white text-xs focus:outline-none ${fu.completed ? 'line-through opacity-60' : ''}`} />
+                    <select value={fu.assigneeId || ''} onChange={(e) => upd({ assigneeId: e.target.value || undefined })} className="col-span-2 px-1 py-1 border border-[#141414]/30 bg-white text-xs focus:outline-none" title="Assigned to">
+                      <option value="">Owner</option>
+                      {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    <input type="datetime-local" value={fu.reminderAt || ''} onChange={(e) => upd({ reminderAt: e.target.value || undefined })} className="col-span-3 px-1 py-1 border border-[#141414]/30 bg-white text-xs focus:outline-none" title="Reminder date & time" />
+                    <button onClick={() => setMeeting({ ...meeting, followUps: (meeting.followUps || []).filter((f: MeetingFollowUp) => f.id !== fu.id) })} className="col-span-1 flex justify-center p-1 hover:bg-red-500 hover:text-white" title="Remove"><X size={12} /></button>
+                  </div>
+                );
+              })}
+              <div className="grid grid-cols-12 gap-2 items-end">
+                <div className="col-span-6"><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Follow-up</div>
+                  <input value={fuDraft.text} onChange={(e) => setFuDraft({ ...fuDraft, text: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') addFollowUpDraft(); }}
+                    placeholder="e.g. Send pricing for GC45" className="w-full px-2 py-1.5 border border-[#141414]/30 bg-white text-xs focus:outline-none focus:border-[#141414]" /></div>
+                <div className="col-span-2"><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Assigned To</div>
+                  <select value={fuDraft.assigneeId} onChange={(e) => setFuDraft({ ...fuDraft, assigneeId: e.target.value })} className="w-full px-1 py-1.5 border border-[#141414]/30 bg-white text-xs focus:outline-none">
+                    <option value="">Owner</option>
+                    {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select></div>
+                <div className="col-span-3"><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Reminder</div>
+                  <input type="datetime-local" value={fuDraft.reminderAt} onChange={(e) => setFuDraft({ ...fuDraft, reminderAt: e.target.value })} className="w-full px-1 py-1.5 border border-[#141414]/30 bg-white text-xs focus:outline-none" /></div>
+                <button onClick={addFollowUpDraft} className="col-span-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase">Add</button>
+              </div>
+              <p className="text-[10px] opacity-50">A reminder email is sent at the reminder time to the assigned person (or the meeting owner).</p>
+            </div>
+          </div>
 
           <div className="flex gap-2 justify-end pt-4 border-t">
             <button onClick={onClose} className="px-4 py-2 border border-[#141414] text-xs font-bold uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">Cancel</button>

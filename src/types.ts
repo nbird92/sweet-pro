@@ -928,13 +928,19 @@ export interface MeetingFollowUp {
   text: string;
   completed: boolean;
   createdAt: string;
+  /** Person.id who does the follow-up (gets the reminder). Blank = meeting owner. */
+  assigneeId?: string;
+  /** When to email the reminder — local business time, "YYYY-MM-DDTHH:mm". */
+  reminderAt?: string;
 }
 
 export interface ConferenceMeeting {
   id: string;
   conferenceId: string;
   date: string; // Conference date (YYYY-MM-DD)
-  time: string;
+  time: string; // Meeting START time (HH:mm)
+  /** Meeting end time (HH:mm). */
+  endTime?: string;
   meetingName: string;
   meetingOwner?: string; // Person ID of the sales employee responsible
   attendees: string[]; // Array of Person IDs (sales employees)
