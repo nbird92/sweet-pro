@@ -198,6 +198,9 @@ export default function SalesForecastPage({
   // ── Modal state for customer forecast editing ───────────────────────────
   const [modalViewMode, setModalViewMode] = useState<'Monthly' | 'Weekly'>('Monthly');
   const [modalLines, setModalLines] = useState<CustomerForecastLine[]>([]);
+  // Units shown / edited: MT volume, or Margin / MT (CAD).
+  const [modalUnits, setModalUnits] = useState<'MT' | 'Margin'>('MT');
+  const [tableUnits, setTableUnits] = useState<'MT' | 'Margin'>('MT');
   const [addProductDropdownOpen, setAddProductDropdownOpen] = useState(false);
   const [addProductSearch, setAddProductSearch] = useState('');
   const [addProductLocation, setAddProductLocation] = useState('');
@@ -853,6 +856,10 @@ export default function SalesForecastPage({
           existing.entries = [...merged.entries()]
             .sort((a, b) => a[0] - b[0])
             .map(([periodIndex, value]) => ({ periodIndex, value }));
+          // Keep the first row's margins; fill gaps from the duplicate.
+          const mm = new Map<number, number>((existing.marginEntries || []).map((e) => [e.periodIndex, e.value]));
+          for (const e of line.marginEntries || []) if (!mm.has(e.periodIndex)) mm.set(e.periodIndex, e.value);
+          if (mm.size) existing.marginEntries = [...mm.entries()].sort((a, b) => a[0] - b[0]).map(([periodIndex, value]) => ({ periodIndex, value }));
         }
       }
       return order.map((k) => byKey.get(k)!);
@@ -1065,7 +1072,14 @@ export default function SalesForecastPage({
             const per = Math.round((v / wks.length) * 100) / 100;
             wks.forEach((w) => entries.push({ periodIndex: w, value: per }));
           }
-          return { ...line, entries };
+          // Margin / MT carries over unchanged to each week of its month.
+          const marginEntries: ForecastEntry[] = [];
+          for (let m = 0; m < 12; m++) {
+            const mv = line.marginEntries?.find((e) => e.periodIndex === m)?.value;
+            if (mv == null) continue;
+            weeksByMonth[m].forEach((w) => marginEntries.push({ periodIndex: w, value: mv }));
+          }
+          return { ...line, entries, marginEntries };
         }
         const totals = new Array(12).fill(0) as number[];
         for (const e of line.entries) {
@@ -1075,7 +1089,21 @@ export default function SalesForecastPage({
         const entries: ForecastEntry[] = totals
           .map((v, m) => ({ periodIndex: m, value: Math.round(v * 100) / 100 }))
           .filter((e) => e.value !== 0);
-        return { ...line, entries };
+        // Weeks → month margin: volume-weighted average (plain average when the
+        // weeks carry no volume).
+        const mSum = new Array(12).fill(0) as number[], mVol = new Array(12).fill(0) as number[], mCnt = new Array(12).fill(0) as number[], mRaw = new Array(12).fill(0) as number[];
+        for (const e of line.marginEntries || []) {
+          const m = weekMonthIdx(e.periodIndex);
+          if (m < 0 || m >= 12) continue;
+          const vol = line.entries.find((x) => x.periodIndex === e.periodIndex)?.value || 0;
+          mSum[m] += e.value * vol; mVol[m] += vol; mRaw[m] += e.value; mCnt[m] += 1;
+        }
+        const marginEntries: ForecastEntry[] = [];
+        for (let m = 0; m < 12; m++) {
+          if (!mCnt[m]) continue;
+          marginEntries.push({ periodIndex: m, value: Math.round((mVol[m] > 0 ? mSum[m] / mVol[m] : mRaw[m] / mCnt[m]) * 100) / 100 });
+        }
+        return { ...line, entries, marginEntries };
       }));
       return mode;
     });
@@ -1083,6 +1111,16 @@ export default function SalesForecastPage({
 
   const handleRemoveProductLine = useCallback((lineId: string) => {
     setModalLines((prev) => prev.filter((l) => l.id !== lineId));
+  }, []);
+
+  /** Margin / MT (CAD) for one period of a line (blank = no margin). */
+  const handleMarginChange = useCallback((lineId: string, periodIndex: number, raw: string) => {
+    const v = raw === '' ? null : Math.round((parseFloat(raw) || 0) * 100) / 100;
+    setModalLines((prev) => prev.map((line) => {
+      if (line.id !== lineId) return line;
+      const rest = (line.marginEntries || []).filter((e) => e.periodIndex !== periodIndex);
+      return { ...line, marginEntries: v === null ? rest : [...rest, { periodIndex, value: v }] };
+    }));
   }, []);
 
   const handleCellChange = useCallback(
@@ -1650,6 +1688,31 @@ export default function SalesForecastPage({
     [getSalesAndForecast]
   );
 
+  /** Margin view of a customer: volume (MT) in the time frame, the margin
+   *  entered on it (CAD), and the volume-weighted average Margin / MT. */
+  const getMarginStats = useCallback(
+    (cf: CustomerForecast): { volume: number; marginVolume: number; totalMargin: number; avg: number | null } => {
+      let volume = 0, marginVolume = 0, totalMargin = 0, raw = 0, n = 0;
+      if (!selectedFY) return { volume, marginVolume, totalMargin, avg: null };
+      const weekly = cf.viewMode === 'Weekly';
+      const count = weekly ? 52 : 12;
+      for (const line of cf.lines) {
+        for (let i = 0; i < count; i++) {
+          if (timeFrameMonths && !timeFrameMonths.has(weekly ? weekMonthIdx(i) : i)) continue;
+          const fv = line.entries.find((e) => e.periodIndex === i)?.value ?? 0;
+          const mt = getCellValue(cf.customerName, line.productName, line.location, i, weekly, fv).value;
+          volume += mt;
+          const mv = line.marginEntries?.find((e) => e.periodIndex === i)?.value;
+          if (mv == null) continue;
+          raw += mv; n += 1;
+          if (mt > 0) { marginVolume += mt; totalMargin += mt * mv; }
+        }
+      }
+      return { volume, marginVolume, totalMargin, avg: marginVolume > 0 ? totalMargin / marginVolume : (n ? raw / n : null) };
+    },
+    [selectedFY, getCellValue, timeFrameMonths, weekMonthIdx]
+  );
+
   // ── Orders on hand (not yet invoiced) per customer ──────────────────────
   // The live order book: confirmed orders still in the Orders table whose BOL
   // hasn't been invoiced. Cancelled orders never count.
@@ -1779,8 +1842,10 @@ export default function SalesForecastPage({
 
   const modalColumnCount = modalViewMode === 'Monthly' ? 12 : 52;
   const modalHeaders = modalViewMode === 'Monthly' ? MONTH_NAMES : WEEK_LABELS;
-  // The current month is split into Sales | Orders | Forecast (Monthly view only).
-  const splitIdx = modalViewMode === 'Monthly' ? currentPeriodIdx : -1;
+  // The current month shows ONE cell — the complete monthly forecast — like
+  // every other month (it used to split into Sales | Orders | Forecast).
+  const splitIdx: number = -1;
+  const currentMonthCol = modalViewMode === 'Monthly' ? currentPeriodIdx : -1;
 
   // ── CSV template download + import (annual forecast by customer/product/month) ──
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -2151,6 +2216,24 @@ export default function SalesForecastPage({
           </div>
         </div>
 
+        {/* Units — the customer table in MT, or Margin / MT (CAD) */}
+        <div className="relative">
+          <label className="text-[10px] uppercase font-bold tracking-widest opacity-60 block mb-1">
+            Units
+          </label>
+          <div className="relative">
+            <select
+              value={tableUnits}
+              onChange={(e) => setTableUnits(e.target.value as 'MT' | 'Margin')}
+              className="appearance-none w-44 px-3 py-2 pr-8 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]"
+            >
+              <option value="MT">MT</option>
+              <option value="Margin">Margin/MT (CAD)</option>
+            </select>
+            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+
         {isBudgetFullyLocked && (
           <div className="flex items-center gap-1 text-xs text-red-600 mt-5">
             <Lock size={14} />
@@ -2242,8 +2325,28 @@ export default function SalesForecastPage({
           </select>
         </div>
         <DataTable<CustomerForecast>
-          title={`Customer ${typeLabel}`}
-          columns={[
+          title={`Customer ${typeLabel}${tableUnits === 'Margin' ? ' — Margin/MT (CAD)' : ''}`}
+          storageKey={tableUnits === 'Margin' ? 'customer-forecast-margin' : undefined}
+          columns={tableUnits === 'Margin' ? [
+            { key: 'customerNumber', label: 'Customer No.', mono: true, render: (cf) => cf.customerNumber || '—' },
+            { key: 'customerName', label: 'Customer Name', bold: true },
+            { key: 'location', label: 'Location', render: (cf) => rowLocationLabel(cf), sortValue: (cf) => rowLocationLabel(cf) },
+            {
+              key: 'volume', label: `Sales + ${typeLabel} (MT)`, align: 'right', mono: true,
+              sortValue: (cf) => getMarginStats(cf).volume,
+              render: (cf) => getMarginStats(cf).volume.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+            },
+            {
+              key: 'avgMargin', label: 'Avg Margin/MT (CAD)', align: 'right', mono: true, bold: true,
+              sortValue: (cf) => getMarginStats(cf).avg ?? -1,
+              render: (cf) => { const a = getMarginStats(cf).avg; return a != null ? `$${a.toFixed(2)}` : '—'; },
+            },
+            {
+              key: 'totalMargin', label: 'Total Margin (CAD)', align: 'right', mono: true,
+              sortValue: (cf) => getMarginStats(cf).totalMargin,
+              render: (cf) => { const t = getMarginStats(cf).totalMargin; return t ? `$${Math.round(t).toLocaleString()}` : '—'; },
+            },
+          ] : [
             { key: 'customerNumber', label: 'Customer No.', mono: true, render: (cf) => cf.customerNumber || '—' },
             { key: 'customerName', label: 'Customer Name', bold: true },
             // All of the customer's forecast sites, not just their default one.
@@ -2282,7 +2385,17 @@ export default function SalesForecastPage({
             },
           ]}
           rows={sortedCustomerForecasts}
-          footerCells={sortedCustomerForecasts.length > 0 ? (() => {
+          footerCells={sortedCustomerForecasts.length > 0 && tableUnits === 'Margin' ? (() => {
+            let volume = 0, mv = 0, tm = 0;
+            for (const cf of sortedCustomerForecasts) { const st = getMarginStats(cf); volume += st.volume; mv += st.marginVolume; tm += st.totalMargin; }
+            return {
+              customerNumber: 'Total',
+              customerName: `${sortedCustomerForecasts.length} customer${sortedCustomerForecasts.length === 1 ? '' : 's'}`,
+              volume: volume.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+              avgMargin: mv > 0 ? `$${(tm / mv).toFixed(2)}` : '—',
+              totalMargin: tm ? `$${Math.round(tm).toLocaleString()}` : '—',
+            };
+          })() : sortedCustomerForecasts.length > 0 ? (() => {
             const fmt = (n: number) => n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
             let sales = 0, orders = 0, forecast = 0;
             for (const cf of sortedCustomerForecasts) {
@@ -2759,6 +2872,27 @@ export default function SalesForecastPage({
                   </div>
                 </div>
 
+                {/* Units — edit MT volumes or Margin / MT (CAD) */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[10px] uppercase font-bold tracking-widest opacity-60">
+                    Units
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={modalUnits}
+                      onChange={(e) => setModalUnits(e.target.value as 'MT' | 'Margin')}
+                      className="appearance-none px-3 py-1.5 pr-7 border border-[#141414] bg-white text-xs focus:outline-none focus:ring-2 focus:ring-[#141414]"
+                    >
+                      <option value="MT">MT</option>
+                      <option value="Margin">Margin/MT (CAD)</option>
+                    </select>
+                    <ChevronDown
+                      size={12}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                    />
+                  </div>
+                </div>
+
                 {/* Budget lock indicator */}
                 {forecastType === 'Budget' && isBudgetLockedForYear(selectedFY) && (
                   <div className="flex items-center gap-1 text-xs text-red-600">
@@ -2870,6 +3004,7 @@ export default function SalesForecastPage({
                                   {h}
                                   {locked && <Lock size={8} className="text-red-500" />}
                                 </div>
+                                {i === currentMonthCol && <div className="text-[8px] normal-case tracking-normal font-normal text-emerald-700">current month</div>}
                               </th>
                             );
                           })}
@@ -2927,6 +3062,24 @@ export default function SalesForecastPage({
                                 );
                                 const editable = isCellEditable(i, modalViewMode === 'Weekly');
                                 const f1 = (v: number) => (v > 0 ? v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—');
+                                // Margin / MT mode — every month / week takes a margin
+                                // (past ones too, for the record), except locked budget periods.
+                                if (modalUnits === 'Margin') {
+                                  const mv = line.marginEntries?.find((e) => e.periodIndex === i)?.value;
+                                  const lockedM = forecastType === 'Budget' && (modalViewMode === 'Weekly' ? isBudgetLockedForWeek(i, selectedFY) : isBudgetLockedForPeriod(i, selectedFY));
+                                  return (
+                                    <td key={i} className={`px-1 py-1 border border-gray-200 text-center ${lockedM ? 'bg-gray-100 text-gray-500' : 'bg-violet-50/40'}`}
+                                      title={cellVal > 0 ? `${cellVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} MT` : 'No volume this period'}>
+                                      {lockedM ? (
+                                        <span className="text-xs">{mv != null ? `$${mv.toFixed(2)}` : '—'}</span>
+                                      ) : (
+                                        <input type="number" step="0.01" value={mv ?? ''} placeholder="$"
+                                          onChange={(e) => handleMarginChange(line.id, i, e.target.value)}
+                                          className="w-full px-1 py-0.5 text-center text-xs border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-[#141414]" />
+                                      )}
+                                    </td>
+                                  );
+                                }
                                 // CURRENT month → three cells: Sales (invoiced so far),
                                 // Orders (open, not yet invoiced) and Forecast (the rest
                                 // of the month, on top of orders). They add up to the
@@ -3002,7 +3155,17 @@ export default function SalesForecastPage({
                                 );
                               })}
                               <td className="px-3 py-1.5 text-center font-mono font-bold border border-gray-200">
-                                {lineTotal.toLocaleString(undefined, {
+                                {modalUnits === 'Margin' ? (() => {
+                                  // Volume-weighted average margin across the year.
+                                  let w = 0, vol = 0, raw = 0, n = 0;
+                                  for (const e of line.marginEntries || []) {
+                                    const fv = line.entries.find((x) => x.periodIndex === e.periodIndex)?.value ?? 0;
+                                    const mt = getCellValue(editingCf.customerName, line.productName, line.location, e.periodIndex, modalViewMode === 'Weekly', fv).value;
+                                    w += e.value * mt; vol += mt; raw += e.value; n += 1;
+                                  }
+                                  if (!n) return '—';
+                                  return `$${(vol > 0 ? w / vol : raw / n).toFixed(2)}`;
+                                })() : lineTotal.toLocaleString(undefined, {
                                   minimumFractionDigits: 1,
                                   maximumFractionDigits: 1,
                                 })}
@@ -3047,6 +3210,29 @@ export default function SalesForecastPage({
                               splitTotals.orders += r.ordersMt || 0;
                               splitTotals.forecast += r.remainingForecast || 0;
                             }
+                          }
+                          if (modalUnits === 'Margin') {
+                            const per = Array.from({ length: modalColumnCount }, () => ({ w: 0, vol: 0, raw: 0, n: 0 }));
+                            for (const line of modalLines) {
+                              for (const e of line.marginEntries || []) {
+                                if (e.periodIndex < 0 || e.periodIndex >= modalColumnCount) continue;
+                                const fv = line.entries.find((x) => x.periodIndex === e.periodIndex)?.value ?? 0;
+                                const mt = getCellValue(editingCf.customerName, line.productName, line.location, e.periodIndex, modalViewMode === 'Weekly', fv).value;
+                                const c = per[e.periodIndex];
+                                c.w += e.value * mt; c.vol += mt; c.raw += e.value; c.n += 1;
+                              }
+                            }
+                            const avg = (c: { w: number; vol: number; raw: number; n: number }) => (c.n ? (c.vol > 0 ? c.w / c.vol : c.raw / c.n) : null);
+                            const all = per.reduce((a, c) => ({ w: a.w + c.w, vol: a.vol + c.vol, raw: a.raw + c.raw, n: a.n + c.n }), { w: 0, vol: 0, raw: 0, n: 0 });
+                            const ga = avg(all);
+                            return (
+                              <tr className="bg-[#141414] text-[#E4E3E0] font-black">
+                                <td className="sticky left-0 z-10 bg-[#141414] px-3 py-1.5 uppercase tracking-widest border border-[#141414]">Avg Margin/MT</td>
+                                {per.map((c, i) => { const a = avg(c); return <td key={i} className="px-1 py-1.5 text-center font-mono text-xs border border-[#141414]/50">{a != null ? `$${a.toFixed(2)}` : '—'}</td>; })}
+                                <td className="px-3 py-1.5 text-center font-mono border border-[#141414]/50">{ga != null ? `$${ga.toFixed(2)}` : '—'}</td>
+                                <td className="border border-[#141414]/50" />
+                              </tr>
+                            );
                           }
                           return (
                             <tr className="bg-[#141414] text-[#E4E3E0] font-black">

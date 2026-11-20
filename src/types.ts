@@ -1432,6 +1432,9 @@ export interface CustomerForecastLine {
   productName: string;
   location: string;
   entries: ForecastEntry[];
+  /** Margin / MT (CAD) per period — same period scheme as `entries`
+   *  (12 months, or 52 weeks when the forecast is Weekly). */
+  marginEntries?: ForecastEntry[];
 }
 
 export interface CustomerForecast {
