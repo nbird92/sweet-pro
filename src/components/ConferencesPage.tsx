@@ -662,7 +662,7 @@ export default function ConferencesPage({
                   )}
                   {sortedMeetings.map(meeting => {
                     const customer = meeting.customerId ? customers.find(c => c.id === meeting.customerId) : null;
-                    const internalNames = (meeting.attendees || []).map(id => getPersonName(id));
+                    const internalNames = Array.from(new Set([...(meeting.meetingOwner ? [meeting.meetingOwner] : []), ...(meeting.attendees || [])])).map(id => getPersonName(id)); // owner always counted
                     const custNames = getCustomerAttendeeNames(meeting);
                     const ownerName = meeting.meetingOwner ? getPersonName(meeting.meetingOwner) : '—';
                     const isExpanded = expandedMeeting === meeting.id;
@@ -1284,7 +1284,16 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
       id: `FU-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, text: fuDraft.text.trim(), completed: false, createdAt: new Date().toISOString(),
       ...(fuDraft.assigneeId ? { assigneeId: fuDraft.assigneeId } : {}), ...(fuDraft.reminderAt ? { reminderAt: fuDraft.reminderAt } : {}),
     }] : [];
-    const final = { ...meeting, customerAttendeeDetails: localCustAttendees, followUps: [...(meeting.followUps || []), ...pending] };
+    const typedAttendee: CustomerAttendeeDetail[] = custInput.name.trim()
+      ? [{ id: `CA-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, name: custInput.name.trim(), email: custInput.email.trim(), phone: custInput.phone.trim() }] : [];
+    const owner = meeting.meetingOwner;
+    const att: string[] = meeting.attendees || [];
+    const final = {
+      ...meeting,
+      attendees: owner && !att.includes(owner) ? [owner, ...att] : att, // owner is always an attendee
+      customerAttendeeDetails: [...localCustAttendees, ...typedAttendee],
+      followUps: [...(meeting.followUps || []), ...pending],
+    };
     setMeeting(final);
     onSubmit(final); // save exactly what's in the menu (no stale-state timer)
   };
@@ -1350,7 +1359,12 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
           {/* Meeting Owner */}
           <div>
             <label className="text-xs font-bold uppercase block mb-1">Meeting Owner (responsible for follow-ups)</label>
-            <select value={meeting.meetingOwner || ''} onChange={(e) => setMeeting({ ...meeting, meetingOwner: e.target.value })}
+            <select value={meeting.meetingOwner || ''} onChange={(e) => {
+                const owner = e.target.value;
+                const att: string[] = meeting.attendees || [];
+                // The owner is always an internal attendee.
+                setMeeting({ ...meeting, meetingOwner: owner, attendees: owner && !att.includes(owner) ? [owner, ...att] : att });
+              }}
               className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
               <option value="">Select meeting owner...</option>
               {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name} {p.salespersonNumber ? `(${p.salespersonNumber})` : ''}</option>)}
@@ -1363,8 +1377,10 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
               {salesPeople.length === 0 ? <p className="text-xs text-gray-600">No sales employees available</p> : (
                 salesPeople.map(person => (
                   <label key={person.id} className="flex items-center text-xs cursor-pointer hover:bg-gray-100 p-1 rounded transition-colors">
-                    <input type="checkbox" checked={(meeting.attendees || []).includes(person.id)} onChange={() => toggleInternalAttendee(person.id)} className="mr-2" />
+                    <input type="checkbox" checked={(meeting.attendees || []).includes(person.id) || meeting.meetingOwner === person.id}
+                      disabled={meeting.meetingOwner === person.id} onChange={() => toggleInternalAttendee(person.id)} className="mr-2" />
                     <span className="font-bold">{person.name}</span>
+                    {meeting.meetingOwner === person.id && <span className="ml-1 bg-purple-100 text-purple-900 px-1 rounded text-[9px] font-bold uppercase">Owner</span>}
                     <span className="text-gray-500 ml-1">{person.salespersonNumber ? `(${person.salespersonNumber})` : ''} — {person.email}</span>
                   </label>
                 ))
@@ -1373,14 +1389,28 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
           </div>
 
           {/* Customer Attendees */}
-          <div><label className="text-xs font-bold uppercase block mb-1">Customer Attendees</label>
+          <div><label className="text-xs font-bold uppercase block mb-1">Customer Attendees {localCustAttendees.length > 0 && <span className="opacity-50">({localCustAttendees.length})</span>}</label>
+            <p className="text-[10px] opacity-50 mb-1">Add as many people as you need — fill in a name and press Enter or Add, then add the next. You can also paste several, one per line ("Name, email, phone").</p>
             <div className="grid grid-cols-3 gap-2 mb-2">
               <input type="text" value={custInput.name} onChange={(e) => setCustInput({ ...custInput, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomerAttendee(); } }}
+                onPaste={(e) => {
+                  const text = e.clipboardData.getData('text');
+                  if (!/\n/.test(text.trim())) return; // single value → normal paste
+                  e.preventDefault();
+                  const added = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map((l, i) => {
+                    const [name, email, phone] = l.split(/[,\t;]/).map(x => (x || '').trim());
+                    return { id: `CA-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`, name, email: email || '', phone: phone || '' };
+                  }).filter(a => a.name);
+                  syncAttendeesToParent([...localCustAttendees, ...added]);
+                }}
                 placeholder="Name" className="px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
               <input type="email" value={custInput.email} onChange={(e) => setCustInput({ ...custInput, email: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomerAttendee(); } }}
                 placeholder="Email" className="px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
               <div className="flex gap-2">
                 <input type="tel" value={custInput.phone} onChange={(e) => setCustInput({ ...custInput, phone: e.target.value })}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustomerAttendee(); } }}
                   placeholder="Phone" className="flex-1 px-3 py-2 border border-[#141414]/30 bg-white text-sm focus:outline-none focus:border-[#141414]" />
                 <button onClick={addCustomerAttendee} className="px-3 py-2 bg-[#141414] text-[#E4E3E0] text-xs font-bold uppercase hover:bg-opacity-80 transition-colors whitespace-nowrap">Add</button>
               </div>
