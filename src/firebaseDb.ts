@@ -797,6 +797,24 @@ export async function saveUserPrefs(uid: string, prefs: Record<string, any>): Pr
   if (!res.ok) throw new Error(res.firstError || 'preferences write failed');
 }
 
+// ── Access list ─────────────────────────────────────────────────────────────
+// appStatus/access holds the lower-cased emails allowed into the app — a mirror
+// of the People table's emails, kept current by the app. firestore.rules lets a
+// signed-in user read/write ONLY when their email is on this list (while the
+// doc doesn't exist yet, any signed-in user is allowed — the bootstrap state).
+export async function fetchAccessList(): Promise<{ exists: boolean; emails: string[] }> {
+  const snap = await getDoc(doc(db, 'appStatus', 'access'));
+  if (!snap.exists()) return { exists: false, emails: [] };
+  const emails = (snap.data() as any)?.emails;
+  return { exists: true, emails: Array.isArray(emails) ? emails.map((e: unknown) => String(e).trim().toLowerCase()) : [] };
+}
+export async function saveAccessList(emails: string[], updatedBy: string): Promise<void> {
+  const res = await restSyncCollection('appStatus', [
+    { id: 'access', emails, updatedAt: new Date().toISOString(), updatedBy } as { id: string } & Record<string, unknown>,
+  ]);
+  if (!res.ok) throw new Error(res.firstError || 'access list write failed');
+}
+
 // Fetch all data from all collections (one-time bulk read). Reads FROM THE SERVER
 // (getDocsFromServer), not the local cache: with offline persistence enabled a
 // plain getDocs would silently resolve from stale IndexedDB when the server is

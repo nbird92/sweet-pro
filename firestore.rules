@@ -1,8 +1,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Access is limited to people in the People table. The app mirrors their
+    // emails (lower-cased) into appStatus/access; a signed-in user may read or
+    // write only when their email is on that list.
+    //
+    // Bootstrap: until appStatus/access exists, any signed-in user is allowed
+    // (the previous behaviour), so turning this on can't lock anyone out — the
+    // restriction starts the moment the app first saves the list.
+    // Server jobs (crons, API routes) use the Admin SDK and bypass these rules.
+    function accessDoc() {
+      return /databases/$(database)/documents/appStatus/access;
+    }
+    function allowed() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && (!exists(accessDoc())
+            || request.auth.token.email.lower() in get(accessDoc()).data.emails);
+    }
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if allowed();
     }
   }
 }

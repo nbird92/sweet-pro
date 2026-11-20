@@ -66,7 +66,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones, fetchAccessList, saveAccessList } from './firebaseDb';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { setDocTemplates, type DocTemplateKey } from './docTemplates';
@@ -5157,6 +5157,12 @@ export default function App() {
   }, [liveSugar, fxForwards, user, lastSynced]);
 
   const [authLoading, setAuthLoading] = useState(true);
+  // Access control: only emails in the People table may use the app. 'ok' until
+  // proven otherwise so a network hiccup never locks anyone out (the Firestore
+  // rules are the real gate — see firestore.rules / appStatus/access).
+  const [accessState, setAccessState] = useState<'checking' | 'ok' | 'denied'>('checking');
+  const accessListRef = useRef<string[] | null>(null); // last known server list
+  const [notInPeople, setNotInPeople] = useState(false);
 
   const fetchMarketData = async () => {
     if (!user) return;
@@ -5195,6 +5201,41 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user) { setAccessState('checking'); accessListRef.current = null; return; }
+    const email = (user.email || '').trim().toLowerCase();
+    let cancelled = false;
+    fetchAccessList()
+      .then(({ exists, emails }) => {
+        if (cancelled) return;
+        accessListRef.current = exists ? emails : null;
+        setAccessState(!exists || emails.includes(email) ? 'ok' : 'denied');
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        // The rules refuse unlisted users outright.
+        setAccessState(e?.code === 'permission-denied' ? 'denied' : 'ok');
+      });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Mirror the People table's emails into appStatus/access (the list the
+  // Firestore rules check). Never writes a list that leaves out the person
+  // saving it — that would lock them out mid-session.
+  useEffect(() => {
+    if (!user || !lastSynced || accessState !== 'ok') return;
+    const me = (user.email || '').trim().toLowerCase();
+    const emails: string[] = Array.from(new Set<string>(people.map(p => String(p.email || "").trim().toLowerCase()).filter(e => e.includes("@")))).sort();
+    if (!emails.length) return; // People not loaded / empty — never publish an empty list
+    if (!emails.includes(me)) { setNotInPeople(true); return; }
+    setNotInPeople(false);
+    const cur = accessListRef.current;
+    if (cur && cur.length === emails.length && [...cur].sort().every((e, i) => e === emails[i])) return;
+    saveAccessList(emails, me)
+      .then(() => { accessListRef.current = emails; console.log(`[access] access list updated — ${emails.length} people`); })
+      .catch(e => console.error('[access] could not update the access list:', e));
+  }, [people, user, lastSynced, accessState]);
 
   // Column-order store handed to every DataTable via context. Reordering a table
   // updates columnOrders here, which the save effect persists to Firestore.
@@ -19311,6 +19352,25 @@ export default function App() {
           </ColumnVisibilityContext.Provider>
         </ColumnOrderContext.Provider>
       </div>
+
+      {/* No access — signed in with an email that isn't in the People table */}
+      {user && accessState === 'denied' && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-[#141414]/90 backdrop-blur-md">
+          <div className="bg-white border border-[#141414] shadow-[12px_12px_0px_0px_rgba(20,20,20,1)] max-w-sm w-full">
+            <div className="bg-[#141414] text-[#E4E3E0] p-4"><h3 className="text-xs font-bold uppercase tracking-widest">No Access</h3></div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm"><span className="font-bold">{user.email}</span> doesn't have access to Sweet Pro.</p>
+              <p className="text-xs opacity-60">Access is limited to people in the People table. Ask an administrator to add your email there, or sign in with a different account.</p>
+              <button onClick={handleSignOut} className="w-full py-3 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80">Sign in with a different account</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {user && accessState === 'ok' && notInPeople && (
+        <div className="fixed bottom-4 right-4 z-[150] max-w-sm bg-amber-100 border border-amber-500 text-amber-900 p-3 text-xs shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+          <span className="font-bold">Add yourself to the People table.</span> Access is limited to People emails, and {user.email} isn't listed — the access list won't update until it is.
+        </div>
+      )}
 
       {/* Login Modal */}
       <AnimatePresence>
