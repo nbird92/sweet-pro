@@ -1218,7 +1218,7 @@ export default function QualityAssurancePage({
     {!cardOnlyProductId && productsMode && (<>
 
       {/* Search + column controls (standard toolbar row) */}
-      <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
+      <div data-page-toolbar-zone="" className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
         <ToolbarSearch value={searchTerm} onChange={setSearchTerm} placeholder="Search products by name, product group, ID or location…" />
         <div className="ml-auto" />
         <div className="relative">

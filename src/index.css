@@ -35,3 +35,14 @@
 .std-table > thead > tr > th.border-l-4 {
   border-left-color: #141414;
 }
+
+/* ── View-only pages (Permissions: View without Edit) ──────────────────────
+   Everything that changes data is disabled; the page toolbar (search,
+   filters, Columns), "Show more" and table sorting still work. */
+.sp-readonly :is(button, input, select, textarea, a[href]):not([data-page-toolbar-zone] *):not([data-ro-allow]) {
+  pointer-events: none;
+  opacity: 0.55;
+}
+.sp-readonly tbody tr {
+  pointer-events: none;
+}

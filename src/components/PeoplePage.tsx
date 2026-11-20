@@ -6,6 +6,8 @@ import { PageToolbar } from './PageShell';
 import DataTable from './DataTable';
 import DetailModal, { DetailRow, DetailField } from './DetailModal';
 import type { SheetSpec } from '../utils/exportExcel';
+import PermissionsTable from './PermissionsTable';
+import type { PermissionMatrix } from '../firebaseDb';
 
 interface PeoplePageProps {
   people: Person[];
@@ -14,6 +16,11 @@ interface PeoplePageProps {
   onAddPerson: (person: Person) => void;
   onUpdatePerson: (person: Person) => void;
   onDeletePerson: (personId: string) => void;
+  /** Permissions table (one row per permission category). */
+  permissionPages: string[];
+  permissionMatrix: PermissionMatrix;
+  canManagePermissions: boolean;
+  onSavePermissions: (m: PermissionMatrix) => Promise<void>;
 }
 
 interface SearchInputProps {
@@ -54,6 +61,10 @@ export default function PeoplePage({
   onAddPerson,
   onUpdatePerson,
   onDeletePerson,
+  permissionPages,
+  permissionMatrix,
+  canManagePermissions,
+  onSavePermissions,
 }: PeoplePageProps) {
   const [searchTerm, setSearchTerm] = useState('');
   // Standardized DataTable + DetailModal state (replaces the old separate
@@ -270,6 +281,12 @@ export default function PeoplePage({
           )
         )}
       </DetailModal>
+
+      {/* Permissions — one row per permission category; View / Edit per page. */}
+      <div className="mt-8">
+        <PermissionsTable pages={permissionPages} matrix={permissionMatrix} people={people}
+          canManage={canManagePermissions} onSave={onSavePermissions} />
+      </div>
     </main>
     </div>
   );

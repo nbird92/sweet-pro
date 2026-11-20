@@ -815,6 +815,22 @@ export async function saveAccessList(emails: string[], updatedBy: string): Promi
   if (!res.ok) throw new Error(res.firstError || 'access list write failed');
 }
 
+// ── Page permissions ────────────────────────────────────────────────────────
+// appStatus/permissions: { matrix: { [permissionGroup]: { [pageName]: { view, edit } } } }
+// Edited in the People page's Permissions table. A missing entry = allowed.
+export type PermissionMatrix = Record<string, Record<string, { view: boolean; edit: boolean }>>;
+export async function fetchPermissions(): Promise<PermissionMatrix> {
+  const snap = await getDoc(doc(db, 'appStatus', 'permissions'));
+  const m = snap.exists() ? (snap.data() as any)?.matrix : null;
+  return m && typeof m === 'object' ? m : {};
+}
+export async function savePermissions(matrix: PermissionMatrix, updatedBy: string): Promise<void> {
+  const res = await restSyncCollection('appStatus', [
+    { id: 'permissions', matrix, updatedAt: new Date().toISOString(), updatedBy } as { id: string } & Record<string, unknown>,
+  ]);
+  if (!res.ok) throw new Error(res.firstError || 'permissions write failed');
+}
+
 // Fetch all data from all collections (one-time bulk read). Reads FROM THE SERVER
 // (getDocsFromServer), not the local cache: with offline persistence enabled a
 // plain getDocs would silently resolve from stale IndexedDB when the server is

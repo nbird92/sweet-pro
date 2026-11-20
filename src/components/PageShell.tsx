@@ -52,7 +52,7 @@ export default function PageShell({ icon, title, count, exportSheets, exportFile
 export function PageToolbar({ search, filters, toolbarRight }: Pick<PageShellProps, 'search' | 'filters' | 'toolbarRight'>) {
   if (!(search || filters || toolbarRight)) return null;
   return (
-    <div className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
+    <div data-page-toolbar-zone="" className="bg-white border-b border-[#141414] px-6 py-3 flex flex-wrap items-center gap-3">
       {search && <ToolbarSearch {...search} />}
       {filters && <div className="flex flex-wrap items-center gap-3">{filters}</div>}
       {/* Right end of the toolbar — the ONE place a page's Columns button lives.

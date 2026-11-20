@@ -560,12 +560,14 @@ export default function DataTable<T>({
             Showing {visibleRows.length} of {sorted.length}
           </span>
           <button
+            data-ro-allow=""
             onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
             className="px-3 py-1.5 bg-[#141414] text-[#E4E3E0] hover:bg-[#2a2a2a] transition-colors"
           >
             Show {Math.min(PAGE_SIZE, remaining)} more
           </button>
           <button
+            data-ro-allow=""
             onClick={() => setVisibleCount(sorted.length)}
             className="px-3 py-1.5 border border-[#141414] hover:bg-[#141414]/5 transition-colors"
           >

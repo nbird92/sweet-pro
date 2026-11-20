@@ -66,7 +66,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones, fetchAccessList, saveAccessList } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones, fetchAccessList, saveAccessList, fetchPermissions, savePermissions, type PermissionMatrix } from './firebaseDb';
+import { permFor } from './components/PermissionsTable';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
 import { setDocTemplates, type DocTemplateKey } from './docTemplates';
@@ -5163,6 +5164,8 @@ export default function App() {
   const [accessState, setAccessState] = useState<'checking' | 'ok' | 'denied'>('checking');
   const accessListRef = useRef<string[] | null>(null); // last known server list
   const [notInPeople, setNotInPeople] = useState(false);
+  // Page permissions (People page → Permissions table).
+  const [permissionMatrix, setPermissionMatrix] = useState<PermissionMatrix>({});
 
   const fetchMarketData = async () => {
     if (!user) return;
@@ -5206,6 +5209,7 @@ export default function App() {
     if (!user) { setAccessState('checking'); accessListRef.current = null; return; }
     const email = (user.email || '').trim().toLowerCase();
     let cancelled = false;
+    fetchPermissions().then(m => { if (!cancelled) setPermissionMatrix(m); }).catch(() => { /* keep defaults */ });
     fetchAccessList()
       .then(({ exists, emails }) => {
         if (cancelled) return;
@@ -12882,6 +12886,18 @@ export default function App() {
     });
   }, [pageOrder]);
 
+  // The signed-in user's permission category (People record matched by email).
+  // No People record / no category → full access.
+  const myPerson = useMemo(() => {
+    const e = (user?.email || '').trim().toLowerCase();
+    return e ? people.find(p => (p.email || '').trim().toLowerCase() === e) : undefined;
+  }, [people, user]);
+  const myGroup = myPerson?.permission || '';
+  const canViewPage = (page: string) => !myGroup || permFor(permissionMatrix, myGroup, page).view;
+  const canEditPage = (page: string) => !myGroup || permFor(permissionMatrix, myGroup, page).edit;
+  // Only Admins manage permissions — anyone may until an Admin exists.
+  const canManagePermissions = myGroup === 'Admin' || !people.some(p => p.permission === 'Admin');
+
   const [draggedPage, setDraggedPage] = useState<string | null>(null);
   const [dragOverPage, setDragOverPage] = useState<string | null>(null);
 
@@ -15461,6 +15477,10 @@ export default function App() {
           onAddPerson={(newPerson) => setPeople([...people, newPerson])}
           onUpdatePerson={(updated) => setPeople(people.map(p => p.id === updated.id ? updated : p))}
           onDeletePerson={(id) => { recordUserDeletes(COLLECTIONS.people, [id]); setPeople(people.filter(p => p.id !== id)); }}
+          permissionPages={defaultNavItems.map(n => n.name)}
+          permissionMatrix={permissionMatrix}
+          canManagePermissions={canManagePermissions}
+          onSavePermissions={async (m) => { await savePermissions(m, user?.email || ''); setPermissionMatrix(m); }}
         />
       );
     }
@@ -19126,6 +19146,7 @@ export default function App() {
         
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
           {navItems
+            .filter(item => canViewPage(item.name))
             .filter(item => isEditingSidebar || !hiddenPages.has(item.name))
             .map((item) => {
               const isHidden = hiddenPages.has(item.name);
@@ -19346,7 +19367,19 @@ export default function App() {
                 an error boundary that recovers from a stale-chunk 404 after a deploy. */}
             <PageErrorBoundary>
               <Suspense fallback={<div className="p-12 text-center text-xs uppercase tracking-widest opacity-50">Loading…</div>}>
-                {renderContent()}
+                {!canViewPage(activePage) ? (
+                  <div className="p-12 text-center">
+                    <div className="inline-block bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] p-6 text-sm">
+                      <div className="font-bold uppercase tracking-widest text-xs mb-2">No access</div>
+                      Your permission category ({myGroup}) can't open {activePage}. Ask an Admin to change it on the People page.
+                    </div>
+                  </div>
+                ) : canEditPage(activePage) ? renderContent() : (
+                  <div className="sp-readonly">
+                    <div className="bg-amber-100 border-b border-amber-500 text-amber-900 px-6 py-2 text-[11px] font-bold uppercase tracking-widest">View only — your permission category ({myGroup}) can't edit {activePage}</div>
+                    {renderContent()}
+                  </div>
+                )}
               </Suspense>
             </PageErrorBoundary>
           </ColumnVisibilityContext.Provider>
