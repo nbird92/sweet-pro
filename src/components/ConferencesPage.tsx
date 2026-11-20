@@ -1123,12 +1123,12 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
                 const custNames = (m.customerAttendeeDetails || []).map(a => a.name).filter(Boolean);
                 return (
                   <button key={m.id} onClick={() => onOpen(m)}
-                    title={`${m.meetingName || 'Meeting'} · ${m.time}${m.endTime ? `–${m.endTime}` : ''}${m.location ? ` · ${m.location}` : ''}`}
+                    title={`${m.meetingName || 'Meeting'} · ${m.time}${m.endTime && m.endTime > m.time ? `–${m.endTime}` : ''}${m.location ? ` · ${m.location}` : ''}`}
                     className="absolute text-left bg-purple-100 border border-purple-400 border-l-4 border-l-purple-700 hover:bg-purple-200 hover:z-20 hover:shadow-[3px_3px_0px_0px_rgba(20,20,20,1)] transition-colors px-2 py-1 overflow-hidden"
                     style={{ top: ((start - first * 60) / 60) * ROW + 1, height: Math.max(22, ((end - start) / 60) * ROW - 2), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}>
                     {/* Details flow left → right and wrap, so a 1-hour block shows them all. */}
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 text-[10px] leading-snug">
-                      <span className="font-mono font-bold">{m.time}{m.endTime ? `–${m.endTime}` : ''}</span>
+                      <span className="font-mono font-bold">{m.time}{m.endTime && m.endTime > m.time ? `–${m.endTime}` : ''}</span>
                       <span className="text-[11px] font-bold">{m.meetingName || 'Untitled'}</span>
                       {customer && customer !== m.meetingName && <span className="opacity-80">· {customer}</span>}
                       {m.location && <span className="opacity-70 inline-flex items-center gap-0.5"><MapPin size={9} />{m.location}</span>}
