@@ -90,10 +90,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const newlySent: Record<string, string> = {};
     for (const cd of confSnap.docs) {
       const conf: any = cd.data();
+      // Reminder times are local to the conference (its time zone), else the default.
+      let confNow = now;
+      if (conf.timeZone) { try { confNow = nowIn(conf.timeZone); } catch { /* bad zone id → default */ } }
       for (const m of conf.meetings || []) {
         for (const fu of m.followUps || []) {
           if (!fu?.id || fu.completed || !fu.reminderAt) continue;
-          if (fu.reminderAt > now) continue;              // not due yet
+          if (fu.reminderAt > confNow) continue;          // not due yet (conference local time)
           if (sent[fu.id] === fu.reminderAt) continue;    // already reminded for this time
           const person = people.get(fu.assigneeId || m.meetingOwner || '');
           const to = (person?.email || '').trim();
@@ -113,10 +116,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 ${row('Conference', esc(conf.name || ''))}
                 ${row('Meeting', esc(m.meetingName || ''))}
                 ${row('Customer', esc(customer || ''))}
-                ${row('When', esc([fmtDate(m.date), [m.time, m.endTime].filter(Boolean).join(' – ')].filter(Boolean).join(', ')))}
-                ${row('Location', esc(m.location || ''))}
+                ${row('When', esc([fmtDate(m.date), [m.time, m.endTime].filter(Boolean).join(' – '), conf.timeZone ? `(${conf.timeZone.replace(/_/g, ' ')} time)` : ''].filter(Boolean).join(', ')))}
+                ${row('Type', esc([m.meetingType, m.reservationRequired ? 'reservation required' : ''].filter(Boolean).join(' — ')))}
+                ${row('Location', esc([m.location, m.address].filter(Boolean).join(', ')))}
                 ${row('Customer attendees', custAttendees.map(esc).join('<br/>'))}
-                ${row('Reminder set for', esc(fmtWhen(fu.reminderAt)))}
+                ${row('Reminder set for', esc(`${fmtWhen(fu.reminderAt)}${conf.timeZone ? ` (${conf.timeZone.replace(/_/g, ' ')})` : ''}`))}
               </table>
               <p style="margin-top:16px;">Mark the follow-up complete in <a href="${esc(appUrl)}">Sweet Pro</a> (Conferences page) once it's done.</p>
               <p style="color:#888;font-size:11px;">Automated reminder from Sweet Pro.</p>

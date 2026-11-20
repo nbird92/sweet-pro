@@ -939,8 +939,13 @@ export interface ConferenceMeeting {
   conferenceId: string;
   date: string; // Conference date (YYYY-MM-DD)
   time: string; // Meeting START time (HH:mm)
-  /** Meeting end time (HH:mm). */
+  /** Meeting end time (HH:mm). Meeting times are in the conference's local time zone. */
   endTime?: string;
+  /** Street address of the meeting venue (restaurant, golf course…). */
+  address?: string;
+  meetingType?: 'Breakfast Meeting' | 'Lunch Meeting' | 'Dinner Meeting' | 'Golf' | 'Other';
+  /** A reservation must be booked for this meeting. */
+  reservationRequired?: boolean;
   meetingName: string;
   meetingOwner?: string; // Person ID of the sales employee responsible
   attendees: string[]; // Array of Person IDs (sales employees)
@@ -966,6 +971,12 @@ export interface Conference {
   meetings: ConferenceMeeting[];
   createdAt?: string;
   status?: 'Planned' | 'In Progress' | 'Completed';
+  /** IANA time zone of the conference (e.g. "America/New_York"). All meeting
+   *  times and follow-up reminders are in this local time. */
+  timeZone?: string;
+  /** Registration / attendance cost per attendee. */
+  costPerAttendee?: number;
+  costCurrency?: string;
 }
 
 export const INITIAL_CONFERENCES: Conference[] = [];

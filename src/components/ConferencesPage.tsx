@@ -23,6 +23,7 @@ const meetingDetails = (m: ConferenceMeeting, conf: Conference, customers: Custo
   const customer = m.customerId ? customers.find(c => c.id === m.customerId)?.name : '';
   return [
     `Conference: ${conf.name}`,
+    m.meetingType ? `Type: ${m.meetingType}${m.reservationRequired ? ' (reservation required)' : ''}` : (m.reservationRequired ? 'Reservation required' : ''),
     customer ? `Customer: ${customer}` : '',
     m.meetingOwner ? `Owner: ${personName(m.meetingOwner)}` : '',
     (m.attendees || []).length ? `Internal attendees: ${(m.attendees || []).map(personName).join(', ')}` : '',
@@ -38,7 +39,8 @@ const googleCalendarUrl = (m: ConferenceMeeting, conf: Conference, customers: Cu
     text: m.meetingName || 'Meeting',
     dates: `${stamp(m.date, m.time)}/${stamp(m.date, endOf(m))}`,
     details: meetingDetails(m, conf, customers, personName),
-    location: m.location || conf.location || '',
+    location: [m.location, m.address].filter(Boolean).join(', ') || conf.location || '',
+    ...(conf.timeZone ? { ctz: conf.timeZone } : {}),
   });
   return `https://calendar.google.com/calendar/render?${q.toString()}`;
 };
@@ -49,10 +51,10 @@ const downloadIcs = (meetings: ConferenceMeeting[], conf: Conference, customers:
     'BEGIN:VEVENT',
     `UID:${m.id}@sweetpro`,
     `DTSTAMP:${now}`,
-    `DTSTART:${stamp(m.date, m.time)}`,
-    `DTEND:${stamp(m.date, endOf(m))}`,
+    conf.timeZone ? `DTSTART;TZID=${conf.timeZone}:${stamp(m.date, m.time)}` : `DTSTART:${stamp(m.date, m.time)}`,
+    conf.timeZone ? `DTEND;TZID=${conf.timeZone}:${stamp(m.date, endOf(m))}` : `DTEND:${stamp(m.date, endOf(m))}`,
     `SUMMARY:${icsEsc(m.meetingName || 'Meeting')}`,
-    `LOCATION:${icsEsc(m.location || conf.location || '')}`,
+    `LOCATION:${icsEsc([m.location, m.address].filter(Boolean).join(', ') || conf.location || '')}`,
     `DESCRIPTION:${icsEsc(meetingDetails(m, conf, customers, personName))}`,
     'END:VEVENT',
   ].join('\r\n'));
@@ -62,6 +64,46 @@ const downloadIcs = (meetings: ConferenceMeeting[], conf: Conference, customers:
   a.download = `${(conf.name || 'conference').replace(/[^a-z0-9]+/gi, '_')}${label ? `_${label.replace(/[^a-z0-9]+/gi, '_')}` : ''}.ics`;
   document.body.appendChild(a); a.click(); a.remove();
 };
+
+// Local time zones offered on a conference (IANA ids).
+export const CONFERENCE_TIME_ZONES: Array<[string, string]> = [
+  ['America/St_Johns', 'Newfoundland (St. John’s)'],
+  ['America/Halifax', 'Atlantic (Halifax)'],
+  ['America/Toronto', 'Eastern (Toronto / New York)'],
+  ['America/Winnipeg', 'Central (Winnipeg / Chicago)'],
+  ['America/Regina', 'Saskatchewan (Regina)'],
+  ['America/Edmonton', 'Mountain (Edmonton / Denver)'],
+  ['America/Phoenix', 'Arizona (Phoenix)'],
+  ['America/Vancouver', 'Pacific (Vancouver / Los Angeles)'],
+  ['America/Anchorage', 'Alaska (Anchorage)'],
+  ['Pacific/Honolulu', 'Hawaii (Honolulu)'],
+  ['America/Mexico_City', 'Mexico City'],
+  ['America/Bogota', 'Bogotá / Lima'],
+  ['America/Sao_Paulo', 'São Paulo'],
+  ['America/Argentina/Buenos_Aires', 'Buenos Aires'],
+  ['Europe/London', 'London / Dublin / Lisbon'],
+  ['Europe/Paris', 'Central Europe (Paris / Berlin / Nuremberg)'],
+  ['Europe/Athens', 'Eastern Europe (Athens / Istanbul)'],
+  ['Africa/Johannesburg', 'Johannesburg'],
+  ['Asia/Dubai', 'Dubai'],
+  ['Asia/Kolkata', 'India (Mumbai / Delhi)'],
+  ['Asia/Bangkok', 'Bangkok / Jakarta'],
+  ['Asia/Singapore', 'Singapore / Kuala Lumpur'],
+  ['Asia/Shanghai', 'China (Shanghai / Beijing)'],
+  ['Asia/Tokyo', 'Tokyo / Seoul'],
+  ['Australia/Sydney', 'Sydney / Melbourne'],
+  ['Pacific/Auckland', 'Auckland'],
+];
+/** Short zone name for a date, e.g. "EST" / "CET" / "GMT+1". */
+export const tzAbbr = (tz?: string, date?: string) => {
+  if (!tz) return '';
+  try {
+    const d = date ? new Date(`${date}T12:00:00`) : new Date();
+    return new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(d).find(p => p.type === 'timeZoneName')?.value || tz;
+  } catch { return tz; }
+};
+const MEETING_TYPES = ['Breakfast Meeting', 'Lunch Meeting', 'Dinner Meeting', 'Golf', 'Other'] as const;
+const COST_CURRENCIES = ['CAD', 'USD', 'EUR', 'GBP', 'MXN'];
 
 /** "2026-11-21T09:30" → "Nov 21, 9:30 AM". */
 const fmtReminder = (v?: string) => {
@@ -173,6 +215,8 @@ export default function ConferencesPage({
       location: newConference.location!, address: newConference.address, city: newConference.city, province: newConference.province,
       postalCode: newConference.postalCode, attendees: newConference.attendees || [], meetings: [],
       createdAt: new Date().toISOString(), status: newConference.status || 'Planned',
+      ...(newConference.timeZone ? { timeZone: newConference.timeZone } : {}),
+      ...(newConference.costPerAttendee != null ? { costPerAttendee: newConference.costPerAttendee, costCurrency: newConference.costCurrency || 'CAD' } : {}),
     };
     onAddConference(conference);
     setShowAddConferenceModal(false);
@@ -240,6 +284,8 @@ export default function ConferencesPage({
       meetingName, meetingOwner: nm.meetingOwner || undefined, attendees,
       customerAttendees: [], customerAttendeeDetails: nm.customerAttendeeDetails || [],
       location: nm.location!, notes: nm.notes, customerId: isNewCustomer ? '' : nm.customerId, followUps: nm.followUps || [],
+      ...(nm.address ? { address: nm.address } : {}), ...(nm.meetingType ? { meetingType: nm.meetingType } : {}),
+      ...(nm.reservationRequired ? { reservationRequired: true } : {}),
     };
     const updatedConference: Conference = { ...selectedConference, meetings: [...selectedConference.meetings, meeting] };
     onAddMeeting(selectedConference.id, meeting);
@@ -587,6 +633,7 @@ export default function ConferencesPage({
               meetings={sortedMeetings}
               customers={customers}
               getPersonName={getPersonName}
+              timeZone={selectedConference?.timeZone}
               onOpen={(meeting) => { setEditingMeeting({ ...meeting, customerAttendeeDetails: meeting.customerAttendeeDetails || [], followUps: meeting.followUps || [] }); setShowEditMeetingModal(true); }}
             />
           ) : meetings.length === 0 ? (
@@ -597,8 +644,9 @@ export default function ConferencesPage({
                 <thead>
                   <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase tracking-widest">
                     <MSortHeader field="date" label="Date" />
-                    <MSortHeader field="time" label="Start" />
-                    <th className="p-3 border-r border-[#E4E3E0]/20">End</th>
+                    <MSortHeader field="time" label={`Start${selectedConference?.timeZone ? ` (${tzAbbr(selectedConference.timeZone, selectedConference.startDate)})` : ''}`} />
+                    <th className="p-3 border-r border-[#E4E3E0]/20">End{selectedConference?.timeZone ? ` (${tzAbbr(selectedConference.timeZone, selectedConference.startDate)})` : ''}</th>
+                    <th className="p-3 border-r border-[#E4E3E0]/20">Type</th>
                     <MSortHeader field="meetingName" label="Meeting" />
                     <MSortHeader field="customer" label="Customer" />
                     <MSortHeader field="owner" label="Owner" />
@@ -610,7 +658,7 @@ export default function ConferencesPage({
                 </thead>
                 <tbody className="divide-y divide-[#141414]/10">
                   {sortedMeetings.length === 0 && (
-                    <tr><td colSpan={10} className="p-6 text-center text-xs font-bold opacity-40 italic">No meetings match your search.</td></tr>
+                    <tr><td colSpan={11} className="p-6 text-center text-xs font-bold opacity-40 italic">No meetings match your search.</td></tr>
                   )}
                   {sortedMeetings.map(meeting => {
                     const customer = meeting.customerId ? customers.find(c => c.id === meeting.customerId) : null;
@@ -625,6 +673,10 @@ export default function ConferencesPage({
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.date ? new Date(meeting.date + 'T00:00:00').toLocaleDateString() : '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.time || '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.endTime || '—'}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">
+                            {meeting.meetingType || '—'}
+                            {meeting.reservationRequired && <div className="mt-0.5"><span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase">Reservation req.</span></div>}
+                          </td>
                           <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{meeting.meetingName || 'Untitled'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10">{customer?.name || '—'}</td>
                           <td className="p-3 text-xs border-r border-[#141414]/10">
@@ -644,7 +696,10 @@ export default function ConferencesPage({
                               ))}</div>
                             ) : '—'}
                           </td>
-                          <td className="p-3 text-xs border-r border-[#141414]/10">{meeting.location || '—'}</td>
+                          <td className="p-3 text-xs border-r border-[#141414]/10">
+                            {meeting.location || '—'}
+                            {meeting.address && <div className="text-[10px] opacity-60">{meeting.address}</div>}
+                          </td>
                           <td className="p-3 text-xs">
                             <div className="flex items-center gap-1">
                               <button onClick={() => setExpandedMeeting(isExpanded ? null : meeting.id)}
@@ -664,7 +719,7 @@ export default function ConferencesPage({
                         {/* Expanded Meeting Detail */}
                         <AnimatePresence>
                           {isExpanded && (
-                            <tr><td colSpan={10} className="p-0">
+                            <tr><td colSpan={11} className="p-0">
                               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                                 className="overflow-hidden bg-[#F9F9F9] border-t border-[#141414]/10">
                                 <div className="p-6 space-y-4">
@@ -831,14 +886,14 @@ export default function ConferencesPage({
           {showAddMeetingModal && (
             <MeetingModal title="Add Meeting" meeting={newMeeting} setMeeting={setNewMeeting} onSubmit={handleAddMeeting}
               onClose={() => { setShowAddMeetingModal(false); resetMeetingForm(); }} submitLabel="Add Meeting"
-              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} />
+              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} timeZone={selectedConference?.timeZone} />
           )}
         </AnimatePresence>
         <AnimatePresence>
           {showEditMeetingModal && editingMeeting && (
             <MeetingModal title="Edit Meeting" meeting={editingMeeting} setMeeting={(m: any) => setEditingMeeting(m)} onSubmit={handleEditMeeting}
               onClose={() => { setShowEditMeetingModal(false); setEditingMeeting(null); }} submitLabel="Update Meeting"
-              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} />
+              customers={customers} salesPeople={salesPeople} conferenceDates={conferenceDates} timeZone={selectedConference?.timeZone} />
           )}
         </AnimatePresence>
         <AnimatePresence>
@@ -1017,6 +1072,30 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
                 placeholder="Postal Code" className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="text-xs font-bold uppercase block mb-1">Local Time Zone</label>
+              <select value={conference.timeZone || ''} onChange={(e) => onConferenceChange({ ...conference, timeZone: e.target.value || undefined })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                <option value="">Select time zone…</option>
+                {CONFERENCE_TIME_ZONES.map(([id, label]) => <option key={id} value={id}>{label} — {tzAbbr(id, conference.startDate)}</option>)}
+                {conference.timeZone && !CONFERENCE_TIME_ZONES.some(([id]) => id === conference.timeZone) && <option value={conference.timeZone}>{conference.timeZone}</option>}
+              </select>
+              <p className="text-[10px] opacity-50 mt-1">All meetings and follow-up reminders are scheduled in this local time.</p></div>
+            <div><label className="text-xs font-bold uppercase block mb-1">Cost per Attendee</label>
+              <div className="flex">
+                <input type="number" min={0} step="0.01" value={conference.costPerAttendee ?? ''} placeholder="0.00"
+                  onChange={(e) => onConferenceChange({ ...conference, costPerAttendee: e.target.value === '' ? undefined : Number(e.target.value), costCurrency: conference.costCurrency || 'CAD' })}
+                  className="flex-1 min-w-0 px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" />
+                <select value={conference.costCurrency || 'CAD'} onChange={(e) => onConferenceChange({ ...conference, costCurrency: e.target.value })}
+                  className="px-2 py-2 border border-l-0 border-[#141414] bg-white text-sm font-bold focus:outline-none">
+                  {COST_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              {conference.costPerAttendee != null && (conference.attendees || []).length > 0 && (
+                <p className="text-[10px] opacity-60 mt-1">Total for {(conference.attendees || []).length} attendee{(conference.attendees || []).length === 1 ? '' : 's'}: {conference.costCurrency || 'CAD'} {(conference.costPerAttendee * (conference.attendees || []).length).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+              )}</div>
+          </div>
+
           <div className="border-t pt-4">
             <h4 className="font-bold mb-3">Attendees (Sales Employees)</h4>
             <div className="flex gap-2 mb-3">
@@ -1058,8 +1137,8 @@ function ConferenceModal({ title, conference, onConferenceChange, onRemoveAttend
  *  per hour. Meetings are blocks placed by start time and sized by duration
  *  (end time, else 1 hour); overlapping meetings share the column side by side.
  *  Click a meeting to edit it. */
-function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
-  days: string[]; meetings: ConferenceMeeting[]; customers: Customer[];
+function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen, timeZone }: {
+  days: string[]; meetings: ConferenceMeeting[]; customers: Customer[]; timeZone?: string;
   getPersonName: (id: string) => string; onOpen: (m: ConferenceMeeting) => void;
 }) {
   const ROW = 64; // px per hour
@@ -1090,7 +1169,7 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
     <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
       <div className="min-w-max" style={{ display: 'grid', gridTemplateColumns: `64px repeat(${days.length}, minmax(180px, 1fr))` }}>
         {/* Header row */}
-        <div className="bg-[#F5F5F5] border-b border-r border-[#141414] sticky left-0 z-10" />
+        <div className="bg-[#F5F5F5] border-b border-r border-[#141414] sticky left-0 z-10 text-[9px] font-bold uppercase text-center pt-2 opacity-60" title={timeZone || 'No time zone set'}>{timeZone ? tzAbbr(timeZone, days[0]) : 'Local'}</div>
         {days.map(d => (
           <div key={d} className="bg-[#F5F5F5] border-b border-r border-[#141414] border-r-[#141414]/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest">
             {dayLabel(d)}
@@ -1130,6 +1209,8 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 text-[10px] leading-snug">
                       <span className="font-mono font-bold">{m.time}{m.endTime && m.endTime > m.time ? `–${m.endTime}` : ''}</span>
                       <span className="text-[11px] font-bold">{m.meetingName || 'Untitled'}</span>
+                      {m.meetingType && <span className="opacity-80 italic">{m.meetingType}</span>}
+                      {m.reservationRequired && <span className="bg-amber-200 text-amber-900 px-1 text-[9px] font-bold uppercase">Reservation</span>}
                       {customer && customer !== m.meetingName && <span className="opacity-80">· {customer}</span>}
                       {m.location && <span className="opacity-70 inline-flex items-center gap-0.5"><MapPin size={9} />{m.location}</span>}
                       {m.meetingOwner && <span className="opacity-70 inline-flex items-center gap-0.5"><Users size={9} />{getPersonName(m.meetingOwner)}</span>}
@@ -1153,9 +1234,11 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
   );
 }
 
-function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLabel, customers, salesPeople, conferenceDates }: {
+function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLabel, customers, salesPeople, conferenceDates, timeZone }: {
   title: string; meeting: Partial<ConferenceMeeting>; setMeeting: (m: any) => void; onSubmit: (final: Partial<ConferenceMeeting>) => void; onClose: () => void;
   submitLabel: string; customers: Customer[]; salesPeople: Person[]; conferenceDates: string[];
+  /** Conference local time zone — meeting times are entered in it. */
+  timeZone?: string;
 }) {
   // Fully local state for customer attendee management to avoid stale closure / prop round-trip issues
   const [localCustAttendees, setLocalCustAttendees] = useState<CustomerAttendeeDetail[]>(meeting.customerAttendeeDetails || []);
@@ -1231,9 +1314,26 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
             </div>
           </div>
 
-          <div><label className="text-xs font-bold uppercase block mb-1">Location*</label>
-            <input type="text" value={meeting.location || ''} onChange={(e) => setMeeting({ ...meeting, location: e.target.value })}
-              placeholder="Meeting Location" className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+          <p className="text-[10px] opacity-60 -mt-2">{timeZone ? `Times are local to the conference: ${CONFERENCE_TIME_ZONES.find(([id]) => id === timeZone)?.[1] || timeZone} (${tzAbbr(timeZone, meeting.date)}).` : 'Set the conference’s Local Time Zone to schedule in local time.'}</p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="text-xs font-bold uppercase block mb-1">Location*</label>
+              <input type="text" value={meeting.location || ''} onChange={(e) => setMeeting({ ...meeting, location: e.target.value })}
+                placeholder="Venue / restaurant / room" className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+            <div><label className="text-xs font-bold uppercase block mb-1">Meeting Type</label>
+              <select value={meeting.meetingType || ''} onChange={(e) => setMeeting({ ...meeting, meetingType: e.target.value || undefined })}
+                className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]">
+                <option value="">Select type…</option>
+                {MEETING_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+          </div>
+          <div><label className="text-xs font-bold uppercase block mb-1">Address</label>
+            <input type="text" value={meeting.address || ''} onChange={(e) => setMeeting({ ...meeting, address: e.target.value })}
+              placeholder="Street address, city" className="w-full px-3 py-2 border border-[#141414] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]" /></div>
+          <label className="flex items-center gap-2 text-xs font-bold uppercase cursor-pointer w-fit">
+            <input type="checkbox" checked={!!meeting.reservationRequired} onChange={(e) => setMeeting({ ...meeting, reservationRequired: e.target.checked })} className="w-4 h-4 accent-[#141414]" />
+            Reservation Required
+          </label>
 
           <div className="grid grid-cols-2 gap-4">
             <div><label className="text-xs font-bold uppercase block mb-1">Customer (auto-generates name)</label>
@@ -1354,7 +1454,7 @@ function MeetingModal({ title, meeting, setMeeting, onSubmit, onClose, submitLab
                     <option value="">Owner</option>
                     {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select></div>
-                <div className="col-span-3"><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Reminder</div>
+                <div className="col-span-3"><div className="text-[10px] uppercase font-bold opacity-50 mb-1">Reminder{timeZone ? ` (${tzAbbr(timeZone)})` : ''}</div>
                   <input type="datetime-local" value={fuDraft.reminderAt} onChange={(e) => setFuDraft({ ...fuDraft, reminderAt: e.target.value })} className="w-full px-1 py-1.5 border border-[#141414]/30 bg-white text-xs focus:outline-none" /></div>
                 <button onClick={addFollowUpDraft} className="col-span-1 py-1.5 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase">Add</button>
               </div>
