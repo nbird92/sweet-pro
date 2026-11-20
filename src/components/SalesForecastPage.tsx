@@ -1847,13 +1847,33 @@ export default function SalesForecastPage({
   const splitIdx: number = -1;
   const currentMonthCol = modalViewMode === 'Monthly' ? currentPeriodIdx : -1;
 
+  /** A line's Margin / MT (CAD) per month (null = none). Weekly forecasts
+   *  roll up to a volume-weighted month average (plain average without volume). */
+  const monthlyMarginsOf = (cf: CustomerForecast, line: CustomerForecastLine): (number | null)[] => {
+    const weekly = (cf.viewMode || 'Monthly') === 'Weekly';
+    if (!weekly) {
+      const out: (number | null)[] = new Array(12).fill(null);
+      for (const e of line.marginEntries || []) if (e.periodIndex >= 0 && e.periodIndex < 12) out[e.periodIndex] = e.value;
+      return out;
+    }
+    const sum = new Array(12).fill(0) as number[], vol = new Array(12).fill(0) as number[], raw = new Array(12).fill(0) as number[], n = new Array(12).fill(0) as number[];
+    for (const e of line.marginEntries || []) {
+      const m = weekMonthIdx(e.periodIndex);
+      if (m < 0 || m >= 12) continue;
+      const v = line.entries.find((x) => x.periodIndex === e.periodIndex)?.value || 0;
+      sum[m] += e.value * v; vol[m] += v; raw[m] += e.value; n[m] += 1;
+    }
+    return sum.map((_, m) => (n[m] ? Math.round((vol[m] > 0 ? sum[m] / vol[m] : raw[m] / n[m]) * 100) / 100 : null));
+  };
+  const MARGIN_COLS = MONTH_NAMES.map((m) => `${m} Margin/MT (CAD)`);
+
   // ── CSV template download + import (annual forecast by customer/product/month) ──
   const importFileRef = useRef<HTMLInputElement>(null);
   const downloadForecastTemplate = () => {
     const esc = (v: string | number) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    const rows: string[] = [['Customer', 'Product', 'Location', ...MONTH_NAMES].join(',')];
+    const rows: string[] = [['Customer', 'Product', 'Location', ...MONTH_NAMES, ...MARGIN_COLS].join(',')];
     for (const cf of mergedForecasts) {
-      if (!cf.lines.length) { rows.push([esc(cf.customerName), '', '', ...Array(12).fill('')].join(',')); continue; }
+      if (!cf.lines.length) { rows.push([esc(cf.customerName), '', '', ...Array(24).fill('')].join(',')); continue; }
       const weekly = (cf.viewMode || 'Monthly') === 'Weekly';
       for (const line of cf.lines) {
         const monthly = new Array(12).fill(0) as number[];
@@ -1864,6 +1884,7 @@ export default function SalesForecastPage({
         rows.push([
           esc(cf.customerName), esc(displayProduct(line.productName)), esc(locationName(line.location)),
           ...monthly.map(v => (v ? Math.round(v * 100) / 100 : '')),
+          ...monthlyMarginsOf(cf, line).map(v => (v != null ? v : '')),
         ].join(','));
       }
     }
@@ -1902,8 +1923,10 @@ export default function SalesForecastPage({
     const cProd = header.indexOf('product');
     const cLoc = header.indexOf('location');
     const monthCols = MONTH_NAMES.map(m => header.indexOf(m.toLowerCase()));
+    // Optional Margin/MT (CAD) columns — "Jan Margin/MT (CAD)" (also "Jan Margin").
+    const marginCols = MONTH_NAMES.map(m => header.findIndex(h => h.startsWith(`${m.toLowerCase()} margin`)));
     if (cCust < 0 || cProd < 0 || monthCols.some(i => i < 0)) {
-      alert('Header must be: Customer, Product, Location, Jan … Dec — download the template to get it exactly right.');
+      alert('Header must be: Customer, Product, Location, Jan … Dec (optionally followed by Jan … Dec Margin/MT (CAD)) — download the template to get it exactly right.');
       return;
     }
     const custByKey = new Map<string, Customer>();
@@ -1923,12 +1946,20 @@ export default function SalesForecastPage({
       const prod = (r[cProd] || '').trim();
       const entries: ForecastEntry[] = [];
       monthCols.forEach((col, m) => { const v = parseFloat(r[col]); if (isFinite(v) && v > 0) entries.push({ periodIndex: m, value: v }); });
+      const marginEntries: ForecastEntry[] = [];
+      marginCols.forEach((col, m) => {
+        if (col < 0) return;
+        const raw = (r[col] || '').replace(/[$,\s]/g, '');
+        if (raw === '') return;
+        const v = parseFloat(raw);
+        if (isFinite(v)) marginEntries.push({ periodIndex: m, value: Math.round(v * 100) / 100 });
+      });
       if (!prod) { if (entries.length) errors.push(`Row ${rowNo}: monthly values but no product — skipped`); return; }
       if (!catalogEntry(prod)) { errors.push(`Row ${rowNo}: unknown product "${prod}"`); return; }
       const loc = cLoc >= 0 ? (r[cLoc] || '').trim() : '';
       let g = parsed.get(cust.id);
       if (!g) { g = { cust, lines: [] }; parsed.set(cust.id, g); }
-      g.lines.push({ id: generateId('CFL'), productName: prod, location: loc, entries });
+      g.lines.push({ id: generateId('CFL'), productName: prod, location: loc, entries, ...(marginEntries.length ? { marginEntries } : {}) });
     });
     if (!parsed.size) { alert('No importable rows found.' + (errors.length ? `\n\n${errors.slice(0, 15).join('\n')}` : '')); return; }
     // REPLACE each imported customer's lines for the selected FY/type (the
@@ -2022,13 +2053,43 @@ export default function SalesForecastPage({
         { header: 'View Mode', key: 'viewMode' },
         { header: '# Product Lines', key: 'lineCount', format: 'integer' },
         { header: 'Annual Total (MT)', key: 'annual', format: 'number' },
+        { header: 'Avg Margin/MT (CAD)', key: 'avgMargin', format: 'currency' },
+        { header: 'Total Margin (CAD)', key: 'totalMargin', format: 'currency' },
       ],
-      rows: mergedForecasts.map(cf => ({
-        customerName: cf.customerName,
-        viewMode: cf.viewMode || 'Monthly',
-        lineCount: cf.lines.length,
-        annual: cf.lines.reduce((s, l) => s + l.entries.reduce((s2, e) => s2 + e.value, 0), 0),
-      })),
+      rows: mergedForecasts.map(cf => {
+        const st = getMarginStats(cf);
+        return {
+          customerName: cf.customerName,
+          viewMode: cf.viewMode || 'Monthly',
+          lineCount: cf.lines.length,
+          annual: cf.lines.reduce((s, l) => s + l.entries.reduce((s2, e) => s2 + e.value, 0), 0),
+          avgMargin: st.avg != null ? Math.round(st.avg * 100) / 100 : '',
+          totalMargin: st.totalMargin ? Math.round(st.totalMargin * 100) / 100 : '',
+        };
+      }),
+    },
+    {
+      sheetName: 'Margin per MT',
+      title: `${typeLabel} Margin / MT (CAD) — ${selectedFY?.name || ''}`,
+      subtitle: 'Margin per MT entered on each customer product line, by month (weekly forecasts averaged by volume)',
+      columns: [
+        { header: 'Customer', key: 'customer' },
+        { header: 'Product', key: 'product' },
+        { header: 'Location', key: 'location' },
+        ...MONTH_NAMES.map((m, i) => ({ header: `${m} (CAD/MT)`, key: `m${i}`, format: 'currency' as const })),
+        { header: 'Avg Margin/MT (CAD)', key: 'avg', format: 'currency' as const },
+      ],
+      rows: mergedForecasts.flatMap(cf => cf.lines
+        .map(line => ({ line, margins: monthlyMarginsOf(cf, line) }))
+        .filter(({ margins }) => margins.some(v => v != null))
+        .map(({ line, margins }) => {
+          const st = getMarginStats({ ...cf, lines: [line] });
+          return {
+            customer: cf.customerName, product: displayProduct(line.productName), location: locationName(line.location),
+            ...Object.fromEntries(margins.map((v, i) => [`m${i}`, v ?? ''])),
+            avg: st.avg != null ? Math.round(st.avg * 100) / 100 : '',
+          };
+        })),
     },
     {
       sheetName: 'Product Forecasts',
