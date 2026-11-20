@@ -810,6 +810,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <th className="p-3 bg-[#141414] border-r border-white/20">Received</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">PO No.</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Order (BOL)</th>
+                  <th className="p-3 bg-[#141414] border-r border-white/20">Customer</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Requested change</th>
                   <th className="p-3 bg-[#141414] border-r border-white/20">Status</th>
                   <th className="p-3 bg-[#141414]">Actions</th>
@@ -826,6 +827,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[140px] truncate">{a.poNumber || '—'}</div></td>
                     <td className="p-3 text-xs font-mono"><div className="max-w-[110px] truncate">{a.orderBol || '—'}</div></td>
+                    <td className="p-3 text-xs font-bold" title={a.customer || ''}><div className="max-w-[180px] truncate">{a.customer || '—'}</div></td>
                     <td className="p-3 text-xs">{renderChanges(a)}</td>
                     <td className="p-3"><AmendmentStatusPill status={a.status} /></td>
                     <td className="p-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
@@ -846,7 +848,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       )}
                     </td>
                   </tr>
-                  {expandedApptId === a.id && renderEmailRow(a, 6)}
+                  {expandedApptId === a.id && renderEmailRow(a, 7)}
                   </React.Fragment>
                 ))}
               </tbody>
