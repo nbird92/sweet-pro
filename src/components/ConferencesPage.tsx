@@ -1,11 +1,67 @@
 import React, { useState, useEffect } from 'react';
 import { Conference, ConferenceAttendee, ConferenceMeeting, CustomerAttendeeDetail, MeetingFollowUp, Customer, Person, SalesLead, SalesLeadFollowUp } from '../types';
-import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText } from 'lucide-react';
+import { Plus, X, Edit2, Trash2, ChevronDown, ChevronUp, Clock, MapPin, Users, Search, ArrowUpDown, CheckSquare, Square, FileText, CalendarPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import PageBanner from './PageBanner';
 import { PageToolbar } from './PageShell';
 import DataTable from './DataTable';
 import type { SheetSpec } from '../utils/exportExcel';
+
+// ── Google Calendar export ───────────────────────────────────────────────
+// Meeting times are local to the conference, so they're exported as
+// "floating" times (no time zone) — Google Calendar places them at that clock
+// time in the calendar's own zone.
+const icsEsc = (v: string) => v.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+const stamp = (date: string, time?: string) => `${date.replace(/-/g, '')}T${(time || '00:00').replace(':', '')}00`;
+const endOf = (m: ConferenceMeeting) => {
+  if (m.endTime && m.endTime > m.time) return m.endTime;
+  const [h, mi] = (m.time || '00:00').split(':').map(Number);
+  const t = Math.min(23 * 60 + 59, h * 60 + mi + 60);
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+};
+const meetingDetails = (m: ConferenceMeeting, conf: Conference, customers: Customer[], personName: (id: string) => string) => {
+  const customer = m.customerId ? customers.find(c => c.id === m.customerId)?.name : '';
+  return [
+    `Conference: ${conf.name}`,
+    customer ? `Customer: ${customer}` : '',
+    m.meetingOwner ? `Owner: ${personName(m.meetingOwner)}` : '',
+    (m.attendees || []).length ? `Internal attendees: ${(m.attendees || []).map(personName).join(', ')}` : '',
+    (m.customerAttendeeDetails || []).length ? `Customer attendees: ${(m.customerAttendeeDetails || []).map(a => [a.name, a.email].filter(Boolean).join(' ')).join(', ')}` : '',
+    (m.followUps || []).filter(f => !f.completed).length ? `Follow-ups: ${(m.followUps || []).filter(f => !f.completed).map(f => f.text).join('; ')}` : '',
+    m.notes ? `Notes: ${m.notes}` : '',
+  ].filter(Boolean).join('\n');
+};
+/** One-click "Add to Google Calendar" link for a meeting. */
+const googleCalendarUrl = (m: ConferenceMeeting, conf: Conference, customers: Customer[], personName: (id: string) => string) => {
+  const q = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: m.meetingName || 'Meeting',
+    dates: `${stamp(m.date, m.time)}/${stamp(m.date, endOf(m))}`,
+    details: meetingDetails(m, conf, customers, personName),
+    location: m.location || conf.location || '',
+  });
+  return `https://calendar.google.com/calendar/render?${q.toString()}`;
+};
+/** Download the meetings as an .ics file (Google Calendar → Settings → Import). */
+const downloadIcs = (meetings: ConferenceMeeting[], conf: Conference, customers: Customer[], personName: (id: string) => string, label: string) => {
+  const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  const events = meetings.filter(m => m.date && m.time).map(m => [
+    'BEGIN:VEVENT',
+    `UID:${m.id}@sweetpro`,
+    `DTSTAMP:${now}`,
+    `DTSTART:${stamp(m.date, m.time)}`,
+    `DTEND:${stamp(m.date, endOf(m))}`,
+    `SUMMARY:${icsEsc(m.meetingName || 'Meeting')}`,
+    `LOCATION:${icsEsc(m.location || conf.location || '')}`,
+    `DESCRIPTION:${icsEsc(meetingDetails(m, conf, customers, personName))}`,
+    'END:VEVENT',
+  ].join('\r\n'));
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Sweet Pro//Conferences//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${icsEsc(conf.name)}`, ...events, 'END:VCALENDAR'].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+  a.download = `${(conf.name || 'conference').replace(/[^a-z0-9]+/gi, '_')}${label ? `_${label.replace(/[^a-z0-9]+/gi, '_')}` : ''}.ics`;
+  document.body.appendChild(a); a.click(); a.remove();
+};
 
 /** "2026-11-21T09:30" → "Nov 21, 9:30 AM". */
 const fmtReminder = (v?: string) => {
@@ -48,6 +104,7 @@ export default function ConferencesPage({
   const [expandedMeeting, setExpandedMeeting] = useState<string | null>(null);
   // Scheduled Meetings: table list or daily calendar (days × hourly slots).
   const [meetingView, setMeetingView] = useState<'table' | 'calendar'>('table');
+  const [icsPerson, setIcsPerson] = useState(''); // '' = export all meetings
   const [editingConference, setEditingConference] = useState<Conference | null>(null);
 
   const [newConference, setNewConference] = useState<Partial<Conference>>({
@@ -496,6 +553,22 @@ export default function ConferencesPage({
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-bold text-lg">Scheduled Meetings ({meetings.length})</h2>
+            <div className="flex items-center gap-2">
+            <select value={icsPerson} onChange={(e) => setIcsPerson(e.target.value)} title="Whose meetings to export"
+              className="bg-white border border-[#141414] px-2 py-1.5 text-[10px] font-bold uppercase outline-none">
+              <option value="">All meetings</option>
+              {salesPeople.filter(p => meetings.some(m => m.meetingOwner === p.id || (m.attendees || []).includes(p.id))).map(p => <option key={p.id} value={p.id}>{p.name}'s meetings</option>)}
+            </select>
+            <button
+              onClick={() => {
+                const list = icsPerson ? meetings.filter(m => m.meetingOwner === icsPerson || (m.attendees || []).includes(icsPerson)) : meetings;
+                if (!list.length) { alert('No meetings to export.'); return; }
+                downloadIcs(list, selectedConference!, customers, getPersonName, icsPerson ? getPersonName(icsPerson) : '');
+              }}
+              title="Download an .ics file, then in Google Calendar: Settings → Import & export → Import"
+              className="px-3 py-1.5 border border-[#141414] bg-white text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 hover:bg-[#141414] hover:text-[#E4E3E0]">
+              <CalendarPlus size={12} /> Export to Google Calendar
+            </button>
             <div className="flex border border-[#141414]">
               {(['table', 'calendar'] as const).map(v => (
                 <button key={v} onClick={() => setMeetingView(v)}
@@ -503,6 +576,7 @@ export default function ConferencesPage({
                   {v === 'table' ? <FileText size={12} /> : <Clock size={12} />}{v === 'table' ? 'Table' : 'Calendar'}
                 </button>
               ))}
+            </div>
             </div>
           </div>
           <div className="mb-4"><SearchInput value={meetingSearch} onChange={setMeetingSearch} placeholder="Search meetings by name, customer, attendee, owner, location..." /></div>
@@ -579,6 +653,8 @@ export default function ConferencesPage({
                               </button>
                               <button onClick={() => { setEditingMeeting({ ...meeting, customerAttendeeDetails: meeting.customerAttendeeDetails || [], followUps: meeting.followUps || [] }); setShowEditMeetingModal(true); }}
                                 className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="Edit"><Edit2 size={14} /></button>
+                              <a href={googleCalendarUrl(meeting, selectedConference!, customers, getPersonName)} target="_blank" rel="noreferrer"
+                                className="p-1 hover:bg-blue-600 hover:text-white transition-colors" title="Add to Google Calendar"><CalendarPlus size={14} /></a>
                               <button onClick={() => handleDeleteMeeting(meeting.id)}
                                 className="p-1 hover:bg-red-500 hover:text-white transition-colors" title="Delete"><Trash2 size={14} /></button>
                             </div>
@@ -986,7 +1062,7 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
   days: string[]; meetings: ConferenceMeeting[]; customers: Customer[];
   getPersonName: (id: string) => string; onOpen: (m: ConferenceMeeting) => void;
 }) {
-  const ROW = 56; // px per hour
+  const ROW = 64; // px per hour
   const toMin = (t?: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(t || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : NaN; };
   const span = (m: ConferenceMeeting) => {
     const start = toMin(m.time);
@@ -1044,17 +1120,22 @@ function MeetingCalendar({ days, meetings, customers, getPersonName, onOpen }: {
               {placed.map(({ m, start, end, lane }) => {
                 const customer = m.customerId ? customers.find(c => c.id === m.customerId)?.name : '';
                 const open = (m.followUps || []).filter(f => !f.completed).length;
+                const custNames = (m.customerAttendeeDetails || []).map(a => a.name).filter(Boolean);
                 return (
                   <button key={m.id} onClick={() => onOpen(m)}
                     title={`${m.meetingName || 'Meeting'} · ${m.time}${m.endTime ? `–${m.endTime}` : ''}${m.location ? ` · ${m.location}` : ''}`}
-                    className="absolute text-left bg-purple-100 border border-purple-400 border-l-4 border-l-purple-700 hover:bg-purple-200 transition-colors px-1.5 py-1 overflow-hidden"
+                    className="absolute text-left bg-purple-100 border border-purple-400 border-l-4 border-l-purple-700 hover:bg-purple-200 hover:z-20 hover:shadow-[3px_3px_0px_0px_rgba(20,20,20,1)] transition-colors px-2 py-1 overflow-hidden"
                     style={{ top: ((start - first * 60) / 60) * ROW + 1, height: Math.max(22, ((end - start) / 60) * ROW - 2), left: `calc(${(lane / lanes) * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }}>
-                    <div className="text-[10px] font-mono opacity-70">{m.time}{m.endTime ? `–${m.endTime}` : ''}</div>
-                    <div className="text-[11px] font-bold leading-tight truncate">{m.meetingName || 'Untitled'}</div>
-                    {customer && <div className="text-[10px] truncate opacity-80">{customer}</div>}
-                    {m.location && <div className="text-[10px] truncate opacity-60">{m.location}</div>}
-                    {m.meetingOwner && <div className="text-[10px] truncate opacity-60">{getPersonName(m.meetingOwner)}</div>}
-                    {open > 0 && <div className="text-[9px] font-bold uppercase text-amber-700">{open} follow-up{open === 1 ? '' : 's'}</div>}
+                    {/* Details flow left → right and wrap, so a 1-hour block shows them all. */}
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0 text-[10px] leading-snug">
+                      <span className="font-mono font-bold">{m.time}{m.endTime ? `–${m.endTime}` : ''}</span>
+                      <span className="text-[11px] font-bold">{m.meetingName || 'Untitled'}</span>
+                      {customer && customer !== m.meetingName && <span className="opacity-80">· {customer}</span>}
+                      {m.location && <span className="opacity-70 inline-flex items-center gap-0.5"><MapPin size={9} />{m.location}</span>}
+                      {m.meetingOwner && <span className="opacity-70 inline-flex items-center gap-0.5"><Users size={9} />{getPersonName(m.meetingOwner)}</span>}
+                      {custNames.length > 0 && <span className="opacity-70">w/ {custNames.join(', ')}</span>}
+                      {open > 0 && <span className="font-bold uppercase text-amber-700 text-[9px]">{open} follow-up{open === 1 ? '' : 's'}</span>}
+                    </div>
                   </button>
                 );
               })}
