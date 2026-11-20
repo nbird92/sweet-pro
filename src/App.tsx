@@ -1950,6 +1950,14 @@ export default function App() {
   // magnitude — a value <= 2 is MT (×1000 → kg), anything larger is already kg —
   // and cap at 2000 kg/unit (a single package never weighs more; a bigger number
   // is an inflated/corrupt value that must not be reused). 0 = genuine bulk/liquid.
+  // Weight/Unit shown in KG in the order + invoice menus. Values are MT/unit,
+  // except legacy lines that stored kg (> 2) — kept as-is.
+  const fmtUnitKg = (v?: number): string => {
+    const n = Number(v) || 0;
+    if (n <= 0) return '—';
+    const kg = n <= 2 ? n * 1000 : n;
+    return kg.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
   const perUnitKg = (nwpu?: number): number => {
     const v = nwpu || 0;
     if (v <= 0) return 0;
@@ -2120,7 +2128,8 @@ export default function App() {
     return {
       ...card,
       lineItems: list,
-      product: list.length ? list.map(li => li.productDisplayName || li.productName).join(', ') : card.product,
+      // Shortform names (e.g. "GC45"), never the long product name.
+      product: list.length ? list.map(li => lineItemToShortform(li) || li.productName).join(', ') : card.product,
       qty: Math.round(newQtyMt * 1000) / 1000,
       amount: totalLineAmt > 0 ? Math.round(totalLineAmt * 100) / 100 : card.amount,
       pricePerMt: totalLineAmt > 0 && newQtyMt > 0 ? Math.round((totalLineAmt / newQtyMt) * 100) / 100 : card.pricePerMt,
@@ -19480,7 +19489,14 @@ export default function App() {
                         )}
                       </select></div>
                     <div><label className="text-[10px] uppercase font-bold opacity-60 block mb-1">Product</label>
-                      <input type="text" value={editingInvoiceCard.product || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" /></div>
+                      {/* Always the SHORTFORM. With line items it's derived from them
+                          (read-only — edit the line items below); otherwise free text. */}
+                      {(editingInvoiceCard.lineItems || []).length > 0 ? (
+                        <input type="text" readOnly value={(editingInvoiceCard.lineItems || []).map(li => lineItemToShortform(li) || li.productName).join(', ')}
+                          title="Set by the line items below" className="w-full bg-[#F5F5F5] border border-[#141414]/30 px-2 py-1.5 text-sm outline-none cursor-default" />
+                      ) : (
+                        <input type="text" value={productToShortform(editingInvoiceCard.product) || editingInvoiceCard.product || ''} onChange={(e) => setEditingInvoiceCard({ ...editingInvoiceCard, product: e.target.value })} className="w-full bg-white border border-[#141414]/30 px-2 py-1.5 text-sm outline-none focus:border-[#141414]" />
+                      )}</div>
                   </div>
                   {(editingInvoiceCard.lineItems || []).length > 0 ? (
                     <table className="w-full text-xs">
@@ -19488,7 +19504,7 @@ export default function App() {
                         <tr>
                           <th className="p-3 text-left font-bold">Product</th>
                           <th className="p-3 text-left font-bold">QTY (units)</th>
-                          <th className="p-3 text-left font-bold">Weight/Unit (MT)</th>
+                          <th className="p-3 text-left font-bold">Weight/Unit (KG)</th>
                           <th className="p-3 text-left font-bold">Total Weight (MT)</th>
                           <th className="p-3 text-left font-bold">$/Unit</th>
                           <th className="p-3 text-left font-bold">$/MT</th>
@@ -19506,7 +19522,7 @@ export default function App() {
                                 the Invoice Details view and never jumps to catalog/order-
                                 derived numbers. */}
                             <td className="p-3">{Number((item.qty || 0).toFixed(3))}</td>
-                            <td className="p-3">{item.qty ? fmtN((item.totalWeight / item.qty), 3) : fmtN((item.netWeightPerUnit || 0), 3)}</td>
+                            <td className="p-3">{fmtUnitKg(item.qty ? item.totalWeight / item.qty : item.netWeightPerUnit)}</td>
                             <td className="p-3 font-bold">{fmtN(item.totalWeight, 2)}</td>
                             <td className="p-3">{item.unitAmount ? `$${fmtN(item.unitAmount, 2)}` : '—'}</td>
                             <td className="p-3">{item.mtAmount ? `$${fmtN(item.mtAmount, 2)}` : '—'}</td>
@@ -19816,7 +19832,7 @@ export default function App() {
                         <tr>
                           <th className="p-3 text-left font-bold">Product</th>
                           <th className="p-3 text-left font-bold">QTY (units)</th>
-                          <th className="p-3 text-left font-bold">Weight/Unit (MT)</th>
+                          <th className="p-3 text-left font-bold">Weight/Unit (KG)</th>
                           <th className="p-3 text-left font-bold">Total Weight (MT)</th>
                           <th className="p-3 text-left font-bold">$/Unit</th>
                           <th className="p-3 text-left font-bold">$/MT</th>
@@ -19829,7 +19845,7 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{Number((qtyUnits || 0).toFixed(3))}</td>
-                            <td className="p-3">{weightPerUnit ? fmtN(weightPerUnit, 3) : '—'}</td>
+                            <td className="p-3">{fmtUnitKg(weightPerUnit)}</td>
                             <td className="p-3 font-bold">{fmtN(totalWeight, 2)}</td>
                             <td className="p-3">{unitAmount ? `$${fmtN(unitAmount, 2)}` : '—'}</td>
                             <td className="p-3">{mtAmount ? `$${fmtN(mtAmount, 2)}` : '—'}</td>
@@ -20034,7 +20050,7 @@ export default function App() {
                         <tr>
                           <th className="p-3 text-left font-bold">Product</th>
                           <th className="p-3 text-left font-bold">Order QTY (units)</th>
-                          <th className="p-3 text-left font-bold">Order Weight/Unit (MT)</th>
+                          <th className="p-3 text-left font-bold">Order Weight/Unit (KG)</th>
                           <th className="p-3 text-left font-bold">Order Total Weight (MT)</th>
                           <th className="p-3 text-left font-bold">$/Unit</th>
                           <th className="p-3 text-left font-bold">$/MT</th>
@@ -20047,7 +20063,7 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-[#141414]/5">
                             <td className="p-3">{lineItemToShortform(item)}</td>
                             <td className="p-3">{item.qty}</td>
-                            <td className="p-3">{weightPerUnit ? fmtN(weightPerUnit, 3) : '—'}</td>
+                            <td className="p-3">{fmtUnitKg(weightPerUnit)}</td>
                             <td className="p-3 font-bold">{fmtN(totalWeight, 2)}</td>
                             <td className="p-3">{unitAmount ? `$${fmtN(unitAmount, 2)}` : '—'}</td>
                             <td className="p-3">{mtAmount ? `$${fmtN(mtAmount, 2)}` : '—'}</td>
