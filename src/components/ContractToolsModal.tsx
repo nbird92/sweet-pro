@@ -82,6 +82,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   // ── Merge draft ──
   // New merged contract gets a temporary number until the ITAS one is typed in.
   const [mNumber, setMNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
+  // Merged contract number: keep A's, keep B's, or a brand-new number.
+  const [mNumMode, setMNumMode] = useState<'new' | 'keepA' | 'keepB'>('new');
   const [mVolume, setMVolume] = useState<string>('');
   const [mPrice, setMPrice] = useState<string>('');
   const [mStart, setMStart] = useState('');
@@ -90,6 +92,13 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   const [tAmount, setTAmount] = useState<string>('');
   const [tReweight, setTReweight] = useState(false);
   const [tPriceB, setTPriceB] = useState<string>('');
+  // Transfer destination: an existing contract, or a brand-new contract that
+  // copies every pricing component of contract A.
+  const [tTarget, setTTarget] = useState<'existing' | 'new'>('existing');
+  const [tNewCust, setTNewCust] = useState('');
+  const [tNewNumber, setTNewNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
+  const [tNewStart, setTNewStart] = useState('');
+  const [tNewEnd, setTNewEnd] = useState('');
   // ── Adjust draft ──
   const [aDir, setADir] = useState<'increase' | 'decrease'>('increase');
   const [aAmount, setAAmount] = useState<string>('');
@@ -131,9 +140,12 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     if (A.id === B.id) warnings.push('Pick two different contracts.');
     if ((A.currency || 'CAD') !== (B.currency || 'CAD')) warnings.push(`Currencies differ (${A.currency} vs ${B.currency}) — the weighted price mixes currencies.`);
     if ((A.skuName || '') !== (B.skuName || '')) warnings.push(`Products differ (${A.skuName || '—'} vs ${B.skuName || '—'}); the merged contract keeps contract A's product and combines the product lines.`);
-    if (custA !== custB) warnings.push('The contracts belong to different customers; the merged contract belongs to contract A\'s customer.');
-    const number = mNumber.trim();
-    const dup = number && contracts.some(c => c.contractNumber.trim().toLowerCase() === number.toLowerCase());
+    // The contract that carries on: A (new number or keep A) or B (keep B).
+    const base = mNumMode === 'keepB' ? B : A;
+    const other = mNumMode === 'keepB' ? A : B;
+    if (custA !== custB) warnings.push(`The contracts belong to different customers; the merged contract belongs to ${base.customerName} (contract ${mNumMode === 'keepB' ? 'B' : 'A'}).`);
+    const number = mNumMode === 'keepA' ? A.contractNumber : mNumMode === 'keepB' ? B.contractNumber : mNumber.trim();
+    const dup = mNumMode === 'new' && !!number && contracts.some(c => c.contractNumber.trim().toLowerCase() === number.toLowerCase());
     if (!number) warnings.push('Enter the new contract number for the merged contract.');
     if (dup) warnings.push(`Contract number ${number} already exists.`);
     const volume = mVolume === '' ? mergeCalc.volume : Number(mVolume) || 0;
@@ -146,11 +158,13 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     );
     preview = (
       <table className="w-full text-xs border border-[#141414]">
-        <thead><tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest"><th className="p-2 text-left" /><th className="p-2 text-left">Contract A</th><th className="p-2 text-left">Contract B</th><th className="p-2 text-left bg-emerald-100">Merged (new)</th></tr></thead>
+        <thead><tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest"><th className="p-2 text-left" /><th className="p-2 text-left">Contract A</th><th className="p-2 text-left">Contract B</th><th className="p-2 text-left bg-emerald-100">Merged {mNumMode === 'new' ? '(new contract)' : `(keeps ${number})`}</th></tr></thead>
         <tbody>
-          {row('Contract No.', A.contractNumber, B.contractNumber, <div><input value={mNumber} onChange={e => setMNumber(e.target.value)} placeholder="New contract no." className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">Temporary number — type the ITAS number here or later in Edit Contract</div></div>)}
-          {row('Customer', A.customerName, B.customerName, A.customerName)}
-          {row('Product', A.skuName || '—', B.skuName || '—', A.skuName || '—')}
+          {row('Contract No.', A.contractNumber, B.contractNumber, mNumMode === 'new'
+            ? <div><input value={mNumber} onChange={e => setMNumber(e.target.value)} placeholder="New contract no." className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">Temporary number — type the ITAS number here or later in Edit Contract</div></div>
+            : number)}
+          {row('Customer', A.customerName, B.customerName, base.customerName)}
+          {row('Product', A.skuName || '—', B.skuName || '—', base.skuName || '—')}
           {row('Contract Volume (MT)', fmt(sA.volume), fmt(sB.volume), <input type="number" value={mVolume === '' ? mergeCalc.volume : mVolume} onChange={e => setMVolume(e.target.value)} className={inputCls} />)}
           {row('Volume Taken (MT)', fmt(sA.taken), fmt(sB.taken), fmt(taken))}
           {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sB.onOrder), fmt(onOrder))}
@@ -158,17 +172,22 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Price / MT', money(A.finalPrice, A.currency), money(B.finalPrice, B.currency), <div><input type="number" step="0.01" value={mPrice === '' ? mergeCalc.price : mPrice} onChange={e => setMPrice(e.target.value)} className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">volume-weighted: {money(mergeCalc.price)}</div></div>)}
           {row('Start Date', A.startDate || '—', B.startDate || '—', <input type="date" value={start} onChange={e => setMStart(e.target.value)} className={inputCls} />)}
           {row('End Date', A.endDate || '—', B.endDate || '—', <input type="date" value={end} onChange={e => setMEnd(e.target.value)} className={inputCls} />)}
-          {row('Status after merge', 'Inactive', 'Inactive', 'Active')}
+          {row('Status after merge', mNumMode === 'keepA' ? 'Active (merged)' : 'Inactive', mNumMode === 'keepB' ? 'Active (merged)' : 'Inactive', 'Active')}
         </tbody>
       </table>
     );
     build = () => {
       const when = stamp();
-      const record = `[${when}${who}] MERGED: ${A.contractNumber} (${fmt(sA.volume)} MT @ ${money(A.finalPrice, A.currency)}; taken ${fmt(sA.taken)}, on order ${fmt(sA.onOrder)}) + ${B.contractNumber} (${fmt(sB.volume)} MT @ ${money(B.finalPrice, B.currency)}; taken ${fmt(sB.taken)}, on order ${fmt(sB.onOrder)}) → ${number}: ${fmt(volume)} MT @ ${money(price, A.currency)} (taken ${fmt(taken)}, on order ${fmt(onOrder)}, outstanding ${fmt(volume - taken)}).${comment.trim() ? ` Note: ${comment.trim()}` : ''}`;
-      const prevNotes = [A.notes ? `— Notes from ${A.contractNumber} —\n${A.notes.trim()}` : '', B.notes ? `— Notes from ${B.contractNumber} —\n${B.notes.trim()}` : ''].filter(Boolean).join('\n\n');
+      const record = `[${when}${who}] MERGED: ${A.contractNumber} (${fmt(sA.volume)} MT @ ${money(A.finalPrice, A.currency)}; taken ${fmt(sA.taken)}, on order ${fmt(sA.onOrder)}) + ${B.contractNumber} (${fmt(sB.volume)} MT @ ${money(B.finalPrice, B.currency)}; taken ${fmt(sB.taken)}, on order ${fmt(sB.onOrder)}) → ${number}${mNumMode === 'new' ? ' (new contract)' : ' (kept number)'}: ${fmt(volume)} MT @ ${money(price, A.currency)} (taken ${fmt(taken)}, on order ${fmt(onOrder)}, outstanding ${fmt(volume - taken)}).${comment.trim() ? ` Note: ${comment.trim()}` : ''}`;
+      const kept = mNumMode !== 'new';
+      // Keeping a number: that contract carries on (its notes stay first, the
+      // other's are appended). New number: both originals' notes are carried over.
+      const prevNotes = kept
+        ? [(base.notes || '').trim(), other.notes ? `— Notes from ${other.contractNumber} —\n${other.notes.trim()}` : ''].filter(Boolean).join('\n\n')
+        : [A.notes ? `— Notes from ${A.contractNumber} —\n${A.notes.trim()}` : '', B.notes ? `— Notes from ${B.contractNumber} —\n${B.notes.trim()}` : ''].filter(Boolean).join('\n\n');
       const merged: Contract = {
-        ...A,
-        id: `CON-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        ...base,
+        id: kept ? base.id : `CON-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         contractNumber: number,
         contractVolume: volume,
         volumeTaken: taken,
@@ -178,20 +197,92 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         endDate: end,
         contractLines: mergeCalc.lines,
         allowedCustomerIds: Array.from(new Set([...(A.allowedCustomerIds || []), ...(B.allowedCustomerIds || [])])),
-        mergedFrom: Array.from(new Set([A.contractNumber, B.contractNumber, ...(A.mergedFrom || []), ...(B.mergedFrom || [])])),
+        mergedFrom: Array.from(new Set([A.contractNumber, B.contractNumber, ...(A.mergedFrom || []), ...(B.mergedFrom || [])])).filter(cn => cn !== number),
         active: true,
-        contractDate: new Date().toISOString().slice(0, 10),
+        contractDate: kept ? base.contractDate : new Date().toISOString().slice(0, 10),
         notes: appendNote(prevNotes, record),
       };
       const closeOut = (c: Contract, s: typeof sA) => ({
         ...c, active: false, volumeTaken: s.taken, volumeOutstanding: s.outstanding,
-        notes: appendNote(c.notes, `[${when}${who}] MERGED into ${number} together with ${c.id === A.id ? B.contractNumber : A.contractNumber}. This contract is now inactive; its invoices and orders count toward ${number}.${comment.trim() ? ` Note: ${comment.trim()}` : ''}`),
+        notes: appendNote(c.notes, `[${when}${who}] MERGED into ${number}${kept ? '' : ` together with ${c.id === A.id ? B.contractNumber : A.contractNumber}`}. This contract is now inactive; its invoices and orders count toward ${number}.${comment.trim() ? ` Note: ${comment.trim()}` : ''}`),
       });
-      return { upserts: [merged, closeOut(A, sA), closeOut(B, sB)], summary: `Merged ${A.contractNumber} + ${B.contractNumber} into ${number}.` };
+      if (kept) {
+        const otherStats = other.id === A.id ? sA : sB;
+        return { upserts: [merged, closeOut(other, otherStats)], summary: `Merged ${other.contractNumber} into ${number} (kept contract number ${number}): ${fmt(volume)} MT @ ${money(price, base.currency)}. ${other.contractNumber} is now inactive.` };
+      }
+      return { upserts: [merged, closeOut(A, sA), closeOut(B, sB)], summary: `Merged ${A.contractNumber} + ${B.contractNumber} into new contract ${number}: ${fmt(volume)} MT @ ${money(price, A.currency)}.` };
     };
   }
 
-  if (mode === 'transfer' && A && B) {
+  const newCustomer = customers.find(c => c.id === (tNewCust || (A ? custOf(A)?.id : '') || ''));
+  if (mode === 'transfer' && A && tTarget === 'new') {
+    const amt = Number(tAmount) || 0;
+    const number = tNewNumber.trim();
+    const dup = !!number && contracts.some(c => c.contractNumber.trim().toLowerCase() === number.toLowerCase());
+    if (amt <= 0) warnings.push('Enter the volume to transfer.');
+    if (amt > sA.available) warnings.push(`That's more than contract A has available (${fmt(sA.available)} MT = outstanding ${fmt(sA.outstanding)} − on order ${fmt(sA.onOrder)}).`);
+    if (!newCustomer) warnings.push('Pick the customer for the new contract.');
+    if (!number) warnings.push('Enter a contract number for the new contract.');
+    if (dup) warnings.push(`Contract number ${number} already exists.`);
+    const priceNew = tPriceB === '' ? r2(A.finalPrice || 0) : r2(Number(tPriceB));
+    const start = tNewStart || A.startDate || '', end = tNewEnd || A.endDate || '';
+    canApply = amt > 0 && !!newCustomer && !!number && !dup;
+    const row = (label: string, a1: React.ReactNode, a2: React.ReactNode, b2: React.ReactNode) => (
+      <tr className="border-b border-[#141414]/10"><td className="p-2 text-[10px] uppercase tracking-widest font-bold opacity-60">{label}</td><td className="p-2 font-mono">{a1}</td><td className="p-2 font-mono font-bold bg-red-50">{a2}</td><td className="p-2 font-mono font-bold bg-emerald-50">{b2}</td></tr>
+    );
+    preview = (
+      <table className="w-full text-xs border border-[#141414]">
+        <thead><tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest"><th className="p-2 text-left" /><th className="p-2 text-left">A — now</th><th className="p-2 text-left bg-red-100">A — after</th><th className="p-2 text-left bg-emerald-100">New contract</th></tr></thead>
+        <tbody>
+          {row('Contract No.', A.contractNumber, A.contractNumber, <div><input value={tNewNumber} onChange={e => setTNewNumber(e.target.value)} className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">Temporary number — type the ITAS number here or later in Edit Contract</div></div>)}
+          {row('Customer', A.customerName, A.customerName, newCustomer?.name || '—')}
+          {row('Product', A.skuName || '—', A.skuName || '—', A.skuName || '—')}
+          {row('Contract Volume (MT)', fmt(sA.volume), fmt(sA.volume - amt), fmt(amt))}
+          {row('Volume Taken (MT)', fmt(sA.taken), fmt(sA.taken), fmt(0))}
+          {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sA.onOrder), fmt(0))}
+          {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sA.outstanding - amt), fmt(amt))}
+          {row('Price / MT', money(A.finalPrice, A.currency), money(A.finalPrice, A.currency), <div><input type="number" step="0.01" value={tPriceB === '' ? priceNew : tPriceB} onChange={e => setTPriceB(e.target.value)} className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">copied from {A.contractNumber}</div></div>)}
+          {row('Raw / FX / Margin', `${A.rawPriceUsdMt != null ? `USD ${fmt(A.rawPriceUsdMt, 2)}/MT` : '—'} · ${A.fxRate ?? '—'} · ${A.margin != null ? money(A.margin) : '—'}`, '', 'same as A')}
+          {row('Freight / Duty / Pallet', `${A.deliveredFreight != null ? money(A.deliveredFreight) : '—'} · ${A.exportDuty != null ? money(A.exportDuty) : '—'} · ${A.palletCharge != null ? money(A.palletCharge) : '—'}`, '', 'same as A')}
+          {row('Terms', [A.shippingTerms, A.paymentTerms, A.palletType].filter(Boolean).join(' · ') || '—', '', 'same as A')}
+          {row('Product lines', `${(A.contractLines || []).length}`, '', `${(A.contractLines || []).length} (copied)`)}
+          {row('Start Date', A.startDate || '—', A.startDate || '—', <input type="date" value={start} onChange={e => setTNewStart(e.target.value)} className={inputCls} />)}
+          {row('End Date', A.endDate || '—', A.endDate || '—', <input type="date" value={end} onChange={e => setTNewEnd(e.target.value)} className={inputCls} />)}
+        </tbody>
+      </table>
+    );
+    build = () => {
+      const when = stamp();
+      const tail = comment.trim() ? ` Note: ${comment.trim()}` : '';
+      const cust = newCustomer!;
+      const sameCustomer = custOf(A)?.id === cust.id;
+      const created: Contract = {
+        ...A, // every pricing component: price, raw, FX, freight, duty, pallet, margin, terms, product lines…
+        id: `CON-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        contractNumber: number,
+        customerNumber: cust.id,
+        customerName: cust.name,
+        itasName: cust.itasCustomerName || (sameCustomer ? A.itasName : undefined),
+        allowedCustomerIds: sameCustomer ? (A.allowedCustomerIds || []) : [],
+        contractVolume: amt,
+        volumeTaken: 0,
+        volumeOutstanding: amt,
+        finalPrice: priceNew,
+        contractLines: (A.contractLines || []).map((l, i) => ({ ...l, id: `CL-${Date.now()}-${i}` })),
+        startDate: start,
+        endDate: end,
+        mergedFrom: [],
+        active: true,
+        contractDate: new Date().toISOString().slice(0, 10),
+        notes: `[${when}${who}] CREATED BY TRANSFER: ${fmt(amt)} MT from ${A.contractNumber} (${A.customerName}). Pricing components copied from ${A.contractNumber}${priceNew !== r2(A.finalPrice) ? `; price set to ${money(priceNew, A.currency)} (A: ${money(A.finalPrice, A.currency)})` : ` at ${money(priceNew, A.currency)}`}.${tail}`,
+      };
+      const newA: Contract = { ...A, contractVolume: sA.volume - amt, volumeOutstanding: sA.outstanding - amt,
+        notes: appendNote(A.notes, `[${when}${who}] TRANSFER OUT: ${fmt(amt)} MT to new contract ${number} (${cust.name}). Volume ${fmt(sA.volume)} → ${fmt(sA.volume - amt)} MT.${tail}`) };
+      return { upserts: [newA, created], summary: `Transferred ${fmt(amt)} MT from ${A.contractNumber} to new contract ${number} (${cust.name}) at ${money(priceNew, A.currency)}/MT.\n\n${A.contractNumber} now has ${fmt(sA.volume - amt)} MT.` };
+    };
+  }
+
+  if (mode === 'transfer' && A && B && tTarget === 'existing') {
     const amt = Number(tAmount) || 0;
     if (A.id === B.id) warnings.push('Pick two different contracts.');
     if (amt <= 0) warnings.push('Enter the volume to transfer.');
@@ -224,7 +315,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         notes: appendNote(A.notes, `[${when}${who}] TRANSFER OUT: ${fmt(amt)} MT to ${B.contractNumber} (${B.customerName}). Volume ${fmt(sA.volume)} → ${fmt(sA.volume - amt)} MT.${tail}`) };
       const newB: Contract = { ...B, contractVolume: sB.volume + amt, volumeOutstanding: sB.outstanding + amt, finalPrice: priceB,
         notes: appendNote(B.notes, `[${when}${who}] TRANSFER IN: ${fmt(amt)} MT from ${A.contractNumber} (${A.customerName}) at ${money(A.finalPrice, A.currency)}. Volume ${fmt(sB.volume)} → ${fmt(sB.volume + amt)} MT${priceB !== r2(B.finalPrice) ? `; price ${money(B.finalPrice, B.currency)} → ${money(priceB, B.currency)}` : ''}.${tail}`) };
-      return { upserts: [newA, newB], summary: `Transferred ${fmt(amt)} MT from ${A.contractNumber} to ${B.contractNumber}.` };
+      return { upserts: [newA, newB], summary: `Transferred ${fmt(amt)} MT from ${A.contractNumber} to ${B.contractNumber}.\n\n${A.contractNumber} now has ${fmt(sA.volume - amt)} MT; ${B.contractNumber} has ${fmt(sB.volume + amt)} MT.` };
     };
   }
 
@@ -305,7 +396,29 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         <div className="flex-1 overflow-auto p-5 space-y-4">
           <div className={`grid gap-4 ${mode === 'adjust' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 md:grid-cols-2'}`}>
             {picker(mode === 'merge' ? 'Contract A' : mode === 'transfer' ? 'From — Contract A' : 'Contract', custA, (v) => { setCustA(v); if (mode === 'merge' && !custB) setCustB(v); }, idA, setIdA)}
-            {mode !== 'adjust' && picker(mode === 'merge' ? 'Contract B' : 'To — Contract B', custB, setCustB, idB, setIdB, idA)}
+            {mode === 'merge' && picker('Contract B', custB, setCustB, idB, setIdB, idA)}
+            {mode === 'transfer' && (
+              <div className="space-y-2">
+                <div className="flex border border-[#141414] w-fit bg-white">
+                  {([['existing', 'To an existing contract'], ['new', 'To a new contract']] as const).map(([k, l]) => (
+                    <button key={k} onClick={() => { setTTarget(k); setTPriceB(''); }} className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest ${tTarget === k ? 'bg-[#141414] text-[#E4E3E0]' : 'bg-white hover:bg-[#F5F5F5]'}`}>{l}</button>
+                  ))}
+                </div>
+                {tTarget === 'existing' ? picker('To — Contract B', custB, setCustB, idB, setIdB, idA) : (
+                  <div className="bg-white border border-[#141414] p-3 space-y-2">
+                    <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-1">To — New Contract</div>
+                    <div><label className={lbl}>Customer</label>
+                      <select value={newCustomer?.id || ''} onChange={e => setTNewCust(e.target.value)} className={inputCls}>
+                        <option value="">Select customer…</option>
+                        {[...customers].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select></div>
+                    <div><label className={lbl}>Contract No.</label>
+                      <input value={tNewNumber} onChange={e => setTNewNumber(e.target.value)} className={inputCls} /></div>
+                    <p className="text-[10px] opacity-60">The new contract copies every pricing component of contract A — price, raw, FX, freight, duty, pallet charge, margin, terms and product lines — with the transferred volume.</p>
+                  </div>
+                )}
+              </div>
+            )}
             {mode === 'adjust' && (
               <div className="bg-white border border-[#141414] p-3 space-y-2">
                 <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-1">Change</div>
@@ -325,15 +438,37 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
             )}
           </div>
 
-          {mode === 'transfer' && A && B && (
+          {mode === 'merge' && A && B && A.id !== B.id && (
+            <div className="bg-white border border-[#141414] p-3 space-y-2">
+              <div className="text-[11px] uppercase font-bold tracking-widest">Merged contract number</div>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ['keepA', `Keep ${A.contractNumber} (A)`],
+                  ['keepB', `Keep ${B.contractNumber} (B)`],
+                  ['new', 'New contract number'],
+                ] as const).map(([k, l]) => (
+                  <label key={k} className={`flex items-center gap-2 px-3 py-2 border cursor-pointer text-xs font-bold ${mNumMode === k ? 'border-[#141414] bg-[#141414] text-[#E4E3E0]' : 'border-[#141414]/30 hover:border-[#141414]'}`}>
+                    <input type="radio" name="mnum" checked={mNumMode === k} onChange={() => setMNumMode(k)} className="accent-emerald-500" />{l}
+                  </label>
+                ))}
+              </div>
+              <p className="text-[10px] opacity-60">{mNumMode === 'new'
+                ? 'Both contracts go inactive and a new contract holds the combined volume.'
+                : `${mNumMode === 'keepA' ? A.contractNumber : B.contractNumber} stays active and absorbs ${mNumMode === 'keepA' ? B.contractNumber : A.contractNumber}, which goes inactive. Orders and invoices on either number keep counting.`}</p>
+            </div>
+          )}
+
+          {mode === 'transfer' && A && (tTarget === 'new' || B) && (
             <div className="bg-white border border-[#141414] p-3 flex flex-wrap items-end gap-4">
               <div className="w-48"><label className={lbl}>Volume to transfer (MT)</label>
                 <input type="number" min={0} value={tAmount} onChange={e => setTAmount(e.target.value)} className={inputCls} /></div>
               <button onClick={() => setTAmount(String(Math.max(0, r2(sA.available))))} className="px-3 py-2 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5]">All available ({fmt(sA.available)} MT)</button>
-              <label className="flex items-center gap-2 text-xs cursor-pointer pb-2">
-                <input type="checkbox" checked={tReweight} onChange={e => { setTReweight(e.target.checked); setTPriceB(''); }} className="w-4 h-4 accent-[#141414]" />
-                Re-weight B's price with the transferred volume at A's price
-              </label>
+              {tTarget === 'existing' && (
+                <label className="flex items-center gap-2 text-xs cursor-pointer pb-2">
+                  <input type="checkbox" checked={tReweight} onChange={e => { setTReweight(e.target.checked); setTPriceB(''); }} className="w-4 h-4 accent-[#141414]" />
+                  Re-weight B's price with the transferred volume at A's price
+                </label>
+              )}
             </div>
           )}
 
