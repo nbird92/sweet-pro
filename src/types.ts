@@ -315,6 +315,9 @@ export interface Contract {
   contractLines?: ContractLine[]; // Product-specific lines with differentials
   contractDate?: string; // ISO date the contract was signed/created (display + CSV)
   itasName?: string; // ITAS-system customer name, mirrored onto the contract for CSV portability
+  /** Contract numbers merged into this one (Merge tool). Their invoices and
+   *  orders count toward this contract's volume taken / on order. */
+  mergedFrom?: string[];
 }
 
 export interface ContractLine {

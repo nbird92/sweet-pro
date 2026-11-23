@@ -19,6 +19,8 @@ import {
   Users,
   DollarSign,
   ArrowRightLeft,
+  GitMerge,
+  PlusCircle,
   FileText,
   X,
   Edit2,
@@ -106,6 +108,7 @@ const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarr
 import PageBanner from './components/PageBanner';
 import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle, PageToolbar } from './components/PageShell';
 import LocationCard from './components/LocationCard';
+import ContractToolsModal, { type ContractToolMode } from './components/ContractToolsModal';
 import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
@@ -5164,6 +5167,8 @@ export default function App() {
   const [accessState, setAccessState] = useState<'checking' | 'ok' | 'denied'>('checking');
   const accessListRef = useRef<string[] | null>(null); // last known server list
   const [notInPeople, setNotInPeople] = useState(false);
+  // Contracts page: Merge / Transfer / Increase-Decrease tool menu.
+  const [contractTool, setContractTool] = useState<ContractToolMode | null>(null);
   // Page permissions (People page → Permissions table).
   const [permissionMatrix, setPermissionMatrix] = useState<PermissionMatrix>({});
 
@@ -12585,13 +12590,15 @@ export default function App() {
 
     const stats = new Map<string, { taken: number; onOrder: number; outstanding: number }>();
     for (const c of contracts) {
-      const cn = c.contractNumber;
-      const taken = (cn && takenByCn.get(cn)) || 0;
+      // A merged contract also counts the invoices / orders of the contracts it
+      // was merged from (Merge tool → mergedFrom).
+      const cns = Array.from(new Set([c.contractNumber, ...(c.mergedFrom || [])].filter(Boolean)));
+      const taken = cns.reduce((s, cn) => s + (takenByCn.get(cn) || 0), 0);
       // Outstanding is always Contract Volume − computed Volume Taken; the stored
       // volumeOutstanding drifts when invoices change without touching the contract.
       stats.set(c.id, {
         taken,
-        onOrder: (cn && onOrderByCn.get(cn)) || 0,
+        onOrder: cns.reduce((s, cn) => s + (onOrderByCn.get(cn) || 0), 0),
         outstanding: (c.contractVolume || 0) - taken,
       });
     }
@@ -17310,6 +17317,9 @@ export default function App() {
             exportSheets={contractExportSheets}
             exportFileName="Contracts"
           >
+            <BannerButton icon={<GitMerge size={12} />} onClick={() => setContractTool('merge')} title="Merge two contracts into one new contract">Merge</BannerButton>
+            <BannerButton icon={<ArrowRightLeft size={12} />} onClick={() => setContractTool('transfer')} title="Move volume from one contract to another">Transfer</BannerButton>
+            <BannerButton icon={<PlusCircle size={12} />} onClick={() => setContractTool('adjust')} title="Increase or decrease a contract's volume">Increase / Decrease</BannerButton>
             <button
               onClick={() => setShowInactiveContracts(v => !v)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
@@ -19385,6 +19395,29 @@ export default function App() {
           </ColumnVisibilityContext.Provider>
         </ColumnOrderContext.Provider>
       </div>
+
+      {/* Contracts: Merge / Transfer / Increase-Decrease */}
+      {contractTool && (
+        <ContractToolsModal
+          mode={contractTool}
+          contracts={contracts}
+          customers={customers}
+          stats={contractVolumeStats}
+          userName={user?.displayName || user?.email || ''}
+          onClose={() => setContractTool(null)}
+          onApply={(upserts, summary) => {
+            if (!user || !lastSynced) {
+              setErrorBox("The app hasn't finished syncing with the server yet, so the contract change could NOT be saved. Wait for a recent sync, then try again.");
+              return;
+            }
+            const byId = new Map(upserts.map(c => [c.id, c]));
+            setContracts(prev => [...prev.map(c => byId.get(c.id) || c), ...upserts.filter(u => !prev.some(c => c.id === u.id))]);
+            saveNow(COLLECTIONS.contracts, upserts);
+            setContractTool(null);
+            setErrorBox(`${summary} The change is recorded in each contract's notes.`);
+          }}
+        />
+      )}
 
       {/* No access — signed in with an email that isn't in the People table */}
       {user && accessState === 'denied' && (
