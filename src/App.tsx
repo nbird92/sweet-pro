@@ -110,6 +110,7 @@ const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarr
 import PageBanner from './components/PageBanner';
 import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle, PageToolbar } from './components/PageShell';
 import LocationCard from './components/LocationCard';
+import SavedQuoteBreakdown from './components/SavedQuoteBreakdown';
 import ContractToolsModal, { type ContractToolMode } from './components/ContractToolsModal';
 import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
@@ -605,6 +606,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
   newLeadFollowUp: Record<string, { date: string; description: string; infoSent: string }>;
   setNewLeadFollowUp: React.Dispatch<React.SetStateAction<Record<string, { date: string; description: string; infoSent: string }>>>;
 }) {
+  const [openQuoteId, setOpenQuoteId] = React.useState<string | null>(null); // expanded saved quote
   const activeLocations = React.useMemo(
     () => locations.filter(l => l.active !== false),
     [locations]
@@ -768,7 +770,7 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
           {/* Saved Quotes — quotes saved for this prospect from the Customer
               Quote page (Save Quote with this lead selected). */}
           <div className="border-t border-[#141414]/10 pt-4">
-            <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Saved Quotes ({(lead.savedQuotes || []).length})</h4>
+            <h4 className="text-xs font-bold uppercase tracking-widest mb-3">Saved Quotes ({(lead.savedQuotes || []).length}) <span className="normal-case tracking-normal font-normal opacity-50">— click a quote for its full breakdown</span></h4>
             {(lead.savedQuotes || []).length > 0 ? (
               <div className="overflow-x-auto border border-[#141414]/20">
                 <table className="std-table w-full text-xs border-collapse">
@@ -779,7 +781,8 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
                   </thead>
                   <tbody>
                     {(lead.savedQuotes || []).map(q => (
-                      <tr key={q.id} className="border-b border-gray-200 hover:bg-gray-50 align-top">
+                      <React.Fragment key={q.id}>
+                      <tr className="border-b border-gray-200 hover:bg-gray-50 align-top cursor-pointer" onClick={() => setOpenQuoteId(id => (id === q.id ? null : q.id))} title="Click for the full price breakdown">
                         <td className="p-2 whitespace-nowrap">
                           {q.savedAt ? new Date(q.savedAt).toLocaleDateString() : '—'}
                           {q.savedBy && <div className="text-[9px] opacity-50">{q.savedBy}</div>}
@@ -797,10 +800,14 @@ function SalesLeadModal({ lead, setLead, onSubmit, onClose, title, qaProducts, s
                         <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                         <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${q.startDate || '?'} – ${q.endDate || 'TBD'}` : '—'}</td>
                         <td className="p-2">
-                          <button onClick={() => { if (window.confirm('Remove this saved quote? (Applied when you click Save Changes.)')) setLead({ ...lead, savedQuotes: (lead.savedQuotes || []).filter(x => x.id !== q.id) }); }}
+                          <button onClick={(e) => { e.stopPropagation(); if (window.confirm('Remove this saved quote? (Applied when you click Save Changes.)')) setLead({ ...lead, savedQuotes: (lead.savedQuotes || []).filter(x => x.id !== q.id) }); }}
                             className="p-0.5 hover:bg-red-100 text-red-400" title="Remove quote"><Trash2 size={12} /></button>
                         </td>
                       </tr>
+                      {openQuoteId === q.id && (
+                        <tr><td colSpan={11} className="p-0"><SavedQuoteBreakdown q={q} /></td></tr>
+                      )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -12543,7 +12550,31 @@ export default function App() {
       paymentTerms: config.paymentTerms || cust?.defaultPaymentTerms || undefined,
       startDate: config.contractStartDate || undefined,
       endDate: config.contractEndDate || undefined,
+      // Full build-up — the same elements Create Contract stores on a contract.
+      rawPriceUsdMt: calculations.rawMtUsd,
+      oceanFreightUsdMt: config.oceanFreightUsdMt,
+      yieldLossMultiplier: config.yieldLossMultiplier,
+      sugarLossPct: config.sugarLossPct || undefined,
+      totalCostOfRaws: calculations.totalCostOfRawsCad,
+      fcaBulkMt: config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk,
+      supplyChainCostMt: config.origin === 'Vancouver' ? calculations.vancouverSupplyChainCost : undefined,
+      deliveredFreight: config.isDelivered ? calculations.deliveredFreight : 0,
+      freightType: config.isDelivered ? (config.freightType || undefined) : undefined,
+      volumePerLoadMt: config.isDelivered ? (config.volumePerLoadMt || undefined) : undefined,
+      exportDuty: config.isExport ? calculations.exportDuty : 0,
+      palletCharge: config.isPalletCharge ? calculations.palletCharge : 0,
+      palletType: config.palletType || undefined,
+      perUnitPrice: calculations.perUnit,
+      productLines: calculations.productPrices.filter(pp => pp.key).map(pp => ({
+        product: pp.label,
+        productKey: pp.key,
+        productName: pp.value,
+        differentialCadMt: pp.differentialCadMt || 0,
+        finalPriceMt: Math.round(pp.finalMt * 100) / 100,
+        perUnit: Math.round(pp.perUnit * 100) / 100,
+      })),
     };
+    if (!quote.productLines?.length) delete quote.productLines;
     // Firestore rejects undefined values — drop them.
     (Object.keys(quote) as (keyof SavedQuote)[]).forEach(k => { if (quote[k] === undefined) delete quote[k]; });
     if (lead) {

@@ -154,6 +154,25 @@ export interface SavedQuote {
   paymentTerms?: string;
   startDate?: string;
   endDate?: string;
+  // ── Full price build-up (every contract element) ──
+  rawPriceUsdMt?: number;
+  oceanFreightUsdMt?: number;
+  yieldLossMultiplier?: number;
+  sugarLossPct?: number;
+  /** Total cost of raws, in the quote currency (/MT). */
+  totalCostOfRaws?: number;
+  /** FCA bulk price at the origin, in the quote currency (/MT). */
+  fcaBulkMt?: number;
+  supplyChainCostMt?: number;
+  deliveredFreight?: number;
+  freightType?: string;
+  volumePerLoadMt?: number;
+  exportDuty?: number;
+  palletCharge?: number;
+  palletType?: string;
+  perUnitPrice?: number;
+  /** Per-product prices: base + each product's differential. */
+  productLines?: Array<{ product: string; productKey?: string; productName?: string; differentialCadMt: number; finalPriceMt: number; perUnit?: number }>;
 }
 
 export interface CustomerImportRules {

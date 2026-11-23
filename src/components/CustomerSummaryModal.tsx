@@ -4,6 +4,7 @@ import CustomerSalesByMonth, { MonthMatrix } from './CustomerSalesByMonth';
 import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2 } from 'lucide-react';
 import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup } from '../types';
 import { fmtN } from '../utils/fmt';
+import SavedQuoteBreakdown from './SavedQuoteBreakdown';
 
 type Tab = 'details' | 'contracts' | 'sales' | 'forecast' | 'quotes';
 
@@ -50,6 +51,7 @@ const Stat = ({ label, value, sub }: { label: string; value: string; sub?: strin
 
 export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('details');
+  const [openQuoteId, setOpenQuoteId] = useState<string | null>(null);
   const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
   const label = (n?: string) => (toShortform(n) || n || '(unknown)').trim();
 
@@ -287,7 +289,8 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                 </thead>
                 <tbody>
                   {(customer.savedQuotes || []).map(q => (
-                    <tr key={q.id} className="border-b border-gray-200 hover:bg-gray-50">
+                    <React.Fragment key={q.id}>
+                    <tr className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer" onClick={() => setOpenQuoteId(id => (id === q.id ? null : q.id))} title="Click for the full price breakdown">
                       <td className="p-2 whitespace-nowrap">{fmtDate(q.savedAt)}<div className="text-[9px] opacity-50">{new Date(q.savedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div></td>
                       <td className="p-2">{q.savedBy || '—'}</td>
                       <td className="p-2 font-bold">{q.product}</td>
@@ -300,8 +303,12 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                       <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {fmtN((q.finalPriceMt || 0), 2)}</td>
                       <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                       <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${fmtDate(q.startDate)} – ${fmtDate(q.endDate)}` : '—'}</td>
-                      <td className="p-2"><button onClick={() => { if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button></td>
+                      <td className="p-2"><button onClick={(e) => { e.stopPropagation(); if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button></td>
                     </tr>
+                    {openQuoteId === q.id && (
+                      <tr><td colSpan={13} className="p-0"><SavedQuoteBreakdown q={q} /></td></tr>
+                    )}
+                    </React.Fragment>
                   ))}
                   {!(customer.savedQuotes || []).length && <tr><td colSpan={13} className="p-8 text-center text-gray-400">No saved quotes. Use Save Quote on the Customer Quote page to add one.</td></tr>}
                 </tbody>
