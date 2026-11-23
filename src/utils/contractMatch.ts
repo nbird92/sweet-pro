@@ -81,3 +81,20 @@ export function computeVolumeOnOrder(
     .filter(o => !(o.bolNumber && invoicedBols.has(o.bolNumber)))
     .reduce((sum, o) => sum + sumOrderWeight(o), 0);
 }
+
+// ── Temporary contract numbers ──────────────────────────────────────────────
+// Final contract numbers come from ITAS and are typed in later; until then a
+// newly booked contract carries a temporary number "TMP-00001", "TMP-00002"…
+export const TEMP_CONTRACT_PREFIX = 'TMP-';
+export function isTempContractNumber(cn: string | undefined | null): boolean {
+  return /^TMP-\d+$/i.test(String(cn || '').trim());
+}
+/** The next free temporary number, given every contract number in use. */
+export function nextTempContractNumber(existing: Array<string | undefined | null>): string {
+  let max = 0;
+  for (const cn of existing) {
+    const m = /^TMP-(\d+)$/i.exec(String(cn || '').trim());
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${TEMP_CONTRACT_PREFIX}${String(max + 1).padStart(5, '0')}`;
+}

@@ -13,6 +13,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, GitMerge, ArrowRightLeft, PlusCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { Contract, ContractLine, Customer } from '../types';
+import { nextTempContractNumber } from '../utils/contractMatch';
 
 export type ContractToolMode = 'merge' | 'transfer' | 'adjust';
 type Stats = Map<string, { taken: number; onOrder: number; outstanding: number }>;
@@ -79,7 +80,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   const [comment, setComment] = useState('');
 
   // ── Merge draft ──
-  const [mNumber, setMNumber] = useState('');
+  // New merged contract gets a temporary number until the ITAS one is typed in.
+  const [mNumber, setMNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
   const [mVolume, setMVolume] = useState<string>('');
   const [mPrice, setMPrice] = useState<string>('');
   const [mStart, setMStart] = useState('');
@@ -146,7 +148,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
       <table className="w-full text-xs border border-[#141414]">
         <thead><tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest"><th className="p-2 text-left" /><th className="p-2 text-left">Contract A</th><th className="p-2 text-left">Contract B</th><th className="p-2 text-left bg-emerald-100">Merged (new)</th></tr></thead>
         <tbody>
-          {row('Contract No.', A.contractNumber, B.contractNumber, <input value={mNumber} onChange={e => setMNumber(e.target.value)} placeholder="New contract no." className={inputCls} />)}
+          {row('Contract No.', A.contractNumber, B.contractNumber, <div><input value={mNumber} onChange={e => setMNumber(e.target.value)} placeholder="New contract no." className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">Temporary number — type the ITAS number here or later in Edit Contract</div></div>)}
           {row('Customer', A.customerName, B.customerName, A.customerName)}
           {row('Product', A.skuName || '—', B.skuName || '—', A.skuName || '—')}
           {row('Contract Volume (MT)', fmt(sA.volume), fmt(sB.volume), <input type="number" value={mVolume === '' ? mergeCalc.volume : mVolume} onChange={e => setMVolume(e.target.value)} className={inputCls} />)}

@@ -98,6 +98,8 @@ import {
   contractNumberFromSplit,
   matchesContractByNumberOrSplit,
   invoiceMatchesContract,
+  isTempContractNumber,
+  nextTempContractNumber,
 } from './utils/contractMatch';
 import { poKey, samePoNumber } from './utils/poNumber';
 import { sameLotCode, cleanLotCode, cleanLotCodeList, dedupeLotCodes, lotKey } from './utils/lotCode';
@@ -2259,7 +2261,7 @@ export default function App() {
       }
       if (Object.keys(patch).length) patchById.set(keep.id, patch as Partial<Invoice>);
     }
-    if (dropIds.length === 0) { setErrorBox('No duplicate invoices found.'); return; }
+    if (dropIds.length === 0) { setSuccessBox('No duplicate invoices found.'); return; }
     if (!window.confirm(`Merge ${dropIds.length} duplicate invoice${dropIds.length === 1 ? '' : 's'} (same invoice number)? The most complete record of each number is kept, with any blank fields filled from its duplicates. This cannot be undone.`)) return;
     const dropSet = new Set(dropIds);
     recordUserDeletes(COLLECTIONS.invoices, dropIds);
@@ -2429,7 +2431,7 @@ export default function App() {
       if (pk) seenPo.add(pk);
       if (b) seenBol.add(b);
     }
-    if (dropIds.length === 0) { setErrorBox('No duplicate orders found (by PO or BOL number).'); return; }
+    if (dropIds.length === 0) { setSuccessBox('No duplicate orders found (by PO or BOL number).'); return; }
     if (!window.confirm(`Remove ${dropIds.length} duplicate order${dropIds.length === 1 ? '' : 's'} that share a PO or BOL number? The most-progressed record of each is kept. This cannot be undone.`)) return;
     const dropSet = new Set(dropIds);
     recordUserDeletes(COLLECTIONS.orders, dropIds);
@@ -4710,13 +4712,13 @@ export default function App() {
         const text = (e.target?.result as string || '').replace(/^\uFEFF/, '');
         const lines = parseCSV(text).filter(r => r.some(c => (c || '').trim()));
         if (lines.length < 2) {
-          alert('CSV file is empty or has no data rows.');
+          setErrorBox('Contract import failed — the CSV file is empty or has no data rows.');
           return;
         }
         const csvHeaders = lines[0].map(h => (h || '').trim().toLowerCase());
 
         if (!csvHeaders.includes('contractnumber') && !csvHeaders.includes('contract')) {
-          alert(`CSV is missing a required "contractNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
+          setErrorBox(`Contract import failed — the CSV is missing a required "contractNumber" column.\n\nFound columns: ${csvHeaders.join(', ')}`);
           return;
         }
 
@@ -4875,15 +4877,15 @@ export default function App() {
           parts.push(`\n\nNot inactivated — uninvoiced orders must be invoiced first:\n${blockedInactivations.join('\n')}`);
         }
         if (parts.length > 0) {
-          alert(parts.join(', ').replace(', \n\n', '\n\n') + (blockedInactivations.length ? '' : '.'));
+          setSuccessBox('Contract import: ' + parts.join(', ').replace(', \n\n', '\n\n') + (blockedInactivations.length ? '' : '.'));
         } else {
-          alert('No contracts could be imported. The file may be empty or in an unexpected format.');
+          setErrorBox('No contracts could be imported. The file may be empty or in an unexpected format.');
         }
       } catch (err) {
-        alert(`Error reading CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        setErrorBox(`Contract import failed — error reading the CSV file: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     };
-    reader.onerror = () => { alert('Failed to read the CSV file.'); };
+    reader.onerror = () => { setErrorBox('Contract import failed — the CSV file could not be read.'); };
     reader.readAsText(file);
     event.target.value = '';
   };
@@ -9611,6 +9613,9 @@ export default function App() {
 
   const [skuToConfirm, setSkuToConfirm] = useState<SKU | null>(null);
   const [errorBox, setErrorBox] = useState<string | null>(null);
+  // Green "Completed" pop-up — a task finished successfully (the red error
+  // pop-up is only for tasks that could NOT be completed).
+  const [successBox, setSuccessBox] = useState<string | null>(null);
 
   const getStatusColor = (status: string) => {
     switch ((status || '').toLowerCase()) {
@@ -9928,7 +9933,7 @@ export default function App() {
       return { ...o, bolNumber: candidate };
     });
     const count = Object.keys(remap).length;
-    if (!count) { setErrorBox('All order BOLs already match their product groups and the PREFIX + 6-digit format.'); return; }
+    if (!count) { setSuccessBox('All order BOLs already match their product groups and the PREFIX + 6-digit format.'); return; }
     const changedOrders = newOrders.filter((o, i) => o !== orders[i]);
     const remapShip = (s: Shipment) => remap[s.bol] ? { ...s, bol: remap[s.bol] } : s;
     const changedShipments = [...hamiltonShipments, ...vancouverShipments].filter(s => remap[s.bol]).map(remapShip);
@@ -12115,13 +12120,13 @@ export default function App() {
       });
     });
 
-    if (!rebuilt.length) { setErrorBox('No additional customers were found in orders, invoices, contracts, shipments or return orders — every referenced customer is already in the table.'); return; }
+    if (!rebuilt.length) { setSuccessBox('No additional customers were found in orders, invoices, contracts, shipments or return orders — every referenced customer is already in the table.'); return; }
     if (!window.confirm(`Rebuild ${rebuilt.length} customer(s) from orders / invoices / contracts and add them to the table? Existing customers are left unchanged. Full street ship-to addresses can't be recovered from this data (only ship-to location names from contracts).`)) return;
     setCustomers(prev => [...prev, ...rebuilt]);
     // Hand back a filled template CSV (same columns as the customer template).
     const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
     exportCSV(tplHeaders, rebuilt, 'customer_template_rebuilt.csv');
-    setErrorBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
+    setSuccessBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
 
   /** Open the Submit Sample Request email: addressed to the sample's QA rep,
@@ -12283,7 +12288,7 @@ export default function App() {
     setSalesLeads(prev => prev.map(l => l.id === lead.id ? wonLead : l));
     saveNow(COLLECTIONS.salesLeads, [wonLead]);
     setEditingLeadCard(null);
-    setErrorBox(`${existing ? `Linked to existing customer "${target.name}"` : `Customer "${target.name}" (No. ${target.customerNumber}) created`}${quotes.length ? `, and ${quotes.length} saved quote(s) moved to the customer card` : ''}. The sales lead is now Closed Won.`);
+    setSuccessBox(`${existing ? `Linked to existing customer "${target.name}"` : `Customer "${target.name}" (No. ${target.customerNumber}) created`}${quotes.length ? `, and ${quotes.length} saved quote(s) moved to the customer card` : ''}. The sales lead is now Closed Won.`);
   };
 
   const addCustomer = () => {
@@ -12403,6 +12408,41 @@ export default function App() {
   };
 
 
+  /** A contract's number changed (e.g. temporary TMP-… → ITAS number): carry
+   *  the new number onto every order, invoice and transfer that used the old
+   *  one, and onto merged contracts that list it. Returns what was updated. */
+  const cascadeContractRename = (oldCn: string, newCn: string) => {
+    const from = oldCn.trim(), to = newCn.trim();
+    if (!from || !to || from === to) return { orders: 0, invoices: 0, transfers: 0 };
+    const swapList = (v?: string) => {
+      const parts = (v || '').split(',').map(x => x.trim());
+      return parts.some(x => x === from) ? parts.map(x => (x === from ? to : x)).filter(Boolean).join(', ') : v;
+    };
+    const chOrders: Order[] = [];
+    const nextOrders = orders.map(o => {
+      const touches = o.contractNumber === from || (o.lineItems || []).some(li => li.contractNumber === from);
+      if (!touches) return o;
+      const u = { ...o, contractNumber: o.contractNumber === from ? to : o.contractNumber, lineItems: (o.lineItems || []).map(li => (li.contractNumber === from ? { ...li, contractNumber: to } : li)) };
+      chOrders.push(u); return u;
+    });
+    const chInvoices: Invoice[] = [];
+    const nextInvoices = invoices.map(inv => {
+      const touches = (inv.contractNumber || '').split(',').some(x => x.trim() === from) || (inv.lineItems || []).some(li => (li.contractNumber || '').split(',').some(x => x.trim() === from));
+      if (!touches) return inv;
+      const u = { ...inv, contractNumber: swapList(inv.contractNumber), lineItems: inv.lineItems ? inv.lineItems.map(li => ({ ...li, contractNumber: swapList(li.contractNumber) || '' })) : inv.lineItems };
+      chInvoices.push(u); return u;
+    });
+    const chTransfers: Transfer[] = [];
+    const nextTransfers = transfers.map(t => {
+      if ((t as any).contractNumber !== from) return t;
+      const u = { ...t, contractNumber: to } as Transfer; chTransfers.push(u); return u;
+    });
+    if (chOrders.length) { setOrders(nextOrders); saveNow(COLLECTIONS.orders, chOrders); }
+    if (chInvoices.length) { setInvoices(nextInvoices); saveNow(COLLECTIONS.invoices, chInvoices); }
+    if (chTransfers.length) { setTransfers(nextTransfers); saveNow(COLLECTIONS.transfers, chTransfers); }
+    return { orders: chOrders.length, invoices: chInvoices.length, transfers: chTransfers.length };
+  };
+
   const createContract = () => {
     // DURABILITY GATE. saveNow (and every other writer) no-ops until `lastSynced`
     // is set, because before the authoritative load lands the arrays still hold
@@ -12427,8 +12467,8 @@ export default function App() {
 
     const newContract: Contract = {
       id: `CON-${Date.now()}`,
-      // Leave blank — user fills in the number from ITAS after creation
-      contractNumber: '',
+      // Temporary number until the ITAS number is typed in (TMP-00001…).
+      contractNumber: nextTempContractNumber(contracts.map(c => c.contractNumber)),
       customerNumber: selectedCustomer.id,
       customerName: selectedCustomer.name,
       contractVolume: config.volumeMt,
@@ -12469,6 +12509,7 @@ export default function App() {
     saveNow(COLLECTIONS.contracts, [newContract]); // durable immediately, not on the 5s debounce
     setShowContractConfirm(false);
     setActivePage('Contracts');
+    setSuccessBox(`Contract ${newContract.contractNumber} created for ${newContract.customerName} — ${newContract.contractVolume.toLocaleString()} MT of ${newContract.skuName} at ${newContract.currency} $${(newContract.finalPrice || 0).toFixed(2)}/MT.\n\n${newContract.contractNumber} is a temporary number — replace it with the ITAS contract number when you have it (Edit Contract). Orders already booked against it follow the new number.`);
   };
 
   // Save Quote (Customer Quote page) — stored on the customer record so it shows
@@ -14050,7 +14091,7 @@ export default function App() {
                   return true;
                 });
                 const removed = transfers.length - deduped.length;
-                if (removed === 0) { setErrorBox('No duplicate transfers found.'); return; }
+                if (removed === 0) { setSuccessBox('No duplicate transfers found.'); return; }
                 if (window.confirm(`Remove ${removed} duplicate transfer${removed === 1 ? '' : 's'}? ${deduped.length} unique transfer${deduped.length === 1 ? '' : 's'} will remain. This cannot be undone.`)) {
                   // Delete the duplicate docs directly (the auto-sync's mass-delete
                   // guard would otherwise refuse to remove this many).
@@ -16065,7 +16106,7 @@ export default function App() {
                         setSampleRequests(prev => prev.map(s => s.id === stamped.id ? stamped : s));
                         saveNow(COLLECTIONS.sampleRequests, [stamped]);
                         setSampleEmail(null);
-                        setErrorBox(`Sample request sent to ${toList.join(', ')}${emailSettings.testMode ? ` (TEST MODE → ${emailSettings.testAddress})` : ''} with the Sample Request form attached.`);
+                        setSuccessBox(`Sample request sent to ${toList.join(', ')}${emailSettings.testMode ? ` (TEST MODE → ${emailSettings.testAddress})` : ''} with the Sample Request form attached.`);
                       } catch (e: any) {
                         setErrorBox(`Sample request email failed: ${e?.message || String(e)}`);
                       } finally {
@@ -17527,7 +17568,7 @@ export default function App() {
                 }
 
                 if (newContracts.length === 0 && priceUpdatedById.size === 0) {
-                  setErrorBox('No new contract numbers to import, and no existing contracts needed a Price/MT from invoices.');
+                  setSuccessBox('No new contract numbers to import, and no existing contracts needed a Price/MT from invoices.');
                   return;
                 }
 
@@ -17538,7 +17579,7 @@ export default function App() {
                 const parts: string[] = [];
                 if (newContracts.length) parts.push(`imported ${newContracts.length} contract${newContracts.length === 1 ? '' : 's'}`);
                 if (priceUpdatedById.size) parts.push(`set Price/MT on ${priceUpdatedById.size} existing contract${priceUpdatedById.size === 1 ? '' : 's'} from invoices`);
-                setErrorBox(`Backfill complete — ${parts.join(' and ')}.`);
+                setSuccessBox(`Backfill complete — ${parts.join(' and ')}.`);
               }}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Plus size={12} /> Backfill from Orders/Invoices
@@ -17644,7 +17685,10 @@ export default function App() {
                 {visibleContracts.map(c => (
                   <React.Fragment key={c.id}>
                     <tr style={{ contentVisibility: 'auto', containIntrinsicSize: '0 48px' } as React.CSSProperties} className={`hover:bg-[#F9F9F9] transition-colors group cursor-pointer ${c.active === false ? 'opacity-50' : ''}`} onClick={() => setSelectedContractDetail(c)}>
-                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">{c.contractNumber}</td>
+                      <td className="p-3 text-xs font-bold border-r border-[#141414]/10 min-w-[160px]">
+                        {c.contractNumber}
+                        {isTempContractNumber(c.contractNumber) && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[8px] font-bold uppercase rounded-full" title="Temporary number — replace with the ITAS contract number">Temp</span>}
+                      </td>
                       {showContractCol('customerNumber') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.customerNumber}</td>}
                       {showContractCol('customerName') && <td className="p-3 text-xs border-r border-[#141414]/10 font-bold">{c.customerName}</td>}
                       {showContractCol('itasName') && <td className="p-3 text-xs border-r border-[#141414]/10">{c.itasName || itasNameByCustomerKey.get(`id:${c.customerNumber}`) || itasNameByCustomerKey.get(`name:${c.customerName}`) || '—'}</td>}
@@ -19414,7 +19458,7 @@ export default function App() {
             setContracts(prev => [...prev.map(c => byId.get(c.id) || c), ...upserts.filter(u => !prev.some(c => c.id === u.id))]);
             saveNow(COLLECTIONS.contracts, upserts);
             setContractTool(null);
-            setErrorBox(`${summary} The change is recorded in each contract's notes.`);
+            setSuccessBox(`${summary}\n\nThe change is recorded in each contract's notes.`);
           }}
         />
       )}
@@ -24287,7 +24331,7 @@ export default function App() {
                       type="text"
                       value={editingContract.contractNumber}
                       onChange={(e) => setEditingContract({ ...editingContract, contractNumber: e.target.value })}
-                      placeholder="To be added from ITAS"
+                      placeholder="ITAS contract number"
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
                     />
                   </div>
@@ -24683,9 +24727,31 @@ export default function App() {
                         setErrorBox("The app hasn't finished syncing with the server yet, so it's read-only right now and these contract changes could NOT be saved. Wait for a recent sync (reload if it's stuck), then save again.");
                         return;
                       }
-                      setContracts(contracts.map(c => c.id === editingContract.id ? editingContract : c));
-                      saveNow(COLLECTIONS.contracts, [editingContract]); // durable immediately
+                      const before = contracts.find(c => c.id === editingContract.id);
+                      const oldCn = (before?.contractNumber || '').trim();
+                      const newCn = (editingContract.contractNumber || '').trim();
+                      if (newCn && contracts.some(c => c.id !== editingContract.id && (c.contractNumber || '').trim().toLowerCase() === newCn.toLowerCase())) {
+                        setErrorBox(`Contract ${newCn} could not be saved — that contract number is already used by another contract.`);
+                        return;
+                      }
+                      let saved: Contract = { ...editingContract, contractNumber: newCn };
+                      const renamed = !!oldCn && !!newCn && oldCn !== newCn;
+                      if (renamed) {
+                        const stampTxt = new Date().toLocaleString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                        saved = { ...saved, notes: [`[${stampTxt}${user?.displayName ? ` · ${user.displayName}` : ''}] CONTRACT NUMBER changed ${oldCn} → ${newCn}${isTempContractNumber(oldCn) ? ' (ITAS number assigned)' : ''}.`, (saved.notes || '').trim()].filter(Boolean).join('\n\n') };
+                      }
+                      // Merged contracts that list the old number follow it.
+                      const followers = renamed ? contracts.filter(c => c.id !== saved.id && (c.mergedFrom || []).includes(oldCn)).map(c => ({ ...c, mergedFrom: (c.mergedFrom || []).map(x => (x === oldCn ? newCn : x)) })) : [];
+                      const upserts = [saved, ...followers];
+                      const byId = new Map(upserts.map(c => [c.id, c]));
+                      setContracts(contracts.map(c => byId.get(c.id) || c));
+                      saveNow(COLLECTIONS.contracts, upserts); // durable immediately
+                      const moved = renamed ? cascadeContractRename(oldCn, newCn) : null;
                       setEditingContract(null);
+                      const movedTxt = moved && (moved.orders || moved.invoices || moved.transfers)
+                        ? `\n\nUpdated to the new number: ${[moved.orders && `${moved.orders} order${moved.orders === 1 ? '' : 's'}`, moved.invoices && `${moved.invoices} invoice${moved.invoices === 1 ? '' : 's'}`, moved.transfers && `${moved.transfers} transfer${moved.transfers === 1 ? '' : 's'}`].filter(Boolean).join(', ')}.`
+                        : '';
+                      setSuccessBox(`Contract ${newCn || '(no number)'} saved${renamed ? ` — renumbered from ${oldCn}` : ''}.${movedTxt}`);
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
@@ -27265,13 +27331,40 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 <h3 className="text-2xl font-black uppercase tracking-tighter text-red-600">Error</h3>
-                <p className="text-sm font-bold opacity-70 leading-relaxed">{errorBox}</p>
+                <p className="text-sm font-bold opacity-70 leading-relaxed whitespace-pre-line">{errorBox}</p>
               </div>
               <button 
                 onClick={() => setErrorBox(null)}
                 className="w-full py-4 bg-red-500 text-white font-bold text-xs uppercase hover:bg-red-600 transition-colors shadow-[8px_8px_0px_0px_rgba(239,68,68,0.2)]"
               >
                 Dismiss
+              </button>
+            </motion.div>
+          </div>
+        )}
+
+        {successBox && (
+          <div className="fixed inset-0 z-[2000] flex items-center-safe justify-center p-6 bg-[#141414]/20 backdrop-blur-sm overflow-y-auto" onClick={() => setSuccessBox(null)}>
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white border-2 border-emerald-600 shadow-[16px_16px_0px_0px_rgba(5,150,105,1)] max-w-md w-full p-10 text-center space-y-8"
+            >
+              <div className="flex justify-center">
+                <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center-safe justify-center text-emerald-600">
+                  <CheckCircle2 size={40} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black uppercase tracking-tighter text-emerald-700">Completed</h3>
+                <p className="text-sm font-bold opacity-70 leading-relaxed whitespace-pre-line">{successBox}</p>
+              </div>
+              <button
+                onClick={() => setSuccessBox(null)}
+                className="w-full py-4 bg-emerald-600 text-white font-bold text-xs uppercase hover:bg-emerald-700 transition-colors shadow-[8px_8px_0px_0px_rgba(5,150,105,0.2)]"
+              >
+                OK
               </button>
             </motion.div>
           </div>
