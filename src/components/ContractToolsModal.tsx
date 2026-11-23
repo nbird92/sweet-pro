@@ -132,8 +132,6 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   const [tTarget, setTTarget] = useState<'existing' | 'new'>('existing');
   const [tNewCust, setTNewCust] = useState('');
   const [tNewNumber, setTNewNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
-  const [tNewStart, setTNewStart] = useState('');
-  const [tNewEnd, setTNewEnd] = useState('');
   const [tBStart, setTBStart] = useState('');
   const [tBEnd, setTBEnd] = useState('');
   // Increase / decrease: contract period (e.g. extend the end with more volume).
@@ -266,7 +264,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     if (!number) warnings.push('Enter a contract number for the new contract.');
     if (dup) warnings.push(`Contract number ${number} already exists.`);
     const priceNew = tPriceB === '' ? r2(A.finalPrice || 0) : r2(Number(tPriceB));
-    const start = tNewStart || toMonthValue(A.startDate), end = tNewEnd || toMonthValue(A.endDate);
+    // The new contract always takes contract A's period — not editable.
+    const start = A.startDate || '', end = A.endDate || '';
     canApply = amt > 0 && !!newCustomer && !!number && !dup;
     const row = (label: string, a1: React.ReactNode, a2: React.ReactNode, b2: React.ReactNode) => (
       <tr className="border-b border-[#141414]/10"><td className="p-2 text-[10px] uppercase tracking-widest font-bold opacity-60">{label}</td><td className="p-2 font-mono">{a1}</td><td className="p-2 font-mono font-bold bg-red-50">{a2}</td><td className="p-2 font-mono font-bold bg-emerald-50">{b2}</td></tr>
@@ -287,8 +286,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Freight / Duty / Pallet', `${A.deliveredFreight != null ? money(A.deliveredFreight) : '—'} · ${A.exportDuty != null ? money(A.exportDuty) : '—'} · ${A.palletCharge != null ? money(A.palletCharge) : '—'}`, '', 'same as A')}
           {row('Terms', [A.shippingTerms, A.paymentTerms, A.palletType].filter(Boolean).join(' · ') || '—', '', 'same as A')}
           {row('Product lines', `${(A.contractLines || []).length}`, '', `${(A.contractLines || []).length} (copied)`)}
-          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(A.startDate) || '—', monthSelect(start, setTNewStart, [A.startDate]))}
-          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(A.endDate) || '—', monthSelect(end, setTNewEnd, [A.endDate]))}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(A.startDate) || '—', <span title="Same as the original contract">{toMonthValue(start) || '—'} <span className="font-normal text-[9px] opacity-60">(from {A.contractNumber})</span></span>)}
+          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(A.endDate) || '—', <span title="Same as the original contract">{toMonthValue(end) || '—'} <span className="font-normal text-[9px] opacity-60">(from {A.contractNumber})</span></span>)}
         </tbody>
       </table>
     );
@@ -463,7 +462,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
                       </select></div>
                     <div><label className={lbl}>Contract No.</label>
                       <input value={tNewNumber} onChange={e => setTNewNumber(e.target.value)} className={inputCls} /></div>
-                    <p className="text-[10px] opacity-60">The new contract copies every pricing component of contract A — price, raw, FX, freight, duty, pallet charge, margin, terms and product lines — with the transferred volume.</p>
+                    <p className="text-[10px] opacity-60">The new contract copies every pricing component of contract A — price, raw, FX, freight, duty, pallet charge, margin, terms and product lines — and its Contract Start / End, with the transferred volume.</p>
                   </div>
                 )}
               </div>
