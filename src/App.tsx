@@ -21683,7 +21683,8 @@ export default function App() {
             if (emailProducts.length) {
               lines.push(`Product${emailProducts.length > 1 ? 's' : ''}: ${emailProducts.map(pp => pp.label).join('; ')}`);
             } else {
-              lines.push(`Product: ${emailSku.productLongForm || emailSku.shortForm || emailSku.name}`);
+              // Full catalog Product Name — never the format-only SKU name ("Bulk").
+              lines.push(`Product: ${(emailSku.id && productToName(emailSku)) || emailSku.productLongForm || emailSku.shortForm || emailSku.name}`);
             }
             lines.push(`Origin: ${config.origin}`);
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
