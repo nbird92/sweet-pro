@@ -7572,6 +7572,9 @@ export default function App() {
   const [showContractConfirm, setShowContractConfirm] = useState(false);
   const [showEmailQuote, setShowEmailQuote] = useState(false);
   const [emailIncludeMargin, setEmailIncludeMargin] = useState(false);
+  // Email Quote: show the build-up (raw sugar, ocean freight, bulk base price)
+  // or only the final price(s).
+  const [emailShowDetails, setEmailShowDetails] = useState(true);
   const [emailTo, setEmailTo] = useState('');
   const [emailCc, setEmailCc] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
@@ -21686,25 +21689,43 @@ export default function App() {
             if (config.isDelivered) lines.push(`Destination: ${config.destination}`);
             lines.push(`Volume: ${config.volumeMt} MT`);
             lines.push(`Currency: ${config.currency}`);
-            lines.push(`Raw Sugar (USD/CWT): $${fmtN(config.rawPriceUsdCwt, 2)}`);
-            lines.push(`Ocean Freight (USD/MT): $${fmtN(calculations.oceanFreightUsd, 2)}`);
+            // Quote details (toggle): the cost build-up behind the price.
+            if (emailShowDetails) {
+              lines.push(`Raw Sugar (USD/CWT): $${fmtN(config.rawPriceUsdCwt, 2)}`);
+              lines.push(`Ocean Freight (USD/MT): $${fmtN(calculations.oceanFreightUsd, 2)}`);
+            }
             if (config.contractStartDate) lines.push(`Contract Period: ${config.contractStartDate} to ${config.contractEndDate || 'TBD'}`);
             const emailPaymentTerms = config.paymentTerms || customers.find(c => c.name === customer)?.defaultPaymentTerms;
             if (emailPaymentTerms) {
               lines.push(`Payment Terms: ${emailPaymentTerms}`);
             }
-            lines.push('');
-            lines.push('FINAL PRICING');
-            lines.push('-------------------------------------');
-            lines.push(`Final Price: ${cs} $${fmtN(calculations.finalMt, 2)}/MT`);
+            // Price — per MT, plus per unit for packaged products (bag / tote …).
+            const unitWord = (format?: string, kg?: number) => {
+              const f = (format || '').toLowerCase();
+              if (!kg || kg >= 1000 && !/tote/.test(f)) return '';
+              if (/bulk|liquid/.test(f)) return '';
+              if (/bag/.test(f)) return 'bag';
+              if (/tote/.test(f)) return 'tote';
+              if (/pail/.test(f)) return 'pail';
+              if (/box|case|carton/.test(f)) return 'case';
+              return `${kg}kg unit`;
+            };
+            const priceLine = (mt: number, perUnit: number, word: string) =>
+              `${cs} $${fmtN(mt, 2)}/MT${word ? ` | ${cs} $${fmtN(perUnit, 2)}/${word}` : ''}`;
             if (emailProducts.length) {
-              // Per-product prices (base + differential), full product names.
-              lines[lines.length - 1] = `Base Price (Bulk): ${cs} $${fmtN(calculations.finalMt, 2)}/MT`;
+              if (emailShowDetails) lines.push(`Base Price (Bulk): ${cs} $${fmtN(calculations.finalMt, 2)}/MT`);
               for (const pp of emailProducts) {
-                lines.push(`${pp.label}: ${cs} $${fmtN(pp.finalMt, 2)}/MT${pp.netKg > 0 ? ` (${cs} $${fmtN(pp.perUnit, 2)} per ${pp.netKg}kg)` : ''}`);
+                const qa = qaProducts.find(q => q.id === pp.key);
+                const sk = skus.find(x => x.id === (qa?.skuId || pp.key));
+                const word = unitWord(qa?.productFormat || sk?.productFormat, pp.netKg);
+                lines.push(emailProducts.length > 1
+                  ? `Price — ${pp.label}: ${priceLine(pp.finalMt, pp.perUnit, word)}`
+                  : `Price: ${priceLine(pp.finalMt, pp.perUnit, word)}`);
               }
             } else {
-              lines.push(`Unit Price (${emailSku.netWeightKg ? emailSku.netWeightKg + 'kg' : 'MT'}): ${cs} $${fmtN(calculations.perUnit, 2)}`);
+              const qa = qaProducts.find(q => q.skuId === emailSku.id);
+              const word = unitWord(qa?.productFormat || emailSku.productFormat, emailSku.netWeightKg || qa?.netWeightKg);
+              lines.push(`Price: ${priceLine(calculations.finalMt, calculations.perUnit, word)}`);
             }
             lines.push('');
             lines.push('Please let us know if you have any questions or would like to proceed.');
@@ -21743,6 +21764,11 @@ export default function App() {
                     <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-colors peer-checked:after:translate-x-full"></div>
                   </label>
                   <span className="text-[10px] uppercase font-bold opacity-60">Include Margin</span>
+                  <label className="relative inline-flex items-center cursor-pointer ml-6">
+                    <input type="checkbox" checked={emailShowDetails} onChange={() => setEmailShowDetails(!emailShowDetails)} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-checked:bg-[#141414] rounded-full peer after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-colors peer-checked:after:translate-x-full"></div>
+                  </label>
+                  <span className="text-[10px] uppercase font-bold opacity-60" title="Show the raw sugar, ocean freight and bulk base price — off shows only the final price(s)">Show Quote Details</span>
                 </div>
 
                 {/* Email Fields */}
