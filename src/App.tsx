@@ -69,7 +69,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import ErrorBoundary from './ErrorBoundary';
 import { auth, googleProvider } from './firebaseConfig';
-import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones, fetchAccessList, saveAccessList, fetchPermissions, savePermissions, type PermissionMatrix } from './firebaseDb';
+import { fetchAllData, syncCollection, syncCollectionDiff, COLLECTIONS, fetchCollection, claimDoc, deleteDocs, fetchUserPrefs, saveUserPrefs, saveDocsNow, SyncTimeoutError, resetFirestoreCache, restSyncCollection, clearTombstones, fetchAccessList, saveAccessList, fetchPermissions, savePermissions, type PermissionMatrix, fetchImportSettings, saveImportSettings, type ImportSettings } from './firebaseDb';
 import { permFor } from './components/PermissionsTable';
 import { resolveProductName as resolveProductNameRule, resolveShortForm as resolveShortFormRule } from './utils/namingFormulaResolver';
 import { generateOrderConfirmationPdf } from './orderConfirmationPdf';
@@ -117,7 +117,7 @@ import ContractToolsModal, { type ContractToolMode } from './components/Contract
 import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
-import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime } from './utils/hamiltonScheduleSync';
+import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
@@ -10427,6 +10427,87 @@ export default function App() {
     } catch { return []; }
   });
 
+  // ── Shared import presets (appStatus/importPresets) ─────────────────────
+  // Presets used to live only in this browser's localStorage, so another
+  // browser, cleared site data or the other app URL lost them ("no saved
+  // import preset"). Now: on sign-in the shared record is loaded; any preset
+  // this browser has that the record lacks is uploaded (that's how presets
+  // stranded in one browser come back for everyone); every change saves.
+  const importSettingsLoadedRef = useRef(false);
+  const importSettingsSavedRef = useRef<string>('');
+  const [importSettingsBump, setImportSettingsBump] = useState(0);
+  const collectImportSettings = (): ImportSettings => ({
+    orders: orderSyncPresets, invoices: invoiceSyncPresets, shipments: shipmentSyncPresets,
+    transfers: transferSyncPresets, lotCodes: lotCodeSyncPresets,
+    hamiltonBayMap: loadHamiltonBayMap(),
+    ...(hasSavedHamiltonSource() ? { hamiltonSource: loadHamiltonSource() } : {}),
+  });
+  useEffect(() => {
+    if (!user || !lastSynced || accessState !== 'ok' || importSettingsLoadedRef.current) return;
+    let cancelled = false;
+    (async () => {
+      let remote: ImportSettings | null = null;
+      try { remote = await fetchImportSettings(); } catch (e) { console.error('[presets] could not load shared presets:', e); return; }
+      if (cancelled) return;
+      const pick = (r: unknown, local: SheetImportConfig[]) => (Array.isArray(r) && r.length ? r as SheetImportConfig[] : local);
+      const merged = {
+        orders: pick(remote?.orders, orderSyncPresets),
+        invoices: pick(remote?.invoices, invoiceSyncPresets),
+        shipments: pick(remote?.shipments, shipmentSyncPresets),
+        transfers: pick(remote?.transfers, transferSyncPresets),
+        lotCodes: pick(remote?.lotCodes, lotCodeSyncPresets),
+      };
+      const setters: Array<[keyof typeof merged, (v: SheetImportConfig[]) => void, string]> = [
+        ['orders', setOrderSyncPresets, 'orderImportPresets'], ['invoices', setInvoiceSyncPresets, 'invoiceImportPresets'],
+        ['shipments', setShipmentSyncPresets, 'shipmentImportPresets'], ['transfers', setTransferSyncPresets, 'transferImportPresets'],
+        ['lotCodes', setLotCodeSyncPresets, 'lotCodeImportPresets'],
+      ];
+      for (const [k, set, lsKey] of setters) {
+        set(merged[k]);
+        try { localStorage.setItem(lsKey, JSON.stringify(merged[k])); } catch { /* ignore */ }
+      }
+      const localBay = loadHamiltonBayMap();
+      const remoteBay = remote?.hamiltonBayMap && Object.values(remote.hamiltonBayMap).some(Boolean) ? remote.hamiltonBayMap : null;
+      if (remoteBay) saveHamiltonBayMap(remoteBay, true);
+      if (remote?.hamiltonSource?.sheetId) saveHamiltonSource(remote.hamiltonSource, true);
+      const result: ImportSettings = {
+        ...merged,
+        hamiltonBayMap: remoteBay || localBay,
+        ...(remote?.hamiltonSource?.sheetId ? { hamiltonSource: remote.hamiltonSource } : hasSavedHamiltonSource() ? { hamiltonSource: loadHamiltonSource() } : {}),
+      };
+      const json = JSON.stringify(result);
+      importSettingsSavedRef.current = JSON.stringify(remote ? { orders: remote.orders || [], invoices: remote.invoices || [], shipments: remote.shipments || [], transfers: remote.transfers || [], lotCodes: remote.lotCodes || [], hamiltonBayMap: remote.hamiltonBayMap || {}, ...(remote.hamiltonSource ? { hamiltonSource: remote.hamiltonSource } : {}) } : {});
+      const hasAnything = Object.values(merged).some(l => l.length) || Object.values(result.hamiltonBayMap || {}).some(Boolean);
+      if (hasAnything && json !== importSettingsSavedRef.current) {
+        try {
+          await saveImportSettings(result, user.email || '');
+          importSettingsSavedRef.current = json;
+          console.log('[presets] uploaded this browser\'s import presets to the shared record');
+        } catch (e) { console.error('[presets] upload failed:', e); }
+      } else {
+        importSettingsSavedRef.current = json;
+      }
+      importSettingsLoadedRef.current = true;
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, lastSynced, accessState]);
+  // Save whenever a preset (or the Sherman mapping) changes.
+  useEffect(() => {
+    const onChange = () => setImportSettingsBump(b => b + 1);
+    window.addEventListener(IMPORT_SETTINGS_EVENT, onChange);
+    return () => window.removeEventListener(IMPORT_SETTINGS_EVENT, onChange);
+  }, []);
+  useEffect(() => {
+    if (!user || !importSettingsLoadedRef.current) return;
+    const settings = collectImportSettings();
+    const json = JSON.stringify(settings);
+    if (json === importSettingsSavedRef.current) return;
+    importSettingsSavedRef.current = json;
+    saveImportSettings(settings, user.email || '').catch(e => console.error('[presets] save failed:', e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderSyncPresets, invoiceSyncPresets, shipmentSyncPresets, transferSyncPresets, lotCodeSyncPresets, importSettingsBump, user]);
+
   // ── Sync apply helpers ──────────────────────────────────────────────────
   // Extracted from the four preview modals' inline onClick handlers so the exact
   // same merge logic can also run unattended from Sync All. Each takes the CURRENT
@@ -10798,14 +10879,16 @@ export default function App() {
     let curLotCodes = lotCodes;
 
     // 1. ORDERS
-    const ordersCfg = orderSyncPresets[0];
+    // No saved preset → the built-in Sucro mapping (what Sync Orders opens with).
+    const ordersCfg = presetIsUsable(orderSyncPresets[0]) ? orderSyncPresets[0] : DEFAULT_ORDER_IMPORT_CONFIG;
+    const ordersDefault = !presetIsUsable(orderSyncPresets[0]);
     if (presetIsUsable(ordersCfg)) {
       try {
         const r = await syncOrdersFromConfig(ordersCfg, {
           existingOrders: curOrders, customers, skus, qaProducts, carriers, existingInvoices: curInvoices,
         });
         curOrders = applyOrderSyncResult(r, curOrders);
-        notes.push(`Orders — ${r.newOrders.length} new, ${(r.updatedOrders ?? []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+        notes.push(`Orders — ${r.newOrders.length} new, ${(r.updatedOrders ?? []).length} updated, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}${ordersDefault ? ' (built-in default mapping — no saved preset)' : ''}`);
       } catch (e: any) {
         notes.push(`Orders — failed: ${e?.message || String(e)}`);
       }
@@ -10814,14 +10897,15 @@ export default function App() {
     }
 
     // 2. INVOICES (after orders — see note above)
-    const invoicesCfg = invoiceSyncPresets[0];
+    const invoicesCfg = presetIsUsable(invoiceSyncPresets[0]) ? invoiceSyncPresets[0] : DEFAULT_INVOICE_IMPORT_CONFIG;
+    const invoicesDefault = !presetIsUsable(invoiceSyncPresets[0]);
     if (presetIsUsable(invoicesCfg)) {
       try {
         const r = await syncInvoicesFromConfig(invoicesCfg, {
           existingInvoices: curInvoices, existingOrders: curOrders, customers, skus, qaProducts, carriers,
         });
         curInvoices = applyInvoiceSyncResult(r, curInvoices);
-        notes.push(`Invoices — ${r.newInvoices.length} new, ${r.updatedInvoices.length} updated${(r.productCorrections || []).length ? `, ${(r.productCorrections || []).length} product corrections` : ''}, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}`);
+        notes.push(`Invoices — ${r.newInvoices.length} new, ${r.updatedInvoices.length} updated${(r.productCorrections || []).length ? `, ${(r.productCorrections || []).length} product corrections` : ''}, ${r.skipped.length} skipped${r.errors.length ? `, ${r.errors.length} errors` : ''}${invoicesDefault ? ' (built-in default mapping — no saved preset)' : ''}`);
       } catch (e: any) {
         notes.push(`Invoices — failed: ${e?.message || String(e)}`);
       }

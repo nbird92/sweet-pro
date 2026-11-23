@@ -478,8 +478,13 @@ const HAMILTON_SOURCE_KEY = 'hamiltonScheduleSource';
 export function loadHamiltonBayMap(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(HAMILTON_BAY_MAP_KEY) || '{}'); } catch { return {}; }
 }
-export function saveHamiltonBayMap(map: Record<string, string>) {
+/** Fired when import settings change so the app can save them to the shared
+ *  database record (appStatus/importPresets). */
+export const IMPORT_SETTINGS_EVENT = 'sp-import-settings-changed';
+const announce = () => { try { window.dispatchEvent(new Event(IMPORT_SETTINGS_EVENT)); } catch { /* non-browser */ } };
+export function saveHamiltonBayMap(map: Record<string, string>, silent = false) {
   try { localStorage.setItem(HAMILTON_BAY_MAP_KEY, JSON.stringify(map)); } catch {}
+  if (!silent) announce();
 }
 /** Sheet + tab last read successfully in the modal (defaults to the Sherman workbook). */
 export function loadHamiltonSource(): { sheetId: string; tab: string } {
@@ -488,6 +493,11 @@ export function loadHamiltonSource(): { sheetId: string; tab: string } {
     return { sheetId: s.sheetId || HAMILTON_SCHEDULE_SHEET_ID, tab: s.tab || HAMILTON_SCHEDULE_TAB };
   } catch { return { sheetId: HAMILTON_SCHEDULE_SHEET_ID, tab: HAMILTON_SCHEDULE_TAB }; }
 }
-export function saveHamiltonSource(src: { sheetId: string; tab: string }) {
+export function saveHamiltonSource(src: { sheetId: string; tab: string }, silent = false) {
   try { localStorage.setItem(HAMILTON_SOURCE_KEY, JSON.stringify(src)); } catch {}
+  if (!silent) announce();
+}
+/** True when a Sherman source was ever saved in this browser. */
+export function hasSavedHamiltonSource(): boolean {
+  try { return !!localStorage.getItem(HAMILTON_SOURCE_KEY); } catch { return false; }
 }

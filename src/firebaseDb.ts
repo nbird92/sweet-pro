@@ -815,6 +815,27 @@ export async function saveAccessList(emails: string[], updatedBy: string): Promi
   if (!res.ok) throw new Error(res.firstError || 'access list write failed');
 }
 
+// ── Sheet-import presets (shared) ───────────────────────────────────────────
+// appStatus/importPresets: every importer's saved presets + the Sherman
+// schedule bay mapping/source. Used to live ONLY in each browser's
+// localStorage (per browser, per web address), so a new browser / cleared
+// site data / the other app URL showed "no saved import preset".
+export type ImportSettings = {
+  orders?: unknown[]; invoices?: unknown[]; shipments?: unknown[]; transfers?: unknown[]; lotCodes?: unknown[];
+  hamiltonBayMap?: Record<string, string>;
+  hamiltonSource?: { sheetId: string; tab: string };
+};
+export async function fetchImportSettings(): Promise<ImportSettings | null> {
+  const snap = await getDoc(doc(db, 'appStatus', 'importPresets'));
+  return snap.exists() ? (snap.data() as ImportSettings) : null;
+}
+export async function saveImportSettings(settings: ImportSettings, updatedBy: string): Promise<void> {
+  const res = await restSyncCollection('appStatus', [
+    stripUndefinedDeep({ ...settings, id: 'importPresets', updatedAt: new Date().toISOString(), updatedBy }) as { id: string } & Record<string, unknown>,
+  ]);
+  if (!res.ok) throw new Error(res.firstError || 'import presets write failed');
+}
+
 // ── Page permissions ────────────────────────────────────────────────────────
 // appStatus/permissions: { matrix: { [permissionGroup]: { [pageName]: { view, edit } } } }
 // Edited in the People page's Permissions table. A missing entry = allowed.
