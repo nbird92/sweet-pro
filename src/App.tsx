@@ -3890,6 +3890,7 @@ export default function App() {
       if (Number.isFinite(v) && v > 0) { vals.push(v); months.push(m); }
     }
     if (!vals.length) return null;
+    months.sort((a, b) => key(a) - key(b)); // chronological for the label
     return { avg: Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100, months };
   };
 
