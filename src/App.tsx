@@ -27263,8 +27263,9 @@ export default function App() {
 
         {/* Email-importer status light — green when the every-3-hours inbox scan is
             running cleanly, red when it's stale (>3.5 h) or its last run had
-            errors. Click for details. */}
-        {user && (() => {
+            errors. Click for details. Shown only on the Dashboard and Email Center
+            (elsewhere it covered page buttons). */}
+        {user && (activePage === 'Dashboard' || activePage === 'Email Center') && (() => {
           const st = poScanStatus;
           const ageMs = st?.lastRunAt ? Date.now() - Date.parse(st.lastRunAt) : Infinity;
           // Cron runs every 3 hours; allow a buffer for GitHub-Actions scheduling
