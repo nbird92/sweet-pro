@@ -119,7 +119,6 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   const [mNumber, setMNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
   // Merged contract number: keep A's, keep B's, or a brand-new number.
   const [mNumMode, setMNumMode] = useState<'new' | 'keepA' | 'keepB'>('new');
-  const [mVolume, setMVolume] = useState<string>('');
   const [mPrice, setMPrice] = useState<string>('');
   const [mStart, setMStart] = useState('');
   const [mEnd, setMEnd] = useState('');
@@ -187,7 +186,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     const dup = mNumMode === 'new' && !!number && contracts.some(c => c.contractNumber.trim().toLowerCase() === number.toLowerCase());
     if (!number) warnings.push('Enter the new contract number for the merged contract.');
     if (dup) warnings.push(`Contract number ${number} already exists.`);
-    const volume = mVolume === '' ? mergeCalc.volume : Number(mVolume) || 0;
+    // All or nothing: the merged contract holds the FULL volume of both contracts.
+    const volume = mergeCalc.volume;
     const price = mPrice === '' ? mergeCalc.price : r2(Number(mPrice));
     const start = mStart || mergeCalc.start, end = mEnd || mergeCalc.end;
     const taken = sA.taken + sB.taken, onOrder = sA.onOrder + sB.onOrder;
@@ -204,7 +204,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
             : number)}
           {row('Customer', A.customerName, B.customerName, base.customerName)}
           {row('Product', A.skuName || '—', B.skuName || '—', base.skuName || '—')}
-          {row('Contract Volume (MT)', fmt(sA.volume), fmt(sB.volume), <input type="number" value={mVolume === '' ? mergeCalc.volume : mVolume} onChange={e => setMVolume(e.target.value)} className={inputCls} />)}
+          {row('Contract Volume (MT)', fmt(sA.volume), fmt(sB.volume), <span title="A merge combines the full volume of both contracts">{fmt(volume)} <span className="font-normal text-[9px] opacity-60">(A + B — full volume)</span></span>)}
           {row('Volume Taken (MT)', fmt(sA.taken), fmt(sB.taken), fmt(taken))}
           {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sB.onOrder), fmt(onOrder))}
           {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sB.outstanding), fmt(volume - taken))}
