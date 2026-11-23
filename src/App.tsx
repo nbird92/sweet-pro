@@ -19447,6 +19447,7 @@ export default function App() {
           contracts={contracts}
           customers={customers}
           stats={contractVolumeStats}
+          monthOptions={contractMonthOptions}
           userName={user?.displayName || user?.email || ''}
           onClose={() => setContractTool(null)}
           onApply={(upserts, summary) => {

@@ -27,7 +27,27 @@ interface Props {
   /** Upsert these contracts (new + changed). */
   onApply: (upserts: Contract[], summary: string) => void;
   onClose: () => void;
+  /** Contract Start / End month options — the same list as the Customer Quote
+   *  page's dropdowns ("Nov 2026", labelled with the futures terminal). */
+  monthOptions: Array<{ value: string; label: string }>;
 }
+
+// Contract dates are "Mon YYYY" (quote tool) or ISO dates (imports).
+const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** Month ordinal for either format (NaN when unreadable). */
+const monthKey = (v?: string): number => {
+  const t = (v || '').trim();
+  const iso = /^(\d{4})-(\d{2})/.exec(t);
+  if (iso) return Number(iso[1]) * 12 + Number(iso[2]) - 1;
+  const mi = MO.findIndex(m => t.toLowerCase().startsWith(m.toLowerCase()));
+  const y = parseInt(t.split(/\s+/).pop() || '', 10);
+  return mi >= 0 && y ? y * 12 + mi : NaN;
+};
+/** Any contract date as "Mon YYYY" (the quote dropdown value). */
+const toMonthValue = (v?: string): string => {
+  const k = monthKey(v);
+  return Number.isFinite(k) ? `${MO[k % 12]} ${Math.floor(k / 12)}` : (v || '');
+};
 
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const fmt = (n: number, d = 1) => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -43,7 +63,22 @@ const TITLES: Record<ContractToolMode, { title: string; icon: React.ReactNode; a
   adjust: { title: 'Increase / Decrease Contract', icon: <PlusCircle size={16} />, apply: 'Apply Change' },
 };
 
-export default function ContractToolsModal({ mode, contracts, customers, stats, userName, onApply, onClose }: Props) {
+export default function ContractToolsModal({ mode, contracts, customers, stats, userName, onApply, onClose, monthOptions }: Props) {
+  /** Month dropdown — same options as the Customer Quote page; a contract's
+   *  current month is added when it falls outside the market list. */
+  const monthSelect = (value: string, onChange: (v: string) => void, extra: Array<string | undefined> = []) => {
+    const opts = [...monthOptions];
+    for (const x of [value, ...extra].map(toMonthValue).filter(Boolean)) {
+      if (!opts.some(o => o.value === x)) opts.push({ value: x, label: x });
+    }
+    opts.sort((a, b) => (monthKey(a.value) || 0) - (monthKey(b.value) || 0));
+    return (
+      <select value={toMonthValue(value)} onChange={e => onChange(e.target.value)} className={inputCls}>
+        <option value="">Select Month</option>
+        {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    );
+  };
   const statOf = (c?: Contract) => {
     if (!c) return { volume: 0, taken: 0, onOrder: 0, outstanding: 0, available: 0 };
     const s = stats.get(c.id);
@@ -99,6 +134,11 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   const [tNewNumber, setTNewNumber] = useState(() => nextTempContractNumber(contracts.map(c => c.contractNumber)));
   const [tNewStart, setTNewStart] = useState('');
   const [tNewEnd, setTNewEnd] = useState('');
+  const [tBStart, setTBStart] = useState('');
+  const [tBEnd, setTBEnd] = useState('');
+  // Increase / decrease: contract period (e.g. extend the end with more volume).
+  const [aStart, setAStart] = useState('');
+  const [aEnd, setAEnd] = useState('');
   // ── Adjust draft ──
   const [aDir, setADir] = useState<'increase' | 'decrease'>('increase');
   const [aAmount, setAAmount] = useState<string>('');
@@ -112,8 +152,9 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     if (!A || !B) return null;
     const volume = (A.contractVolume || 0) + (B.contractVolume || 0);
     const price = r2(weighted(A.contractVolume || 0, A.finalPrice || 0, B.contractVolume || 0, B.finalPrice || 0));
-    const start = [A.startDate, B.startDate].filter(Boolean).sort()[0] || '';
-    const end = [A.endDate, B.endDate].filter(Boolean).sort().slice(-1)[0] || '';
+    const byMonth = (xs: Array<string | undefined>) => xs.filter(x => Number.isFinite(monthKey(x))).sort((a, b) => monthKey(a) - monthKey(b)) as string[];
+    const start = toMonthValue(byMonth([A.startDate, B.startDate])[0]);
+    const end = toMonthValue(byMonth([A.endDate, B.endDate]).slice(-1)[0]);
     // Contract lines: union by product; a product on both is volume-weighted.
     const lines = new Map<string, ContractLine>();
     const keyOf = (l: ContractLine) => l.productKey || l.productName;
@@ -170,8 +211,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sB.onOrder), fmt(onOrder))}
           {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sB.outstanding), fmt(volume - taken))}
           {row('Price / MT', money(A.finalPrice, A.currency), money(B.finalPrice, B.currency), <div><input type="number" step="0.01" value={mPrice === '' ? mergeCalc.price : mPrice} onChange={e => setMPrice(e.target.value)} className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">volume-weighted: {money(mergeCalc.price)}</div></div>)}
-          {row('Start Date', A.startDate || '—', B.startDate || '—', <input type="date" value={start} onChange={e => setMStart(e.target.value)} className={inputCls} />)}
-          {row('End Date', A.endDate || '—', B.endDate || '—', <input type="date" value={end} onChange={e => setMEnd(e.target.value)} className={inputCls} />)}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(B.startDate) || '—', monthSelect(start, setMStart, [A.startDate, B.startDate]))}
+          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(B.endDate) || '—', monthSelect(end, setMEnd, [A.endDate, B.endDate]))}
           {row('Status after merge', mNumMode === 'keepA' ? 'Active (merged)' : 'Inactive', mNumMode === 'keepB' ? 'Active (merged)' : 'Inactive', 'Active')}
         </tbody>
       </table>
@@ -225,7 +266,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     if (!number) warnings.push('Enter a contract number for the new contract.');
     if (dup) warnings.push(`Contract number ${number} already exists.`);
     const priceNew = tPriceB === '' ? r2(A.finalPrice || 0) : r2(Number(tPriceB));
-    const start = tNewStart || A.startDate || '', end = tNewEnd || A.endDate || '';
+    const start = tNewStart || toMonthValue(A.startDate), end = tNewEnd || toMonthValue(A.endDate);
     canApply = amt > 0 && !!newCustomer && !!number && !dup;
     const row = (label: string, a1: React.ReactNode, a2: React.ReactNode, b2: React.ReactNode) => (
       <tr className="border-b border-[#141414]/10"><td className="p-2 text-[10px] uppercase tracking-widest font-bold opacity-60">{label}</td><td className="p-2 font-mono">{a1}</td><td className="p-2 font-mono font-bold bg-red-50">{a2}</td><td className="p-2 font-mono font-bold bg-emerald-50">{b2}</td></tr>
@@ -246,8 +287,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Freight / Duty / Pallet', `${A.deliveredFreight != null ? money(A.deliveredFreight) : '—'} · ${A.exportDuty != null ? money(A.exportDuty) : '—'} · ${A.palletCharge != null ? money(A.palletCharge) : '—'}`, '', 'same as A')}
           {row('Terms', [A.shippingTerms, A.paymentTerms, A.palletType].filter(Boolean).join(' · ') || '—', '', 'same as A')}
           {row('Product lines', `${(A.contractLines || []).length}`, '', `${(A.contractLines || []).length} (copied)`)}
-          {row('Start Date', A.startDate || '—', A.startDate || '—', <input type="date" value={start} onChange={e => setTNewStart(e.target.value)} className={inputCls} />)}
-          {row('End Date', A.endDate || '—', A.endDate || '—', <input type="date" value={end} onChange={e => setTNewEnd(e.target.value)} className={inputCls} />)}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(A.startDate) || '—', monthSelect(start, setTNewStart, [A.startDate]))}
+          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(A.endDate) || '—', monthSelect(end, setTNewEnd, [A.endDate]))}
         </tbody>
       </table>
     );
@@ -305,6 +346,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sA.outstanding - amt), fmt(sB.outstanding), fmt(sB.outstanding + amt))}
           {row('Price / MT', money(A.finalPrice, A.currency), money(A.finalPrice, A.currency), money(B.finalPrice, B.currency),
             <input type="number" step="0.01" value={tPriceB === '' ? autoPriceB : tPriceB} onChange={e => setTPriceB(e.target.value)} className={inputCls} />)}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(A.startDate) || '—', toMonthValue(B.startDate) || '—', monthSelect(tBStart || toMonthValue(B.startDate), setTBStart, [B.startDate]))}
+          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(A.endDate) || '—', toMonthValue(B.endDate) || '—', monthSelect(tBEnd || toMonthValue(B.endDate), setTBEnd, [B.endDate]))}
         </tbody>
       </table>
     );
@@ -313,8 +356,10 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
       const tail = comment.trim() ? ` Note: ${comment.trim()}` : '';
       const newA: Contract = { ...A, contractVolume: sA.volume - amt, volumeOutstanding: sA.outstanding - amt,
         notes: appendNote(A.notes, `[${when}${who}] TRANSFER OUT: ${fmt(amt)} MT to ${B.contractNumber} (${B.customerName}). Volume ${fmt(sA.volume)} → ${fmt(sA.volume - amt)} MT.${tail}`) };
-      const newB: Contract = { ...B, contractVolume: sB.volume + amt, volumeOutstanding: sB.outstanding + amt, finalPrice: priceB,
-        notes: appendNote(B.notes, `[${when}${who}] TRANSFER IN: ${fmt(amt)} MT from ${A.contractNumber} (${A.customerName}) at ${money(A.finalPrice, A.currency)}. Volume ${fmt(sB.volume)} → ${fmt(sB.volume + amt)} MT${priceB !== r2(B.finalPrice) ? `; price ${money(B.finalPrice, B.currency)} → ${money(priceB, B.currency)}` : ''}.${tail}`) };
+      const bStart = tBStart || B.startDate, bEnd = tBEnd || B.endDate;
+      const datesTxt = (bStart !== B.startDate || bEnd !== B.endDate) ? `; period ${toMonthValue(B.startDate) || '—'}–${toMonthValue(B.endDate) || '—'} → ${toMonthValue(bStart) || '—'}–${toMonthValue(bEnd) || '—'}` : '';
+      const newB: Contract = { ...B, contractVolume: sB.volume + amt, volumeOutstanding: sB.outstanding + amt, finalPrice: priceB, startDate: bStart, endDate: bEnd,
+        notes: appendNote(B.notes, `[${when}${who}] TRANSFER IN: ${fmt(amt)} MT from ${A.contractNumber} (${A.customerName}) at ${money(A.finalPrice, A.currency)}. Volume ${fmt(sB.volume)} → ${fmt(sB.volume + amt)} MT${priceB !== r2(B.finalPrice) ? `; price ${money(B.finalPrice, B.currency)} → ${money(priceB, B.currency)}` : ''}${datesTxt}.${tail}`) };
       return { upserts: [newA, newB], summary: `Transferred ${fmt(amt)} MT from ${A.contractNumber} to ${B.contractNumber}.\n\n${A.contractNumber} now has ${fmt(sA.volume - amt)} MT; ${B.contractNumber} has ${fmt(sB.volume + amt)} MT.` };
     };
   }
@@ -342,13 +387,17 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sA.onOrder))}
           {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sA.outstanding + delta))}
           {row('Price / MT', money(A.finalPrice, A.currency), <input type="number" step="0.01" value={aPrice === '' ? autoPrice : aPrice} onChange={e => setAPrice(e.target.value)} className={inputCls} />)}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', monthSelect(aStart || toMonthValue(A.startDate), setAStart, [A.startDate]))}
+          {row('Contract End', toMonthValue(A.endDate) || '—', monthSelect(aEnd || toMonthValue(A.endDate), setAEnd, [A.endDate]))}
         </tbody>
       </table>
     );
     build = () => {
       const when = stamp();
-      const updated: Contract = { ...A, contractVolume: newVol, volumeOutstanding: sA.outstanding + delta, finalPrice: price,
-        notes: appendNote(A.notes, `[${when}${who}] ${aDir === 'increase' ? 'INCREASE' : 'DECREASE'}: ${aDir === 'increase' ? '+' : '−'}${fmt(amt)} MT${aDir === 'increase' && addPrice !== A.finalPrice ? ` at ${money(addPrice, A.currency)}` : ''}. Volume ${fmt(sA.volume)} → ${fmt(newVol)} MT${price !== r2(A.finalPrice) ? `; price ${money(A.finalPrice, A.currency)} → ${money(price, A.currency)}` : ''}.${comment.trim() ? ` Reason: ${comment.trim()}` : ''}`) };
+      const nStart = aStart || A.startDate, nEnd = aEnd || A.endDate;
+      const periodTxt = (nStart !== A.startDate || nEnd !== A.endDate) ? `; period ${toMonthValue(A.startDate) || '—'}–${toMonthValue(A.endDate) || '—'} → ${toMonthValue(nStart) || '—'}–${toMonthValue(nEnd) || '—'}` : '';
+      const updated: Contract = { ...A, contractVolume: newVol, volumeOutstanding: sA.outstanding + delta, finalPrice: price, startDate: nStart, endDate: nEnd,
+        notes: appendNote(A.notes, `[${when}${who}] ${aDir === 'increase' ? 'INCREASE' : 'DECREASE'}: ${aDir === 'increase' ? '+' : '−'}${fmt(amt)} MT${aDir === 'increase' && addPrice !== A.finalPrice ? ` at ${money(addPrice, A.currency)}` : ''}. Volume ${fmt(sA.volume)} → ${fmt(newVol)} MT${price !== r2(A.finalPrice) ? `; price ${money(A.finalPrice, A.currency)} → ${money(price, A.currency)}` : ''}${periodTxt}.${comment.trim() ? ` Reason: ${comment.trim()}` : ''}`) };
       return { upserts: [updated], summary: `${aDir === 'increase' ? 'Increased' : 'Decreased'} ${A.contractNumber} by ${fmt(amt)} MT.` };
     };
   }
@@ -378,7 +427,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
             <div><div className="opacity-50 text-[9px] uppercase font-bold">On order</div><div className="font-mono">{fmt(s.onOrder)}</div></div>
             <div><div className="opacity-50 text-[9px] uppercase font-bold">Outstanding</div><div className="font-mono">{fmt(s.outstanding)}</div></div>
             <div><div className="opacity-50 text-[9px] uppercase font-bold">Price / MT</div><div className="font-mono">{money(c.finalPrice, c.currency)}</div></div>
-            <div><div className="opacity-50 text-[9px] uppercase font-bold">Dates</div><div className="font-mono text-[10px]">{c.startDate || '—'} → {c.endDate || '—'}</div></div>
+            <div><div className="opacity-50 text-[9px] uppercase font-bold">Dates</div><div className="font-mono text-[10px]">{toMonthValue(c.startDate) || '—'} → {toMonthValue(c.endDate) || '—'}</div></div>
           </div>
         )}
       </div>
