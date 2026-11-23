@@ -66,10 +66,20 @@ const TITLES: Record<ContractToolMode, { title: string; icon: React.ReactNode; a
 export default function ContractToolsModal({ mode, contracts, customers, stats, userName, onApply, onClose, monthOptions }: Props) {
   /** Month dropdown — same options as the Customer Quote page; a contract's
    *  current month is added when it falls outside the market list. */
-  const monthSelect = (value: string, onChange: (v: string) => void, extra: Array<string | undefined> = []) => {
-    const opts = [...monthOptions];
+  const monthSelect = (value: string, onChange: (v: string) => void, extra: Array<string | undefined> = [], range?: { min: number; max: number } | null) => {
+    let opts = [...monthOptions];
     for (const x of [value, ...extra].map(toMonthValue).filter(Boolean)) {
       if (!opts.some(o => o.value === x)) opts.push({ value: x, label: x });
+    }
+    if (range) {
+      // Limited window: offer EVERY month in it (past months included), with
+      // the quote page's terminal label where the market list has one.
+      const inRange: Array<{ value: string; label: string }> = [];
+      for (let k = range.min; k <= range.max; k++) {
+        const v = `${MO[k % 12]} ${Math.floor(k / 12)}`;
+        inRange.push(monthOptions.find(o => o.value === v) || { value: v, label: v });
+      }
+      opts = inRange;
     }
     opts.sort((a, b) => (monthKey(a.value) || 0) - (monthKey(b.value) || 0));
     return (
@@ -190,8 +200,14 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     const volume = mergeCalc.volume;
     const price = mPrice === '' ? mergeCalc.price : r2(Number(mPrice));
     const start = mStart || mergeCalc.start, end = mEnd || mergeCalc.end;
+    // The merged period can't reach past the originals: earliest original
+    // start … latest original end.
+    const origKeys = [A.startDate, B.startDate, A.endDate, B.endDate].map(monthKey).filter(Number.isFinite);
+    const mergeRange = origKeys.length ? { min: Math.min(...origKeys), max: Math.max(...origKeys) } : null;
+    if (Number.isFinite(monthKey(start)) && Number.isFinite(monthKey(end)) && monthKey(start) > monthKey(end)) warnings.push('Contract Start is after Contract End.');
     const taken = sA.taken + sB.taken, onOrder = sA.onOrder + sB.onOrder;
-    canApply = !!number && !dup && A.id !== B.id;
+    const periodOk = !(Number.isFinite(monthKey(start)) && Number.isFinite(monthKey(end)) && monthKey(start) > monthKey(end));
+    canApply = !!number && !dup && A.id !== B.id && periodOk;
     const row = (label: string, a: React.ReactNode, b: React.ReactNode, m: React.ReactNode) => (
       <tr className="border-b border-[#141414]/10"><td className="p-2 text-[10px] uppercase tracking-widest font-bold opacity-60">{label}</td><td className="p-2 font-mono">{a}</td><td className="p-2 font-mono">{b}</td><td className="p-2 font-mono font-bold bg-emerald-50">{m}</td></tr>
     );
@@ -209,8 +225,8 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
           {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sB.onOrder), fmt(onOrder))}
           {row('Volume Outstanding (MT)', fmt(sA.outstanding), fmt(sB.outstanding), fmt(volume - taken))}
           {row('Price / MT', money(A.finalPrice, A.currency), money(B.finalPrice, B.currency), <div><input type="number" step="0.01" value={mPrice === '' ? mergeCalc.price : mPrice} onChange={e => setMPrice(e.target.value)} className={inputCls} /><div className="text-[9px] font-normal opacity-60 mt-0.5">volume-weighted: {money(mergeCalc.price)}</div></div>)}
-          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(B.startDate) || '—', monthSelect(start, setMStart, [A.startDate, B.startDate]))}
-          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(B.endDate) || '—', monthSelect(end, setMEnd, [A.endDate, B.endDate]))}
+          {row('Contract Start', toMonthValue(A.startDate) || '—', toMonthValue(B.startDate) || '—', monthSelect(start, setMStart, [A.startDate, B.startDate], mergeRange))}
+          {row('Contract End', toMonthValue(A.endDate) || '—', toMonthValue(B.endDate) || '—', monthSelect(end, setMEnd, [A.endDate, B.endDate], mergeRange))}
           {row('Status after merge', mNumMode === 'keepA' ? 'Active (merged)' : 'Inactive', mNumMode === 'keepB' ? 'Active (merged)' : 'Inactive', 'Active')}
         </tbody>
       </table>
