@@ -21,6 +21,7 @@ import {
   ArrowRightLeft,
   GitMerge,
   PlusCircle,
+  CalendarClock,
   FileText,
   X,
   Edit2,
@@ -3860,6 +3861,37 @@ export default function App() {
         return { value: m, label: term ? `${m} — ${term} terminal` : m };
       });
   }, [marketData, monthTerminalMap]);
+
+  /** Average #11 raw sugar (USD/cwt) over the market months from..to
+   *  (inclusive, "Mon YYYY") — the same rule the Customer Quote uses for a
+   *  contract period: each month's live terminal price, else the stored
+   *  market-table value. null when none of those months are on the board. */
+  const marketRawForPeriod = (fromMonth: string, toMonth: string): { avg: number; months: string[] } | null => {
+    if (!marketData.length) return null;
+    const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const key = (m: string) => {
+      const t = (m || '').trim();
+      const mi = MO.findIndex(x => t.toLowerCase().startsWith(x.toLowerCase()));
+      const y = parseInt(t.split(/\s+/).pop() || '', 10);
+      return mi >= 0 && y ? y * 12 + mi : NaN;
+    };
+    const lo = key(fromMonth), hi = key(toMonth);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    const first = marketData[0] || {};
+    const rawKey = Object.keys(first).find(k => k.toLowerCase().includes('raw sugar') || k.toLowerCase().includes('#11') || k.toLowerCase().includes('raw') || k.toLowerCase().includes('raws'));
+    const vals: number[] = [], months: string[] = [];
+    for (const row of marketData) {
+      const m = String(row.Month || row.month || '');
+      const k = key(m);
+      if (!Number.isFinite(k) || k < Math.min(lo, hi) || k > Math.max(lo, hi)) continue;
+      const live = liveRawsForMonth(m);
+      const stored = rawKey ? parseFloat(String(row[rawKey] ?? '').replace(/[^0-9.]/g, '')) : NaN;
+      const v = live ? live.price : stored;
+      if (Number.isFinite(v) && v > 0) { vals.push(v); months.push(m); }
+    }
+    if (!vals.length) return null;
+    return { avg: Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100, months };
+  };
 
   const [lastMarketUpdate, setLastMarketUpdate] = useState<string | null>(null);
   const [isFetchingMarket, setIsFetchingMarket] = useState(false);
@@ -17405,6 +17437,7 @@ export default function App() {
             <BannerButton icon={<GitMerge size={12} />} onClick={() => setContractTool('merge')} title="Merge two contracts into one new contract">Merge</BannerButton>
             <BannerButton icon={<ArrowRightLeft size={12} />} onClick={() => setContractTool('transfer')} title="Move volume from one contract to another">Transfer</BannerButton>
             <BannerButton icon={<PlusCircle size={12} />} onClick={() => setContractTool('adjust')} title="Increase or decrease a contract's volume">Increase / Decrease</BannerButton>
+            <BannerButton icon={<CalendarClock size={12} />} onClick={() => setContractTool('roll')} title="Extend a contract's end date and reprice the rolled volume on the #11 market">Roll</BannerButton>
             <button
               onClick={() => setShowInactiveContracts(v => !v)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap"
@@ -19492,6 +19525,9 @@ export default function App() {
           customers={customers}
           stats={contractVolumeStats}
           monthOptions={contractMonthOptions}
+          rawForPeriod={marketRawForPeriod}
+          yieldMultiplier={config.yieldLossMultiplier || 1}
+          defaultFx={config.fxRate || 1}
           userName={user?.displayName || user?.email || ''}
           onClose={() => setContractTool(null)}
           onApply={(upserts, summary) => {

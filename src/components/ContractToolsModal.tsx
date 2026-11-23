@@ -11,11 +11,11 @@
 // Every change appends a dated record to the notes of each contract touched.
 
 import React, { useMemo, useState } from 'react';
-import { X, GitMerge, ArrowRightLeft, PlusCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { X, GitMerge, ArrowRightLeft, PlusCircle, CheckCircle2, AlertTriangle, CalendarClock } from 'lucide-react';
 import type { Contract, ContractLine, Customer } from '../types';
 import { nextTempContractNumber } from '../utils/contractMatch';
 
-export type ContractToolMode = 'merge' | 'transfer' | 'adjust';
+export type ContractToolMode = 'merge' | 'transfer' | 'adjust' | 'roll';
 type Stats = Map<string, { taken: number; onOrder: number; outstanding: number }>;
 
 interface Props {
@@ -30,7 +30,14 @@ interface Props {
   /** Contract Start / End month options — the same list as the Customer Quote
    *  page's dropdowns ("Nov 2026", labelled with the futures terminal). */
   monthOptions: Array<{ value: string; label: string }>;
+  /** Average #11 raw (USD/cwt) over market months from..to ("Mon YYYY"). */
+  rawForPeriod: (fromMonth: string, toMonth: string) => { avg: number; months: string[] } | null;
+  /** Quote tool yield-loss multiplier (raw → refined). */
+  yieldMultiplier: number;
+  /** FX used when a contract has none stored. */
+  defaultFx: number;
 }
+const MT_TO_CWT = 22.0462;
 
 // Contract dates are "Mon YYYY" (quote tool) or ISO dates (imports).
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -61,9 +68,10 @@ const TITLES: Record<ContractToolMode, { title: string; icon: React.ReactNode; a
   merge: { title: 'Merge Contracts', icon: <GitMerge size={16} />, apply: 'Merge Contracts' },
   transfer: { title: 'Transfer Volume', icon: <ArrowRightLeft size={16} />, apply: 'Transfer Volume' },
   adjust: { title: 'Increase / Decrease Contract', icon: <PlusCircle size={16} />, apply: 'Apply Change' },
+  roll: { title: 'Roll Contract', icon: <CalendarClock size={16} />, apply: 'Roll Contract' },
 };
 
-export default function ContractToolsModal({ mode, contracts, customers, stats, userName, onApply, onClose, monthOptions }: Props) {
+export default function ContractToolsModal({ mode, contracts, customers, stats, userName, onApply, onClose, monthOptions, rawForPeriod, yieldMultiplier, defaultFx }: Props) {
   /** Month dropdown — same options as the Customer Quote page; a contract's
    *  current month is added when it falls outside the market list. */
   const monthSelect = (value: string, onChange: (v: string) => void, extra: Array<string | undefined> = [], range?: { min: number; max: number } | null) => {
@@ -146,6 +154,11 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
   // Increase / decrease: contract period (e.g. extend the end with more volume).
   const [aStart, setAStart] = useState('');
   const [aEnd, setAEnd] = useState('');
+  // ── Roll draft ──
+  const [rEnd, setREnd] = useState('');
+  const [rOldRaw, setROldRaw] = useState<string>('');
+  const [rNewRaw, setRNewRaw] = useState<string>('');
+  const [rPrice, setRPrice] = useState<string>('');
   // ── Adjust draft ──
   const [aDir, setADir] = useState<'increase' | 'decrease'>('increase');
   const [aAmount, setAAmount] = useState<string>('');
@@ -417,6 +430,78 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
     };
   }
 
+  // ── Roll: extend the end date; the ENTIRE outstanding volume rolls and is
+  // repriced on the #11 average of the extension months. ──
+  const marketKeys = monthOptions.map(o => monthKey(o.value)).filter(Number.isFinite);
+  const firstMarket = marketKeys.length ? Math.min(...marketKeys) : NaN;
+  const lastMarket = marketKeys.length ? Math.max(...marketKeys) : NaN;
+  const keyLabel = (k: number) => `${MO[k % 12]} ${Math.floor(k / 12)}`;
+  let rollRange: { min: number; max: number } | null = null;
+  if (mode === 'roll' && A) {
+    const oldEndK = monthKey(A.endDate);
+    const min = Math.max(Number.isFinite(oldEndK) ? oldEndK + 1 : firstMarket, firstMarket);
+    rollRange = Number.isFinite(min) && Number.isFinite(lastMarket) && min <= lastMarket ? { min, max: lastMarket } : null;
+    const outstanding = sA.outstanding;
+    const newEndK = monthKey(rEnd);
+    if (!Number.isFinite(monthKey(A.endDate))) warnings.push('This contract has no Contract End — the roll prices from the first market month.');
+    if (!rollRange) warnings.push('No later market months are available to roll into.');
+    if (outstanding <= 0) warnings.push('Nothing to roll — this contract has no outstanding volume.');
+    if (!rEnd) warnings.push('Select the new Contract End.');
+    // Extension period: the month after the old end (or the first market month) → new end.
+    const fromLabel = rollRange ? keyLabel(rollRange.min) : '';
+    const market = rEnd && fromLabel ? rawForPeriod(fromLabel, rEnd) : null;
+    if (rEnd && !market) warnings.push('No #11 market price for the new period — enter the new raw price.');
+    const oldRawDefault = A.rawPriceUsdMt ? r2(A.rawPriceUsdMt / MT_TO_CWT)
+      : (rawForPeriod(toMonthValue(A.startDate), toMonthValue(A.endDate))?.avg ?? NaN);
+    const oldRaw = rOldRaw === '' ? oldRawDefault : Number(rOldRaw);
+    const newRaw = rNewRaw === '' ? (market?.avg ?? NaN) : Number(rNewRaw);
+    if (!Number.isFinite(oldRaw)) warnings.push("The contract's original raw price isn't stored — enter it (USD/cwt).");
+    const isCad = (A.currency || 'CAD') !== 'USD';
+    const fx = A.fxRate || defaultFx || 1;
+    const twoPct = A.paymentTerms === '2% / Net 15' ? 1.02 : 1;
+    const delta = Number.isFinite(oldRaw) && Number.isFinite(newRaw) ? (newRaw - oldRaw) * MT_TO_CWT * (yieldMultiplier || 1) * (isCad ? fx : 1) * twoPct : 0;
+    const autoPrice = r2((A.finalPrice || 0) + delta);
+    const price = rPrice === '' ? autoPrice : r2(Number(rPrice));
+    canApply = outstanding > 0 && !!rEnd && Number.isFinite(newEndK) && (!Number.isFinite(monthKey(A.endDate)) || newEndK > monthKey(A.endDate)) && Number.isFinite(oldRaw) && Number.isFinite(newRaw) && price > 0;
+    const row = (label: string, now: React.ReactNode, after: React.ReactNode) => (
+      <tr className="border-b border-[#141414]/10"><td className="p-2 text-[10px] uppercase tracking-widest font-bold opacity-60">{label}</td><td className="p-2 font-mono">{now}</td><td className="p-2 font-mono font-bold bg-emerald-50">{after}</td></tr>
+    );
+    preview = (
+      <table className="w-full text-xs border border-[#141414]">
+        <thead><tr className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest"><th className="p-2 text-left" /><th className="p-2 text-left">Now</th><th className="p-2 text-left bg-emerald-100">After roll</th></tr></thead>
+        <tbody>
+          {row('Contract No.', A.contractNumber, A.contractNumber)}
+          {row('Contract End', toMonthValue(A.endDate) || '—', rEnd || '—')}
+          {row('Contract Volume (MT)', fmt(sA.volume), fmt(sA.volume))}
+          {row('Volume Taken (MT)', fmt(sA.taken), <span>{fmt(sA.taken)} <span className="font-normal text-[9px] opacity-60">(stays at invoiced prices)</span></span>)}
+          {row('Volume on Order (MT)', fmt(sA.onOrder), fmt(sA.onOrder))}
+          {row('Rolled Volume (MT)', '—', <span>{fmt(outstanding)} <span className="font-normal text-[9px] opacity-60">(all outstanding — all or nothing)</span></span>)}
+          {row('#11 Raw (USD/cwt)',
+            <input type="number" step="0.01" value={rOldRaw === '' ? (Number.isFinite(oldRawDefault) ? oldRawDefault : '') : rOldRaw} onChange={e => setROldRaw(e.target.value)} className={inputCls} title="The contract's original raw price" />,
+            <div><input type="number" step="0.01" value={rNewRaw === '' ? (market ? market.avg : '') : rNewRaw} onChange={e => setRNewRaw(e.target.value)} className={inputCls} />
+              <div className="text-[9px] font-normal opacity-60 mt-0.5">{market ? `#11 average of ${market.months.join(', ')}` : 'enter the new raw price'}</div></div>)}
+          {row('Price / MT', money(A.finalPrice, A.currency),
+            <div><input type="number" step="0.01" value={rPrice === '' ? autoPrice : rPrice} onChange={e => setRPrice(e.target.value)} className={inputCls} />
+              <div className="text-[9px] font-normal opacity-60 mt-0.5">{delta >= 0 ? '+' : '−'}{money(Math.abs(delta), A.currency)} = Δraw × {MT_TO_CWT} × yield {yieldMultiplier}{isCad ? ` × FX ${fx}` : ''}{twoPct !== 1 ? ' × 1.02' : ''}</div></div>)}
+          {(A.contractLines || []).length > 0 && row('Product lines', `${(A.contractLines || []).length}`, `each re-priced ${delta >= 0 ? '+' : '−'}${money(Math.abs(price - (A.finalPrice || 0)), A.currency)}/MT`)}
+        </tbody>
+      </table>
+    );
+    build = () => {
+      const when = stamp();
+      const shift = price - (A.finalPrice || 0);
+      const updated: Contract = {
+        ...A,
+        endDate: rEnd,
+        finalPrice: price,
+        rawPriceUsdMt: r2(newRaw * MT_TO_CWT),
+        contractLines: (A.contractLines || []).map(l => ({ ...l, finalPriceMt: r2((l.finalPriceMt || 0) + shift) })),
+        notes: appendNote(A.notes, `[${when}${who}] ROLLED: all ${fmt(outstanding)} MT outstanding rolled — Contract End ${toMonthValue(A.endDate) || '—'} → ${rEnd}. #11 raw ${fmt(oldRaw, 2)} → ${fmt(newRaw, 2)} USD/cwt${market && rNewRaw === '' ? ` (average of ${market.months.join(', ')})` : ''}; Price/MT ${money(A.finalPrice, A.currency)} → ${money(price, A.currency)} (${shift >= 0 ? '+' : '−'}${money(Math.abs(shift), A.currency)}). ${fmt(sA.taken)} MT already taken stays at its invoiced prices.${comment.trim() ? ` Note: ${comment.trim()}` : ''}`),
+      };
+      return { upserts: [updated], summary: `Rolled ${A.contractNumber}: ${fmt(outstanding)} MT now runs to ${rEnd} at ${money(price, A.currency)}/MT (${shift >= 0 ? '+' : '−'}${money(Math.abs(shift), A.currency)} on the #11 roll).` };
+    };
+  }
+
   const picker = (label: string, cust: string, setCust: (v: string) => void, id: string, setId: (v: string) => void, exclude?: string) => {
     const c = contracts.find(x => x.id === id);
     const s = statOf(c);
@@ -481,6 +566,15 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
                     <p className="text-[10px] opacity-60">The new contract copies every pricing component of contract A — price, raw, FX, freight, duty, pallet charge, margin, terms and product lines — and its Contract Start / End, with the transferred volume.</p>
                   </div>
                 )}
+              </div>
+            )}
+            {mode === 'roll' && (
+              <div className="bg-white border border-[#141414] p-3 space-y-2">
+                <div className="text-[11px] uppercase font-bold tracking-widest border-b border-[#141414]/10 pb-1">Roll to</div>
+                <div><label className={lbl}>New Contract End</label>
+                  {A ? (rollRange ? monthSelect(rEnd, (v) => { setREnd(v); setRNewRaw(''); setRPrice(''); }, [], rollRange) : <div className="text-xs opacity-60 italic">No later market months available.</div>)
+                    : <div className="text-xs opacity-60 italic">Select a contract first.</div>}</div>
+                <p className="text-[10px] opacity-60">The entire outstanding volume rolls (all or nothing). It's repriced on the #11 market — the average raw price of the months after the current end through the new end — and the contract price and product lines move by the difference.</p>
               </div>
             )}
             {mode === 'adjust' && (
