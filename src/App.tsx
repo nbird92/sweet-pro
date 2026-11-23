@@ -110,6 +110,7 @@ const DemurrageByCarrierReport = lazy(() => import('./components/DemurrageByCarr
 import PageBanner from './components/PageBanner';
 import PageShell, { BannerButton, ToolbarSelect, ToolbarToggle, PageToolbar } from './components/PageShell';
 import LocationCard from './components/LocationCard';
+import { withChangeNote, noteStamp, prependNote } from './utils/contractNotes';
 import SavedQuoteBreakdown from './components/SavedQuoteBreakdown';
 import ContractToolsModal, { type ContractToolMode } from './components/ContractToolsModal';
 import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
@@ -4790,6 +4791,7 @@ export default function App() {
           if (existingIdx !== -1) {
             updatedCount++;
             const c = workingContracts[existingIdx];
+            const beforeImport = c;
             const updatedVolume = contractVolume || c.contractVolume;
             const updatedTaken = volumeTaken || c.volumeTaken;
             workingContracts[existingIdx] = {
@@ -4830,6 +4832,8 @@ export default function App() {
               workingContracts[existingIdx] = { ...workingContracts[existingIdx], active: true };
               reactivatedCount++;
             }
+            // Detailed change note for everything this row changed.
+            workingContracts[existingIdx] = withChangeNote(beforeImport, workingContracts[existingIdx], `CSV IMPORT (${file.name})`, user?.displayName || user?.email || undefined, customerNameById);
             continue;
           }
 
@@ -4849,7 +4853,7 @@ export default function App() {
             destination,
             finalPrice,
             currency,
-            notes: notes || undefined,
+            notes: prependNote(notes, `${noteStamp(user?.displayName || user?.email || undefined)} CREATED by CSV import (${file.name}).`),
             shippingTerms: shippingTerms || undefined,
             fxRate: fxRate || undefined,
             rawPriceUsdMt: rawPriceUsdMt || undefined,
@@ -9281,7 +9285,7 @@ export default function App() {
 
       if (Object.keys(patch).length === 0) return c;
       changed = true;
-      return { ...c, ...patch };
+      return withChangeNote(c, { ...c, ...patch }, 'AUTO-FILLED from the customer table', 'Sweet Pro');
     });
 
     if (changed) setContracts(updated);
@@ -12396,8 +12400,11 @@ export default function App() {
         return;
       }
     }
-    setContracts(contracts.map(c => c.id === id ? { ...c, active: c.active === false ? true : false } : c));
+    const toggled = withChangeNote(contract, { ...contract, active: contract.active === false }, contract.active === false ? 'REACTIVATED' : 'INACTIVATED', user?.displayName || user?.email || undefined);
+    setContracts(contracts.map(c => c.id === id ? toggled : c));
+    saveNow(COLLECTIONS.contracts, [toggled]);
     setContractInactivateConfirmId(null);
+    setSuccessBox(`Contract ${contract.contractNumber} ${contract.active === false ? 'reactivated' : 'inactivated'}. The change is recorded in the contract notes.`);
   };
 
   const deleteShipment = (id: string) => {
@@ -12421,6 +12428,9 @@ export default function App() {
   /** A contract's number changed (e.g. temporary TMP-… → ITAS number): carry
    *  the new number onto every order, invoice and transfer that used the old
    *  one, and onto merged contracts that list it. Returns what was updated. */
+  /** Customer name for an id (contract change notes). */
+  const customerNameById = (id: string) => customers.find(c => c.id === id)?.name || id;
+
   const cascadeContractRename = (oldCn: string, newCn: string) => {
     const from = oldCn.trim(), to = newCn.trim();
     if (!from || !to || from === to) return { orders: 0, invoices: 0, transfers: 0 };
@@ -12491,7 +12501,7 @@ export default function App() {
       destination: config.destination,
       finalPrice: calculations.finalMt,
       currency: config.currency,
-      notes: `Generated from quote tool for ${customer}`,
+      notes: `${noteStamp(user?.displayName || user?.email || undefined)} CREATED from the Customer Quote tool for ${customer}: ${config.volumeMt} MT at ${calculations.currencySymbol} $${(calculations.finalMt || 0).toFixed(2)}/MT (temporary number — replace with the ITAS number).`,
       shippingTerms: config.shippingTerms || '',
       fxRate: config.fxRate,
       rawPriceUsdMt: calculations.rawMtUsd,
@@ -17598,7 +17608,7 @@ export default function App() {
                   const inv = invoices
                     .filter(i => i.status !== 'Cancelled' && invoicePrice(i) > 0 && invoiceMatchesContract(i, cn))
                     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-                  if (inv) priceUpdatedById.set(c.id, { ...c, finalPrice: invoicePrice(inv) });
+                  if (inv) priceUpdatedById.set(c.id, withChangeNote(c, { ...c, finalPrice: invoicePrice(inv) }, 'BACKFILLED from invoices', user?.displayName || user?.email || undefined, undefined, `Price taken from invoice ${inv.invoiceNumber || inv.bolNumber || ''}${inv.date ? ` dated ${inv.date}` : ''}`));
                 }
 
                 if (newContracts.length === 0 && priceUpdatedById.size === 0) {
@@ -24793,12 +24803,12 @@ export default function App() {
                         setErrorBox(`Contract ${newCn} could not be saved — that contract number is already used by another contract.`);
                         return;
                       }
-                      let saved: Contract = { ...editingContract, contractNumber: newCn };
                       const renamed = !!oldCn && !!newCn && oldCn !== newCn;
-                      if (renamed) {
-                        const stampTxt = new Date().toLocaleString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-                        saved = { ...saved, notes: [`[${stampTxt}${user?.displayName ? ` · ${user.displayName}` : ''}] CONTRACT NUMBER changed ${oldCn} → ${newCn}${isTempContractNumber(oldCn) ? ' (ITAS number assigned)' : ''}.`, (saved.notes || '').trim()].filter(Boolean).join('\n\n') };
-                      }
+                      // Dated, field-by-field record of everything this save changed.
+                      const saved: Contract = before
+                        ? withChangeNote(before, { ...editingContract, contractNumber: newCn }, 'EDITED', user?.displayName || user?.email || undefined, customerNameById)
+                        : { ...editingContract, contractNumber: newCn };
+                      const changedSomething = saved.notes !== editingContract.notes;
                       // Merged contracts that list the old number follow it.
                       const followers = renamed ? contracts.filter(c => c.id !== saved.id && (c.mergedFrom || []).includes(oldCn)).map(c => ({ ...c, mergedFrom: (c.mergedFrom || []).map(x => (x === oldCn ? newCn : x)) })) : [];
                       const upserts = [saved, ...followers];
@@ -24810,7 +24820,7 @@ export default function App() {
                       const movedTxt = moved && (moved.orders || moved.invoices || moved.transfers)
                         ? `\n\nUpdated to the new number: ${[moved.orders && `${moved.orders} order${moved.orders === 1 ? '' : 's'}`, moved.invoices && `${moved.invoices} invoice${moved.invoices === 1 ? '' : 's'}`, moved.transfers && `${moved.transfers} transfer${moved.transfers === 1 ? '' : 's'}`].filter(Boolean).join(', ')}.`
                         : '';
-                      setSuccessBox(`Contract ${newCn || '(no number)'} saved${renamed ? ` — renumbered from ${oldCn}` : ''}.${movedTxt}`);
+                      setSuccessBox(`Contract ${newCn || '(no number)'} saved${renamed ? ` — renumbered from ${oldCn}` : ''}.${movedTxt}${changedSomething ? '\n\nThe changes are recorded in the contract notes.' : '\n\nNo changes were made.'}`);
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors"
                   >
