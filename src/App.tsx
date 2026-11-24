@@ -7502,7 +7502,8 @@ export default function App() {
       for (const l of c.contractLines || []) {
         const name = l.productDisplayName || productNameToDisplay(l.productName) || l.productName || '';
         if (bulkProduct && name === bulkProduct) continue;
-        items.push({ product: name, differential: money(l.differentialCadMt) || '$0.00', price_mt: money(l.finalPriceMt), volume: '' });
+        const d = contractLineDifferential(c, l);
+        items.push({ product: name, differential: `${d.label}${d.value < 0 ? '−' : ''}$${fmtN(Math.abs(d.value), 2)}`, price_mt: money(l.finalPriceMt), volume: '' });
       }
       const fields = [
         { label: 'Agreement No.', value: tokens.contract_no },
@@ -11422,6 +11423,16 @@ export default function App() {
   };
   const contractPriceForProduct = (contract: Contract, productName?: string, productKey?: string): number =>
     contractPricing(contract, productName, productKey).price;
+  /** A contract line's differential for display, in the contract's currency:
+   *  stored as CAD/MT, so a USD contract shows it ÷ the contract's FX rate.
+   *  `label` is the currency prefix ('USD ' / 'CAD ' — '' for CAD contracts). */
+  const contractLineDifferential = (contract: Contract, line: ContractLine): { value: number; label: string; note?: string } => {
+    const cad = Number(line.differentialCadMt) || 0;
+    if ((contract.currency || '').trim().toUpperCase() !== 'USD') return { value: cad, label: '' };
+    const fx = Number(contract.fxRate) || 0;
+    if (fx > 0) return { value: cad / fx, label: 'USD ', note: `CAD $${fmtN(cad, 2)} ÷ FX ${fmtN(fx, 4)}` };
+    return { value: cad, label: 'CAD ', note: 'No FX rate on this contract — shown in CAD' };
+  };
   const resolveProduct = (productName: string | undefined, opts?: { exact?: boolean }): { sku: SKU | null; qa: QAProduct | null } => {
     if (!productName) return { sku: null, qa: null };
 
@@ -25570,7 +25581,7 @@ export default function App() {
                       <tbody className="divide-y divide-[#141414]/10">
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">Customer</td><td className="px-4 py-2 font-bold">{selectedContractDetail.customerName || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Customer #</td><td className="px-4 py-2 font-mono font-bold">{selectedContractDetail.customerNumber || '—'}</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Start Date</td><td className="px-4 py-2 font-bold">{selectedContractDetail.startDate || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Start Date</td><td className="px-4 py-2 font-bold">{toDateInputValue(selectedContractDetail.startDate) || selectedContractDetail.startDate || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">End Date</td><td className="px-4 py-2 font-bold">{selectedContractDetail.endDate || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Shipping Terms</td><td className="px-4 py-2 font-bold">{selectedContractDetail.shippingTerms || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Payment Terms</td><td className="px-4 py-2 font-bold">{selectedContractDetail.paymentTerms || '—'}</td></tr>
@@ -25668,7 +25679,7 @@ export default function App() {
                           {selectedContractDetail.contractLines.map((cl, idx) => (
                             <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                               <td className="px-4 py-2 opacity-70">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                              <td className="px-4 py-2 text-right font-bold">{cl.differentialCadMt >= 0 ? '+' : '−'}${fmtN(Math.abs(cl.differentialCadMt), 2)}/MT</td>
+                              <td className="px-4 py-2 text-right font-bold">{(() => { const d = contractLineDifferential(selectedContractDetail, cl); return `${d.label}${d.value >= 0 ? '+' : '−'}$${fmtN(Math.abs(d.value), 2)}/MT`; })()}</td>
                               <td className="px-4 py-2 opacity-70">Final Price</td>
                               <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}/MT</td>
                             </tr>
@@ -25701,7 +25712,10 @@ export default function App() {
                         {selectedContractDetail.contractLines.map((cl, idx) => (
                           <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                             <td className="px-4 py-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                            <td className="px-4 py-2 text-right">${fmtN(cl.differentialCadMt, 2)}</td>
+                            {(() => {
+                              const d = contractLineDifferential(selectedContractDetail, cl);
+                              return <td className="px-4 py-2 text-right" title={d.note}>{d.label}${fmtN(d.value, 2)}</td>;
+                            })()}
                             <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}</td>
                           </tr>
                         ))}
@@ -25730,6 +25744,13 @@ export default function App() {
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2"
                   >
                     <Edit2 size={16} /> Edit Contract
+                  </button>
+                  <button
+                    onClick={() => handleGenerateSalesAgreement(selectedContractDetail)}
+                    className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors flex items-center-safe justify-center gap-2"
+                    title="View Sales Agreement"
+                  >
+                    <ScrollText size={16} /> Sales Agreement
                   </button>
                   <button
                     onClick={() => setSelectedContractDetail(null)}

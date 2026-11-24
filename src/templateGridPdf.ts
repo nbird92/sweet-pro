@@ -312,6 +312,10 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
             if (nb?.t && (isCheckbox(nb) || textFor(o, nb).trim())) { limitC = cc; break; }
           }
           const maxW = colX[limitC] - (r.x + padX) - mm(2);
+          // Slightly too long (a label running into its value cell): shrink the
+          // font up to 20% so the whole text shows; only longer text is cut.
+          const widest = Math.max(0, ...lines.map(ln => doc.getTextWidth(ln)));
+          if (widest > maxW && maxW > 0 && maxW / widest >= 0.8) doc.setFontSize(doc.getFontSize() * (maxW / widest));
           lines = lines.map(ln => {
             if (doc.getTextWidth(ln) <= maxW) return ln;
             let cut = ln;
