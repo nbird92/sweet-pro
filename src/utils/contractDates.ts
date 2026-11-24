@@ -53,3 +53,23 @@ export function contractCreatedDate(c: { id?: string; contractDate?: string; not
   if (stamps.length) return stamps.map(s => s.slice(1)).sort()[0];
   return '';
 }
+
+/** A contract Start Date as an ISO date: a month value ("Jan 2026") becomes
+ *  that month's first day; a full ISO date is kept; anything else unchanged. */
+export function contractStartDate(v?: string | null): string {
+  const t = String(v ?? '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const pm = parseMonth(t);
+  return pm ? `${pm.y}-${pad(pm.m)}-01` : t;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** "2027-12-31" → "December 31, 2027" (documents such as the Sales Agreement).
+ *  Anything that isn't an ISO date is returned unchanged. */
+export function longDate(v?: string | null): string {
+  const t = String(v ?? '').trim();
+  const r = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  if (!r) return t;
+  const m = +r[2];
+  return m >= 1 && m <= 12 ? `${MONTH_NAMES[m - 1]} ${+r[3]}, ${r[1]}` : t;
+}

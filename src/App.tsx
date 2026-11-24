@@ -63,7 +63,8 @@ import {
   Sparkles,
   Boxes,
   Copy,
-  Pencil
+  Pencil,
+  ScrollText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
@@ -120,7 +121,8 @@ import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
-import { contractEndDate, contractCreatedDate } from './utils/contractDates';
+import { contractEndDate, contractCreatedDate, contractStartDate, longDate } from './utils/contractDates';
+import { generateSalesAgreementPdf } from './salesAgreementPdf';
 import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
@@ -7259,6 +7261,10 @@ export default function App() {
   // borders, fonts) once — on start and whenever the Templates table changes —
   // and register it so every document is DRAWN like its template, instantly.
   // Template edits therefore show after a refresh.
+  const salesAgreementTemplate = useMemo(
+    () => qaTemplates.find(t => /sales\s*agreement/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
+    [qaTemplates],
+  );
   const docTemplatePicks = useMemo(() => {
     const byType = (type: string) => qaTemplates.find(t => (t.type || '') === type && (t.googleSheetUrl || '').trim());
     const picks: Partial<Record<DocTemplateKey, QATemplate | undefined>> = {
@@ -7273,6 +7279,8 @@ export default function App() {
       // The Sample Request form: type "Sample Request", else any template named "…sample…".
       sampleRequest: byType('Sample Request')
         || qaTemplates.find(t => /sample/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
+      // The contract Sales Agreement: any template named "…sales agreement…".
+      salesAgreement: salesAgreementTemplate,
     };
     return picks;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7434,6 +7442,90 @@ export default function App() {
     const scaled = scaleDocSourcesToInvoice(inv, shipment, orderOverride);
     // Invoiced loads are outbound — the Scale Ticket's Shipping box is marked.
     handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proFormaDataForInvoice(inv));
+  };
+
+  /** Contracts-table action: build the Sales Agreement for a contract, drawn
+   *  from the "Sales Agreement" template (QA Templates) the same way the invoice
+   *  document package draws from its templates, and shown in the PDF preview. */
+  const handleGenerateSalesAgreement = (c: Contract) => {
+    try {
+      const up = (v?: string) => (v || '').trim().toUpperCase();
+      const customer = (c.customerNumber && customers.find(x => up(x.customerNumber) === up(c.customerNumber)))
+        || customers.find(x => up(x.name) === up(c.customerName))
+        || customers.find(x => !!c.itasName && up(x.itasCustomerName) === up(c.itasName));
+      const supplierLoc = findDocLocation(c.origin) || findDocLocation(customer?.defaultLocation);
+      const twoLine = (street?: string, city?: string, prov?: string, postal?: string) => {
+        const cityLine = [[city, prov].filter(Boolean).join(', '), postal].filter(Boolean).join(' ');
+        return [street, cityLine].filter(x => (x || '').trim()).join('\n');
+      };
+      const oneLine = (street?: string, city?: string, prov?: string, postal?: string) => [street, city, prov, postal].filter(x => (x || '').trim()).join(', ');
+      const money = (n?: number) => (Number(n) ? `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '');
+      const cur = c.currency || customer?.defaultCurrency || 'CAD';
+      const bulkProduct = c.bulkProduct
+        || (c.skuName && !/^(bulk|bag|bags|tote|totes|liquid)$/i.test(c.skuName.trim()) ? (productNameToDisplay(c.skuName) || c.skuName) : '');
+      const volume = Number(c.contractVolume) ? `${Number(c.contractVolume).toLocaleString(undefined, { maximumFractionDigits: 3 })} MT` : '';
+      const pt = (c.paymentTerms || customer?.defaultPaymentTerms || '').trim();
+      const paymentTerms = /^\d+$/.test(pt) ? `Net ${pt} days` : pt;
+      const agreementDate = contractCreatedDate(c);
+      const start = contractStartDate(c.startDate);
+      const end = contractEndDate(c.endDate);
+      const corporateName = customer?.corporateName || customer?.name || c.customerName || '';
+      const supplierName = supplierLoc?.bolName || supplierLoc?.name || c.origin || '';
+      const supplierAddress = supplierLoc ? twoLine(supplierLoc.address, supplierLoc.city, supplierLoc.province, supplierLoc.postalCode) : '';
+      const customerAddress = customer ? twoLine(customer.address, customer.city, customer.province, customer.postalCode) : '';
+      const priceMt = money(c.finalPrice);
+      // Keys are case-insensitive ({{contract_Date}} = contract_date).
+      const tokens: Record<string, string> = {
+        contract_no: c.contractNumber || '', contract_number: c.contractNumber || '', agreement_no: c.contractNumber || '',
+        contract_date: longDate(agreementDate), agreement_date: longDate(agreementDate),
+        contract_start_date: longDate(start), contract_end_date: longDate(end),
+        start_date: longDate(start), end_date: longDate(end),
+        location_name: supplierName, supplier_name: supplierName,
+        location_address: supplierAddress, supplier_address: supplierAddress,
+        customer_corporate_name: corporateName, corporate_name: corporateName,
+        customer_name: customer?.name || c.customerName || '', customer_number: c.customerNumber || customer?.customerNumber || '',
+        itas_name: c.itasName || customer?.itasCustomerName || '',
+        corporate_address: customerAddress, customer_address: customerAddress,
+        customer_corporate_address: customer ? oneLine(customer.address, customer.city, customer.province, customer.postalCode) : '',
+        currency: cur, price_mt: priceMt ? `${priceMt} / MT` : '', price: priceMt,
+        contract_volume: volume, volume,
+        freight_terms: c.shippingTerms || '', shipping_terms: c.shippingTerms || '',
+        payment_terms: paymentTerms,
+        origin: c.origin || '', destination: c.destination || '',
+        bulk_product: bulkProduct, product: bulkProduct,
+        pallet_type: c.palletType || '',
+      };
+      // One item per product on the contract (the bulk product, then each custom
+      // product line) for templates that add an {{item_…}} table.
+      const items: Array<Record<string, string>> = [];
+      if (bulkProduct) items.push({ product: bulkProduct, differential: '', price_mt: priceMt, volume });
+      for (const l of c.contractLines || []) {
+        const name = l.productDisplayName || productNameToDisplay(l.productName) || l.productName || '';
+        if (bulkProduct && name === bulkProduct) continue;
+        items.push({ product: name, differential: money(l.differentialCadMt) || '$0.00', price_mt: money(l.finalPriceMt), volume: '' });
+      }
+      const fields = [
+        { label: 'Agreement No.', value: tokens.contract_no },
+        { label: 'Agreement Date', value: tokens.contract_date },
+        { label: 'Supplier', value: [supplierName, supplierAddress].filter(Boolean).join('\n') },
+        { label: 'Buyer', value: [corporateName, customerAddress].filter(Boolean).join('\n') },
+        { label: 'Bulk Product', value: bulkProduct },
+        { label: 'Agreement Start Date', value: tokens.contract_start_date },
+        { label: 'Agreement End Date', value: tokens.contract_end_date },
+        { label: 'Unit Price', value: priceMt ? `${cur} ${priceMt} / MT` : '' },
+        { label: 'Contract Volume', value: volume },
+        { label: 'Freight Terms', value: tokens.freight_terms },
+        { label: 'Payment Terms', value: paymentTerms },
+      ];
+      const safe = (v: string) => v.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const filename = `SalesAgreement_${safe(c.contractNumber || 'draft')}_${safe(corporateName)}.pdf`;
+      const { blobUrl } = generateSalesAgreementPdf({ tokens, items, fields, filename });
+      if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
+      setPdfPreview({ url: blobUrl, filename, title: 'Sales Agreement Preview', templateId: salesAgreementTemplate?.id });
+    } catch (e: any) {
+      console.error('Generate sales agreement failed:', e);
+      setErrorBox('Failed to generate sales agreement: ' + (e.message || 'Unknown error'));
+    }
   };
 
   /** Transfer-table action: build the document package (BOL, COA, Packing List,
@@ -18179,6 +18271,9 @@ export default function App() {
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); openEditContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           <Edit2 size={14} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); handleGenerateSalesAgreement(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="View Sales Agreement">
+                          <ScrollText size={14} />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-colors ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
                           <Power size={14} />
