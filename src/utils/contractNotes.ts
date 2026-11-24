@@ -14,6 +14,7 @@ const FIELDS: Array<[keyof Contract, string, Kind]> = [
   ['customerNumber', 'Customer No.', 'text'],
   ['itasName', 'ITAS Name', 'text'],
   ['skuName', 'Product', 'text'],
+  ['bulkProduct', 'Bulk Product', 'text'],
   ['contractVolume', 'Contract Volume', 'mt'],
   ['finalPrice', 'Price/MT', 'money'],
   ['currency', 'Currency', 'text'],

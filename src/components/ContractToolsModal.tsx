@@ -14,6 +14,7 @@ import React, { useMemo, useState } from 'react';
 import { X, GitMerge, ArrowRightLeft, PlusCircle, CheckCircle2, AlertTriangle, CalendarClock } from 'lucide-react';
 import type { Contract, ContractLine, Customer } from '../types';
 import { nextTempContractNumber } from '../utils/contractMatch';
+import { contractEndDate } from '../utils/contractDates';
 
 export type ContractToolMode = 'merge' | 'transfer' | 'adjust' | 'roll';
 type Stats = Map<string, { taken: number; onOrder: number; outstanding: number }>;
@@ -262,7 +263,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         volumeOutstanding: volume - taken,
         finalPrice: price,
         startDate: start,
-        endDate: end,
+        endDate: contractEndDate(end),
         contractLines: mergeCalc.lines,
         allowedCustomerIds: Array.from(new Set([...(A.allowedCustomerIds || []), ...(B.allowedCustomerIds || [])])),
         mergedFrom: Array.from(new Set([A.contractNumber, B.contractNumber, ...(A.mergedFrom || []), ...(B.mergedFrom || [])])).filter(cn => cn !== number),
@@ -339,7 +340,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         finalPrice: priceNew,
         contractLines: (A.contractLines || []).map((l, i) => ({ ...l, id: `CL-${Date.now()}-${i}` })),
         startDate: start,
-        endDate: end,
+        endDate: contractEndDate(end),
         mergedFrom: [],
         active: true,
         contractDate: new Date().toISOString().slice(0, 10),
@@ -386,7 +387,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
         notes: appendNote(A.notes, `[${when}${who}] TRANSFER OUT: ${fmt(amt)} MT to ${B.contractNumber} (${B.customerName}). Volume ${fmt(sA.volume)} → ${fmt(sA.volume - amt)} MT.${tail}`) };
       const bStart = tBStart || B.startDate, bEnd = tBEnd || B.endDate;
       const datesTxt = (bStart !== B.startDate || bEnd !== B.endDate) ? `; period ${toMonthValue(B.startDate) || '—'}–${toMonthValue(B.endDate) || '—'} → ${toMonthValue(bStart) || '—'}–${toMonthValue(bEnd) || '—'}` : '';
-      const newB: Contract = { ...B, contractVolume: sB.volume + amt, volumeOutstanding: sB.outstanding + amt, finalPrice: priceB, startDate: bStart, endDate: bEnd,
+      const newB: Contract = { ...B, contractVolume: sB.volume + amt, volumeOutstanding: sB.outstanding + amt, finalPrice: priceB, startDate: bStart, endDate: contractEndDate(bEnd),
         notes: appendNote(B.notes, `[${when}${who}] TRANSFER IN: ${fmt(amt)} MT from ${A.contractNumber} (${A.customerName}) at ${money(A.finalPrice, A.currency)}. Volume ${fmt(sB.volume)} → ${fmt(sB.volume + amt)} MT${priceB !== r2(B.finalPrice) ? `; price ${money(B.finalPrice, B.currency)} → ${money(priceB, B.currency)}` : ''}${datesTxt}.${tail}`) };
       return { upserts: [newA, newB], summary: `Transferred ${fmt(amt)} MT from ${A.contractNumber} to ${B.contractNumber}.\n\n${A.contractNumber} now has ${fmt(sA.volume - amt)} MT; ${B.contractNumber} has ${fmt(sB.volume + amt)} MT.` };
     };
@@ -424,7 +425,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
       const when = stamp();
       const nStart = aStart || A.startDate, nEnd = aEnd || A.endDate;
       const periodTxt = (nStart !== A.startDate || nEnd !== A.endDate) ? `; period ${toMonthValue(A.startDate) || '—'}–${toMonthValue(A.endDate) || '—'} → ${toMonthValue(nStart) || '—'}–${toMonthValue(nEnd) || '—'}` : '';
-      const updated: Contract = { ...A, contractVolume: newVol, volumeOutstanding: sA.outstanding + delta, finalPrice: price, startDate: nStart, endDate: nEnd,
+      const updated: Contract = { ...A, contractVolume: newVol, volumeOutstanding: sA.outstanding + delta, finalPrice: price, startDate: nStart, endDate: contractEndDate(nEnd),
         notes: appendNote(A.notes, `[${when}${who}] ${aDir === 'increase' ? 'INCREASE' : 'DECREASE'}: ${aDir === 'increase' ? '+' : '−'}${fmt(amt)} MT${aDir === 'increase' && addPrice !== A.finalPrice ? ` at ${money(addPrice, A.currency)}` : ''}. Volume ${fmt(sA.volume)} → ${fmt(newVol)} MT${price !== r2(A.finalPrice) ? `; price ${money(A.finalPrice, A.currency)} → ${money(price, A.currency)}` : ''}${periodTxt}.${comment.trim() ? ` Reason: ${comment.trim()}` : ''}`) };
       return { upserts: [updated], summary: `${aDir === 'increase' ? 'Increased' : 'Decreased'} ${A.contractNumber} by ${fmt(amt)} MT.` };
     };
@@ -492,7 +493,7 @@ export default function ContractToolsModal({ mode, contracts, customers, stats, 
       const shift = price - (A.finalPrice || 0);
       const updated: Contract = {
         ...A,
-        endDate: rEnd,
+        endDate: contractEndDate(rEnd),
         finalPrice: price,
         rawPriceUsdMt: r2(newRaw * MT_TO_CWT),
         contractLines: (A.contractLines || []).map(l => ({ ...l, finalPriceMt: r2((l.finalPriceMt || 0) + shift) })),

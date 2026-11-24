@@ -140,6 +140,8 @@ export interface SavedQuote {
   savedAt: string;        // ISO timestamp
   savedBy?: string;
   product: string;
+  /** The quote's Bulk Product (QA/SKU id) — restored when booking from the quote. */
+  bulkProductKey?: string;
   origin: string;
   destination?: string;
   shippingTerms?: string;
@@ -319,6 +321,12 @@ export interface Contract {
   startDate: string;
   endDate: string;
   skuName: string;
+  /** The contract's base (bulk) product — a Bulk Granulated or Molasses catalog
+   *  product picked on the Customer Quote (display name) and its QA/SKU id. The
+   *  contract's finalPrice is this product's price; other products are priced
+   *  off it with their differentials. */
+  bulkProduct?: string;
+  bulkProductKey?: string;
   origin: string;
   destination: string;
   finalPrice: number;

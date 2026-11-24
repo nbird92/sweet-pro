@@ -120,6 +120,7 @@ import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
+import { contractEndDate, contractCreatedDate } from './utils/contractDates';
 import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
@@ -3709,6 +3710,8 @@ export default function App() {
   }, [poIngestNotice]);
   const [orderCustomerNumberInput, setOrderCustomerNumberInput] = useState<string>(''); // manual customer number entry in order modal
   const [orderLineItems, setOrderLineItems] = useState<OrderLineItem[]>([]);
+  // Order line items whose contract pricing components are shown (chevron).
+  const [expandedPricingLines, setExpandedPricingLines] = useState<Set<string>>(new Set());
   const [newLineItem, setNewLineItem] = useState<{
     productName: string;
     productKey: string; // unique option key (qa.id / sku.id) — fixes dropdown value collisions when several products share a name
@@ -9727,6 +9730,9 @@ export default function App() {
     ) || INITIAL_SKUS.find(s => s.productGroup === 'Bulk');
     return (bulkGranulated || INITIAL_SKUS[0]).id;
   });
+  // Customer Quote → Bulk Product (QA/SKU id): the quote's base product, stored
+  // on the contract it books. Defaults to GC100 once the catalog loads.
+  const [quoteBulkProductKey, setQuoteBulkProductKey] = useState('');
   const [selectedSugarTypeId, setSelectedSugarTypeId] = useState<string>('');
   // Quote product lines (shown when the "Add Product" toggle is on). Each line is
   // one catalog product (same options as order / contract lines — `value` is the
@@ -11282,9 +11288,28 @@ export default function App() {
    *  contract price already carries its own product's differential, so swap it
    *  for the ordered product's. CAD/MT differentials convert at the contract FX
    *  for USD contracts. */
-  const contractPriceForProduct = (contract: Contract, productName?: string, productKey?: string): number => {
-    const line = contract.contractLines?.find(cl => cl.productName === productName);
-    if (line) return line.finalPriceMt;
+  /** The contract line for a product: by catalog key first (QA/SKU id — names
+   *  are format-only and shared, "Bag" names every bagged product), then by
+   *  name only when exactly one line carries that name. */
+  const contractLineFor = (contract: Contract, productName?: string, productKey?: string): ContractLine | undefined => {
+    const lines = contract.contractLines || [];
+    if (productKey) {
+      const byKey = lines.find(cl => cl.productKey === productKey);
+      if (byKey) return byKey;
+    }
+    const byName = productName ? lines.filter(cl => cl.productName === productName && (!productKey || !cl.productKey)) : [];
+    return byName.length === 1 ? byName[0] : undefined;
+  };
+  /** How a product is priced on a contract — the components shown under an order
+   *  line. A contract line (custom differential) wins; otherwise the product's
+   *  DEFAULT differential (Products table) applies, relative to the contract's
+   *  Bulk Product (the base price already includes that product's own). */
+  const contractPricing = (contract: Contract, productName?: string, productKey?: string): {
+    base: number; differential: number; source: 'contract' | 'default'; price: number; line?: ContractLine;
+  } => {
+    const base = contract.finalPrice || 0;
+    const line = contractLineFor(contract, productName, productKey);
+    if (line) return { base, differential: (line.finalPriceMt || 0) - base, source: 'contract', price: line.finalPriceMt, line };
     const skuOf = (name?: string, key?: string): SKU | null => {
       if (key) {
         const byId = skus.find(x => x.id === key);
@@ -11297,12 +11322,14 @@ export default function App() {
     };
     const diffOf = (sku: SKU | null) => sku?.premiumCadMt || 0;
     const productDiff = diffOf(skuOf(productName, productKey));
-    const contractDiff = diffOf(skuOf(contract.skuName));
+    const contractDiff = diffOf(skuOf(contract.skuName, contract.bulkProductKey));
     const fx = (contract.currency || '').toUpperCase() === 'USD' ? (contract.fxRate || 0) : 1;
-    if (!fx) return contract.finalPrice;
-    return (contract.finalPrice || 0) + (productDiff - contractDiff) / fx;
+    if (!fx) return { base, differential: 0, source: 'default', price: base };
+    const differential = (productDiff - contractDiff) / fx;
+    return { base, differential, source: 'default', price: base + differential };
   };
-
+  const contractPriceForProduct = (contract: Contract, productName?: string, productKey?: string): number =>
+    contractPricing(contract, productName, productKey).price;
   const resolveProduct = (productName: string | undefined, opts?: { exact?: boolean }): { sku: SKU | null; qa: QAProduct | null } => {
     if (!productName) return { sku: null, qa: null };
 
@@ -12198,6 +12225,63 @@ export default function App() {
     return entries;
   };
 
+  // ── Bulk Product (a quote's / contract's base product) ──────────────────
+  /** Short form (GC100, MOL…) of a catalog option key (QA id or SKU id). */
+  const shortFormForKey = (key: string): string => {
+    const qa = qaProducts.find(q => q.id === key) || null;
+    const sku = skus.find(s => s.id === (qa?.skuId || key)) || null;
+    if (!sku && !qa) return '';
+    const attrs = buildProductAttrs(sku, qa);
+    const rule = resolveShortFormRule(namingFormulas, attrs, { sugarTypes, productGroups });
+    if (rule && rule.trim()) return rule.trim();
+    if (attrs.sugarType === 'Molasses') return 'MOL';
+    const st = sugarTypes.find(t => t.name === attrs.sugarType);
+    if (!st || !attrs.category || attrs.maxColor === undefined) return '';
+    return `${st.abbreviation}${attrs.category === 'Conventional' ? 'C' : 'B'}${attrs.maxColor}`;
+  };
+  /** Choices for a Bulk Product: Bulk Granulated and Molasses catalog products
+   *  only (one per distinct name), each with its short form. `currentKey` keeps
+   *  a stored choice listed even if it is no longer one of them. */
+  const bulkProductOptions = (currentKey?: string): Array<{ value: string; label: string; key: string; location: string; short: string }> => {
+    const isBulkBase = (key: string) => {
+      const qa = qaProducts.find(q => q.id === key);
+      const sku = skus.find(s => s.id === (qa?.skuId || key));
+      const sugar = (qa?.sugarType || sku?.sugarType || '').trim().toLowerCase();
+      const group = (qa?.productGroup || sku?.productGroup || '').trim().toLowerCase();
+      const format = (qa?.productFormat || sku?.productFormat || '').trim().toLowerCase();
+      if (sugar === 'molasses' || group.includes('molasses')) return true;
+      return sugar === 'granulated' && (format === 'bulk' || group === 'bulk granulated' || group === 'bulk');
+    };
+    const seen = new Set<string>();
+    const out: Array<{ value: string; label: string; key: string; location: string; short: string }> = [];
+    for (const o of buildOrderProductOptions(undefined, { selectableOnly: true })) {
+      if (o.key !== currentKey && !isBulkBase(o.key)) continue;
+      const short = shortFormForKey(o.key);
+      const dedupe = `${short}|${o.label}`;
+      if (o.key !== currentKey && seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      out.push({ ...o, short });
+    }
+    return out.sort((a, b) => (a.short || a.label).localeCompare(b.short || b.label, undefined, { numeric: true }));
+  };
+  /** The default Bulk Product: GC100, else the first Bulk Granulated choice. */
+  const defaultBulkProductKey = (): string => {
+    const opts = bulkProductOptions();
+    return (opts.find(o => o.short.toUpperCase() === 'GC100') || opts.find(o => !/^mol/i.test(o.short)) || opts[0])?.key || '';
+  };
+  const skuIdForKey = (key: string): string => qaProducts.find(q => q.id === key)?.skuId || key;
+  // Default the quote's Bulk Product to GC100 once the catalog is loaded (and
+  // re-pick if the stored choice left the catalog). The quote's base SKU follows.
+  useEffect(() => {
+    if (!skus.length || !qaProducts.length) return;
+    if (quoteBulkProductKey && bulkProductOptions().some(o => o.key === quoteBulkProductKey)) return;
+    const key = defaultBulkProductKey();
+    if (!key) return;
+    setQuoteBulkProductKey(key);
+    setSelectedSkuId(skuIdForKey(key));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skus, qaProducts, namingFormulas]);
+
   // Validate + add (or update) the in-progress Add Order line item. Extracted
   // from the inline button so the Add/Update Item action can live in the
   // section header instead of a table column.
@@ -12277,14 +12361,9 @@ export default function App() {
     if (newLineItem.contractNumber) {
       const contract = contracts.find(c => c.contractNumber === newLineItem.contractNumber);
       if (!contract) { setErrorBox('Contract not found'); return; }
-      // Validate product against contract lines if contract has lines
-      if (contract.contractLines && contract.contractLines.length > 0) {
-        const matchingLine = contract.contractLines.find(cl => cl.productName === newLineItem.productName);
-        if (!matchingLine) {
-          setErrorBox(`Product "${newLineItem.productName}" is not available on contract ${contract.contractNumber}. Only products with contract lines can be ordered: ${contract.contractLines.map(cl => cl.productName).join(', ')}`);
-          return;
-        }
-      }
+      // Any product can be drawn on a contract: a product with its own contract
+      // line uses that line's custom differential, every other product the
+      // default differential from the Products table (contractPricing).
       // Calculate existing usage on this contract from current line items (excluding the item being edited if applicable)
       const existingWeightOnContract = orderLineItems
         .filter((li, i) => li.contractNumber === newLineItem.contractNumber && i !== editingLineItemIdx)
@@ -12306,7 +12385,8 @@ export default function App() {
         );
         return;
       }
-      // Use contract line price if available, otherwise use contract finalPrice
+      // Contract line (custom differential) if the product has one, else the
+      // contract's base price + the product's default differential.
       mtAmount = contractPriceForProduct(contract, newLineItem.productName, newLineItem.productKey);
       unitAmount = hasUnitWeight ? mtAmount * effNetKg / 1000 : mtAmount;
       lineAmount = totalWeight * mtAmount;
@@ -12694,6 +12774,14 @@ export default function App() {
       return !hasInvoice || o.status === 'Open';
     });
 
+  /** Open Edit Contract. A contract without a Contract Date gets the date it was
+   *  created (CON-<ms> id / oldest dated note) filled in; it is saved with the edit. */
+  const openEditContract = (c: Contract) => {
+    const hasDate = /^\d{4}-\d{2}-\d{2}/.test(String(c.contractDate ?? '').trim());
+    const created = hasDate ? '' : contractCreatedDate(c);
+    setEditingContract(created ? { ...c, contractDate: created } : c);
+  };
+
   const toggleContractActive = (id: string) => {
     const contract = contracts.find(c => c.id === id);
     if (!contract) return;
@@ -12791,6 +12879,11 @@ export default function App() {
       return;
     }
 
+    // The quote's Bulk Product is the contract's base product. skuName carries its
+    // short form (GC100) — the SKU's own name is format-only ("Bulk", shared with
+    // Molasses), which is how contracts used to show the wrong product.
+    const bulkOpt = bulkProductOptions(quoteBulkProductKey).find(o => o.key === quoteBulkProductKey);
+    const today = new Date().toISOString().split('T')[0];
     const newContract: Contract = {
       id: `CON-${Date.now()}`,
       // Temporary number until the ITAS number is typed in (TMP-00001…).
@@ -12800,11 +12893,15 @@ export default function App() {
       contractVolume: config.volumeMt,
       volumeTaken: 0,
       volumeOutstanding: config.volumeMt,
-      startDate: config.contractStartDate || new Date().toISOString().split('T')[0],
-      endDate: config.contractEndDate || new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0],
-      skuName: selectedSku.name,
+      contractDate: today,
+      startDate: config.contractStartDate || today,
+      // End Date = the last day of the selected end month (Dec 2027 → 2027-12-31).
+      endDate: contractEndDate(config.contractEndDate) || contractEndDate(new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString().split('T')[0].slice(0, 7)),
+      skuName: bulkOpt?.short || bulkOpt?.label || selectedSku.name,
+      ...(bulkOpt ? { bulkProduct: bulkOpt.label, bulkProductKey: bulkOpt.key } : {}),
       origin: config.origin,
-      destination: config.destination,
+      // Delivery location, freight and duty only when they are part of the price.
+      destination: config.isDelivered ? (config.destination || '') : '',
       finalPrice: calculations.finalMt,
       currency: config.currency,
       notes: `${noteStamp(user?.displayName || user?.email || undefined)} CREATED from the Customer Quote tool for ${customer}: ${config.volumeMt} MT at ${calculations.currencySymbol} $${(calculations.finalMt || 0).toFixed(2)}/MT (temporary number — replace with the ITAS number).`,
@@ -12812,8 +12909,8 @@ export default function App() {
       fxRate: config.fxRate,
       rawPriceUsdMt: calculations.rawMtUsd,
       oceanFreightUsdMt: config.oceanFreightUsdMt,
-      deliveredFreight: calculations.deliveredFreight,
-      exportDuty: calculations.exportDuty,
+      deliveredFreight: config.isDelivered && calculations.deliveredFreight ? calculations.deliveredFreight : undefined,
+      exportDuty: config.isExport && calculations.exportDuty ? calculations.exportDuty : undefined,
       palletCharge: calculations.palletCharge,
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
       palletType: config.palletType || '',
@@ -12855,7 +12952,10 @@ export default function App() {
       id: `QUOTE-${Date.now()}`,
       savedAt: new Date().toISOString(),
       savedBy: user?.displayName || user?.email || undefined,
-      product: calculations.productPrices.filter(pp => pp.key).map(pp => pp.label).join(', ') || sku.shortForm || sku.productLongForm || sku.name,
+      product: calculations.productPrices.filter(pp => pp.key).map(pp => pp.label).join(', ')
+        || bulkProductOptions(quoteBulkProductKey).find(o => o.key === quoteBulkProductKey)?.short
+        || sku.shortForm || sku.productLongForm || sku.name,
+      ...(quoteBulkProductKey ? { bulkProductKey: quoteBulkProductKey } : {}),
       origin: config.origin,
       destination: config.isDelivered ? config.destination : undefined,
       shippingTerms: config.shippingTerms || undefined,
@@ -13008,6 +13108,11 @@ export default function App() {
     setCustomer(cust.name);
     setConfig(prev => ({ ...prev, ...restored, rawPriceUsdCwt: prev.rawPriceUsdCwt, fxRate: prev.fxRate }));
     setQuoteProducts(products.map((p, i) => ({ id: `QP-${Date.now()}-${i}`, ...p })));
+    // The quote's Bulk Product (quotes saved before it existed keep the current one).
+    if (q.bulkProductKey && bulkProductOptions(q.bulkProductKey).some(o => o.key === q.bulkProductKey)) {
+      setQuoteBulkProductKey(q.bulkProductKey);
+      setSelectedSkuId(skuIdForKey(q.bulkProductKey));
+    }
     const legacyNote = q.inputs?.config ? undefined
       : 'This quote was saved before the app kept every input, so check the pallet charge, freight and product differentials before creating the contract.';
     setQuoteLoadedFrom({ customer: cust.name, savedAt: q.savedAt, savedBy: q.savedBy, product: q.product, periodNote, legacyNote });
@@ -13264,6 +13369,10 @@ export default function App() {
   // Prefer Bulk Granulated (non-molasses); seed the differential from it.
   useEffect(() => {
     if (!skus.length || skus.some(sk => sk.id === selectedSkuId)) return;
+    // The quote's Bulk Product (default GC100) decides the base SKU when known.
+    const bulkKey = quoteBulkProductKey || defaultBulkProductKey();
+    const bulkSku = bulkKey ? skus.find(sk => sk.id === skuIdForKey(bulkKey)) : undefined;
+    if (bulkSku) { setSelectedSkuId(bulkSku.id); return; }
     const notMol = (sk: SKU) => !/mol/i.test(`${sk.sugarType || ''} ${sk.name || ''} ${sk.shortForm || ''}`);
     const pick = skus.find(sk => notMol(sk) && sk.productGroup === 'Bulk' && /granulated/i.test(`${sk.sugarType || ''} ${sk.productLongForm || ''}`))
       || skus.find(sk => notMol(sk) && sk.productGroup === 'Bulk')
@@ -18068,7 +18177,7 @@ export default function App() {
                         <button onClick={(e) => { e.stopPropagation(); toggleRow(c.id); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           {expandedRows.has(c.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); setEditingContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
+                        <button onClick={(e) => { e.stopPropagation(); openEditContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           <Edit2 size={14} />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-colors ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
@@ -18996,6 +19105,25 @@ export default function App() {
                 Sales lead{selectedQuoteLead.contactName ? ` · ${selectedQuoteLead.contactName}` : ''}{selectedQuoteLead.contactEmail ? ` · ${selectedQuoteLead.contactEmail}` : ''} — add as a customer before creating a contract
               </div>
             )}
+            {/* Bulk Product — the quote's base product (Bulk Granulated or
+                Molasses only); saved on the contract it books. */}
+            <div className="mt-4 space-y-1">
+              <label className="text-[10px] uppercase font-bold opacity-60">Bulk Product</label>
+              <select
+                value={quoteBulkProductKey}
+                onChange={(e) => {
+                  const key = e.target.value;
+                  setQuoteBulkProductKey(key);
+                  if (key) setSelectedSkuId(skuIdForKey(key));
+                }}
+                className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#141414]/10"
+              >
+                {!quoteBulkProductKey && <option value="">Select Bulk Product</option>}
+                {bulkProductOptions(quoteBulkProductKey).map(o => (
+                  <option key={o.key} value={o.key}>{o.short && o.short !== o.label ? `${o.short} — ${o.label}` : o.label}</option>
+                ))}
+              </select>
+            </div>
           </section>
 
 
@@ -24958,22 +25086,36 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">SKU / Product</label>
-                    <select
-                      value={editingContract.skuName || ''}
-                      onChange={(e) => setEditingContract({ ...editingContract, skuName: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    >
-                      <option value="">Select Product</option>
-                      {/* Use the SAME catalog the order line-item picker uses so the
-                          rendered Product Name (naming-formula resolved) shows here,
-                          not the raw SKU `name` code. buildOrderProductOptions also
-                          emits a ghost option for a stored value no longer in the
-                          catalog, so no separate fallback <option> is needed. */}
-                      {buildOrderProductOptions(editingContract.skuName, { selectableOnly: true }).map(o => (
-                        <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
-                      ))}
-                    </select>
+                    <label className="text-[10px] uppercase font-bold opacity-50">Bulk Product</label>
+                    {(() => {
+                      // Bulk Granulated / Molasses choices. A contract saved before
+                      // Bulk Product existed is matched by its short form (skuName
+                      // "GC100"); anything else it carries stays listed as-is.
+                      const opts = bulkProductOptions(editingContract.bulkProductKey);
+                      const sku = (editingContract.skuName || '').trim();
+                      const formatOnly = /^(bulk|bag|bags|tote|totes|liquid)$/i.test(sku);
+                      const matched = editingContract.bulkProductKey
+                        || (!formatOnly && sku ? opts.find(o => o.short.toUpperCase() === sku.toUpperCase() || o.label === sku)?.key : '')
+                        || '';
+                      const legacy = !matched && sku && !formatOnly ? `__sku:${sku}` : '';
+                      return (
+                        <select
+                          value={matched || legacy}
+                          onChange={(e) => {
+                            const o = opts.find(x => x.key === e.target.value);
+                            if (!o) return;
+                            setEditingContract({ ...editingContract, bulkProductKey: o.key, bulkProduct: o.label, skuName: o.short || o.label });
+                          }}
+                          className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                        >
+                          <option value="">Select Bulk Product</option>
+                          {legacy && <option value={legacy}>{productNameToDisplay(sku) || sku} (current)</option>}
+                          {opts.map(o => (
+                            <option key={o.key} value={o.key}>{o.short && o.short !== o.label ? `${o.short} — ${o.label}` : o.label}</option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Destination</label>
@@ -25026,17 +25168,19 @@ export default function App() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
+                    {/* Blank when the contract has no freight (0 is not shown). */}
                     <DecimalInput
-                      value={editingContract.deliveredFreight}
-                      onValue={(v) => setEditingContract({ ...editingContract, deliveredFreight: v })}
+                      value={editingContract.deliveredFreight || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, deliveredFreight: v ? v : undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Export Duty</label>
+                    {/* Blank when no duty was added to the contract (0 is not shown). */}
                     <DecimalInput
-                      value={editingContract.exportDuty}
-                      onValue={(v) => setEditingContract({ ...editingContract, exportDuty: v })}
+                      value={editingContract.exportDuty || undefined}
+                      onValue={(v) => setEditingContract({ ...editingContract, exportDuty: v ? v : undefined })}
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
@@ -25210,9 +25354,11 @@ export default function App() {
                       }
                       const renamed = !!oldCn && !!newCn && oldCn !== newCn;
                       // Dated, field-by-field record of everything this save changed.
+                      // A month-only End Date ("Dec 2027") is stored as that month's last day.
+                      const edited: Contract = { ...editingContract, contractNumber: newCn, endDate: contractEndDate(editingContract.endDate) };
                       const saved: Contract = before
-                        ? withChangeNote(before, { ...editingContract, contractNumber: newCn }, 'EDITED', user?.displayName || user?.email || undefined, customerNameById)
-                        : { ...editingContract, contractNumber: newCn };
+                        ? withChangeNote(before, edited, 'EDITED', user?.displayName || user?.email || undefined, customerNameById)
+                        : edited;
                       const changedSomething = saved.notes !== editingContract.notes;
                       // Merged contracts that list the old number follow it.
                       const followers = renamed ? contracts.filter(c => c.id !== saved.id && (c.mergedFrom || []).includes(oldCn)).map(c => ({ ...c, mergedFrom: (c.mergedFrom || []).map(x => (x === oldCn ? newCn : x)) })) : [];
@@ -25344,7 +25490,16 @@ export default function App() {
                     </div>
                     <table className="w-full text-xs">
                       <tbody className="divide-y divide-[#141414]/10">
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">SKU</td><td className="px-4 py-2 font-bold">{selectedContractDetail.skuName ? (productNameToDisplay(selectedContractDetail.skuName) || selectedContractDetail.skuName) : '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold w-1/2">Bulk Product</td><td className="px-4 py-2 font-bold">{(() => {
+                          // The contract's Bulk Product; older contracts fall back to
+                          // their skuName unless it is a bare format word ("Bulk" is
+                          // shared with Molasses and resolved to the wrong product).
+                          const c = selectedContractDetail;
+                          if (c.bulkProduct) return c.bulkProduct;
+                          const sku = (c.skuName || '').trim();
+                          if (!sku || /^(bulk|bag|bags|tote|totes|liquid)$/i.test(sku)) return '—';
+                          return productNameToDisplay(sku) || sku;
+                        })()}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.origin || '—'}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
@@ -25474,7 +25629,7 @@ export default function App() {
                 <div className="flex gap-4 pt-2">
                   <button
                     onClick={() => {
-                      setEditingContract(selectedContractDetail);
+                      openEditContract(selectedContractDetail);
                       setSelectedContractDetail(null);
                     }}
                     className="flex-1 py-4 bg-[#141414] text-[#E4E3E0] font-bold text-xs uppercase hover:bg-opacity-80 transition-colors flex items-center-safe justify-center gap-2"
@@ -28449,7 +28604,8 @@ export default function App() {
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
                         {orderLineItems.map((item, idx) => (
-                          <tr key={item.id} className="hover:bg-[#F9F9F9] transition-colors">
+                          <React.Fragment key={item.id}>
+                          <tr className="hover:bg-[#F9F9F9] transition-colors">
                             <td className="p-2">{item.productDisplayName || productNameToDisplay(item.productName)}</td>
                             <td className="p-2">{lineItemUnits(item)}</td>
                             <td className="p-2 font-bold">{fmtN((item.totalWeight * 1000), 0)}</td>
@@ -28491,6 +28647,18 @@ export default function App() {
                                 <Edit2 size={12} />
                               </button>
                               <button
+                                onClick={() => setExpandedPricingLines(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                                  return next;
+                                })}
+                                disabled={!item.contractNumber}
+                                className="text-[#141414]/70 hover:bg-[#141414]/5 p-1 rounded transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
+                                title={item.contractNumber ? (expandedPricingLines.has(item.id) ? 'Hide contract pricing' : 'Show contract pricing') : 'No contract on this line'}
+                              >
+                                {expandedPricingLines.has(item.id) ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              </button>
+                              <button
                                 onClick={() => setOrderLineItems(orderLineItems.filter((_, i) => i !== idx))}
                                 className="text-red-500 hover:bg-red-50 p-1 rounded transition-colors"
                                 title="Delete line item"
@@ -28499,6 +28667,49 @@ export default function App() {
                               </button>
                             </td>
                           </tr>
+                          {expandedPricingLines.has(item.id) && item.contractNumber && (() => {
+                            const c = contracts.find(ct => ct.contractNumber === item.contractNumber);
+                            if (!c) {
+                              return (
+                                <tr className="bg-[#F9F9F9]"><td colSpan={8} className="px-4 py-2 text-[11px] opacity-60">Contract {item.contractNumber} not found.</td></tr>
+                              );
+                            }
+                            const pr = contractPricing(c, item.productName, item.productKey);
+                            const cur = c.currency || '';
+                            const money = (n?: number) => (typeof n === 'number' && n) ? `$${fmtN(n, 2)}/MT` : '—';
+                            const raws = rawPriceUsdCwt(c.rawPriceUsdMt);
+                            const cells: Array<[string, string]> = [
+                              ['Bulk Product', c.bulkProduct || (c.skuName && !/^(bulk|bag|bags|tote|totes|liquid)$/i.test(c.skuName.trim()) ? (productNameToDisplay(c.skuName) || c.skuName) : '—')],
+                              ['Raws (USD/cwt)', raws === null ? '—' : `USD $${fmtN(raws, 2)}`],
+                              ['Ocean Freight (USD/MT)', typeof c.oceanFreightUsdMt === 'number' ? `USD $${fmtN(c.oceanFreightUsdMt, 2)}` : '—'],
+                              ['FX Rate (USD/CAD)', c.fxRate ? fmtN(c.fxRate, 4) : '—'],
+                              ['Margin (CAD/MT)', c.margin ? `$${fmtN(c.margin, 2)}` : '—'],
+                              ['Delivered Freight', money(c.deliveredFreight)],
+                              ['Export Duty', money(c.exportDuty)],
+                              ['Pallet Charge', money(c.palletCharge)],
+                              ['Base Price', `${cur} $${fmtN(pr.base, 2)}/MT`],
+                              [pr.source === 'contract' ? 'Contract Differential' : 'Default Differential', `${pr.differential >= 0 ? '+' : '−'}$${fmtN(Math.abs(pr.differential), 2)}/MT`],
+                              ['Price for this Product', `${cur} $${fmtN(pr.price, 2)}/MT`],
+                            ];
+                            return (
+                              <tr className="bg-[#F9F9F9]">
+                                <td colSpan={8} className="px-4 py-3">
+                                  <div className="text-[10px] uppercase font-bold tracking-widest opacity-60 mb-2">
+                                    Contract {c.contractNumber} — pricing components{pr.source === 'contract' ? ' (custom differential for this product)' : ' (default differential — no contract line for this product)'}
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-x-6 gap-y-1.5 text-[11px]">
+                                    {cells.map(([k, v]) => (
+                                      <div key={k} className="flex justify-between gap-2 border-b border-[#141414]/5 pb-1">
+                                        <span className="opacity-60">{k}</span>
+                                        <span className="font-bold text-right">{v}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })()}
+                          </React.Fragment>
                         ))}
                       </tbody>
                     </table>
