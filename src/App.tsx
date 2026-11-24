@@ -12910,7 +12910,7 @@ export default function App() {
   // live market data — Raw Sugar (#11) and FX stay on today's live values (the
   // market effect re-prices them for the quote's contract months). Quotes saved
   // before the input snapshot existed are rebuilt from their stored build-up.
-  const [quoteLoadedFrom, setQuoteLoadedFrom] = useState<{ customer: string; savedAt: string; savedBy?: string; product: string; periodNote?: string } | null>(null);
+  const [quoteLoadedFrom, setQuoteLoadedFrom] = useState<{ customer: string; savedAt: string; savedBy?: string; product: string; periodNote?: string; legacyNote?: string } | null>(null);
   const bookContractFromQuote = (cust: Customer, q: SavedQuote) => {
     const fx = q.fxRate || config.fxRate || 1;
     const isUsd = (q.currency || '').toUpperCase() === 'USD';
@@ -12963,6 +12963,24 @@ export default function App() {
       products = (q.productLines || []).filter(pl => pl.productKey).map(pl => ({
         key: pl.productKey!, value: pl.productName || pl.product, label: pl.product, differentialCadMt: pl.differentialCadMt || 0,
       }));
+      // Oldest quotes kept only the product NAME: match it to the catalog (exact
+      // label / value only — a bare format word like "Bulk" is never guessed)
+      // and add it as a product line with its default differential.
+      if (!products.length && q.product) {
+        const options = buildOrderProductOptions(undefined, { selectableOnly: true });
+        const baseSku = skus.find(sk => sk.id === selectedSkuId);
+        const baseNames = new Set([baseSku?.shortForm, baseSku?.productLongForm, baseSku?.name].filter(Boolean).map(n => String(n).trim().toLowerCase()));
+        const formatOnly = /^(bulk|bag|bags|bagged|tote|totes|liquid|packaged)$/i;
+        for (const raw of q.product.split(',').map(x => x.trim()).filter(Boolean)) {
+          const n = raw.toLowerCase();
+          if (formatOnly.test(raw) || baseNames.has(n)) continue;
+          const opt = options.find(o => (o.label || '').trim().toLowerCase() === n) || options.find(o => (o.value || '').trim().toLowerCase() === n);
+          if (!opt?.key || products.some(p => p.key === opt.key)) continue;
+          const qa = qaProducts.find(x => x.id === opt.key);
+          const diff = skus.find(x => x.id === (qa?.skuId || opt.key))?.premiumCadMt || 0;
+          products.push({ key: opt.key, value: opt.value, label: opt.label, differentialCadMt: diff });
+        }
+      }
       restored.isAddProduct = products.length > 0;
     }
     delete restored.rawPriceUsdCwt;
@@ -12975,7 +12993,9 @@ export default function App() {
     setCustomer(cust.name);
     setConfig(prev => ({ ...prev, ...restored, rawPriceUsdCwt: prev.rawPriceUsdCwt, fxRate: prev.fxRate }));
     setQuoteProducts(products.map((p, i) => ({ id: `QP-${Date.now()}-${i}`, ...p })));
-    setQuoteLoadedFrom({ customer: cust.name, savedAt: q.savedAt, savedBy: q.savedBy, product: q.product, periodNote });
+    const legacyNote = q.inputs?.config ? undefined
+      : 'This quote was saved before the app kept every input, so check the pallet charge, freight and product differentials before creating the contract.';
+    setQuoteLoadedFrom({ customer: cust.name, savedAt: q.savedAt, savedBy: q.savedBy, product: q.product, periodNote, legacyNote });
     setSummaryCustomer(null);
     setActivePage('Customer Quote');
   };
@@ -18928,6 +18948,7 @@ export default function App() {
                   {' '}Every field is filled from the quote except Raw Sugar (#11) and FX, which use today's live market. Review it, then click Create Contract.
                 </div>
                 {quoteLoadedFrom.periodNote && <div className="text-amber-800 font-bold">{quoteLoadedFrom.periodNote}</div>}
+                {quoteLoadedFrom.legacyNote && <div className="text-amber-800">{quoteLoadedFrom.legacyNote}</div>}
               </div>
               <button onClick={() => setQuoteLoadedFrom(null)} className="p-1 hover:bg-emerald-100" title="Dismiss"><X size={12} /></button>
             </div>
