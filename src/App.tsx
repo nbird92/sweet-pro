@@ -118,6 +118,7 @@ import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
+import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
 import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
@@ -1083,6 +1084,43 @@ export default function App() {
   const [orderApptTime, setOrderApptTime] = useState('');
   const [orderApptBay, setOrderApptBay] = useState('');
 
+  // ONE ROW PER LOAD. An appointment booked for an order whose BOL already has a
+  // shipment on that date — usually the Sherman sync filed it first from the dock
+  // sheet, which carries the BOL before the order exists here — fills that row's
+  // blanks instead of adding a second row for the same load (a duplicate the
+  // schedule hides, since it shows one shipment per slot). Returns only the rows
+  // that are genuinely new; the caller adds those.
+  const fileAppointmentShipments = (rows: Shipment[]): Shipment[] => {
+    const byIdentity = new Map<string, Shipment>();
+    for (const s of [...hamiltonShipments, ...vancouverShipments]) {
+      const k = shipmentIdentityKey(s);
+      if (k && !byIdentity.has(k)) byIdentity.set(k, s);
+    }
+    const fresh: Shipment[] = [];
+    const patched = new Map<string, Shipment>();
+    for (const r of rows) {
+      const hit = byIdentity.get(shipmentIdentityKey(r));
+      if (!hit) { fresh.push(r); continue; }
+      const next: Shipment = { ...(patched.get(hit.id) || hit) };
+      let touched = false;
+      for (const f of ['customer', 'product', 'contractNumber', 'po', 'carrier', 'deliveryDate', 'location', 'time', 'bay'] as const) {
+        if (!String(next[f] ?? '').trim() && String(r[f] ?? '').trim()) {
+          (next as unknown as Record<string, unknown>)[f] = r[f];
+          touched = true;
+        }
+      }
+      if (!(next.qty > 0) && r.qty > 0) { next.qty = r.qty; touched = true; }
+      if (touched) patched.set(hit.id, next);
+    }
+    if (patched.size) {
+      const apply = (prev: Shipment[]) => prev.map(s => patched.get(s.id) || s);
+      setHamiltonShipments(apply);
+      setVancouverShipments(apply);
+      saveNow(COLLECTIONS.shipments, [...patched.values()]);
+    }
+    return fresh;
+  };
+
   // Books a shipment appointment for a freshly-created order using the add-order
   // inline scheduler fields — mirrors createOrderFromReview's appointment block.
   // No-op unless scheduling is enabled and a pick-up date (orderShipmentDate) is set.
@@ -1112,8 +1150,11 @@ export default function App() {
       ...(newOrder.deliveryDate ? { deliveryDate: newOrder.deliveryDate } : {}),
     }));
     const toHamilton = apptLoc.toLowerCase().includes('hamilton');
-    if (toHamilton) setHamiltonShipments(prev => [...prev, ...apptShipments]);
-    else setVancouverShipments(prev => [...prev, ...apptShipments]);
+    const fresh = fileAppointmentShipments(apptShipments);
+    if (fresh.length) {
+      if (toHamilton) setHamiltonShipments(prev => [...prev, ...fresh]);
+      else setVancouverShipments(prev => [...prev, ...fresh]);
+    }
     setScheduleLocation(toHamilton ? 'Hamilton' : 'Vancouver');
   };
 
@@ -2567,8 +2608,13 @@ export default function App() {
         location: apptLoc,
       }));
       const toHamilton = apptLoc.toLowerCase().includes('hamilton');
-      if (toHamilton) setHamiltonShipments(prev => [...prev, ...apptShipments]);
-      else setVancouverShipments(prev => [...prev, ...apptShipments]);
+      // A load the Sherman sync already filed under this BOL + date is filled in,
+      // not duplicated (fileAppointmentShipments saves that patch itself).
+      apptShipments = fileAppointmentShipments(apptShipments);
+      if (apptShipments.length) {
+        if (toHamilton) setHamiltonShipments(prev => [...prev, ...apptShipments]);
+        else setVancouverShipments(prev => [...prev, ...apptShipments]);
+      }
       setScheduleLocation(toHamilton ? 'Hamilton' : 'Vancouver');
     }
     // Remember the user's mappings so the next scan of this PO maps itself.
@@ -3111,8 +3157,10 @@ export default function App() {
     const bucketName = toHamilton ? 'Hamilton' : 'Vancouver';
     if (!time || !dateISO) return { status: 'unavailable', time: timeRaw || '', location: bucketName };
     const list = [...(toHamilton ? hamiltonShipments : vancouverShipments), ...extraBooked];
-    // Already booked for this BOL that day — nothing to do.
-    if ((order.bolNumber || '').trim() && list.some(s => (s.bol || '').trim() === order.bolNumber.trim() && s.date === dateISO)) {
+    // Already booked for this BOL that day — nothing to do. Checked across BOTH
+    // sites and ignoring spaces/punctuation/case (one row per load).
+    const ident = shipmentIdentityKey({ bol: order.bolNumber, date: dateISO });
+    if (ident && [...hamiltonShipments, ...vancouverShipments, ...extraBooked].some(s => shipmentIdentityKey(s) === ident)) {
       return { status: 'exists' };
     }
     const locationObj = locations.find(l => l.name.toLowerCase().includes(bucketName.toLowerCase()));
@@ -4955,6 +5003,9 @@ export default function App() {
         }
 
         const newShipments: Shipment[] = [];
+        // Ids that came FROM the CSV (an exported schedule). Rows without one get a
+        // generated id below, which must not count as an identity match.
+        const csvIds = new Set<string>();
         let skippedRows = 0;
         for (let i = 1; i < lines.length; i++) {
           const values = lines[i].split(',').map(v => v.trim());
@@ -4964,6 +5015,7 @@ export default function App() {
           });
 
           if (!entry.date) { skippedRows++; continue; }
+          if (entry.id) csvIds.add(entry.id);
 
           // Normalize date: accept M/D/YYYY, MM/DD/YYYY, YYYY-MM-DD
           let date = entry.date.trim();
@@ -5050,17 +5102,33 @@ export default function App() {
             const importSlots = new Set<string>();
             let newCount = 0;
             let updatedCount = 0;
+            // Lookup indexes over `working` (kept current as rows are added, so a
+            // repeated BOL + date later in the same file merges too).
+            const idIdx = new Map<string, number>();
+            const identIdx = new Map<string, number>();
+            working.forEach((ex, i) => {
+              idIdx.set(ex.id, i);
+              const k = shipmentIdentityKey(ex);
+              if (k && !identIdx.has(k)) identIdx.set(k, i);
+            });
             for (const s of incoming) {
               const slot = `${s.week}|${s.day}|${s.time}|${s.bay}`;
-              // Match existing shipments by STABLE identity (id, then BOL), not
-              // slot — two distinct shipments legitimately share a slot (multi-line
-              // orders, blank-slot stubs) and a rescheduled shipment changes slot.
+              // Match existing shipments by STABLE identity, not slot — two distinct
+              // shipments legitimately share a slot (multi-line orders, blank-slot
+              // stubs) and a rescheduled shipment changes slot:
+              //   1. the id the CSV carries (an exported schedule);
+              //   2. the BOL on the same date (BOL alone is reused across years).
               // Slot is only a last resort when the row has neither id nor BOL.
-              const sBol = (s.bol || '').trim().toUpperCase();
-              const existingIdx = working.findIndex(ex =>
-                (s.id && ex.id === s.id) ||
-                (!s.id && sBol && (ex.bol || '').trim().toUpperCase() === sBol) ||
-                (!s.id && !sBol && `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === slot));
+              // (Every row is GIVEN an id above, so "has an id" can't mean "came
+              // with one" — testing s.id here made the BOL match dead code and
+              // every re-import of an id-less CSV duplicated every row.)
+              const hasCsvId = csvIds.has(s.id);
+              const sIdent = shipmentIdentityKey(s);
+              let existingIdx = hasCsvId ? (idIdx.get(s.id) ?? -1) : -1;
+              if (existingIdx < 0 && sIdent) existingIdx = identIdx.get(sIdent) ?? -1;
+              if (existingIdx < 0 && !hasCsvId && !sIdent) {
+                existingIdx = working.findIndex(ex => !shipmentIdentityKey(ex) && `${ex.week}|${ex.day}|${ex.time}|${ex.bay}` === slot);
+              }
               if (existingIdx >= 0) {
                 const ex = working[existingIdx];
                 const mergedBol = s.bol || ex.bol;
@@ -5092,11 +5160,14 @@ export default function App() {
                 continue;
               }
               // Intra-batch dedup on identity too, so two distinct blank/same-slot
-              // rows in one file aren't collapsed into one.
-              const dedupKey = s.id || (sBol ? `BOL:${sBol}` : slot);
+              // rows in one file aren't collapsed into one. (Repeated BOL + date
+              // rows already merged above via identIdx.)
+              const dedupKey = hasCsvId ? s.id : (sIdent ? `BOL:${sIdent}` : `${s.id}|${slot}`);
               if (importSlots.has(dedupKey)) continue;
               importSlots.add(dedupKey);
               newCount++;
+              idIdx.set(s.id, working.length);
+              if (sIdent) identIdx.set(sIdent, working.length);
               working.push(s);
             }
             return { result: working, newCount, updatedCount };
@@ -10419,6 +10490,59 @@ export default function App() {
   const [isSyncingSchedule, setIsSyncingSchedule] = useState(false);
   // Hamilton (Sherman) dock-schedule sync — dedicated modal for the wide SHERMAN sheet.
   const [showHamiltonScheduleSync, setShowHamiltonScheduleSync] = useState(false);
+  // MANUAL cleanup of EXISTING duplicate shipments (Shipment Schedule toolbar
+  // "Remove Duplicates"). Rows sharing a BOL + date are one load: the plan keeps
+  // the best row, fills its blanks from the copies (lot codes unioned) and
+  // deletes the copies — only after the user reviews the preview. Never runs
+  // automatically. See planShipmentDedupe for what is held back.
+  const [shipmentDedupePreview, setShipmentDedupePreview] = useState<DedupePlan | null>(null);
+  const buildShipmentDedupePlan = (): DedupePlan => {
+    const t = (x?: string) => String(x || '').trim().toLowerCase();
+    // A bay that belongs to the row's location (any location when it has none)
+    // shows on the schedule grid — such a row is preferred as the survivor.
+    const validBay = (s: Shipment) => {
+      const b = t(s.bay);
+      if (!b) return false;
+      const loc = t(s.location);
+      const scoped = loc ? locations.filter(l => t(l.name) === loc) : [];
+      return (scoped.length ? scoped : locations).some(l => (l.bays || []).some(x => t(x) === b));
+    };
+    const invoicedIds = new Set<string>(invoices.map(i => i.shipmentId).filter((id): id is string => !!id));
+    return planShipmentDedupe([...hamiltonShipments, ...vancouverShipments], { validBay, invoicedIds });
+  };
+  const openShipmentDedupe = () => {
+    if (!user || !lastSynced) { setErrorBox('Wait for the data to finish loading before removing duplicates.'); return; }
+    setShipmentDedupePreview(buildShipmentDedupePlan());
+  };
+  const applyShipmentDedupe = () => {
+    const approved = shipmentDedupePreview;
+    if (!approved || !user || !lastSynced) return;
+    // Rebuild from the LIVE schedule so a row edited/synced since the preview is
+    // merged from its current version. If the set of rows to delete changed,
+    // show the new plan instead of deleting anything the user didn't review.
+    const plan = buildShipmentDedupePlan();
+    const approvedIds = new Set(approved.dropIds);
+    if (plan.dropIds.length !== approved.dropIds.length || plan.dropIds.some(id => !approvedIds.has(id))) {
+      setShipmentDedupePreview(plan);
+      setErrorBox('The schedule changed since this preview was built — review the updated plan and confirm again.');
+      return;
+    }
+    if (!plan.dropIds.length) { setShipmentDedupePreview(null); return; }
+    const dropSet = new Set(plan.dropIds);
+    const keepById = new Map(plan.changed.map(s => [s.id, s] as const));
+    // Merged survivors are saved first; the copies then go through the ledgered,
+    // tombstoned delete path (recordUserDeletes + deleteDocs) so no other open
+    // session can re-upload them — never a silent array prune.
+    if (plan.changed.length) saveNow(COLLECTIONS.shipments, plan.changed);
+    recordUserDeletes(COLLECTIONS.shipments, plan.dropIds);
+    const apply = (prev: Shipment[]) => prev.filter(s => !dropSet.has(s.id)).map(s => keepById.get(s.id) || s);
+    setHamiltonShipments(apply);
+    setVancouverShipments(apply);
+    setShipmentDedupePreview(null);
+    deleteDocs(COLLECTIONS.shipments, plan.dropIds)
+      .then(() => setSuccessBox(`Removed ${plan.dropIds.length.toLocaleString()} duplicate shipment row${plan.dropIds.length === 1 ? '' : 's'}; ${plan.changed.length.toLocaleString()} kept row${plan.changed.length === 1 ? ' was' : 's were'} filled in from ${plan.changed.length === 1 ? 'its' : 'their'} copies.`))
+      .catch(e => setErrorBox(`The duplicates are gone from this screen, but the server delete did not finish (${e instanceof Error ? e.message : String(e)}). It will retry with the next sync — keep this tab open until the sync badge is green.`));
+  };
   const applyHamiltonScheduleSync = (newShipments: Shipment[], updates: Array<{ id: string; patch: Partial<Shipment> }>) => {
     const patchById = new Map(updates.map(u => [u.id, u.patch] as const));
     // Functional update: merge onto the LIVE list so edits made while the modal
@@ -13754,6 +13878,11 @@ export default function App() {
             <button onClick={() => setShowHamiltonScheduleSync(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <RefreshCw size={12} /> Sync Sherman
+            </button>
+            <button onClick={openShipmentDedupe}
+              title="Find rows that share a BOL and date (the same load), preview the merge, then delete the copies"
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
+              <Trash2 size={12} /> Remove Duplicates
             </button>
             <button onClick={() => setIsAddingBatchShipment(true)}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
@@ -22970,6 +23099,110 @@ export default function App() {
           </div>
         )}
 
+        {/* Remove Duplicate Shipments — preview / confirm (nothing is deleted until Confirm) */}
+        {shipmentDedupePreview && (() => {
+          const plan = shipmentDedupePreview;
+          const heldRows = plan.held.reduce((n, h) => n + h.rows.length, 0);
+          const slotOf = (s: Shipment) => `${(s.bay || '').trim() || 'no bay'} · ${s.time || 'no time'}`;
+          const FIELD_LABEL: Record<string, string> = { lotNumbers: 'lot codes', lotNumber: 'lot #', scaledQty: 'scaled qty', qty: 'qty', deliveryDate: 'delivery date', contractNumber: 'contract', trailerNo: 'trailer', sealNumbers: 'seals', originOfGoods: 'origin' };
+          return (
+            <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-6xl w-full overflow-hidden my-8"
+              >
+                <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Trash2 size={14} /> Remove Duplicate Shipments — Preview</h3>
+                  <button onClick={() => setShipmentDedupePreview(null)} className="hover:opacity-70"><X size={16} /></button>
+                </div>
+                <div className="p-6 space-y-5 max-h-[72vh] overflow-y-auto text-xs">
+                  {plan.groups.length === 0 ? (
+                    <div className="text-center p-8 opacity-60 text-sm">No duplicate shipments — every BOL has one row per date.</div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-4 gap-3">
+                        {[
+                          ['Loads with copies', plan.groups.length],
+                          ['Rows to delete', plan.dropIds.length],
+                          ['Kept rows filled in', plan.changed.length],
+                          ['Left for review', `${plan.held.length} (${heldRows} rows)`],
+                        ].map(([label, v]) => (
+                          <div key={String(label)} className="border border-[#141414]/15 p-3">
+                            <div className="text-[10px] uppercase font-bold opacity-50">{label}</div>
+                            <div className="text-lg font-bold font-mono">{typeof v === 'number' ? v.toLocaleString() : v}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="opacity-70 leading-relaxed">
+                        Rows with the same BOL on the same date are one load (BOL compared without spaces, punctuation or case; BOLs with no digits such as "UNLOADED" are never matched, and different POs under one BOL stay separate).
+                        For each load the row on a real bay of its location is kept (then the most advanced status, then the most complete). Its blank fields are filled from the copies, lot codes and seals are combined,
+                        and a Completed / In Progress copy raises its status. The copies are then deleted for every user — nothing is deleted until you confirm.
+                      </p>
+                      <div className="border border-[#141414]/10 max-h-[38vh] overflow-y-auto">
+                        <table className="w-full">
+                          <thead className="bg-[#F5F5F5] sticky top-0">
+                            <tr>
+                              <th className="p-2 text-left font-bold">BOL</th>
+                              <th className="p-2 text-left font-bold">Date</th>
+                              <th className="p-2 text-left font-bold">Customer</th>
+                              <th className="p-2 text-left font-bold">Keep</th>
+                              <th className="p-2 text-left font-bold">Delete</th>
+                              <th className="p-2 text-left font-bold">Filled in</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {plan.groups.slice(0, 300).map(g => (
+                              <tr key={g.key} className="border-b border-[#141414]/5 align-top">
+                                <td className="p-2 font-mono font-bold">{g.bol}</td>
+                                <td className="p-2 font-mono whitespace-nowrap">{g.date}</td>
+                                <td className="p-2">{g.keep.customer || '—'}</td>
+                                <td className="p-2">{slotOf(g.keep)} · {g.keep.status || '—'}<div className="opacity-50">{g.keep.location || 'no location'}</div></td>
+                                <td className="p-2">{g.drop.length}× <span className="opacity-60">{Array.from(new Set(g.drop.map(slotOf))).slice(0, 3).join('; ')}</span></td>
+                                <td className="p-2 opacity-70">{g.filled.length ? g.filled.map(f => FIELD_LABEL[f] || f).join(', ') : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {plan.groups.length > 300 && <div className="p-2 text-center opacity-50">…and {(plan.groups.length - 300).toLocaleString()} more loads (newest first above)</div>}
+                      </div>
+                    </>
+                  )}
+                  {plan.held.length > 0 && (
+                    <div>
+                      <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Left alone — decide these yourself ({plan.held.length})</h4>
+                      <div className="border border-amber-300 bg-amber-50 max-h-48 overflow-y-auto">
+                        <table className="w-full">
+                          <tbody>
+                            {plan.held.slice(0, 200).map(h => (
+                              <tr key={h.key + h.reason} className="border-b border-amber-200/60 align-top">
+                                <td className="p-2 font-mono font-bold whitespace-nowrap">{h.rows[0]?.bol} · {h.rows[0]?.date}</td>
+                                <td className="p-2">{h.reason}</td>
+                                <td className="p-2 opacity-70">{h.rows.map(r => `${r.customer || '—'} (${r.status || 'no status'}, ${slotOf(r)})`).join('; ')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                  <button onClick={() => setShipmentDedupePreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                  <button
+                    disabled={plan.dropIds.length === 0}
+                    onClick={applyShipmentDedupe}
+                    className="px-4 py-2 bg-red-700 text-white text-[11px] font-bold uppercase hover:bg-red-800 disabled:opacity-40"
+                  >
+                    Delete {plan.dropIds.length.toLocaleString()} Duplicate Row{plan.dropIds.length === 1 ? '' : 's'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+
         {/* Invoice Sheet Sync — Preview / Confirm modal */}
         {invoiceSyncPreview && (
           <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
@@ -30360,10 +30593,17 @@ export default function App() {
                               }));
 
                               const saveToHamilton = shipmentCreationData.location.toLowerCase().includes('hamilton');
-                              if (saveToHamilton) {
-                                setHamiltonShipments([...hamiltonShipments, ...newShipments]);
+                              // One row per load: if this BOL already has a shipment on
+                              // that date, fill it in rather than adding a second row.
+                              const freshShipments = fileAppointmentShipments(newShipments);
+                              if (freshShipments.length === 0) {
+                                const ident = shipmentIdentityKey({ bol: order.bolNumber, date: shipmentCreationData.date });
+                                const ex = [...hamiltonShipments, ...vancouverShipments].find(s => shipmentIdentityKey(s) === ident);
+                                setSuccessBox(`BOL ${order.bolNumber} already has a shipment on ${shipmentCreationData.date}${ex ? ` (${(ex.bay || '').trim() || 'no bay'} at ${ex.time || 'no time'})` : ''} — filled in its missing details instead of adding a second row. Move it on the schedule if the slot should change.`);
+                              } else if (saveToHamilton) {
+                                setHamiltonShipments(prev => [...prev, ...freshShipments]);
                               } else {
-                                setVancouverShipments([...vancouverShipments, ...newShipments]);
+                                setVancouverShipments(prev => [...prev, ...freshShipments]);
                               }
                               // Show the scheduler tab the appointment was filed under so it's
                               // never invisible (an imported order whose origin isn't literally

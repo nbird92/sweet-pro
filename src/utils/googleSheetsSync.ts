@@ -10,6 +10,7 @@
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
 import type { Order, OrderLineItem, Shipment, Customer, SKU, QAProduct } from '../types';
+import { shipmentIdentityKey } from './shipmentDedupe';
 
 // Workbook containing the shipment schedule tabs the user wants imported.
 // Tabs of interest: FERGUSON (Hamilton (Ferguson)) and SHERMAN (Hamilton (Sherman)).
@@ -403,6 +404,9 @@ export function appointmentsToOrdersAndShipments(
   const shipmentKey = (s: { bol?: string; date?: string; time?: string; bay?: string }) =>
     `${(s.bol || '').trim().toUpperCase()}|${s.date || ''}|${s.time || ''}|${s.bay || ''}`;
   const existingShipmentKeys = new Set(existingShipments.map(s => shipmentKey(s)));
+  // One row per load: BOL + date (see shipmentIdentityKey) — the slot key above
+  // misses a load whose time/bay text was normalized after it was imported.
+  const existingIdentity = new Set(existingShipments.map(s => shipmentIdentityKey(s)).filter(Boolean));
 
   for (const appt of appointments) {
     try {
@@ -456,13 +460,16 @@ export function appointmentsToOrdersAndShipments(
       const shipKey = shipmentKey({
         bol: bolForLink, date: appt.date, time: appt.time, bay: appt.bay,
       });
-      if (existingShipmentKeys.has(shipKey)) {
+      const ident = shipmentIdentityKey({ bol: bolForLink, date: appt.date });
+      if (existingShipmentKeys.has(shipKey) || (ident && existingIdentity.has(ident))) {
         result.skipped.push({
           bolNumber: appt.bolNumber,
-          reason: 'Shipment already scheduled for this BOL/date/time/bay',
+          reason: 'Shipment already scheduled for this BOL on this date',
         });
         continue;
       }
+      existingShipmentKeys.add(shipKey);
+      if (ident) existingIdentity.add(ident);
       const newShipment: Shipment = {
         id: `SHIP-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         week: appt.week,

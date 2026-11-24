@@ -22,6 +22,7 @@ import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, 
 import { parseCSV } from './googleSheetsSync';
 import { poKey } from './poNumber';
 import { cleanLotCode, lotKey } from './lotCode';
+import { shipmentIdentityKey } from './shipmentDedupe';
 
 // Workbook containing the order tabs to import.
 export const ORDER_SHEET_ID = '1prdn1bw4roP-JamzaAhIVtZ7irw9ABWkjm2y0bm_NtM';
@@ -2314,11 +2315,14 @@ export function parsedRowsToShipmentsConfigured(
 
   const result: ShipmentSyncResult = { newShipments: [], skipped: [], errors: [] };
 
-  // Dedup: shipments are keyed on (bol + date + time + bay) so the same BOL
-  // can have multiple appointments at different docks/times without collision.
+  // Dedup: one row per load — a BOL on a date (shipmentIdentityKey) that already
+  // has a shipment is skipped, whatever its time/bay now say (the Sherman sync
+  // normalizes times and remaps bays, so a slot-based key re-created rows).
+  // The old exact-slot key still covers rows whose BOL can't be an identity.
   const shipmentKey = (s: { bol?: string; date?: string; time?: string; bay?: string }) =>
     `${(s.bol || '').trim().toUpperCase()}|${s.date || ''}|${s.time || ''}|${s.bay || ''}`;
   const existingKeys = new Set(existingShipments.map(s => shipmentKey(s)));
+  const existingIdentity = new Set(existingShipments.map(s => shipmentIdentityKey(s)).filter(Boolean));
   const addedKeys = new Set<string>();
 
   for (const r of parsed) {
@@ -2359,6 +2363,11 @@ export function parsedRowsToShipmentsConfigured(
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: 'Shipment already scheduled for this BOL/date/time/bay' });
         continue;
       }
+      const ident = shipmentIdentityKey({ bol: r.bolNumber, date: dateISO });
+      if (ident && existingIdentity.has(ident)) {
+        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, reason: `Already scheduled — this BOL already has a shipment on ${dateISO}` });
+        continue;
+      }
 
       const newShipment: Shipment = {
         id: `SHIP-IMPORT-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -2384,6 +2393,7 @@ export function parsedRowsToShipmentsConfigured(
 
       result.newShipments.push(stripUndefined(newShipment));
       addedKeys.add(candidateKey);
+      if (ident) existingIdentity.add(ident);
     } catch (err) {
       result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
     }
@@ -2566,6 +2576,11 @@ export function parseShipmentScheduleGrid(
   const key = (s: { bol?: string; date?: string; time?: string; bay?: string; location?: string; customer?: string; po?: string }) =>
     `${(s.location || '').toUpperCase()}|${(s.bay || '').toUpperCase()}|${s.date || ''}|${s.time || ''}|${(s.bol || '').toUpperCase()}|${(s.customer || '').toUpperCase()}|${(s.po || '').toUpperCase()}`;
   const existingKeys = new Set(ctx.existingShipments.map(s => key(s as any)));
+  // One row per load: a BOL that already has a shipment on that date is skipped
+  // even when its slot/bay/customer text differs (the full key above compares
+  // raw sheet text — "7:00" vs "07:00", sheet bay names vs app bays — which is
+  // how a re-run re-created ~2,300 rows the CSV import already held).
+  const existingIdentity = new Set(ctx.existingShipments.map(s => shipmentIdentityKey(s)).filter(Boolean));
   const addedKeys = new Set<string>();
 
   for (let r = fieldRowIdx + 1; r < grid.length; r++) {
@@ -2599,6 +2614,11 @@ export function parseShipmentScheduleGrid(
           result.skipped.push({ tab: opts.tabName, bolNumber: bol, reason: `Already scheduled — ${bay.name} ${dateISO} ${time}` });
           continue;
         }
+        const ident = shipmentIdentityKey({ bol, date: dateISO });
+        if (ident && existingIdentity.has(ident)) {
+          result.skipped.push({ tab: opts.tabName, bolNumber: bol, reason: `Already scheduled — this BOL already has a shipment on ${dateISO}` });
+          continue;
+        }
 
         const newShipment: Shipment = stripUndefined({
           id: `SHIP-SCHED-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -2621,6 +2641,7 @@ export function parseShipmentScheduleGrid(
         } as Shipment);
         result.newShipments.push(newShipment);
         addedKeys.add(k);
+        if (ident) existingIdentity.add(ident);
       } catch (err) {
         result.errors.push({ tab: opts.tabName, rowIdx: r + 1, message: err instanceof Error ? err.message : String(err) });
       }

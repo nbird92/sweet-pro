@@ -21,6 +21,7 @@
 
 import type { Customer, SKU, QAProduct, Carrier, Shipment, Invoice } from '../types';
 import { resolveCustomer, resolveCarrier, resolveProduct, stripUndefined } from './googleOrderSheetSync';
+import { shipmentBolKey, shipmentIdentityKey, daysBetween } from './shipmentDedupe';
 
 export const HAMILTON_SCHEDULE_SHEET_ID = '1pu359fHqjTzG8r8iBUv8zuroyOEZw_XxwWO-VsZtLRc';
 export const HAMILTON_SCHEDULE_TAB = 'SHERMAN';
@@ -297,12 +298,23 @@ const sameCustomer = (a: string, b: string) => {
   return !!x && !!y && (x === y || (x.length >= 4 && y.length >= 4 && (x.includes(y) || y.includes(x))));
 };
 
+/** A load the dock reschedules keeps its BOL; BOL numbers are also reused years
+ *  later, so a same-BOL match on a DIFFERENT date only reaches this far. */
+const BOL_RESCHEDULE_WINDOW_DAYS = 60;
+
 /**
  * Classify parsed rows against existing Sherman shipments.
  *  • bayMap: sheet bay name → app bay name ('' = skip that bay).
  *  • Rows outside [from, to] or on a skipped bay are dropped (counted in `excluded`).
  * Matching (first hit wins, each existing shipment matched at most once):
- *   1. same BOL;  2. same PO on the same date;  3. same slot (date+time+bay) and customer.
+ *   1. same BOL on the same date — against EVERY existing shipment passed in, not
+ *      just the Sherman pool (a load filed at Ferguson / with no location is the
+ *      same load, and is moved to Sherman rather than duplicated);
+ *   2. same BOL within BOL_RESCHEDULE_WINDOW_DAYS (a rescheduled load);
+ *   3. same PO on the same date;  4. same slot (date+time+bay) and customer.
+ * A second sheet row with the same BOL + date as an earlier one is 'unchanged'
+ * (one row per load) instead of a second new shipment. Placeholder BOLs without
+ * a digit ("UNLOADED", "ONHOLD") never match by BOL.
  * Scaled Qty (MT): when `invoices` is given, the invoiced weight for the row's BOL
  * (summed across split invoices) fills the shipment's scaledQty — on new rows,
  * and on matched rows whose scaledQty is still blank.
@@ -319,12 +331,18 @@ export function classifyScheduleRows(
     return appBaySet.has(s.bay);
   });
   const slotKey = (date: string, time: string, bay: string) => `${date}|${normalizeScheduleTime(time) || time}|${bay}`;
+  const poolIds = new Set(pool.map(s => s.id));
+  const byIdentity = new Map<string, Shipment[]>();
   const byBol = new Map<string, Shipment[]>();
   const byPoDate = new Map<string, Shipment[]>();
   const bySlot = new Map<string, Shipment>();
   const push = (m: Map<string, Shipment[]>, k: string, s: Shipment) => { if (!m.has(k)) m.set(k, []); m.get(k)!.push(s); };
+  for (const s of opts.existing) {
+    const ident = shipmentIdentityKey(s);
+    if (ident) push(byIdentity, ident, s);
+  }
   for (const s of pool) {
-    if (normKey(s.bol)) push(byBol, normKey(s.bol), s);
+    if (shipmentBolKey(s.bol)) push(byBol, shipmentBolKey(s.bol), s);
     if (normKey(s.po) && s.date) push(byPoDate, `${normKey(s.po)}|${s.date}`, s);
     if (s.date && s.bay) bySlot.set(slotKey(s.date, s.time, s.bay), s);
   }
@@ -342,6 +360,8 @@ export function classifyScheduleRows(
 
   const used = new Set<string>();
   const takenSlots = new Map<string, string>(); // slot → who holds it in this import
+  // BOL + date → the sheet row that already took that load in this import.
+  const handled = new Map<string, { sheetRow: number; shipment?: Shipment }>();
   const out: ClassifiedScheduleRow[] = [];
   let excluded = 0;
 
@@ -349,11 +369,26 @@ export function classifyScheduleRows(
     const appBay = opts.bayMap[r.sheetBay] || '';
     if (!appBay || (opts.from && r.date < opts.from) || (opts.to && r.date > opts.to)) { excluded++; continue; }
 
+    const ident = shipmentIdentityKey({ bol: r.bol, date: r.date });
+    const prior = ident ? handled.get(ident) : undefined;
+    if (prior) {
+      out.push({
+        ...r, appBay, kind: 'unchanged', changes: [], existing: prior.shipment,
+        note: `Same BOL and date as sheet row ${prior.sheetRow} — one row per load`,
+      });
+      continue;
+    }
+
     const free = (list?: Shipment[]) => (list || []).filter(s => !used.has(s.id));
     let match: Shipment | undefined;
-    if (normKey(r.bol)) {
-      const hits = free(byBol.get(normKey(r.bol)));
-      match = hits.find(s => s.date === r.date) || hits[0];
+    if (ident) {
+      const hits = free(byIdentity.get(ident));
+      match = hits.find(s => poolIds.has(s.id)) || hits[0];
+    }
+    if (!match && shipmentBolKey(r.bol)) {
+      match = free(byBol.get(shipmentBolKey(r.bol)))
+        .filter(s => s.date && daysBetween(s.date, r.date) <= BOL_RESCHEDULE_WINDOW_DAYS)
+        .sort((a, b) => daysBetween(a.date, r.date) - daysBetween(b.date, r.date))[0];
     }
     if (!match && normKey(r.po)) {
       const hits = free(byPoDate.get(`${normKey(r.po)}|${r.date}`));
@@ -366,6 +401,7 @@ export function classifyScheduleRows(
     const status = sheetStatus(r);
     if (match) {
       used.add(match.id);
+      if (ident) handled.set(ident, { sheetRow: r.sheetRow, shipment: match });
       const changes: ClassifiedScheduleRow['changes'] = [];
       const patch: Partial<Shipment> = {};
       const set = (field: keyof Shipment, to: string | number, from: string | number) => {
@@ -386,7 +422,10 @@ export function classifyScheduleRows(
       if (r.qty > 0 && !(match.qty > 0)) set('qty', r.qty, match.qty);
       const scaled = scaledFor(r.bol || match.bol);
       if (scaled > 0 && !(typeof match.scaledQty === 'number' && match.scaledQty > 0)) set('scaledQty', scaled, '');
+      // A same-BOL-same-date row filed elsewhere (Ferguson, or no location) is
+      // this Sherman load — move it here along with its bay.
       if (!(match.location || '').trim()) set('location', opts.location, '');
+      else if (!poolIds.has(match.id) && match.location !== opts.location) set('location', opts.location, match.location || '');
       const cur = (match.status || '').toLowerCase();
       if (cur !== 'cancelled' && (STATUS_RANK[status.toLowerCase()] ?? 0) > (STATUS_RANK[cur] ?? 0)) set('status', status, match.status);
 
@@ -426,6 +465,7 @@ export function classifyScheduleRows(
       notes: '',
       location: opts.location,
     } as Shipment);
+    if (ident) handled.set(ident, { sheetRow: r.sheetRow, shipment });
     if (blocker || heldByImport) {
       out.push({
         ...r, appBay, kind: 'conflict', changes: [], shipment, existing: blocker,
