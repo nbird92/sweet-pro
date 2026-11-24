@@ -4853,6 +4853,7 @@ export default function App() {
           const rawPriceUsdMt = rawCwtCell > 0
             ? Math.round(rawCwtCell * MT_TO_CWT * 100) / 100
             : (parseFloat(entry.rawpriceusdmt || entry.rawprice || '0') || 0);
+          const oceanFreightUsdMt = parseFloat(entry.oceanfreightusdmt || entry['ocean freight (usd/mt)'] || entry.oceanfreight || '0') || 0;
           const deliveredFreight = parseFloat(entry.deliveredfreight || entry.freight || '0') || 0;
           const exportDuty = parseFloat(entry.exportduty || entry.duty || '0') || 0;
           const palletCharge = parseFloat(entry.palletcharge || '0') || 0;
@@ -4894,6 +4895,7 @@ export default function App() {
               shippingTerms: shippingTerms || c.shippingTerms,
               fxRate: fxRate || c.fxRate,
               rawPriceUsdMt: rawPriceUsdMt || c.rawPriceUsdMt,
+              oceanFreightUsdMt: oceanFreightUsdMt || c.oceanFreightUsdMt,
               deliveredFreight: deliveredFreight || c.deliveredFreight,
               exportDuty: exportDuty || c.exportDuty,
               palletCharge: palletCharge || c.palletCharge,
@@ -4939,6 +4941,7 @@ export default function App() {
             shippingTerms: shippingTerms || undefined,
             fxRate: fxRate || undefined,
             rawPriceUsdMt: rawPriceUsdMt || undefined,
+            oceanFreightUsdMt: oceanFreightUsdMt || undefined,
             deliveredFreight: deliveredFreight || undefined,
             exportDuty: exportDuty || undefined,
             palletCharge: palletCharge || undefined,
@@ -12808,6 +12811,7 @@ export default function App() {
       shippingTerms: config.shippingTerms || '',
       fxRate: config.fxRate,
       rawPriceUsdMt: calculations.rawMtUsd,
+      oceanFreightUsdMt: config.oceanFreightUsdMt,
       deliveredFreight: calculations.deliveredFreight,
       exportDuty: calculations.exportDuty,
       palletCharge: calculations.palletCharge,
@@ -17633,7 +17637,7 @@ export default function App() {
       const contractsRemaining = filteredContracts.length - visibleContracts.length;
       const inactiveCount = contracts.filter(c => c.active === false).length;
 
-      const contractCsvHeaders = ['contractNumber', 'status', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
+      const contractCsvHeaders = ['contractNumber', 'status', 'customerNumber', 'customerName', 'itasName', 'contractDate', 'contractVolume', 'volumeTaken', 'startDate', 'endDate', 'skuName', 'origin', 'destination', 'Price/MT', 'currency', 'fxRate', 'rawPriceUsdMt', 'oceanFreightUsdMt', 'deliveredFreight', 'exportDuty', 'palletCharge', 'margin', 'shippingTerms', 'paymentTerms', 'palletType', 'notes'];
       const contractExportSheets = (): SheetSpec[] => [{
         sheetName: 'Contracts',
         title: 'Contract Management',
@@ -17653,6 +17657,7 @@ export default function App() {
           { header: 'Currency', key: 'currency' },
           { header: 'FX Rate', key: 'fxRate', format: 'number' },
           { header: 'Raws (USD/cwt)', key: 'rawsUsdCwt', format: 'number' },
+          { header: 'Ocean Freight (USD/MT)', key: 'oceanFreightUsdMt', format: 'number' },
           { header: 'Margin (CAD/MT)', key: 'margin', format: 'number' },
           { header: 'Shipping Terms', key: 'shippingTerms' },
           { header: 'Payment Terms', key: 'paymentTerms' },
@@ -25012,6 +25017,14 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Ocean Freight (USD/MT)</label>
+                    <DecimalInput
+                      value={editingContract.oceanFreightUsdMt}
+                      onValue={(v) => setEditingContract({ ...editingContract, oceanFreightUsdMt: v === undefined || v < 0 ? undefined : v })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
                     <DecimalInput
                       value={editingContract.deliveredFreight}
@@ -25384,10 +25397,15 @@ export default function App() {
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.exportDuty ? `$${fmtN(selectedContractDetail.exportDuty, 2)}/MT` : '—'}</td>
                       </tr>
                       <tr>
-                        <td className="px-4 py-2 opacity-70">Margin (CAD/MT)</td>
-                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.margin ? `$${fmtN(selectedContractDetail.margin, 2)}` : '—'}</td>
+                        <td className="px-4 py-2 opacity-70">Ocean Freight (USD/MT)</td>
+                        <td className="px-4 py-2 text-right font-bold">{typeof selectedContractDetail.oceanFreightUsdMt === 'number' ? `USD $${fmtN(selectedContractDetail.oceanFreightUsdMt, 2)}` : '—'}</td>
                         <td className="px-4 py-2 opacity-70">Pallet Charge</td>
                         <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.palletCharge ? `$${fmtN(selectedContractDetail.palletCharge, 2)}/MT` : '—'}</td>
+                      </tr>
+                      <tr className="bg-[#F9F9F9]">
+                        <td className="px-4 py-2 opacity-70">Margin (CAD/MT)</td>
+                        <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.margin ? `$${fmtN(selectedContractDetail.margin, 2)}` : '—'}</td>
+                        <td className="px-4 py-2" colSpan={2}></td>
                       </tr>
                       {/* Product differentials folded into the breakdown: each
                           contract line adjusts the base Final Price by its own

@@ -18,6 +18,7 @@ const FIELDS: Array<[keyof Contract, string, Kind]> = [
   ['finalPrice', 'Price/MT', 'money'],
   ['currency', 'Currency', 'text'],
   ['rawPriceUsdMt', 'Raw (USD/MT)', 'usdmt'],
+  ['oceanFreightUsdMt', 'Ocean Freight (USD/MT)', 'usdmt'],
   ['fxRate', 'FX', 'fx'],
   ['margin', 'Margin (CAD/MT)', 'money'],
   ['deliveredFreight', 'Delivered Freight (/MT)', 'money'],

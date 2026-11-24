@@ -327,6 +327,8 @@ export interface Contract {
   shippingTerms?: string;
   fxRate?: number;
   rawPriceUsdMt?: number;
+  /** Ocean freight on the raw sugar (USD/MT) — from the Customer Quote at booking. */
+  oceanFreightUsdMt?: number;
   deliveredFreight?: number;
   exportDuty?: number;
   palletCharge?: number;
