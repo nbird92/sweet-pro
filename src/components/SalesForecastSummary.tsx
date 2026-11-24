@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import type { Customer, CustomerForecast, FiscalYear, Invoice } from '../types';
 
 /* Dashboard: Sales vs Forecast & Budget for the current fiscal period and year.
@@ -153,14 +153,6 @@ export function salesForecastExportRows(d: SalesForecastSummaryData) {
   }));
 }
 
-/** Round up to a 1 / 2 / 2.5 / 5 × 10ⁿ step so the grid has clean labels. */
-const niceMax = (v: number) => {
-  if (v <= 0) return 1;
-  const p = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
-  return 10 * p;
-};
-
 /** Three bars on ONE scale (Sales, Forecast, Budget) with the value beside each. */
 function CompareBars({ rows }: { rows: { key: SeriesKey; label: string; value: number; missing?: string }[] }) {
   const max = Math.max(...rows.map((r) => r.value), 1);
@@ -198,7 +190,6 @@ export default function SalesForecastSummary({
     () => computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers),
     [invoices, customerForecasts, fiscalYears, customers],
   );
-  const [hover, setHover] = useState<number | null>(null);
 
   const card = 'bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]';
   if (!data) {
@@ -214,9 +205,6 @@ export default function SalesForecastSummary({
   const cur = curIdx >= 0 ? months[curIdx] : null;
   const noBudget = `No budget entered for ${fy.name}`;
   const noForecast = `No forecast entered for ${fy.name}`;
-  const chartMax = niceMax(Math.max(...months.flatMap((m) => [m.sales, m.forecast, m.budget]), 1));
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => t * chartMax);
-  const keys: SeriesKey[] = ['sales', 'forecast', 'budget'];
 
   return (
     <div className={card}>
@@ -226,7 +214,7 @@ export default function SalesForecastSummary({
       </div>
 
       {/* ── Period and year summaries ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 border-b border-[#141414]/10">
+      <div className="grid grid-cols-1 lg:grid-cols-2">
         <div className="p-5 lg:border-r border-[#141414]/10">
           <div className="flex items-baseline justify-between gap-2 mb-3">
             <h4 className="text-[11px] font-black uppercase tracking-widest">This Period{cur ? ` — ${cur.name}` : ''}</h4>
@@ -266,116 +254,6 @@ export default function SalesForecastSummary({
         </div>
       </div>
 
-      {/* ── Monthly chart: Sales | Forecast | Budget per fiscal period ── */}
-      <div className="p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <h4 className="text-[11px] font-black uppercase tracking-widest">By Period (MT)</h4>
-          <div className="flex gap-4 text-[10px]">
-            {keys.map((k) => (
-              <span key={k} className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-3 rounded-sm" style={{ background: SERIES[k].color }} />
-                {SERIES[k].label}{k === 'budget' && !data.hasBudget ? ' (none entered)' : ''}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="flex">
-          {/* y-axis labels */}
-          <div className="relative w-12 shrink-0" style={{ height: 200 }}>
-            {ticks.map((t) => (
-              <span key={t} className="absolute right-2 text-[9px] font-mono opacity-50" style={{ bottom: `${(t / chartMax) * 100}%`, transform: 'translateY(50%)' }}>
-                {t >= 1000 ? `${(t / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })}k` : Math.round(t).toLocaleString()}
-              </span>
-            ))}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="relative" style={{ height: 200 }}>
-              {ticks.map((t) => (
-                <div key={t} className={`absolute left-0 right-0 border-t ${t === 0 ? 'border-[#141414]/40' : 'border-[#141414]/10'}`} style={{ bottom: `${(t / chartMax) * 100}%` }} />
-              ))}
-              <div className="absolute inset-0 flex">
-                {months.map((m, i) => (
-                  <div
-                    key={m.name}
-                    className={`flex-1 relative flex items-end justify-center gap-[2px] px-[3px] ${i === curIdx ? 'bg-[#141414]/[0.05]' : ''} ${hover === i ? 'bg-[#141414]/[0.08]' : ''}`}
-                    onMouseEnter={() => setHover(i)}
-                    onMouseLeave={() => setHover((h) => (h === i ? null : h))}
-                  >
-                    {keys.map((k) => (
-                      <div
-                        key={k}
-                        className="rounded-t-[4px]"
-                        style={{ height: `${(m[k] / chartMax) * 100}%`, width: '28%', maxWidth: 16, background: SERIES[k].color }}
-                      />
-                    ))}
-                    {hover === i && (
-                      <div className={`absolute bottom-full mb-2 z-20 bg-[#141414] text-[#E4E3E0] px-3 py-2 text-[10px] shadow-lg pointer-events-none whitespace-nowrap ${i > months.length - 4 ? 'right-0' : i < 3 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
-                        <div className="font-bold mb-1">{m.name} · {fmtDate(m.start)} – {fmtDate(m.end)}{i === curIdx ? ' (current)' : ''}</div>
-                        {keys.map((k) => (
-                          <div key={k} className="flex items-center gap-2">
-                            <span className="inline-block w-2 h-2 rounded-sm" style={{ background: SERIES[k].color }} />
-                            <span className="w-14">{SERIES[k].label}</span>
-                            <span className="font-mono ml-auto">{m[k] > 0 ? fmtMt(m[k]) : '—'}</span>
-                          </div>
-                        ))}
-                        <div className="mt-1 opacity-70">Sales {pctOf(m.sales, m.forecast)} of forecast · {pctOf(m.sales, m.budget)} of budget</div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="flex mt-1">
-              {months.map((m, i) => (
-                <span key={m.name} className={`flex-1 text-center text-[9px] uppercase ${i === curIdx ? 'font-black' : 'font-bold opacity-50'}`}>
-                  {m.label}{i === curIdx ? ' ●' : ''}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Table view of the same numbers */}
-        <details className="mt-4">
-          <summary className="text-[10px] uppercase tracking-widest font-bold cursor-pointer select-none opacity-70 hover:opacity-100">Show as table</summary>
-          <div className="overflow-x-auto mt-2">
-            <table className="w-full text-left border-collapse std-table text-xs">
-              <thead>
-                <tr className="text-[10px] uppercase font-bold">
-                  <th className="p-2">Period</th>
-                  <th className="p-2">Dates</th>
-                  <th className="p-2 text-right">Sales (MT)</th>
-                  <th className="p-2 text-right">Forecast (MT)</th>
-                  <th className="p-2 text-right">Budget (MT)</th>
-                  <th className="p-2 text-right">% of Forecast</th>
-                  <th className="p-2 text-right">% of Budget</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#141414]/10">
-                {months.map((m, i) => (
-                  <tr key={m.name} className={i === curIdx ? 'bg-[#141414]/[0.04] font-bold' : ''}>
-                    <td className="p-2">{m.name}{i === curIdx ? ' (current)' : ''}</td>
-                    <td className="p-2 opacity-70">{fmtDate(m.start)} – {fmtDate(m.end)}</td>
-                    <td className="p-2 text-right font-mono">{m.sales > 0 ? Math.round(m.sales).toLocaleString() : '—'}</td>
-                    <td className="p-2 text-right font-mono">{m.forecast > 0 ? Math.round(m.forecast).toLocaleString() : '—'}</td>
-                    <td className="p-2 text-right font-mono">{m.budget > 0 ? Math.round(m.budget).toLocaleString() : '—'}</td>
-                    <td className="p-2 text-right font-mono">{pctOf(m.sales, m.forecast)}</td>
-                    <td className="p-2 text-right font-mono">{pctOf(m.sales, m.budget)}</td>
-                  </tr>
-                ))}
-                <tr className="bg-[#141414] text-[#E4E3E0] font-bold">
-                  <td className="p-2 uppercase tracking-wider" colSpan={2}>Year</td>
-                  <td className="p-2 text-right font-mono">{Math.round(data.salesYtd).toLocaleString()}</td>
-                  <td className="p-2 text-right font-mono">{data.hasForecast ? Math.round(data.forecastYear).toLocaleString() : '—'}</td>
-                  <td className="p-2 text-right font-mono">{data.hasBudget ? Math.round(data.budgetYear).toLocaleString() : '—'}</td>
-                  <td className="p-2 text-right font-mono">{pctOf(data.salesYtd, data.forecastYear)}</td>
-                  <td className="p-2 text-right font-mono">{pctOf(data.salesYtd, data.budgetYear)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </details>
-      </div>
     </div>
   );
 }
