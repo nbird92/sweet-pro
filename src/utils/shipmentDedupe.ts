@@ -109,6 +109,13 @@ const filledCount = (s: Shipment) => SCORE_FIELDS.reduce((n, f) => {
 }, 0);
 
 const sameCustomer = (a: string, b: string) => !a || !b || a === b || a.includes(b) || b.includes(a);
+/** "7:00" / "07:00" / "7:00 AM" → "07:00" ('' when unreadable). */
+const normTime = (t?: string | null) => {
+  const m = String(t ?? '').trim().match(/^(\d{1,2}):(\d{2})/);
+  return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '';
+};
+/** Rows created by the Sherman sync / schedule-grid sync (filed from a dock sheet). */
+const SHEET_ID = /^SHIP-(SHER|SCHED)-/;
 const sameText = (a?: string | null, b?: string | null) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
 const union = (lists: Array<string[] | undefined>): string[] => {
@@ -129,8 +136,10 @@ const union = (lists: Array<string[] | undefined>): string[] => {
  *    row must survive; two invoiced rows in one set are held for review.
  * Sets are left untouched (held) when the copies carry different POs with no way
  * to tell which blank-PO row belongs where, different customers, different
- * transfer links, two invoiced rows, or a Cancelled copy next to a still-open
- * one (cancelling may have been the user's own call — a person decides).
+ * transfer links, two invoiced rows, a Cancelled copy next to a still-open one
+ * (cancelling may have been the user's own call), different times on the same
+ * day, or a dock-sheet row beside an app-created one (the last two can be
+ * separate loads that the BOL reconcile made look identical) — a person decides.
  */
 export function planShipmentDedupe(
   shipments: Shipment[],
@@ -187,6 +196,22 @@ export function planShipmentDedupe(
       const maxRank = Math.max(...ranks);
       if (maxRank === 3 && ranks.some(r => r !== 3)) {
         plan.held.push({ key: set.key, reason: 'A Cancelled copy next to a Scheduled/Confirmed one', rows: grp });
+        continue;
+      }
+      // Separate loads can end up looking identical: the dock sheet sometimes
+      // numbers a load with a BOL the app gave a DIFFERENT order, and the load-time
+      // reconcile then copies that order's customer/PO onto the sheet's row
+      // (2026-11-24: FGF Locke 21:00 vs FGF Creditstone 17:00, both "B601059").
+      // So different times on the same day, or a sheet-filed row beside an
+      // app-created one, are left for a person.
+      const times = new Set(grp.map(r => normTime(r.time)).filter(Boolean));
+      if (times.size > 1) {
+        plan.held.push({ key: set.key, reason: 'Different times on the same day — may be separate loads', rows: grp });
+        continue;
+      }
+      const fromSheet = grp.filter(r => SHEET_ID.test(r.id));
+      if (fromSheet.length && fromSheet.length < grp.length) {
+        plan.held.push({ key: set.key, reason: 'A dock-sheet row beside an app-created row — may be separate loads', rows: grp });
         continue;
       }
 

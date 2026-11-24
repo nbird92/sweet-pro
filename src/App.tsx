@@ -23121,7 +23121,7 @@ export default function App() {
                         ))}
                       </div>
                       <p className="opacity-70 leading-relaxed">
-                        Rows with the same BOL on the same date are one load (BOL compared without spaces, punctuation or case; BOLs with no digits such as "UNLOADED" are never matched, and different POs under one BOL stay separate).
+                        Rows with the same BOL on the same date are one load (BOL compared without spaces, punctuation or case; BOLs with no digits such as "UNLOADED" are never matched; different POs under one BOL stay separate; rows at different times, or a dock-sheet row beside an app-created one, are left for you because they can be separate loads).
                         For each load the row on a real bay of its location is kept (then the most advanced status, then the most complete). Its blank fields are filled from the copies, lot codes and seals are combined,
                         and a Completed / In Progress copy raises its status. The copies are then deleted for every user — nothing is deleted until you confirm.
                       </p>
