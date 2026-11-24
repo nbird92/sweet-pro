@@ -5848,8 +5848,13 @@ export default function App() {
   //   1. a shipment already listing the lot number → fill the lot's blank
   //      BOL / Customer PO from that shipment;
   //   2. otherwise match the lot's Customer PO to an order or invoice PO (or its
-  //      BOL to an order/invoice BOL) → fill the lot's blank BOL / PO from it, and
-  //      add the lot number to the shipment with that BOL (or PO).
+  //      BOL to an order/invoice BOL) → fill the lot's blank BOL / PO from it;
+  //   3. EVERY shipment carrying the lot code's BOL gets the lot number — even
+  //      when the lot is already on another shipment (one lot often spans
+  //      several loads; that check used to skip 57 real BOL matches), and on
+  //      every duplicate row of that BOL. BOLs compare ignoring spaces /
+  //      punctuation / case. No BOL match → the PO's shipment, only when the lot
+  //      isn't placed anywhere yet (a PO can span several loads).
   // Fill-blanks / append-only, so it self-converges and never overwrites edits.
   useEffect(() => {
     if (!user || !lastSynced || !lotCodes.length) return;
@@ -5857,12 +5862,18 @@ export default function App() {
     if (!allShip.length && !orders.length && !invoices.length) return;
     const U = (v?: string) => (v || '').trim().toUpperCase();
     const lotsOf = (s: Shipment) => (s.lotNumbers && s.lotNumbers.length ? s.lotNumbers : (s.lotNumber ? [s.lotNumber] : []));
+    const BK = (v?: string) => (v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     const shipByLot = new Map<string, Shipment>();
     const shipByBol = new Map<string, Shipment>();
+    const shipsByBol = new Map<string, Shipment[]>(); // every row per BOL (duplicates included)
     const shipByPo = new Map<string, Shipment>();
     for (const sh of allShip) {
       for (const l of lotsOf(sh)) { const k = lotKey(l); if (k && !shipByLot.has(k)) shipByLot.set(k, sh); }
-      if (U(sh.bol) && !shipByBol.has(U(sh.bol))) shipByBol.set(U(sh.bol), sh);
+      const bk = BK(sh.bol);
+      if (bk) {
+        if (!shipByBol.has(bk)) shipByBol.set(bk, sh);
+        const arr = shipsByBol.get(bk) || []; arr.push(sh); shipsByBol.set(bk, arr);
+      }
       const pk = poKey(sh.po); if (pk && !shipByPo.has(pk)) shipByPo.set(pk, sh);
     }
     const docByPo = new Map<string, { bol: string; po: string }>();
@@ -5870,7 +5881,7 @@ export default function App() {
     for (const d of [...invoices.filter(i => i.status !== 'Cancelled'), ...orders.filter(o => o.status !== 'Cancelled')]) {
       const rec = { bol: (d.bolNumber || '').trim(), po: (d.po || '').trim() };
       const pk = poKey(d.po); if (pk && !docByPo.has(pk)) docByPo.set(pk, rec);
-      if (U(d.bolNumber) && !docByBol.has(U(d.bolNumber))) docByBol.set(U(d.bolNumber), rec);
+      if (BK(d.bolNumber) && !docByBol.has(BK(d.bolNumber))) docByBol.set(BK(d.bolNumber), rec);
     }
     const lotPatched: LotCode[] = [];
     const shipAdds = new Map<string, string[]>(); // shipment id → lots to append
@@ -5879,22 +5890,44 @@ export default function App() {
       if (!lot || lot === '-') continue;
       let bol = (lc.bolNumber || '').trim();
       let po = (lc.customerPo || '').trim();
-      let ship = shipByLot.get(lotKey(lot));
-      if (ship) {
-        if (!bol && ship.bol) bol = ship.bol.trim();
-        if (!po && ship.po) po = ship.po.trim();
+      const addTo = (sh: Shipment) => {
+        if (lotsOf(sh).some(l => sameLotCode(l, lot))) return;
+        const a = shipAdds.get(sh.id) || [];
+        if (!a.some(l => sameLotCode(l, lot))) a.push(lot);
+        shipAdds.set(sh.id, a);
+      };
+      const placed = shipByLot.get(lotKey(lot));
+      if (placed) {
+        if (!bol && placed.bol) bol = placed.bol.trim();
+        if (!po && placed.po) po = placed.po.trim();
       } else {
-        const doc = (po && docByPo.get(poKey(po))) || (bol && docByBol.get(U(bol))) || null;
+        const doc = (po && docByPo.get(poKey(po))) || (bol && docByBol.get(BK(bol))) || null;
         if (doc) {
           if (!bol && doc.bol) bol = doc.bol;
           if (!po && doc.po) po = doc.po;
         }
-        ship = (bol && shipByBol.get(U(bol))) || (po && shipByPo.get(poKey(po))) || undefined;
-        if (ship && !lotsOf(ship).some(l => sameLotCode(l, lot))) {
-          const a = shipAdds.get(ship.id) || [];
-          if (!a.some(l => sameLotCode(l, lot))) a.push(lot);
-          shipAdds.set(ship.id, a);
-        }
+      }
+      // Every shipment row carrying this BOL gets the lot — but only rows within
+      // 14 days of the lot's date: BOL numbers are reused across years, so a
+      // 2026 lot must never land on a 2024 load. (No usable lot date → only when
+      // every row of that BOL is the same day, i.e. one load.)
+      const dayNum = (v?: string): number => {
+        const t = (v || '').trim();
+        const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+        if (iso) return Date.UTC(+iso[1], +iso[2] - 1, +iso[3]) / 86400000;
+        const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(t);
+        if (us) { const y = +us[3] < 100 ? 2000 + +us[3] : +us[3]; return Date.UTC(y, +us[1] - 1, +us[2]) / 86400000; }
+        return NaN;
+      };
+      const lotDay = dayNum(lc.date);
+      const allBolShips = bol ? (shipsByBol.get(BK(bol)) || []) : [];
+      const bolShips = Number.isFinite(lotDay)
+        ? allBolShips.filter(sh => { const d = dayNum(sh.date); return Number.isFinite(d) && Math.abs(d - lotDay) <= 14; })
+        : (new Set(allBolShips.map(sh => sh.date)).size === 1 ? allBolShips : []);
+      if (bolShips.length) bolShips.forEach(addTo);
+      else if (!placed && po) {
+        const poShip = shipByPo.get(poKey(po));
+        if (poShip) addTo(poShip);
       }
       if (bol !== (lc.bolNumber || '').trim() || po !== (lc.customerPo || '').trim()) {
         lotPatched.push({ ...lc, bolNumber: bol, customerPo: po });
@@ -13875,7 +13908,7 @@ export default function App() {
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.po || sRes.po || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{s.bol || sRes.bolNumber || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.qty}</td>
-                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.scaledQty || '—'}</td>
+                                                        <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-mono">{typeof s.scaledQty === 'number' && s.scaledQty > 0 ? s.scaledQty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.carrier || sRes.carrier || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.trailerNo || sRes.trailerNo || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.arrive}</td>
@@ -24105,8 +24138,11 @@ export default function App() {
                         <label className="text-[10px] uppercase font-bold opacity-60">Scaled Qty (MT)</label>
                         <input
                           type="number"
+                          step="0.01"
                           value={editingShipment.scaledQty || ''}
                           onChange={(e) => setEditingShipment({...editingShipment, scaledQty: parseFloat(e.target.value) || undefined})}
+                          // Scaled quantities are kept to two decimals.
+                          onBlur={(e) => { const v = parseFloat(e.target.value); if (v > 0) setEditingShipment({ ...editingShipment, scaledQty: Math.round(v * 100) / 100 }); }}
                           className="w-full bg-[#F5F5F5] border border-[#141414] p-2 text-sm focus:outline-none"
                           placeholder="Scaled quantity"
                         />
