@@ -117,6 +117,7 @@ import ContractToolsModal, { type ContractToolMode } from './components/Contract
 import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
+import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
 import { fmtN } from './utils/fmt';
@@ -13449,29 +13450,6 @@ export default function App() {
         if (!i.excludeFromTolling) weeklyTotals[wk].tolling += qty * config.refiningMarginCadMt;
       });
 
-      // Volume by Product — invoiced weight per product SHORTFORM per week. Sum the
-      // invoice's line items (each by its shortform); an invoice with no lines falls
-      // back to its own product + qty.
-      const productVolume: { [week: string]: { [product: string]: number } } = {};
-      billedWeeklyInvoices.forEach(i => {
-        const wk = weekOfDate(i.date);
-        if (!wk) return;
-        if (!productVolume[wk]) productVolume[wk] = {};
-        const bucket = productVolume[wk];
-        const lines = i.lineItems || [];
-        if (lines.length) {
-          for (const li of lines) {
-            const name = lineItemToShortform(li) || productToShortform(li.productName) || li.productName || '(unknown)';
-            const w = li.totalWeight || 0;
-            if (!w) continue;
-            bucket[name] = (bucket[name] || 0) + w;
-          }
-        } else {
-          const name = productToShortform(i.product) || i.product || '(unknown)';
-          bucket[name] = (bucket[name] || 0) + (i.qty || 0);
-        }
-      });
-
       const sortedWeeks = Object.keys(weeklyTotals).sort((a, b) => {
         const aNum = parseInt(a.replace('Week ', ''));
         const bNum = parseInt(b.replace('Week ', ''));
@@ -13484,12 +13462,7 @@ export default function App() {
           volume: weeklyTotals[w].volume,
           tolling: weeklyTotals[w].tolling,
         }));
-        const productRows: Record<string, any>[] = [];
-        Object.keys(productVolume).sort().forEach(w => {
-          Object.keys(productVolume[w]).forEach(p => {
-            productRows.push({ week: w, product: p, volume: productVolume[w][p] });
-          });
-        });
+        const sf = computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers);
         return [
           {
             sheetName: 'Weekly Totals',
@@ -13502,17 +13475,21 @@ export default function App() {
             ],
             rows: weeklyRows,
           },
-          {
-            sheetName: 'Volume by Product',
-            title: 'Weekly Volume by Product',
-            subtitle: `${productRows.length} rows`,
+          ...(sf ? [{
+            sheetName: 'Sales vs Forecast',
+            title: `Sales vs Forecast & Budget — ${sf.fy.name}`,
+            subtitle: 'Sales = invoiced MT; Forecast & Budget from the Sales Forecast page',
             columns: [
-              { header: 'Week', key: 'week' },
-              { header: 'Product', key: 'product' },
-              { header: 'Volume (MT)', key: 'volume', format: 'number' },
+              { header: 'Period', key: 'period' },
+              { header: 'Dates', key: 'dates' },
+              { header: 'Sales (MT)', key: 'sales', format: 'number' as const },
+              { header: 'Forecast (MT)', key: 'forecast', format: 'number' as const },
+              { header: 'Budget (MT)', key: 'budget', format: 'number' as const },
+              { header: 'Sales % of Forecast', key: 'pctForecast', format: 'number' as const },
+              { header: 'Sales % of Budget', key: 'pctBudget', format: 'number' as const },
             ],
-            rows: productRows,
-          },
+            rows: salesForecastExportRows(sf),
+          }] : []),
         ];
       };
       return (
@@ -13534,6 +13511,9 @@ export default function App() {
             </button>
           </PageBanner>
           <div className="p-6 space-y-8">
+
+          {/* Sales vs Forecast & Budget — current period and fiscal year */}
+          <SalesForecastSummary invoices={invoices} customerForecasts={customerForecasts} fiscalYears={fiscalYears} customers={customers} />
 
           {/* Weekly Completed Totals Chart */}
           {sortedWeeks.length > 0 && (() => {
@@ -13583,7 +13563,7 @@ export default function App() {
             );
           })()}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
             {/* Weekly Totals Table */}
             <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
               <div className="bg-[#141414] text-[#E4E3E0] p-4">
@@ -13625,130 +13605,6 @@ export default function App() {
               </table>
             </div>
 
-            {/* Shipment Schedule Summary */}
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-x-auto">
-              <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Shipment Schedule</h3>
-              </div>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                    <th className="p-4">Date</th>
-                    <th className="p-4">Customer</th>
-                    <th className="p-4">Product</th>
-                    <th className="p-4">MT</th>
-                    <th className="p-4">Appointment</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {(() => {
-                    const today = new Date().toISOString().split('T')[0];
-                    // Upcoming appointments in the CURRENT calendar year only.
-                    const yearEnd = `${today.slice(0, 4)}-12-31`;
-                    const allShipments = [...hamiltonShipments, ...vancouverShipments]
-                      .filter(s => s.status !== 'Completed' && s.status !== 'Cancelled' && (s.date || '') >= today && (s.date || '') <= yearEnd)
-                      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-                    // Scheduler rows often carry a format placeholder ("Bulk") as
-                    // the product — show the real SHORTFORM name from the
-                    // BOL-linked order/invoice line items instead.
-                    const byBol = new Map<string, { lineItems?: OrderLineItem[]; product?: string; qty?: number }>();
-                    invoices.forEach(i => { const b = (i.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, i); });
-                    orders.forEach(o => { const b = (o.bolNumber || '').trim().toUpperCase(); if (b && !byBol.has(b)) byBol.set(b, o); });
-                    const fmtOnlyRe = /^(bulk|bag|bagged|tote|totes|liquid)$/i;
-                    // A format word is NOT a product name — resolving it would
-                    // guess a catalog product (it used to format-match the MOL
-                    // SKU, stamping molasses on every bulk granulated shipment).
-                    const safeShort = (name?: string): string => {
-                      const n = (name || '').trim();
-                      if (!n || fmtOnlyRe.test(n)) return '';
-                      return productToShortform(n) || n;
-                    };
-                    const prodLabel = (s: Shipment): string => {
-                      const raw = (s.product || '').trim();
-                      const fmtOnly = fmtOnlyRe.test(raw);
-                      if (fmtOnly || !raw) {
-                        const rec = byBol.get((s.bol || '').trim().toUpperCase());
-                        if (rec) {
-                          const names = Array.from(new Set((rec.lineItems || []).map(li => safeShort(li.productName)).filter(Boolean)));
-                          if (names.length) return names.join(', ');
-                          const headline = safeShort(rec.product);
-                          if (headline) return headline;
-                        }
-                      }
-                      if (!raw) return '—';
-                      // A bare format word stays as-is — a shortform guess would
-                      // name a product that may not be on the truck.
-                      return fmtOnly ? raw : (productToShortform(raw) || raw);
-                    };
-                    // Scheduler rows book bulk loads as qty 1 (a truck count, not
-                    // tonnage) — show the real MT from the BOL-linked document.
-                    const mtLabel = (s: Shipment): string | number => {
-                      const rec = byBol.get((s.bol || '').trim().toUpperCase());
-                      if (rec) {
-                        const mt = (rec.lineItems || []).reduce((sum, li) => sum + (li.totalWeight > 0 ? li.totalWeight : 0), 0)
-                          || (typeof rec.qty === 'number' && rec.qty > 0 ? rec.qty : 0);
-                        if (mt > 0) return mt.toLocaleString(undefined, { maximumFractionDigits: 1 });
-                      }
-                      return s.qty;
-                    };
-                    if (allShipments.length === 0) return (
-                      <tr>
-                        <td colSpan={5} className="p-6 text-center text-xs opacity-50 italic">No upcoming shipments.</td>
-                      </tr>
-                    );
-                    return allShipments.slice(0, 20).map(s => (
-                      <tr key={s.id} className="hover:bg-[#F9F9F9]">
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{s.date || '—'}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{s.customer || '—'}</td>
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{prodLabel(s)}</td>
-                        <td className="p-4 text-xs font-bold border-r border-[#141414]/10">{mtLabel(s)}</td>
-                        <td className="p-4 text-xs">{s.time || '—'}</td>
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Volume by Product */}
-            <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] lg:col-span-2 overflow-hidden">
-              <div className="bg-[#141414] text-[#E4E3E0] p-4">
-                <h3 className="text-xs font-bold uppercase tracking-widest">Weekly Volume by Product (MT) — {new Date().getFullYear()}</h3>
-              </div>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-[#F5F5F5] text-[10px] uppercase font-bold border-b border-[#141414]">
-                    <th className="p-4">Week</th>
-                    <th className="p-4">Product</th>
-                    <th className="p-4">Volume (MT)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#141414]/10">
-                  {/* sortedWeeks includes zero-seeded quiet weeks that have no
-                      productVolume entry — guard with || {} (Object.entries on
-                      undefined threw "Cannot convert undefined or null to object"
-                      during load, flashing the page-error fallback). */}
-                  {sortedWeeks.flatMap(week =>
-                    Object.entries(productVolume[week] || {}).map(([prod, vol], i) => (
-                      <tr key={`${week}-${prod}`} className="hover:bg-[#F9F9F9]">
-                        {i === 0 ? (
-                          <td className="p-4 text-xs font-bold border-r border-[#141414]/10" rowSpan={Object.keys(productVolume[week] || {}).length}>
-                            {week}
-                          </td>
-                        ) : null}
-                        <td className="p-4 text-xs border-r border-[#141414]/10">{prod}</td>
-                        <td className="p-4 text-xs font-bold">{vol.toLocaleString()} MT</td>
-                      </tr>
-                    ))
-                  )}
-                  {sortedWeeks.length === 0 && (
-                    <tr>
-                      <td colSpan={3} className="p-6 text-center text-xs opacity-50 italic">No data available.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
           </div>
           </div>
         </div>
