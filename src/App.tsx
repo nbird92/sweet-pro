@@ -7904,10 +7904,17 @@ export default function App() {
         lastSyncedData.current.carriers = JSON.stringify(data.carriers);
       }
       if (data.shipments?.length) {
-        const mapped = data.shipments.map((s: any) => ({
-          ...s,
-          qty: parseFloat(s.qty) || 0
-        }));
+        // Scaled quantities are kept to two decimals (rounded on load, so every
+        // save carries the rounded value — and the fix-up below persists it).
+        const roundedIds = new Set<string>();
+        const mapped = data.shipments.map((s: any) => {
+          const out = { ...s, qty: parseFloat(s.qty) || 0 };
+          if (typeof s.scaledQty === 'number' && s.scaledQty > 0) {
+            const r = Math.round(s.scaledQty * 100) / 100;
+            if (r !== s.scaledQty) { out.scaledQty = r; if (s.id) roundedIds.add(s.id); }
+          }
+          return out;
+        });
         // Split shipments by location using bay names from location data
         const locs = data.locations?.length ? data.locations : [];
         const vancLoc = locs.find((l: any) => l.name?.toLowerCase().includes('vancouver'));
@@ -7986,6 +7993,7 @@ export default function App() {
         if (totalRemoved > 0 || reconciled > 0) {
           if (totalRemoved > 0) console.log(`Removed ${totalRemoved} duplicate shipment(s)`);
           if (reconciled > 0) console.log(`Reconciled ${reconciled} shipment(s) with their invoice/order`);
+          if (roundedIds.size > 0) console.log(`Rounded Scaled Qty to 2 decimals on ${roundedIds.size} shipment(s)`);
           syncCollection(COLLECTIONS.shipments, dedupAll).then(() => {
             lastSyncedData.current.shipments = JSON.stringify(dedupAll);
             setSyncStatus('synced');
@@ -7993,6 +8001,15 @@ export default function App() {
           }).catch(e => console.error('Shipment dedup sync failed:', e));
         } else {
           lastSyncedData.current.shipments = JSON.stringify(dedupAll);
+          // Only rounding changed: write just those shipments (not all ~13k).
+          // If it fails, they're simply rounded again on the next load.
+          if (roundedIds.size > 0) {
+            const roundedDocs = dedupAll.filter((s: any) => roundedIds.has(s.id));
+            console.log(`Rounded Scaled Qty to 2 decimals on ${roundedDocs.length} shipment(s)`);
+            restSyncCollection(COLLECTIONS.shipments, roundedDocs as unknown as Array<{ id: string } & Record<string, unknown>>, [])
+              .then(res => { if (!res.ok) console.error('Scaled Qty rounding save failed:', res.firstError); })
+              .catch(e => console.error('Scaled Qty rounding save failed:', e));
+          }
         }
       }
       if (data.locations?.length) {
