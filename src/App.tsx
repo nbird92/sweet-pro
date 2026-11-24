@@ -8737,6 +8737,17 @@ export default function App() {
           `explicitly deleted this session — NOT deleting them from Firestore. They remain on the server and ` +
           `will reload next session. (Prevents load races / cache fallbacks from becoming data loss.)`,
         );
+        // ...and KEEP THEM IN THE BASELINE. They are still on the server, so
+        // the baseline must still list them. Advancing to a snapshot without
+        // them made the NEXT pass see every one as new and re-push the whole
+        // collection from this tab's copy: a fresh load whose first pass ran
+        // before the loaded arrays reached state "saved" empty tables, then
+        // rewrote ~25k full documents (73s), overwriting anything other users
+        // or field-level fixes had saved since this tab read the data.
+        for (const id of blockedDeletes) {
+          const prev = baseline.get(id);
+          if (prev !== undefined) nextDocMap.set(id, prev);
+        }
       }
       // Advance the baseline to the just-pushed snapshot. Shared by the SDK
       // success path, the SDK late-ack, and the REST fallback — whichever
