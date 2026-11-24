@@ -173,6 +173,12 @@ export interface SavedQuote {
   perUnitPrice?: number;
   /** Per-product prices: base + each product's differential. */
   productLines?: Array<{ product: string; productKey?: string; productName?: string; differentialCadMt: number; finalPriceMt: number; perUnit?: number }>;
+  /** Customer Quote inputs at save time — everything except the live #11 raw
+   *  price and FX. Book Contract restores the quote page from these. */
+  inputs?: {
+    config: Partial<CommodityConfig>;
+    products?: Array<{ key: string; value: string; label: string; differentialCadMt: number }>;
+  };
 }
 
 export interface CustomerImportRules {

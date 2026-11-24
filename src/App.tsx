@@ -12880,6 +12880,15 @@ export default function App() {
       })),
     };
     if (!quote.productLines?.length) delete quote.productLines;
+    // Input snapshot for Book Contract (JSON round-trip drops undefined values,
+    // which Firestore rejects). Live market values are left out on purpose.
+    {
+      const { rawPriceUsdCwt: _raw, fxRate: _fx, ...inputConfig } = config;
+      quote.inputs = JSON.parse(JSON.stringify({
+        config: inputConfig,
+        products: config.isAddProduct ? quoteProducts.filter(pp => pp.key).map(({ key, value, label, differentialCadMt }) => ({ key, value, label, differentialCadMt })) : [],
+      }));
+    }
     // Firestore rejects undefined values — drop them.
     (Object.keys(quote) as (keyof SavedQuote)[]).forEach(k => { if (quote[k] === undefined) delete quote[k]; });
     if (lead) {
@@ -12894,6 +12903,81 @@ export default function App() {
     }
     setQuoteSavedFlash(true);
     window.setTimeout(() => setQuoteSavedFlash(false), 2500);
+  };
+
+  // Book Contract (customer card → Quotes tab): open the Customer Quote page
+  // pre-filled from a saved quote. Every field comes from the quote EXCEPT the
+  // live market data — Raw Sugar (#11) and FX stay on today's live values (the
+  // market effect re-prices them for the quote's contract months). Quotes saved
+  // before the input snapshot existed are rebuilt from their stored build-up.
+  const [quoteLoadedFrom, setQuoteLoadedFrom] = useState<{ customer: string; savedAt: string; savedBy?: string; product: string; periodNote?: string } | null>(null);
+  const bookContractFromQuote = (cust: Customer, q: SavedQuote) => {
+    const fx = q.fxRate || config.fxRate || 1;
+    const isUsd = (q.currency || '').toUpperCase() === 'USD';
+    const toCad = (v: number) => (isUsd ? v * fx : v);
+    let restored: Partial<CommodityConfig>;
+    let products: Array<{ key: string; value: string; label: string; differentialCadMt: number }>;
+    if (q.inputs?.config) {
+      restored = { ...q.inputs.config };
+      products = (q.inputs.products || []).filter(p => p.key);
+    } else {
+      const isDelivered = !!q.isDelivered;
+      const volPerLoad = q.volumePerLoadMt || config.volumePerLoadMt || 1;
+      const exportDuty = q.exportDuty || 0;
+      const palletCharge = q.palletCharge || 0;
+      restored = {
+        origin: q.origin as CommodityConfig['origin'],
+        isDelivered,
+        ...(q.destination ? { destination: q.destination } : {}),
+        shippingTerms: q.shippingTerms || '',
+        volumeMt: q.volumeMt || config.volumeMt,
+        currency: isUsd ? 'USD' : 'CAD',
+        ...(q.marginCadMt != null ? { refiningMarginCadMt: q.marginCadMt } : {}),
+        paymentTerms: q.paymentTerms,
+        ...(q.oceanFreightUsdMt != null ? { oceanFreightUsdMt: q.oceanFreightUsdMt } : {}),
+        ...(q.yieldLossMultiplier != null ? { yieldLossMultiplier: q.yieldLossMultiplier } : {}),
+        sugarLossPct: q.sugarLossPct || 0,
+        freightType: (q.freightType || '') as CommodityConfig['freightType'],
+        volumePerLoadMt: volPerLoad,
+        isExport: exportDuty > 0,
+        ...(exportDuty > 0 ? { exportDutyUsdMt: Math.round((isUsd ? exportDuty : exportDuty / fx) * 100) / 100 } : {}),
+        isPalletCharge: palletCharge > 0 || !!q.palletType,
+        palletType: (q.palletType || '') as CommodityConfig['palletType'],
+        ...(palletCharge > 0 ? { palletCostCadMt: Math.round(toCad(palletCharge) * 100) / 100 } : q.palletType ? { palletCostCadMt: 0 } : {}),
+        contractStartDate: q.startDate || config.contractStartDate,
+        contractEndDate: q.endDate || config.contractEndDate,
+      };
+      // Delivered freight: the rate table reproduces it when a rate matches at
+      // the same $/MT; otherwise restore the quote's figure as a manual total.
+      if (isDelivered && (q.deliveredFreight || 0) > 0) {
+        const perMtCad = toCad(q.deliveredFreight!);
+        const rate = freightRates.find(r => r.origin === restored.origin && r.destination === restored.destination
+          && (restored.freightType ? r.freightType === restored.freightType : true));
+        if (!rate || Math.abs(rate.cost / volPerLoad - perMtCad) > 0.01) {
+          restored.useManualFreight = true;
+          restored.freightCostTotalCad = Math.round(perMtCad * volPerLoad * 100) / 100;
+        } else {
+          restored.useManualFreight = false;
+        }
+      }
+      products = (q.productLines || []).filter(pl => pl.productKey).map(pl => ({
+        key: pl.productKey!, value: pl.productName || pl.product, label: pl.product, differentialCadMt: pl.differentialCadMt || 0,
+      }));
+      restored.isAddProduct = products.length > 0;
+    }
+    delete restored.rawPriceUsdCwt;
+    delete restored.fxRate;
+    const months = new Set(contractMonthOptions.map(o => o.value));
+    const s0 = restored.contractStartDate, e0 = restored.contractEndDate;
+    const periodNote = (s0 && !months.has(s0)) || (e0 && !months.has(e0))
+      ? `The quote's contract period (${s0 || '?'} to ${e0 || '?'}) includes months that are no longer on the #11 market board. Pick a new Contract Start / End so raw sugar is priced on live months.`
+      : undefined;
+    setCustomer(cust.name);
+    setConfig(prev => ({ ...prev, ...restored, rawPriceUsdCwt: prev.rawPriceUsdCwt, fxRate: prev.fxRate }));
+    setQuoteProducts(products.map((p, i) => ({ id: `QP-${Date.now()}-${i}`, ...p })));
+    setQuoteLoadedFrom({ customer: cust.name, savedAt: q.savedAt, savedBy: q.savedBy, product: q.product, periodNote });
+    setSummaryCustomer(null);
+    setActivePage('Customer Quote');
   };
 
   // Per-contract volume roll-ups, computed ONCE per data change instead of inside
@@ -18835,6 +18919,19 @@ export default function App() {
         {/* Input Section — the wider column (inputs need the room; the
             breakdown is a narrow label/value list). */}
         <div className="lg:col-span-7 space-y-4">
+          {quoteLoadedFrom && quoteLoadedFrom.customer === customer && (
+            <div className="bg-emerald-50 border border-emerald-700 p-3 text-xs flex items-start gap-3">
+              <div className="flex-1 space-y-1">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-emerald-800">Booking a contract from a saved quote</div>
+                <div>
+                  {quoteLoadedFrom.product} · saved {new Date(quoteLoadedFrom.savedAt).toLocaleDateString()}{quoteLoadedFrom.savedBy ? ` by ${quoteLoadedFrom.savedBy}` : ''}.
+                  {' '}Every field is filled from the quote except Raw Sugar (#11) and FX, which use today's live market. Review it, then click Create Contract.
+                </div>
+                {quoteLoadedFrom.periodNote && <div className="text-amber-800 font-bold">{quoteLoadedFrom.periodNote}</div>}
+              </div>
+              <button onClick={() => setQuoteLoadedFrom(null)} className="p-1 hover:bg-emerald-100" title="Dismiss"><X size={12} /></button>
+            </div>
+          )}
           <section className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
             <h2 className="text-xs font-bold uppercase mb-6 flex items-center gap-2 border-b border-[#141414] pb-2">
               <Users size={14} /> Customer Selection
@@ -26215,6 +26312,7 @@ export default function App() {
             toShortform={productToShortform}
             onEdit={() => { const c = customers.find(x => x.id === summaryCustomer.id) || summaryCustomer; setSummaryCustomer(null); setEditingCustomer(c); }}
             onOpenContract={(ct) => { setSummaryCustomer(null); setActivePage('Contracts'); setSelectedContractDetail(ct); }}
+            onBookContract={(q) => bookContractFromQuote(customers.find(x => x.id === summaryCustomer.id) || summaryCustomer, q)}
             onDeleteQuote={(qid) => {
               const c = customers.find(x => x.id === summaryCustomer.id);
               if (!c) return;

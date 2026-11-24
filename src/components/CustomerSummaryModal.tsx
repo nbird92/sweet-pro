@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import CustomerContractsTable from './CustomerContractsTable';
 import CustomerSalesByMonth, { MonthMatrix } from './CustomerSalesByMonth';
-import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2 } from 'lucide-react';
-import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup } from '../types';
+import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, ExternalLink, Trash2, FileSignature } from 'lucide-react';
+import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup, SavedQuote } from '../types';
 import { fmtN } from '../utils/fmt';
 import SavedQuoteBreakdown from './SavedQuoteBreakdown';
 
@@ -22,6 +22,8 @@ interface Props {
   onEdit: () => void;
   onOpenContract: (c: Contract) => void;
   onDeleteQuote: (quoteId: string) => void;
+  /** Open the Customer Quote page pre-filled from this quote. */
+  onBookContract?: (quote: SavedQuote) => void;
   onClose: () => void;
 }
 
@@ -49,7 +51,7 @@ const Stat = ({ label, value, sub }: { label: string; value: string; sub?: strin
   </div>
 );
 
-export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onClose }: Props) {
+export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onBookContract, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('details');
   const [openQuoteId, setOpenQuoteId] = useState<string | null>(null);
   const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
@@ -303,7 +305,20 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                       <td className="p-2 font-mono text-right font-bold whitespace-nowrap">{q.currency} {fmtN((q.finalPriceMt || 0), 2)}</td>
                       <td className="p-2 font-mono text-right whitespace-nowrap">{q.currency} {(q.totalValue || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                       <td className="p-2 whitespace-nowrap">{q.startDate || q.endDate ? `${fmtDate(q.startDate)} – ${fmtDate(q.endDate)}` : '—'}</td>
-                      <td className="p-2"><button onClick={(e) => { e.stopPropagation(); if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button></td>
+                      <td className="p-2">
+                        <div className="flex items-center gap-1 justify-end">
+                          {onBookContract && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onBookContract(q); }}
+                              className="px-2 py-1 bg-[#141414] text-[#E4E3E0] text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 whitespace-nowrap hover:bg-[#333]"
+                              title="Open the Customer Quote page filled in from this quote (live #11 and FX) to create the contract"
+                            >
+                              <FileSignature size={11} /> Book Contract
+                            </button>
+                          )}
+                          <button onClick={(e) => { e.stopPropagation(); if (window.confirm('Delete this saved quote?')) onDeleteQuote(q.id); }} className="p-1 hover:bg-red-500 hover:text-white" title="Delete quote"><Trash2 size={12} /></button>
+                        </div>
+                      </td>
                     </tr>
                     {openQuoteId === q.id && (
                       <tr><td colSpan={13} className="p-0"><SavedQuoteBreakdown q={q} /></td></tr>
