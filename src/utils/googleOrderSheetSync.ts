@@ -1052,6 +1052,13 @@ export interface ColumnMap {
   tempLoadingBay?: number;
   atmosphericTemp?: number;
   sugarLumpsGrams?: number;
+  /** Contract-sheet columns (Sync Contracts — see contractSheetSync.ts).
+   *  Customer, Contract # and Price reuse `customer` / `contractNumber` / `pricePerMt`. */
+  originalQty?: number;
+  adjustedQty?: number;
+  currency?: number;
+  shippingTerms?: number;
+  paymentTerms?: number;
 }
 
 export interface ConfiguredTab {

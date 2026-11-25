@@ -60,7 +60,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     // The sheet isn't shared with the service account.
     if (/permission|not have access|forbidden|the caller does not have/i.test(msg)) {
-      return res.status(403).json({ error: `The service account can't open this sheet. Share it with the service account email (GOOGLE_SERVICE_ACCOUNT_EMAIL) as a Viewer or Editor. (${msg})` });
+      return res.status(403).json({ error: `The service account can't open this sheet. Share it with the service account ${process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '(GOOGLE_SERVICE_ACCOUNT_EMAIL)'} as a Viewer or Editor. (${msg})` });
     }
     // Bad range usually means the tab name doesn't match.
     if (/unable to parse range|range/i.test(msg)) {

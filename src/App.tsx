@@ -119,6 +119,7 @@ import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
+import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
 import { contractEndDate, contractCreatedDate, contractStartDate, longDate } from './utils/contractDates';
@@ -10570,7 +10571,7 @@ export default function App() {
   const [orderSyncError, setOrderSyncError] = useState<string | null>(null);
   // Configurable sync UI — same modal serves Orders, Invoices, Shipments, Transfers,
   // and Lot Codes. syncMode tracks which mode the modal is in; null means closed.
-  type SyncMode = 'orders' | 'invoices' | 'shipments' | 'transfers' | 'lotCodes';
+  type SyncMode = 'orders' | 'invoices' | 'shipments' | 'transfers' | 'lotCodes' | 'contracts';
   const [syncMode, setSyncMode] = useState<SyncMode | null>(null);
   const isConfiguringOrderSync = syncMode !== null;
   const [orderSyncConfig, setOrderSyncConfig] = useState<SheetImportConfig>(DEFAULT_ORDER_IMPORT_CONFIG);
@@ -10714,6 +10715,15 @@ export default function App() {
       return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
     } catch { return []; }
   });
+  // Contract-sync state (ITAS contract list sheet; separate preset store)
+  const [isSyncingContractSheet, setIsSyncingContractSheet] = useState(false);
+  const [contractSyncPreview, setContractSyncPreview] = useState<ContractSyncResult | null>(null);
+  const [contractSyncPresets, setContractSyncPresets] = useState<SheetImportConfig[]>(() => {
+    try {
+      const raw = localStorage.getItem('contractImportPresets');
+      return raw ? JSON.parse(raw) as SheetImportConfig[] : [];
+    } catch { return []; }
+  });
 
   // ── Shared import presets (appStatus/importPresets) ─────────────────────
   // Presets used to live only in this browser's localStorage, so another
@@ -10726,7 +10736,7 @@ export default function App() {
   const [importSettingsBump, setImportSettingsBump] = useState(0);
   const collectImportSettings = (): ImportSettings => ({
     orders: orderSyncPresets, invoices: invoiceSyncPresets, shipments: shipmentSyncPresets,
-    transfers: transferSyncPresets, lotCodes: lotCodeSyncPresets,
+    transfers: transferSyncPresets, lotCodes: lotCodeSyncPresets, contracts: contractSyncPresets,
     hamiltonBayMap: loadHamiltonBayMap(),
     ...(hasSavedHamiltonSource() ? { hamiltonSource: loadHamiltonSource() } : {}),
   });
@@ -10744,11 +10754,13 @@ export default function App() {
         shipments: pick(remote?.shipments, shipmentSyncPresets),
         transfers: pick(remote?.transfers, transferSyncPresets),
         lotCodes: pick(remote?.lotCodes, lotCodeSyncPresets),
+        contracts: pick(remote?.contracts, contractSyncPresets),
       };
       const setters: Array<[keyof typeof merged, (v: SheetImportConfig[]) => void, string]> = [
         ['orders', setOrderSyncPresets, 'orderImportPresets'], ['invoices', setInvoiceSyncPresets, 'invoiceImportPresets'],
         ['shipments', setShipmentSyncPresets, 'shipmentImportPresets'], ['transfers', setTransferSyncPresets, 'transferImportPresets'],
         ['lotCodes', setLotCodeSyncPresets, 'lotCodeImportPresets'],
+        ['contracts', setContractSyncPresets, 'contractImportPresets'],
       ];
       for (const [k, set, lsKey] of setters) {
         set(merged[k]);
@@ -10764,7 +10776,7 @@ export default function App() {
         ...(remote?.hamiltonSource?.sheetId ? { hamiltonSource: remote.hamiltonSource } : hasSavedHamiltonSource() ? { hamiltonSource: loadHamiltonSource() } : {}),
       };
       const json = JSON.stringify(result);
-      importSettingsSavedRef.current = JSON.stringify(remote ? { orders: remote.orders || [], invoices: remote.invoices || [], shipments: remote.shipments || [], transfers: remote.transfers || [], lotCodes: remote.lotCodes || [], hamiltonBayMap: remote.hamiltonBayMap || {}, ...(remote.hamiltonSource ? { hamiltonSource: remote.hamiltonSource } : {}) } : {});
+      importSettingsSavedRef.current = JSON.stringify(remote ? { orders: remote.orders || [], invoices: remote.invoices || [], shipments: remote.shipments || [], transfers: remote.transfers || [], lotCodes: remote.lotCodes || [], contracts: remote.contracts || [], hamiltonBayMap: remote.hamiltonBayMap || {}, ...(remote.hamiltonSource ? { hamiltonSource: remote.hamiltonSource } : {}) } : {});
       const hasAnything = Object.values(merged).some(l => l.length) || Object.values(result.hamiltonBayMap || {}).some(Boolean);
       if (hasAnything && json !== importSettingsSavedRef.current) {
         try {
@@ -10794,7 +10806,7 @@ export default function App() {
     importSettingsSavedRef.current = json;
     saveImportSettings(settings, user.email || '').catch(e => console.error('[presets] save failed:', e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderSyncPresets, invoiceSyncPresets, shipmentSyncPresets, transferSyncPresets, lotCodeSyncPresets, importSettingsBump, user]);
+  }, [orderSyncPresets, invoiceSyncPresets, shipmentSyncPresets, transferSyncPresets, lotCodeSyncPresets, contractSyncPresets, importSettingsBump, user]);
 
   // ── Sync apply helpers ──────────────────────────────────────────────────
   // Extracted from the four preview modals' inline onClick handlers so the exact
@@ -11121,6 +11133,35 @@ export default function App() {
     return merged;
   };
 
+  /** Apply a contract-sheet sync (preview modal and Sync All share it). Updates
+   *  replace by id; a "new" contract whose number already exists by now (added
+   *  since the preview) is dropped rather than duplicated. Saved immediately. */
+  const applyContractSyncResult = (preview: ContractSyncResult, current: Contract[]): Contract[] => {
+    const upById = new Map(preview.updatedContracts.map((c): [string, Contract] => [c.id, c]));
+    const afterUpdates = current.map(c => upById.get(c.id) || c);
+    const have = new Set(afterUpdates.map(c => (c.contractNumber || '').trim().toUpperCase()).filter(Boolean));
+    const fresh: Contract[] = [];
+    for (const c of preview.newContracts) {
+      const k = (c.contractNumber || '').trim().toUpperCase();
+      if (!k || have.has(k)) continue;
+      have.add(k);
+      fresh.push(c);
+    }
+    const merged = [...afterUpdates, ...fresh];
+    setContracts(merged);
+    const toPersist = [...preview.updatedContracts.filter(c => current.some(x => x.id === c.id)), ...fresh];
+    if (toPersist.length) saveNow(COLLECTIONS.contracts, toPersist);
+    return merged;
+  };
+  /** One-line Sync All / toast summary of a contract sync. */
+  const contractSyncNote = (r: ContractSyncResult): string => {
+    const fetchFail = r.errors.find(e => !e.rowIdx);
+    if (fetchFail && !r.newContracts.length && !r.updatedContracts.length && !r.unchanged) return `Contracts — failed: ${fetchFail.message}`;
+    return `Contracts — ${r.newContracts.length} new, ${r.updatedContracts.length} updated, ${r.unchanged} unchanged`
+      + `${r.unmatchedCustomers.length ? `, ${r.unmatchedCustomers.length} ITAS customer${r.unmatchedCustomers.length === 1 ? '' : 's'} not matched to a customer` : ''}`
+      + `${r.errors.length ? `, ${r.errors.length} errors` : ''}`;
+  };
+
   /** True when a PO number is already used on ANOTHER order or on ANY invoice —
    *  case-insensitive + trimmed. Every order-creation path funnels through this so
    *  a duplicate PO can never be created. Pass excludeOrderId when editing an order
@@ -11165,6 +11206,21 @@ export default function App() {
     let curInvoices = invoices;
     let curTransfers = transfers;
     let curLotCodes = lotCodes;
+
+    // 0. CONTRACTS — the ITAS contract list. No saved preset → the built-in mapping.
+    {
+      const contractsCfg = presetIsUsable(contractSyncPresets[0]) ? contractSyncPresets[0] : DEFAULT_CONTRACT_IMPORT_CONFIG;
+      try {
+        const r = await syncContractsFromConfig(contractsCfg, {
+          existingContracts: contracts, customers,
+          who: user?.displayName || user?.email || undefined, customerNameById,
+        });
+        if (r.newContracts.length || r.updatedContracts.length) applyContractSyncResult(r, contracts);
+        notes.push(contractSyncNote(r));
+      } catch (e: any) {
+        notes.push(`Contracts — failed: ${e?.message || String(e)}`);
+      }
+    }
 
     // 1. ORDERS
     // No saved preset → the built-in Sucro mapping (what Sync Orders opens with).
@@ -13834,7 +13890,7 @@ export default function App() {
             <button
               onClick={handleSyncAll}
               disabled={isSyncingAll}
-              title="Run the Orders, Invoices, Transfers and Hamilton Lab sheet imports using each importer's saved preset, accepting all changes automatically."
+              title="Run the Contracts, Orders, Invoices, Transfers, Hamilton Lab and Sherman schedule sheet imports using each importer's saved preset, accepting all changes automatically."
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
             >
               <RefreshCw size={12} className={isSyncingAll ? 'animate-spin' : ''} />
@@ -17910,30 +17966,22 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> Template
             </button>
-            <button onClick={() => {
-                const rows = contracts.map(c => {
-                  // Backfill itasName from the linked customer's itasCustomerName
-                  // when the contract doesn't carry its own value, so the export
-                  // always has something to show.
-                  const linkedItas = c.itasName
-                    || customers.find(cust => cust.id === c.customerNumber || cust.name === c.customerName)?.itasCustomerName
-                    || '';
-                  return {
-                    ...c,
-                    itasName: linkedItas,
-                    'Price/MT': c.finalPrice, // CSV column header is "Price/MT"
-                    // Active / Inactive — edit and re-import to (in)activate many at once.
-                    status: c.active === false ? 'Inactive' : 'Active',
-                    volumeOutstanding: undefined,
-                    id: undefined,
-                    active: undefined,
-                    contractLines: undefined,
-                  };
-                });
-                exportCSV(contractCsvHeaders, rows, 'contracts_export.csv');
+            <button
+              onClick={() => {
+                // Same configurator as Sync Orders / Invoices, in contract mode.
+                const preset = contractSyncPresets[0] || DEFAULT_CONTRACT_IMPORT_CONFIG;
+                setOrderSyncConfig(preset);
+                setOrderSyncUrl(`https://docs.google.com/spreadsheets/d/${preset.sheetId}/`);
+                setOrderSyncEditingTabIdx(null);
+                setOrderSyncTabHeaders(null);
+                setOrderSyncTabSample([]);
+                setSyncMode('contracts');
               }}
-              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
-              <Download size={12} /> CSV
+              disabled={isSyncingContractSheet}
+              className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap disabled:opacity-50"
+              title="Pull the ITAS contract list from its Google Sheet and preview new and changed contracts."
+            >
+              <RefreshCw size={12} className={isSyncingContractSheet ? 'animate-spin' : ''} /> {isSyncingContractSheet ? 'Syncing…' : 'Sync Contracts'}
             </button>
             <button onClick={() => contractFileInputRef.current?.click()}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
@@ -22749,7 +22797,7 @@ export default function App() {
             if (orderSyncEditingTabIdx === null || !orderSyncTabHeaders) return;
             // fetchTabPreview already resolved the real header row (e.g. row 2 under
             // a title/blank row 1), so detect from it directly.
-            updateTabColumns(orderSyncEditingTabIdx, autoDetectColumns(orderSyncTabHeaders));
+            updateTabColumns(orderSyncEditingTabIdx, syncMode === 'contracts' ? autoDetectContractColumns(orderSyncTabHeaders) : autoDetectColumns(orderSyncTabHeaders));
           };
           // Preset storage is per-mode: orders → 'orderImportPresets',
           // invoices → 'invoiceImportPresets', shipments → 'shipmentImportPresets'.
@@ -22758,35 +22806,41 @@ export default function App() {
             : syncMode === 'shipments' ? 'shipmentImportPresets'
             : syncMode === 'transfers' ? 'transferImportPresets'
             : syncMode === 'lotCodes' ? 'lotCodeImportPresets'
+            : syncMode === 'contracts' ? 'contractImportPresets'
             : 'orderImportPresets';
           const modePresets =
             syncMode === 'invoices' ? invoiceSyncPresets
             : syncMode === 'shipments' ? shipmentSyncPresets
             : syncMode === 'transfers' ? transferSyncPresets
             : syncMode === 'lotCodes' ? lotCodeSyncPresets
+            : syncMode === 'contracts' ? contractSyncPresets
             : orderSyncPresets;
           const setModePresets =
             syncMode === 'invoices' ? setInvoiceSyncPresets
             : syncMode === 'shipments' ? setShipmentSyncPresets
             : syncMode === 'transfers' ? setTransferSyncPresets
             : syncMode === 'lotCodes' ? setLotCodeSyncPresets
+            : syncMode === 'contracts' ? setContractSyncPresets
             : setOrderSyncPresets;
           const modeDefaultConfig =
             syncMode === 'invoices' ? DEFAULT_INVOICE_IMPORT_CONFIG
             : syncMode === 'shipments' ? DEFAULT_SHIPMENT_IMPORT_CONFIG
             : syncMode === 'transfers' ? DEFAULT_TRANSFER_IMPORT_CONFIG
             : syncMode === 'lotCodes' ? DEFAULT_LOTCODE_IMPORT_CONFIG
+            : syncMode === 'contracts' ? DEFAULT_CONTRACT_IMPORT_CONFIG
             : DEFAULT_ORDER_IMPORT_CONFIG;
           const modeDefaultName =
             syncMode === 'invoices' ? 'Sucro Invoices Default'
             : syncMode === 'shipments' ? 'Shipments Template'
             : syncMode === 'transfers' ? 'Transfers Template'
             : syncMode === 'lotCodes' ? 'Lot Codes Template'
+            : syncMode === 'contracts' ? 'ITAS Contract List'
             : 'Sucro Default';
           // Column-mapping field list is mode-specific: transfers map From/To
           // and a Transfer Number; lot codes map the lab testing-log columns.
           const modeFields = syncMode === 'transfers' ? TRANSFER_FIELDS
             : syncMode === 'lotCodes' ? LOTCODE_FIELDS
+            : syncMode === 'contracts' ? CONTRACT_FIELDS
             : ORDER_FIELDS;
           const savePreset = () => {
             const name = window.prompt('Preset name:', cfg.name || (syncMode === 'invoices' ? 'My Invoice Sheet' : 'My Order Sheet'));
@@ -22866,6 +22920,20 @@ export default function App() {
               } finally {
                 setIsSyncingTransferSheet(false);
               }
+            } else if (syncMode === 'contracts') {
+              setIsSyncingContractSheet(true);
+              try {
+                const preview = await syncContractsFromConfig(toRun, {
+                  existingContracts: contracts, customers,
+                  who: user?.displayName || user?.email || undefined, customerNameById,
+                });
+                setContractSyncPreview(preview);
+                setSyncMode(null);
+              } catch (err) {
+                setOrderSyncError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setIsSyncingContractSheet(false);
+              }
             } else if (syncMode === 'lotCodes') {
               setIsSyncingLotCodeSheet(true);
               try {
@@ -22902,7 +22970,7 @@ export default function App() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-[#141414] text-[#E4E3E0] px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : syncMode === 'transfers' ? 'Transfer' : syncMode === 'lotCodes' ? 'Lot Code' : 'Order'} Sheet Sync</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Configure {syncMode === 'invoices' ? 'Invoice' : syncMode === 'shipments' ? 'Shipment' : syncMode === 'transfers' ? 'Transfer' : syncMode === 'lotCodes' ? 'Lot Code' : syncMode === 'contracts' ? 'Contract' : 'Order'} Sheet Sync</h3>
                   <button onClick={() => setSyncMode(null)} className="hover:opacity-70"><X size={16} /></button>
                 </div>
 
@@ -22970,6 +23038,7 @@ export default function App() {
                               placeholder="Tab name (e.g. LIQ)"
                               className="flex-1 bg-white border border-[#141414] px-3 py-2 text-sm font-mono outline-none"
                             />
+                            {syncMode !== 'contracts' && (<>
                             <select
                               value={tab.expectedFormat || ''}
                               onChange={(e) => updateTab(idx, { expectedFormat: e.target.value || undefined })}
@@ -23004,6 +23073,7 @@ export default function App() {
                                 <option value={tab.defaultLocation}>{tab.defaultLocation} (inactive)</option>
                               )}
                             </select>
+                            </>)}
                             {/* Lot-code sync only: sugar type stamped on rows whose sheet has no
                                 Sugar Type column, so imports show under the Lot Code Testing Log
                                 filter. Blank = infer from the tab name (e.g. "Granulated Loads"). */}
@@ -23076,6 +23146,7 @@ export default function App() {
                                       </div>
                                     ))}
                                   </div>
+                                  {syncMode !== 'contracts' && (<>
                                   <div className="space-y-1">
                                     <label className="text-[10px] uppercase font-bold opacity-60">Product fallback (used when the product cell is blank)</label>
                                     <input
@@ -23096,6 +23167,7 @@ export default function App() {
                                       className="w-full bg-[#F5F5F5] border border-[#141414] px-3 py-2 text-xs outline-none"
                                     />
                                   </div>
+                                  </>)}
                                 </>
                               )}
                             </div>
@@ -23110,7 +23182,7 @@ export default function App() {
                   <button onClick={savePreset} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Save Preset</button>
                   <div className="flex gap-2">
                     <button onClick={() => setSyncMode(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
-                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet) ? 'Fetching…' : 'Preview Import →'}</button>
+                    <button onClick={runPreview} disabled={isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet || isSyncingContractSheet || cfg.tabs.length === 0 || !idFromUrl} className="px-4 py-2 bg-[#141414] text-[#E4E3E0] text-[11px] font-bold uppercase hover:opacity-80 disabled:opacity-40 flex items-center gap-2">{(isSyncingOrdersSheet || isSyncingInvoiceSheet || isSyncingTransferSheet || isSyncingLotCodeSheet || isSyncingContractSheet) ? 'Fetching…' : 'Preview Import →'}</button>
                   </div>
                 </div>
               </motion.div>
@@ -24136,6 +24208,122 @@ export default function App() {
             </motion.div>
           </div>
         )}
+
+        {contractSyncPreview && (() => {
+          const pv = contractSyncPreview;
+          const fetchFail = pv.errors.find(e => !e.rowIdx);
+          const fmtN2 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
+          return (
+          <div className="fixed inset-0 z-[500] flex items-center-safe justify-center p-6 bg-[#141414]/80 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              className="bg-white border border-[#141414] shadow-[24px_24px_0px_0px_rgba(20,20,20,1)] max-w-6xl w-full overflow-hidden my-8"
+            >
+              <div className="bg-[#141414] text-[#E4E3E0] p-4 flex justify-between items-center">
+                <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><FileText size={14} /> Contract Sync Preview</h3>
+                <button onClick={() => setContractSyncPreview(null)} className="hover:opacity-70"><X size={16} /></button>
+              </div>
+              <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+                {fetchFail && (
+                  <div className="border border-red-500 bg-red-50 p-3 text-xs text-red-800"><span className="font-bold">Couldn't read the sheet:</span> {fetchFail.message}</div>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  <div className="border border-emerald-500/40 bg-emerald-50 p-3"><div className="text-[10px] uppercase opacity-60">New Contracts</div><div className="text-2xl font-bold">{pv.newContracts.length}</div></div>
+                  <div className="border border-blue-500/40 bg-blue-50 p-3"><div className="text-[10px] uppercase opacity-60">Updated</div><div className="text-2xl font-bold">{pv.updatedContracts.length}</div></div>
+                  <div className="border border-[#141414]/20 bg-[#F5F5F5] p-3"><div className="text-[10px] uppercase opacity-60">Unchanged</div><div className="text-2xl font-bold">{pv.unchanged}</div></div>
+                  <div className="border border-amber-500/40 bg-amber-50 p-3"><div className="text-[10px] uppercase opacity-60">ITAS Customers Not Matched</div><div className="text-2xl font-bold">{pv.unmatchedCustomers.length}</div></div>
+                  <div className="border border-red-500/40 bg-red-50 p-3"><div className="text-[10px] uppercase opacity-60">Skipped / Errors</div><div className="text-2xl font-bold">{pv.skipped.length + pv.errors.length}</div></div>
+                </div>
+
+                {pv.updateSummaries.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Updated Contracts ({pv.updateSummaries.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-64 overflow-y-auto">
+                      <table className="w-full text-xs std-table">
+                        <thead className="sticky top-0"><tr><th className="p-2 text-left">Contract #</th><th className="p-2 text-left">Customer</th><th className="p-2 text-left">Changes</th></tr></thead>
+                        <tbody>
+                          {pv.updateSummaries.map(u => (
+                            <tr key={u.contractNumber} className="border-b border-[#141414]/5">
+                              <td className="p-2 font-mono font-bold whitespace-nowrap">{u.contractNumber}</td>
+                              <td className="p-2 whitespace-nowrap">{u.customer || '—'}</td>
+                              <td className="p-2">{u.changes.join(' · ')}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {pv.newContracts.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">New Contracts ({pv.newContracts.length})</h4>
+                    <div className="border border-[#141414]/10 max-h-72 overflow-y-auto">
+                      <table className="w-full text-xs std-table">
+                        <thead className="sticky top-0"><tr>
+                          <th className="p-2 text-left">Contract #</th><th className="p-2 text-left">ITAS Customer</th><th className="p-2 text-left">Customer</th>
+                          <th className="p-2 text-right">Volume (MT)</th><th className="p-2 text-right">Price / MT</th><th className="p-2 text-left">Currency</th><th className="p-2 text-left">Terms</th>
+                        </tr></thead>
+                        <tbody>
+                          {pv.newContracts.map(c => (
+                            <tr key={c.id} className="border-b border-[#141414]/5 hover:bg-emerald-50/50">
+                              <td className="p-2 font-mono font-bold whitespace-nowrap">{c.contractNumber}</td>
+                              <td className="p-2 font-mono">{c.itasName || '—'}</td>
+                              <td className="p-2">{c.customerName || <span className="text-amber-700 italic">not matched</span>}</td>
+                              <td className="p-2 text-right font-mono">{fmtN2(c.contractVolume || 0)}</td>
+                              <td className="p-2 text-right font-mono">{(c.finalPrice || 0).toFixed(2)}</td>
+                              <td className="p-2">{c.currency}</td>
+                              <td className="p-2 whitespace-nowrap">{[c.shippingTerms, c.paymentTerms].filter(Boolean).join(' · ') || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {pv.unmatchedCustomers.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-1 opacity-70">ITAS Customers Not Matched ({pv.unmatchedCustomers.length})</h4>
+                    <p className="text-[11px] opacity-70 mb-2">These contracts still import, with the ITAS code. Put the code in the customer's <strong>ITAS Customer Name</strong> on the Customers page and they link automatically.</p>
+                    <div className="border border-amber-300 bg-amber-50/60 max-h-40 overflow-y-auto p-2 text-xs grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                      {pv.unmatchedCustomers.map(u => (
+                        <div key={u.itas} className="py-0.5"><span className="font-mono font-bold">{u.itas}</span> <span className="opacity-60">— {u.contracts.length} contract{u.contracts.length === 1 ? '' : 's'}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(pv.skipped.length > 0 || pv.errors.filter(e => e.rowIdx).length > 0) && (
+                  <div>
+                    <h4 className="text-[10px] uppercase font-bold mb-2 opacity-70">Skipped / Errors</h4>
+                    <div className="border border-[#141414]/10 max-h-40 overflow-y-auto p-2 text-xs space-y-1">
+                      {pv.skipped.map((sk, i) => <div key={`s${i}`}><span className="font-mono">{sk.contractNumber}</span> — <span className="opacity-70">{sk.reason}</span></div>)}
+                      {pv.errors.filter(e => e.rowIdx).map((er, i) => <div key={`e${i}`} className="text-red-700">{er.tab} row {er.rowIdx} — {er.message}</div>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="bg-[#F5F5F5] border-t border-[#141414] px-6 py-4 flex items-center justify-between">
+                <button onClick={() => setContractSyncPreview(null)} className="px-4 py-2 border border-[#141414] text-[11px] font-bold uppercase hover:bg-white">Cancel</button>
+                <button
+                  disabled={pv.newContracts.length === 0 && pv.updatedContracts.length === 0}
+                  onClick={() => {
+                    applyContractSyncResult(pv, contracts);
+                    setContractSyncPreview(null);
+                    setSuccessBox(`${contractSyncNote(pv)}.`);
+                  }}
+                  className="px-4 py-2 bg-emerald-700 text-white text-[11px] font-bold uppercase hover:bg-emerald-800 disabled:opacity-40"
+                >
+                  Import {pv.newContracts.length} new · Update {pv.updatedContracts.length}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+          );
+        })()}
 
         {isAddingBatchShipment && (
           <div className="fixed inset-0 z-[100] flex items-center-safe justify-center p-6 bg-[#141414]/60 backdrop-blur-md overflow-y-auto">

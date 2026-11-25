@@ -821,7 +821,7 @@ export async function saveAccessList(emails: string[], updatedBy: string): Promi
 // localStorage (per browser, per web address), so a new browser / cleared
 // site data / the other app URL showed "no saved import preset".
 export type ImportSettings = {
-  orders?: unknown[]; invoices?: unknown[]; shipments?: unknown[]; transfers?: unknown[]; lotCodes?: unknown[];
+  orders?: unknown[]; invoices?: unknown[]; shipments?: unknown[]; transfers?: unknown[]; lotCodes?: unknown[]; contracts?: unknown[];
   hamiltonBayMap?: Record<string, string>;
   hamiltonSource?: { sheetId: string; tab: string };
 };
