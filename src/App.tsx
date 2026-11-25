@@ -16137,6 +16137,7 @@ export default function App() {
           tollingFees={tollingFees}
           productToShortform={productToShortform}
           resolveCatalogProduct={(n) => { const r = resolveProduct(n); return { sku: r.sku || null, qa: r.qa || null }; }}
+          lineItemToShortform={lineItemToShortform}
         />
       );
     }

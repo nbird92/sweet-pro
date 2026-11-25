@@ -61,6 +61,9 @@ interface SalesForecastPageProps {
    *  raw SKU names are just the format ("Bulk"/"Bag"/"Tote"), so name equality
    *  alone can never identify a product. */
   resolveCatalogProduct?: (name: string) => { sku: SKU | null; qa: QAProduct | null };
+  /** The app's line-item resolver (App.tsx lineItemToShortform): a line's
+   *  productKey / exact dropdown label -> that specific QA product's shortform. */
+  lineItemToShortform?: (item: { productKey?: string; productDisplayName?: string; productName: string }) => string;
   /** 'sales' (default) shows the customer forecast, tolling and period views;
    *  'production' shows the product forecast, product-group rollup and
    *  packaging material requirements (the Production Forecast page). */
@@ -160,6 +163,7 @@ export default function SalesForecastPage({
   orders,
   shipments,
   resolveCatalogProduct,
+  lineItemToShortform,
   tollingFees,
   productToShortform,
   view = 'sales',
@@ -444,6 +448,16 @@ export default function SalesForecastPage({
     const name = (li.productName || '').trim();
     const disp = (li.productDisplayName || '').trim();
     const formatOnly = (s: string) => /^(bulk|bag|bags|bagged|tote|totes|liquid|packaged)$/i.test(s);
+    // PRECISE first: the line's own product id (QA id), then its exact
+    // dropdown label → that specific QA product's shortform. Resolving the
+    // display NAME goes through the catalog SKU, and variants that share a SKU
+    // (bulk liquid LC100 / LC325) collapsed onto whichever QA came first —
+    // Chapmans' "Conventional Bulk Liquid Sucrose 100" lines landed on LC325.
+    // productName '' keeps the resolver from falling back to a free-text guess.
+    if (lineItemToShortform && (li.productKey || disp)) {
+      const sf = (lineItemToShortform({ productKey: li.productKey, productDisplayName: disp || undefined, productName: '' }) || '').trim();
+      if (sf && !formatOnly(sf)) return sf;
+    }
     if (disp && !formatOnly(disp)) return disp;
     if (name && !formatOnly(name)) return name;
     if (li.productKey) {
