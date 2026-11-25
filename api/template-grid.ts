@@ -15,6 +15,7 @@ interface Border { s: string; w: number; c: Rgb }
 export interface GridCell {
   r: number; c: number;
   t?: string;                 // formatted text
+  img?: boolean;              // the cell holds an image (in-cell image / =IMAGE())
   n?: boolean;                // numeric value (default right-aligned)
   bg?: Rgb;                   // background (omitted when white)
   b?: { t?: Border; r?: Border; b?: Border; l?: Border };
@@ -55,7 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const title: string = meta.data?.sheets?.[0]?.properties?.title || 'Sheet1';
     const fields = 'sheets(properties(title,gridProperties(rowCount,columnCount)),merges,data(startRow,startColumn,'
       + 'rowMetadata(pixelSize,hiddenByUser),columnMetadata(pixelSize,hiddenByUser),'
-      + 'rowData(values(formattedValue,effectiveValue,effectiveFormat(backgroundColor,borders,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)))))';
+      + 'rowData(values(formattedValue,effectiveValue,userEnteredValue,effectiveFormat(backgroundColor,borders,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)))))';
     const resp: any = await jwt.request({
       url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}?includeGridData=true`
         + `&ranges=${encodeURIComponent(`'${title.replace(/'/g, "''")}'`)}&fields=${encodeURIComponent(fields)}`,
@@ -77,6 +78,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const text = v.formattedValue;
         if (text !== undefined && text !== null && String(text) !== '') cell.t = String(text);
         if (v.effectiveValue && typeof v.effectiveValue.numberValue === 'number') cell.n = true;
+        // An image IN the cell (Insert → Image → in cell) comes back as an EMPTY
+        // userEnteredValue; an =IMAGE() formula as that formula. Flag it so the
+        // document draws the template logo right there.
+        const uev = v.userEnteredValue;
+        if (uev && typeof uev === 'object' && cell.t === undefined
+          && (Object.keys(uev).length === 0 || /^=\s*IMAGE\s*\(/i.test(String(uev.formulaValue || '')))) cell.img = true;
         const bg = rgb(ef.backgroundColor);
         if (bg && !isWhite(bg)) cell.bg = bg;
         const bd = ef.borders || {};
@@ -97,10 +104,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (ef.horizontalAlignment) cell.h = ef.horizontalAlignment;
         if (ef.verticalAlignment) cell.v = ef.verticalAlignment;
         if (ef.wrapStrategy) cell.w = ef.wrapStrategy;
-        const meaningful = cell.t !== undefined || cell.bg || cell.b;
+        const meaningful = cell.t !== undefined || cell.bg || cell.b || cell.img;
         if (meaningful) { maxR = Math.max(maxR, r); maxC = Math.max(maxC, c); }
         if (!meaningful) continue;
-        if (cell.t === undefined) { delete cell.f; delete cell.h; delete cell.v; delete cell.w; delete cell.n; }
+        if (cell.t === undefined) { delete cell.f; if (!cell.img) { delete cell.h; delete cell.v; } delete cell.w; delete cell.n; }
         cells.push(cell);
       }
     }

@@ -10,6 +10,8 @@ interface Border { s: string; w: number; c: Rgb }
 export interface GridCell {
   r: number; c: number;
   t?: string; n?: boolean; bg?: Rgb;
+  /** The template cell holds an image (in-cell image / =IMAGE()) — the logo is drawn there. */
+  img?: boolean;
   b?: { t?: Border; r?: Border; b?: Border; l?: Border };
   f?: { b?: boolean; i?: boolean; u?: boolean; s?: number; c?: Rgb; fam?: string };
   h?: string; v?: string; w?: string;
@@ -136,6 +138,36 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
     for (let o = m.o0; o < m.o1; o++) for (let c = m.c0; c < m.c1; c++) if (o !== m.o0 || c !== m.c0) covered.add(`${o},${c}`);
   }
 
+  // ── Page headers: the template's own pages each open with a band of blank
+  //    rows closed by a full-width rule line (e.g. the red line under the
+  //    logo). The first band sits at the very top; later bands with the same
+  //    rule colour start the template's next pages. ──
+  const isBlankRow = (o: number) => !grid.cells.some(x => x.r === outRows[o].src && (x.t || '').trim());
+  const ruleColorOf = (o: number): string | null => {
+    const edges = grid.cells.filter(x => x.r === outRows[o].src && x.b?.b);
+    return edges.length >= grid.cols.length * 0.8 ? edges[0].b!.b!.c.join(',') : null;
+  };
+  const headerBands: Array<{ o0: number; o1: number }> = []; // output rows [o0, o1)
+  {
+    let first = -1;
+    let color: string | null = null;
+    for (let o = 0; o < outRows.length && isBlankRow(o); o++) {
+      const rc = ruleColorOf(o);
+      if (rc) { first = o; color = rc; break; }
+    }
+    if (first >= 0) {
+      headerBands.push({ o0: 0, o1: first + 1 });
+      const len = first + 1;
+      for (let o = first + 1; o < outRows.length; o++) {
+        if (!isBlankRow(o) || ruleColorOf(o) !== color) continue;
+        let st = o;
+        while (st > o - len + 1 && isBlankRow(st - 1)) st--;
+        headerBands.push({ o0: st, o1: o + 1 });
+      }
+    }
+  }
+  const forcedBreaks = new Set(fill.paginate ? headerBands.slice(1).map(b => b.o0) : []);
+
   // ── Rows → pages. One page unless fill.paginate; then a row that would run
   //    past the bottom margin starts a new page, and a multi-row merged block
   //    moves whole to the next page when it fits on one. ──
@@ -147,7 +179,8 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
     if (fill.paginate) for (const m of outMerges) if (m.o1 - m.o0 > 1) groupEnd.set(m.o0, Math.max(groupEnd.get(m.o0) ?? 0, m.o1));
     let page = 0, y = margin;
     for (let o = 0; o < outRows.length; o++) {
-      if (fill.paginate) {
+      if (fill.paginate && forcedBreaks.has(o) && y > margin + 0.01) { page++; y = margin; }
+      else if (fill.paginate) {
         let need = rowH[o];
         const end = groupEnd.get(o);
         if (end) {
@@ -301,37 +334,88 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
   });
 
   // ── 3. Logo ──
-  //   a) a cell containing {{logo}} (its merged block) — the template decides;
+  //   0) every template cell holding an image (in-cell image) — drawn right there;
+  //   a) else every cell containing {{logo}} (its merged block);
   //   b) else the largest EMPTY merged block in the top rows, right half;
-  //   c) else centred in the blank band of rows at the top of the first page.
+  //   c) else top right of each page header band (blank rows above the rule);
+  //   d) else top right of the blank band at the top of the first page.
   if (fill.logoDataUrl) {
-    let target: { x: number; y: number; w: number; h: number; page: number } | null = null;
-    for (let o = 0; o < outRows.length && !target; o++) {
-      const cell = grid.cells.find(x => x.r === outRows[o].src && !!x.t && /\{\{\s*logo\s*\}\}/i.test(x.t) && !covered.has(`${o},${x.c}`));
-      if (cell) target = rectOf(o, cell.c);
-    }
-    if (!target) {
+    type LogoBox = { x: number; y: number; w: number; h: number; page: number; align: 'left' | 'center' | 'right'; inCell?: boolean };
+    const boxes: LogoBox[] = [];
+    const bandRect = (o0: number, o1: number) => {
+      let h = 0;
+      for (let o = o0; o < o1; o++) { if (rowPage[o] !== rowPage[o0]) break; h += rowH[o]; }
+      return { x: colX[0], y: rowTop[o0], w: colX[colX.length - 1] - colX[0], h, page: rowPage[o0] };
+    };
+    outRows.forEach((row, o) => {
+      for (const x of grid.cells) {
+        if (x.r === row.src && x.img && !covered.has(`${o},${x.c}`)) {
+          boxes.push({ ...rectOf(o, x.c), align: x.h === 'LEFT' ? 'left' : x.h === 'RIGHT' ? 'right' : 'center', inCell: true });
+        }
+      }
+    });
+    if (!boxes.length) outRows.forEach((row, o) => {
+      for (const x of grid.cells) {
+        if (x.r === row.src && x.t && /\{\{\s*logo\s*\}\}/i.test(x.t) && !covered.has(`${o},${x.c}`)) boxes.push({ ...rectOf(o, x.c), align: 'center' });
+      }
+    });
+    if (!boxes.length) {
       const half = colX[0] + (colX[colX.length - 1] - colX[0]) / 2;
       const candidates = outMerges.filter(m => m.o0 <= 2 && colX[m.c0] >= half - 1
         && !(cellAt.get(`${outRows[m.o0].src},${m.c0}`)?.t || '').trim());
       const best = candidates.map(m => ({ m, r: rectOf(m.o0, m.c0) })).sort((a, b) => b.r.w * b.r.h - a.r.w * a.r.h)[0];
-      // Only a block big enough to be a logo area.
-      if (best && best.r.w >= 25 && best.r.h >= 10) target = best.r;
+      if (best && best.r.w >= 25 && best.r.h >= 10) boxes.push({ ...best.r, align: 'center' });
     }
-    if (!target) {
-      let o = 0, h = 0;
-      while (o < outRows.length && rowPage[o] === 0 && !grid.cells.some(x => x.r === outRows[o].src && (x.t || '').trim())) { h += rowH[o]; o++; }
-      if (h >= 8) target = { x: colX[0], y: rowTop[0], w: colX[colX.length - 1] - colX[0], h, page: 0 };
+    if (!boxes.length) {
+      for (const b of headerBands) { const r = bandRect(b.o0, b.o1); if (r.h >= 8) boxes.push({ ...r, align: 'right' }); }
     }
-    if (target) {
+    if (!boxes.length) {
+      let o = 0;
+      while (o < outRows.length && rowPage[o] === 0 && isBlankRow(o)) o++;
+      const r = o ? bandRect(0, o) : null;
+      if (r && r.h >= 8) boxes.push({ ...r, align: 'right' });
+    }
+    if (boxes.length) {
       try {
-        onPage(target.page);
         const props = doc.getImageProperties(fill.logoDataUrl);
-        const pad = 1.2;
-        const bw = target.w - pad * 2, bh = target.h - pad * 2;
-        const sc = Math.min(bw / props.width, bh / props.height);
-        const w = props.width * sc, h = props.height * sc;
-        doc.addImage(fill.logoDataUrl, (props.fileType || 'PNG') as any, target.x + pad + (bw - w) / 2, target.y + pad + (bh - h) / 2, w, h);
+        const contentW = colX[colX.length - 1] - colX[0];
+        for (const bx of boxes) {
+          const pad = bx.inCell ? 0.3 : 1.2;
+          const rightEdge = colX[colX.length - 1];
+          let x: number, y: number, w: number, h: number;
+          if (bx.inCell) {
+            // The template's logo cell: a small cell inside a page header band
+            // anchors the logo there, sized to the header band's height (a
+            // one-row cell would make it unreadably small); else fit the cell.
+            const o = outRows.findIndex((_, i) => rowPage[i] === bx.page && Math.abs(rowTop[i] - bx.y) < 0.01);
+            const band = headerBands.find(b => o >= b.o0 && o < b.o1);
+            const br = band ? bandRect(band.o0, band.o1) : null;
+            if (br && br.h > bx.h) {
+              const bh = br.h - pad * 2;
+              const sc = Math.min((contentW * 0.35) / props.width, bh / props.height);
+              w = props.width * sc; h = props.height * sc;
+              x = Math.min(bx.x + pad, rightEdge - pad - w);
+              y = br.y + pad + (bh - h) / 2;
+            } else {
+              const bw = bx.w - pad * 2, bh = bx.h - pad * 2;
+              if (bw <= 0 || bh <= 0) continue;
+              const sc = Math.min(bw / props.width, bh / props.height);
+              w = props.width * sc; h = props.height * sc;
+              x = bx.align === 'right' ? bx.x + bx.w - pad - w : bx.align === 'left' ? bx.x + pad : bx.x + pad + (bw - w) / 2;
+              y = bx.y + pad + (bh - h) / 2;
+            }
+          } else {
+            const bw = bx.align === 'right' ? Math.min(bx.w - pad * 2, contentW * 0.35) : bx.w - pad * 2;
+            const bh = bx.h - pad * 2;
+            if (bw <= 0 || bh <= 0) continue;
+            const sc = Math.min(bw / props.width, bh / props.height);
+            w = props.width * sc; h = props.height * sc;
+            x = bx.align === 'right' ? bx.x + bx.w - pad - w : bx.align === 'left' ? bx.x + pad : bx.x + pad + (bw - w) / 2;
+            y = bx.y + pad + (bh - h) / 2;
+          }
+          onPage(bx.page);
+          doc.addImage(fill.logoDataUrl, (props.fileType || 'PNG') as any, x, y, w, h);
+        }
       } catch { /* bad image — skip */ }
     }
   }
