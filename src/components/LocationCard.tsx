@@ -195,6 +195,7 @@ export default function LocationCard({ location, isNew, people, productGroups, o
                   {text('Location Name', 'name', 'Location name')}
                   {text('Location Code', 'locationCode', 'e.g. 100')}
                   <div className="col-span-2">{text('BOL Name', 'bolName', 'Legal shipper name for BOL / Packing List')}</div>
+                  <div className="col-span-2">{text('Port of Origin', 'portOfOrigin', 'e.g. Hamilton, ON — printed on the Sales Contract')}</div>
                   {editing ? (
                     <div>
                       <label className={lblCls}>Active</label>

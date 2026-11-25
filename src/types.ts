@@ -346,6 +346,9 @@ export interface Contract {
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   palletType?: 'CHEP' | 'One Way' | '';
   margin?: number; // Margin in CAD/MT
+  /** Delivered contract (the Customer Quote's Delivered toggle). Unset on older
+   *  contracts: derived from delivered freight / delivered shipping terms. */
+  delivered?: boolean;
   /** Yield loss multiplier on raws + ocean freight (Customer Quote default 1.08). */
   yieldLossMultiplier?: number;
   /** Sugar loss % — applied to the refined bulk cost. */
@@ -427,6 +430,9 @@ export interface Location {
   /** Legal shipper name printed on the BOL (Shipper) and Packing List (Ship From).
    *  Falls back to `name` when empty. */
   bolName?: string;
+  /** Port of origin printed on the Sales Contract (e.g. "Hamilton, ON"). Also
+   *  shown as the Origin of contracts that aren't delivered. */
+  portOfOrigin?: string;
   address: string;
   city: string;
   province: string;

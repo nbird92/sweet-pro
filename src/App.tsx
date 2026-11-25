@@ -6869,6 +6869,21 @@ export default function App() {
       || locations.find(l => { const ln = l.name.trim().toLowerCase(); return !!ln && (ln.includes(n) || n.includes(ln)); });
   };
 
+  /** Is a contract delivered? The stored Delivered toggle, else (older
+   *  contracts) delivered freight on it or a delivered shipping term. */
+  const isContractDelivered = (c: Contract): boolean =>
+    typeof c.delivered === 'boolean' ? c.delivered
+      : (Number(c.deliveredFreight) || 0) > 0 || /^(DAP|DDP|DPU|CPT|CIP|CFR|CIF)\b/i.test((c.shippingTerms || '').trim());
+  /** The Port of Origin of a contract's location ('' when the location has none). */
+  const contractPortOfOrigin = (c: Contract): string => (findDocLocation(c.origin)?.portOfOrigin || '').trim();
+  /** Origin as shown for a contract: a contract that isn't delivered shows its
+   *  location's Port of Origin. The stored `origin` stays the location name —
+   *  orders, schedules and documents resolve the location from it. */
+  const contractOriginLabel = (c: Contract): string => {
+    if (!isContractDelivered(c)) { const port = contractPortOfOrigin(c); if (port) return port; }
+    return c.origin || '';
+  };
+
   /** Resolve everything a shipment document (BOL / document package) draws from,
    *  so a document opened from the SHIPMENT SCHEDULE carries the same data as one
    *  opened from the invoice table: the order linked by BOL (else the invoice's
@@ -7497,7 +7512,11 @@ export default function App() {
         contract_volume: Number(c.contractVolume) ? Number(c.contractVolume).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '', volume,
         freight_terms: c.shippingTerms || '', shipping_terms: c.shippingTerms || '',
         payment_terms: paymentTerms,
-        origin: c.origin || '', destination: c.destination || '',
+        origin: contractOriginLabel(c), destination: c.destination || '',
+        // Port of Origin: the location's (Locations table), else its city, province.
+        // The template's Port of Origin row reads {{location_city_PROVINCE}}.
+        port_of_origin: contractPortOfOrigin(c) || [supplierLoc?.city, supplierLoc?.province].filter(Boolean).join(', '),
+        location_city_province: contractPortOfOrigin(c) || [supplierLoc?.city, supplierLoc?.province].filter(Boolean).join(', '),
         bulk_product: bulkProduct, product: bulkProduct,
         pallet_type: c.palletType || '',
       };
@@ -13088,6 +13107,7 @@ export default function App() {
       origin: config.origin,
       // Delivery location, freight and duty only when they are part of the price.
       destination: config.isDelivered ? (config.destination || '') : '',
+      delivered: !!config.isDelivered,
       finalPrice: calculations.finalMt,
       currency: config.currency,
       notes: `${noteStamp(user?.displayName || user?.email || undefined)} CREATED from the Customer Quote tool for ${customer}: ${config.volumeMt} MT at ${calculations.currencySymbol} $${(calculations.finalMt || 0).toFixed(2)}/MT (temporary number — replace with the ITAS number).`,
@@ -17331,6 +17351,7 @@ export default function App() {
           columns: [
             { header: 'Code', key: 'locationCode' },
             { header: 'Name', key: 'name' },
+            { header: 'Port of Origin', key: 'portOfOrigin' },
             { header: 'Address', key: 'address' },
             { header: 'City', key: 'city' },
             { header: 'Province', key: 'province' },
@@ -17510,6 +17531,7 @@ export default function App() {
               { key: 'locationCode', label: 'Code', mono: true, bold: true, widthClass: 'w-20', render: (l) => l.locationCode || '—' },
               { key: 'name', label: 'Name', bold: true, render: (l) => l.name || '—' },
               { key: 'bolName', label: 'BOL Name', render: (l) => l.bolName || '—' },
+              { key: 'portOfOrigin', label: 'Port of Origin', render: (l) => l.portOfOrigin || '—' },
               { key: 'address', label: 'Address', render: (l) => l.address || '—' },
               { key: 'city', label: 'City', render: (l) => l.city || '—' },
               { key: 'province', label: 'Province', render: (l) => l.province || '—' },
@@ -17966,7 +17988,7 @@ export default function App() {
           { header: 'Payment Terms', key: 'paymentTerms' },
         ],
         // Raws exported in USD/cwt to match the on-screen column.
-        rows: contracts.map(c => ({ ...c, rawsUsdCwt: rawPriceUsdCwt(c.rawPriceUsdMt) ?? '' })) as any[],
+        rows: contracts.map(c => ({ ...c, origin: contractOriginLabel(c), rawsUsdCwt: rawPriceUsdCwt(c.rawPriceUsdMt) ?? '' })) as any[],
       }];
       return (
         <div className="space-y-0">
@@ -25386,6 +25408,21 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Delivered</label>
+                    <select
+                      value={isContractDelivered(editingContract) ? 'yes' : 'no'}
+                      onChange={(e) => setEditingContract({ ...editingContract, delivered: e.target.value === 'yes' })}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
+                      title="Not delivered: the contract's Origin shows the location's Port of Origin"
+                    >
+                      <option value="no">No — buyer collects (Origin = Port of Origin)</option>
+                      <option value="yes">Yes — delivered</option>
+                    </select>
+                    {!isContractDelivered(editingContract) && (
+                      <div className="text-[10px] opacity-60">Origin shows as: {contractPortOfOrigin(editingContract) || <span className="text-amber-700">no Port of Origin on this location — set it in Supply Chain → Locations</span>}</div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Shipping Terms</label>
                     <select
                       value={editingContract.shippingTerms || ''}
@@ -25928,7 +25965,7 @@ export default function App() {
                           if (!sku || /^(bulk|bag|bags|tote|totes|liquid)$/i.test(sku)) return '—';
                           return productNameToDisplay(sku) || sku;
                         })()}</td></tr>
-                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{selectedContractDetail.origin || '—'}</td></tr>
+                        <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{contractOriginLabel(selectedContractDetail) || '—'}{contractOriginLabel(selectedContractDetail) !== (selectedContractDetail.origin || '') && <span className="ml-2 text-[10px] font-normal opacity-60">({selectedContractDetail.origin} · not delivered)</span>}</td></tr>
                         <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
                         {(() => {
