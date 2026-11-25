@@ -300,22 +300,38 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
     }
   });
 
-  // ── 3. Logo: the largest EMPTY merged block in the top rows, right half ──
+  // ── 3. Logo ──
+  //   a) a cell containing {{logo}} (its merged block) — the template decides;
+  //   b) else the largest EMPTY merged block in the top rows, right half;
+  //   c) else centred in the blank band of rows at the top of the first page.
   if (fill.logoDataUrl) {
-    const half = colX[0] + (colX[colX.length - 1] - colX[0]) / 2;
-    const candidates = outMerges.filter(m => m.o0 <= 2 && colX[m.c0] >= half - 1
-      && !(cellAt.get(`${outRows[m.o0].src},${m.c0}`)?.t || '').trim());
-    const best = candidates.map(m => ({ m, r: rectOf(m.o0, m.c0) })).sort((a, b) => b.r.w * b.r.h - a.r.w * a.r.h)[0];
-    // Only a block big enough to be a logo area (else the template has none).
-    if (best && best.r.w >= 25 && best.r.h >= 10) {
+    let target: { x: number; y: number; w: number; h: number; page: number } | null = null;
+    for (let o = 0; o < outRows.length && !target; o++) {
+      const cell = grid.cells.find(x => x.r === outRows[o].src && !!x.t && /\{\{\s*logo\s*\}\}/i.test(x.t) && !covered.has(`${o},${x.c}`));
+      if (cell) target = rectOf(o, cell.c);
+    }
+    if (!target) {
+      const half = colX[0] + (colX[colX.length - 1] - colX[0]) / 2;
+      const candidates = outMerges.filter(m => m.o0 <= 2 && colX[m.c0] >= half - 1
+        && !(cellAt.get(`${outRows[m.o0].src},${m.c0}`)?.t || '').trim());
+      const best = candidates.map(m => ({ m, r: rectOf(m.o0, m.c0) })).sort((a, b) => b.r.w * b.r.h - a.r.w * a.r.h)[0];
+      // Only a block big enough to be a logo area.
+      if (best && best.r.w >= 25 && best.r.h >= 10) target = best.r;
+    }
+    if (!target) {
+      let o = 0, h = 0;
+      while (o < outRows.length && rowPage[o] === 0 && !grid.cells.some(x => x.r === outRows[o].src && (x.t || '').trim())) { h += rowH[o]; o++; }
+      if (h >= 8) target = { x: colX[0], y: rowTop[0], w: colX[colX.length - 1] - colX[0], h, page: 0 };
+    }
+    if (target) {
       try {
-        onPage(best.r.page);
+        onPage(target.page);
         const props = doc.getImageProperties(fill.logoDataUrl);
         const pad = 1.2;
-        const bw = best.r.w - pad * 2, bh = best.r.h - pad * 2;
-        const s = Math.min(bw / props.width, bh / props.height);
-        const w = props.width * s, h = props.height * s;
-        doc.addImage(fill.logoDataUrl, (props.fileType || 'PNG') as any, best.r.x + pad + (bw - w) / 2, best.r.y + pad + (bh - h) / 2, w, h);
+        const bw = target.w - pad * 2, bh = target.h - pad * 2;
+        const sc = Math.min(bw / props.width, bh / props.height);
+        const w = props.width * sc, h = props.height * sc;
+        doc.addImage(fill.logoDataUrl, (props.fileType || 'PNG') as any, target.x + pad + (bw - w) / 2, target.y + pad + (bh - h) / 2, w, h);
       } catch { /* bad image — skip */ }
     }
   }
