@@ -13850,7 +13850,7 @@ export default function App() {
           volume: weeklyTotals[w].volume,
           tolling: weeklyTotals[w].tolling,
         }));
-        const sf = computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers);
+        const sf = computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers, orders);
         return [
           {
             sheetName: 'Weekly Totals',
@@ -13871,6 +13871,7 @@ export default function App() {
               { header: 'Period', key: 'period' },
               { header: 'Dates', key: 'dates' },
               { header: 'Sales (MT)', key: 'sales', format: 'number' as const },
+              { header: 'Open Orders (MT)', key: 'orders', format: 'number' as const },
               { header: 'Forecast (MT)', key: 'forecast', format: 'number' as const },
               { header: 'Budget (MT)', key: 'budget', format: 'number' as const },
               { header: 'Sales % of Forecast', key: 'pctForecast', format: 'number' as const },
@@ -13901,7 +13902,7 @@ export default function App() {
           <div className="p-6 space-y-8">
 
           {/* Sales vs Forecast & Budget — current period and fiscal year */}
-          <SalesForecastSummary invoices={invoices} customerForecasts={customerForecasts} fiscalYears={fiscalYears} customers={customers} />
+          <SalesForecastSummary invoices={invoices} customerForecasts={customerForecasts} fiscalYears={fiscalYears} customers={customers} orders={orders} />
 
           {/* Weekly Completed Totals Chart */}
           {sortedWeeks.length > 0 && (() => {

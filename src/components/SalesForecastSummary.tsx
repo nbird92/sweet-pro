@@ -1,10 +1,13 @@
 import React, { useMemo } from 'react';
-import type { Customer, CustomerForecast, FiscalYear, Invoice } from '../types';
+import type { Customer, CustomerForecast, FiscalYear, Invoice, Order } from '../types';
 
 /* Dashboard: Sales vs Forecast & Budget for the current fiscal period and year.
  *
  *  Sales    = invoiced MT (the invoice quantity, the same figure the Weekly
  *             Completed Totals use) from billed invoices dated in the period.
+ *  Orders   = open orders shipping in the CURRENT period that aren't invoiced
+ *             yet (same rule as the forecast editor's Orders column). The
+ *             period row shows Sales + Orders MTD.
  *  Forecast = the customer forecasts for the fiscal year (Sales Forecast page).
  *  Budget   = the customer budgets for the fiscal year.
  *  "To date" plan = full past periods + the elapsed share of the current one. */
@@ -22,6 +25,8 @@ export interface SalesForecastMonth {
   start: string;
   end: string;
   sales: number;
+  /** Open (not yet invoiced) order MT shipping in this period — current period only. */
+  orders: number;
   forecast: number;
   budget: number;
 }
@@ -73,6 +78,7 @@ export function computeSalesForecastSummary(
   customerForecasts: CustomerForecast[],
   fiscalYears: FiscalYear[],
   customers: Customer[],
+  orders: Order[] = [],
   today: string = localToday(),
 ): SalesForecastSummaryData | null {
   if (!fiscalYears.length) return null;
@@ -84,7 +90,7 @@ export function computeSalesForecastSummary(
 
   const months: SalesForecastMonth[] = periods.map((p) => {
     const mid = isoFromDay(Math.round((dayNum(p.startDate) + dayNum(p.endDate)) / 2));
-    return { name: p.name, label: MONTH_ABBR[+mid.slice(5, 7) - 1], start: p.startDate, end: p.endDate, sales: 0, forecast: 0, budget: 0 };
+    return { name: p.name, label: MONTH_ABBR[+mid.slice(5, 7) - 1], start: p.startDate, end: p.endDate, sales: 0, orders: 0, forecast: 0, budget: 0 };
   });
 
   for (const inv of invoices) {
@@ -118,6 +124,23 @@ export function computeSalesForecastSummary(
   const inYear = today >= fy.startDate && today <= fy.endDate;
   const curIdx = inYear ? idxFor(today) : -1;
   const cur = curIdx >= 0 ? months[curIdx] : null;
+  // Open orders for the current period: not cancelled, BOL not yet on a billed
+  // invoice, shipping (else ordered) inside the period. Weight = line items.
+  if (cur) {
+    const invoicedBols = new Set(invoices
+      .filter(i => i.status !== 'Cancelled' && i.status !== 'Credit')
+      .map(i => (i.bolNumber || '').trim().toUpperCase()).filter(Boolean));
+    for (const o of orders) {
+      if (!o.customer) continue;
+      const st = (o.status || '').trim().toLowerCase();
+      if (st === 'x' || st === 'cxl' || st === 'dnl' || /cancel|void/.test(st)) continue;
+      const bol = (o.bolNumber || '').trim().toUpperCase();
+      if (bol && invoicedBols.has(bol)) continue;
+      const d = (o.shipmentDate || o.date || '').slice(0, 10);
+      if (!d || d < cur.start || d > cur.end) continue;
+      cur.orders += (o.lineItems || []).reduce((t, li) => t + (li.totalWeight > 0 ? li.totalWeight : 0), 0);
+    }
+  }
   const periodDays = cur ? dayNum(cur.end) - dayNum(cur.start) + 1 : 0;
   const periodElapsed = cur ? Math.min(1, (dayNum(today) - dayNum(cur.start) + 1) / periodDays) : 0;
   const periodDaysLeft = cur ? Math.max(0, dayNum(cur.end) - dayNum(today)) : 0;
@@ -146,6 +169,7 @@ export function salesForecastExportRows(d: SalesForecastSummaryData) {
     period: m.name,
     dates: `${m.start} to ${m.end}`,
     sales: Math.round(m.sales * 10) / 10,
+    orders: m.orders ? Math.round(m.orders * 10) / 10 : null,
     forecast: Math.round(m.forecast * 10) / 10,
     budget: Math.round(m.budget * 10) / 10,
     pctForecast: m.forecast > 0 ? Math.round((m.sales / m.forecast) * 1000) / 10 : null,
@@ -153,13 +177,16 @@ export function salesForecastExportRows(d: SalesForecastSummaryData) {
   }));
 }
 
-/** Three bars on ONE scale (Sales, Forecast, Budget) with the value beside each. */
-function CompareBars({ rows }: { rows: { key: SeriesKey; label: string; value: number; missing?: string }[] }) {
+const ORDERS_COLOR = '#7cb2f2'; // a tint of the Sales blue: orders are sales not yet invoiced
+
+/** Three bars on ONE scale (Sales, Forecast, Budget) with the value beside each.
+ *  A row can stack `parts` (Sales | Orders) with a 2px gap between segments. */
+function CompareBars({ rows }: { rows: { key: SeriesKey; label: string; value: number; missing?: string; parts?: { label: string; value: number; color: string }[] }[] }) {
   const max = Math.max(...rows.map((r) => r.value), 1);
   return (
     <div className="space-y-2.5">
       {rows.map((r) => (
-        <div key={r.key} className="grid grid-cols-[112px_1fr_92px] items-center gap-3">
+        <div key={r.key} className="grid grid-cols-[132px_1fr_92px] items-center gap-3">
           <span className="text-[10px] uppercase tracking-widest font-bold opacity-70 flex items-center gap-1.5">
             <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: SERIES[r.key].color }} />
             {r.label}
@@ -167,6 +194,12 @@ function CompareBars({ rows }: { rows: { key: SeriesKey; label: string; value: n
           <div className="h-4 bg-[#141414]/[0.05] relative">
             {r.missing ? (
               <span className="absolute inset-0 flex items-center px-2 text-[10px] italic opacity-50">{r.missing}</span>
+            ) : r.parts && r.value > 0 ? (
+              <div className="h-full flex gap-[2px]" style={{ width: `${Math.max((r.value / max) * 100, 0.75)}%` }}>
+                {r.parts.filter(pt => pt.value > 0).map((pt, i, arr) => (
+                  <div key={pt.label} className={`h-full ${i === arr.length - 1 ? 'rounded-r-[4px]' : ''}`} style={{ flex: `${pt.value} 0 0`, background: pt.color }} title={`${pt.label}: ${fmtMt(pt.value)}`} />
+                ))}
+              </div>
             ) : r.value > 0 ? (
               <div className="h-full rounded-r-[4px]" style={{ width: `${Math.max((r.value / max) * 100, 0.75)}%`, background: SERIES[r.key].color }} />
             ) : null}
@@ -179,16 +212,17 @@ function CompareBars({ rows }: { rows: { key: SeriesKey; label: string; value: n
 }
 
 export default function SalesForecastSummary({
-  invoices, customerForecasts, fiscalYears, customers,
+  invoices, customerForecasts, fiscalYears, customers, orders = [],
 }: {
   invoices: Invoice[];
   customerForecasts: CustomerForecast[];
   fiscalYears: FiscalYear[];
   customers: Customer[];
+  orders?: Order[];
 }) {
   const data = useMemo(
-    () => computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers),
-    [invoices, customerForecasts, fiscalYears, customers],
+    () => computeSalesForecastSummary(invoices, customerForecasts, fiscalYears, customers, orders),
+    [invoices, customerForecasts, fiscalYears, customers, orders],
   );
 
   const card = 'bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]';
@@ -223,12 +257,17 @@ export default function SalesForecastSummary({
           {cur ? (
             <>
               <CompareBars rows={[
-                { key: 'sales', label: 'Sales MTD', value: cur.sales },
+                { key: 'sales', label: 'Sales + Orders MTD', value: cur.sales + cur.orders, parts: [
+                  { label: 'Sales (invoiced)', value: cur.sales, color: SERIES.sales.color },
+                  { label: 'Open orders', value: cur.orders, color: ORDERS_COLOR },
+                ] },
                 { key: 'forecast', label: 'Forecast', value: cur.forecast, missing: cur.forecast > 0 ? undefined : noForecast },
                 { key: 'budget', label: 'Budget', value: cur.budget, missing: cur.budget > 0 ? undefined : noBudget },
               ]} />
               <p className="text-[11px] mt-3 opacity-80">
-                Sales are at <strong>{pctOf(cur.sales, cur.forecast)}</strong> of forecast and <strong>{pctOf(cur.sales, cur.budget)}</strong> of budget,
+                <span className="inline-flex items-center gap-1 mr-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SERIES.sales.color }} />Sales {fmtMt(cur.sales)}</span>
+                + <span className="inline-flex items-center gap-1 mx-1"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: ORDERS_COLOR }} />open orders {fmtMt(cur.orders)}</span>
+                are at <strong>{pctOf(cur.sales + cur.orders, cur.forecast)}</strong> of forecast and <strong>{pctOf(cur.sales + cur.orders, cur.budget)}</strong> of budget,
                 with {Math.round(data.periodElapsed * 100)}% of the period gone.
               </p>
             </>
