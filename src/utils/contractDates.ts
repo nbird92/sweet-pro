@@ -64,7 +64,7 @@ export function contractStartDate(v?: string | null): string {
 }
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-/** "2027-12-31" → "December 31, 2027" (documents such as the Sales Agreement).
+/** "2027-12-31" → "December 31, 2027" (documents such as the Sales Contract).
  *  Anything that isn't an ISO date is returned unchanged. */
 export function longDate(v?: string | null): string {
   const t = String(v ?? '').trim();

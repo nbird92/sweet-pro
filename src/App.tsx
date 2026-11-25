@@ -7266,7 +7266,7 @@ export default function App() {
   // and register it so every document is DRAWN like its template, instantly.
   // Template edits therefore show after a refresh.
   const salesAgreementTemplate = useMemo(
-    () => qaTemplates.find(t => /sales\s*agreement/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
+    () => qaTemplates.find(t => /sales\s*(contract|agreement)/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
     [qaTemplates],
   );
   const docTemplatePicks = useMemo(() => {
@@ -7283,7 +7283,7 @@ export default function App() {
       // The Sample Request form: type "Sample Request", else any template named "…sample…".
       sampleRequest: byType('Sample Request')
         || qaTemplates.find(t => /sample/i.test(t.name || '') && (t.googleSheetUrl || '').trim()),
-      // The contract Sales Agreement: any template named "…sales agreement…".
+      // The Sales Contract: any template named "…sales contract…" (or the old "…sales agreement…").
       salesAgreement: salesAgreementTemplate,
     };
     return picks;
@@ -7448,8 +7448,8 @@ export default function App() {
     handleGenerateDocumentPackage(scaled.shipment, includeBagIdReport, scaled.order, 'shipping', proFormaDataForInvoice(inv));
   };
 
-  /** Contracts-table action: build the Sales Agreement for a contract, drawn
-   *  from the "Sales Agreement" template (QA Templates) the same way the invoice
+  /** Contracts-table action: build the Sales Contract for a contract, drawn
+   *  from the "Sales Contract" template (QA Templates) the same way the invoice
    *  document package draws from its templates, and shown in the PDF preview. */
   const handleGenerateSalesAgreement = (c: Contract) => {
     try {
@@ -7523,13 +7523,13 @@ export default function App() {
         { label: 'Payment Terms', value: paymentTerms },
       ];
       const safe = (v: string) => v.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-      const filename = `SalesAgreement_${safe(c.contractNumber || 'draft')}_${safe(corporateName)}.pdf`;
+      const filename = `SalesContract_${safe(c.contractNumber || 'draft')}_${safe(corporateName)}.pdf`;
       const { blobUrl } = generateSalesAgreementPdf({ tokens, items, fields, filename });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url: blobUrl, filename, title: 'Sales Agreement Preview', templateId: salesAgreementTemplate?.id });
+      setPdfPreview({ url: blobUrl, filename, title: 'Sales Contract Preview', templateId: salesAgreementTemplate?.id });
     } catch (e: any) {
-      console.error('Generate sales agreement failed:', e);
-      setErrorBox('Failed to generate sales agreement: ' + (e.message || 'Unknown error'));
+      console.error('Generate sales contract failed:', e);
+      setErrorBox('Failed to generate the sales contract: ' + (e.message || 'Unknown error'));
     }
   };
 
@@ -18364,7 +18364,7 @@ export default function App() {
                         <button onClick={(e) => { e.stopPropagation(); openEditContract(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); handleGenerateSalesAgreement(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="View Sales Agreement">
+                        <button onClick={(e) => { e.stopPropagation(); handleGenerateSalesAgreement(c); }} className="p-1 hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors" title="View Sales Contract">
                           <ScrollText size={14} />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setContractInactivateConfirmId(c.id); }} className={`p-1 transition-colors ${c.active !== false ? 'hover:bg-amber-500 hover:text-white' : 'hover:bg-green-500 hover:text-white'}`} title={c.active !== false ? 'Inactivate Contract' : 'Reactivate Contract'}>
@@ -26085,9 +26085,9 @@ export default function App() {
                   <button
                     onClick={() => handleGenerateSalesAgreement(selectedContractDetail)}
                     className="flex-1 py-4 border border-[#141414] font-bold text-xs uppercase hover:bg-[#141414] hover:text-[#E4E3E0] transition-colors flex items-center-safe justify-center gap-2"
-                    title="View Sales Agreement"
+                    title="View Sales Contract"
                   >
-                    <ScrollText size={16} /> Sales Agreement
+                    <ScrollText size={16} /> Sales Contract
                   </button>
                   <button
                     onClick={() => setSelectedContractDetail(null)}

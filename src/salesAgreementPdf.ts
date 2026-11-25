@@ -3,8 +3,8 @@ import autoTable from 'jspdf-autotable';
 import { renderTemplateGridInto } from './templateGridPdf';
 import { docTemplate } from './docTemplates';
 
-/** Everything the Sales Agreement draws from one contract. `tokens` are the
- *  "Sales Agreement" template's {{tokens}} (case-insensitive); `items` fill any
+/** Everything the Sales Contract draws from one contract. `tokens` are the
+ *  "Sales Contract" template's {{tokens}} (case-insensitive); `items` fill any
  *  {{item_…}} row the template has (one per contract product line); `fields`
  *  drive the built-in layout used when the template isn't loaded. */
 export interface SalesAgreementData {
@@ -15,8 +15,8 @@ export interface SalesAgreementData {
 }
 
 /**
- * Build the Sales Agreement PDF for a contract.
- * When the "Sales Agreement" template (QA Templates table) is loaded, the page
+ * Build the Sales Contract PDF for a contract.
+ * When the "Sales Contract" template (QA Templates table) is loaded, the page
  * is drawn FROM THE TEMPLATE with its {{tokens}} filled — the agreement's
  * wording (force majeure, governing law, …) lives in the template sheet, never
  * in the code. Otherwise a plain built-in summary of the terms is drawn.
@@ -30,7 +30,7 @@ export function generateSalesAgreementPdf(d: SalesAgreementData): { blobUrl: str
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(20);
     doc.setTextColor('#141414');
-    doc.text('Sales Agreement', 14, 20);
+    doc.text('Sales Contract', 14, 20);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.text('Sucro Canada', 14, 26);
