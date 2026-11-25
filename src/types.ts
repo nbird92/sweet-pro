@@ -346,6 +346,15 @@ export interface Contract {
   paymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   palletType?: 'CHEP' | 'One Way' | '';
   margin?: number; // Margin in CAD/MT
+  /** Yield loss multiplier on raws + ocean freight (Customer Quote default 1.08). */
+  yieldLossMultiplier?: number;
+  /** Sugar loss % — applied to the refined bulk cost. */
+  sugarLossPct?: number;
+  /** Supply chain cost per MT (contract currency) — Vancouver origin. */
+  supplyChainCostMt?: number;
+  /** Bulk base price per MT (contract currency), calculated from the pricing
+   *  fields: before delivered freight, duty, pallets and payment-term uplift. */
+  bulkBasePrice?: number;
   active?: boolean; // Contract active status (defaults to true)
   /** Additional customer IDs allowed to draw on this contract beyond the primary
    *  customer / its group — e.g. Ventura authorized to use Nestle's contracts. */

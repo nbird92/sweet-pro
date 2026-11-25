@@ -120,6 +120,7 @@ import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
 import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './utils/customerItas';
+import { calcContractPrice, DEFAULT_YIELD_LOSS } from './utils/contractPriceCalc';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
@@ -13072,6 +13073,11 @@ export default function App() {
       deliveredFreight: config.isDelivered && calculations.deliveredFreight ? calculations.deliveredFreight : undefined,
       exportDuty: config.isExport && calculations.exportDuty ? calculations.exportDuty : undefined,
       palletCharge: calculations.palletCharge,
+      // The rest of the build-up, so Edit Contract recalculates exactly this price.
+      yieldLossMultiplier: config.yieldLossMultiplier,
+      ...(config.sugarLossPct ? { sugarLossPct: config.sugarLossPct } : {}),
+      ...(config.origin === 'Vancouver' && calculations.vancouverSupplyChainCost ? { supplyChainCostMt: Math.round(calculations.vancouverSupplyChainCost * 100) / 100 } : {}),
+      bulkBasePrice: Math.round((config.origin === 'Vancouver' ? calculations.fcaVancouverBulk : calculations.fcaHamiltonBulk) * 100) / 100,
       paymentTerms: config.paymentTerms || selectedCustomer.defaultPaymentTerms || undefined,
       palletType: config.palletType || '',
       margin: config.refiningMarginCadMt || selectedCustomer.defaultMargin || 0,
@@ -25272,14 +25278,39 @@ export default function App() {
                       className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">Final Price (per MT)</label>
-                    <DecimalInput
-                      value={editingContract.finalPrice || undefined}
-                      onValue={(v) => setEditingContract({ ...editingContract, finalPrice: v ?? 0 })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                    />
-                  </div>
+                  {(() => {
+                    // Calculated from this menu's pricing fields only (no live
+                    // market data). Incomplete build-up → the stored price is kept.
+                    const pc = calcContractPrice(editingContract);
+                    const cur = editingContract.currency || '';
+                    const money = (v?: number) => (v === undefined ? '—' : `${cur ? cur + ' ' : ''}$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+                    const changed = pc.complete && Math.abs((pc.final ?? 0) - (editingContract.finalPrice || 0)) >= 0.005;
+                    return (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Final Price (per MT) <span className="text-[8px] opacity-60">calculated</span></label>
+                          <div className={`w-full border p-3 text-sm font-mono font-bold ${pc.complete ? 'bg-emerald-50 border-emerald-700' : 'bg-gray-100 border-[#141414]/30 text-gray-600'}`}
+                            title="Bulk Base + Delivered Freight + Export Duty + Pallet Charge, × 1.02 on 2% / Net 15">
+                            {pc.complete ? money(pc.final) : money(editingContract.finalPrice || undefined)}
+                          </div>
+                          {pc.complete && changed && (
+                            <div className="text-[10px] text-emerald-800">Was {money(editingContract.finalPrice || undefined)} — saves as {money(pc.final)}.</div>
+                          )}
+                          {!pc.complete && (
+                            <div className="text-[10px] text-amber-700">Not calculated — fill in {pc.missing.join(', ')}. The stored price is kept.</div>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase font-bold opacity-50">Bulk Base Price (per MT) <span className="text-[8px] opacity-60">calculated</span></label>
+                          <div className={`w-full border p-3 text-sm font-mono font-bold ${pc.complete ? 'bg-emerald-50 border-emerald-700' : 'bg-gray-100 border-[#141414]/30 text-gray-600'}`}
+                            title="((Raws + Ocean Freight) × Yield × FX + Margin) × (1 + Sugar Loss %) + Supply Chain">
+                            {pc.complete ? money(pc.bulkBase) : money(editingContract.bulkBasePrice)}
+                          </div>
+                          <div className="text-[10px] opacity-50">Before delivered freight, duty, pallets and payment terms.</div>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Contract Date</label>
                     <input
@@ -25465,6 +25496,33 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Yield Loss Multiplier</label>
+                    <DecimalInput
+                      value={editingContract.yieldLossMultiplier}
+                      onValue={(v) => setEditingContract({ ...editingContract, yieldLossMultiplier: v && v > 0 ? v : undefined })}
+                      placeholder={`${DEFAULT_YIELD_LOSS} (default)`}
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Sugar Loss %</label>
+                    <DecimalInput
+                      value={editingContract.sugarLossPct}
+                      onValue={(v) => setEditingContract({ ...editingContract, sugarLossPct: v ? v : undefined })}
+                      placeholder="0"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Supply Chain (per MT)</label>
+                    <DecimalInput
+                      value={editingContract.supplyChainCostMt}
+                      onValue={(v) => setEditingContract({ ...editingContract, supplyChainCostMt: v ? v : undefined })}
+                      placeholder="0"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Delivered Freight</label>
                     {/* Blank when the contract has no freight (0 is not shown). */}
                     <DecimalInput
@@ -25585,7 +25643,7 @@ export default function App() {
                           id: `CL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
                           productName,
                           differentialCadMt: diff,
-                          finalPriceMt: editingContract.finalPrice + diff
+                          finalPriceMt: Math.round(((calcContractPrice(editingContract).final ?? editingContract.finalPrice) + diff) * 100) / 100
                         };
                         setEditingContract({
                           ...editingContract,
@@ -25653,7 +25711,20 @@ export default function App() {
                       const renamed = !!oldCn && !!newCn && oldCn !== newCn;
                       // Dated, field-by-field record of everything this save changed.
                       // A month-only End Date ("Dec 2027") is stored as that month's last day.
-                      const edited: Contract = { ...editingContract, contractNumber: newCn, endDate: contractEndDate(editingContract.endDate) };
+                      // Prices come from the pricing fields (no live market data).
+                      // An incomplete build-up keeps the stored prices.
+                      const pc = calcContractPrice(editingContract);
+                      const priced: Contract = pc.complete
+                        ? {
+                            ...editingContract,
+                            finalPrice: pc.final!,
+                            bulkBasePrice: pc.bulkBase!,
+                            ...(editingContract.contractLines?.length ? {
+                              contractLines: editingContract.contractLines.map(l => ({ ...l, finalPriceMt: Math.round((pc.final! + (l.differentialCadMt || 0)) * 100) / 100 })),
+                            } : {}),
+                          }
+                        : editingContract;
+                      const edited: Contract = { ...priced, contractNumber: newCn, endDate: contractEndDate(editingContract.endDate) };
                       const saved: Contract = before
                         ? withChangeNote(before, edited, 'EDITED', user?.displayName || user?.email || undefined, customerNameById)
                         : edited;
