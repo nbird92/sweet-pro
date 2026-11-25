@@ -38,13 +38,18 @@ export interface TemplateFill {
   marks?: string[];
   /** Logo drawn into the largest empty block at the top right, if any. */
   logoDataUrl?: string;
+  /** Long documents (e.g. the Sales Contract): fit the page WIDTH and flow
+   *  onto further pages, breaking between rows (a multi-row merged block is
+   *  kept together when it fits), instead of shrinking everything to one page. */
+  paginate?: boolean;
 }
 
 const PX_MM = 25.4 / 96;
 const lower = (s: string) => s.toLowerCase();
 
 /** Draw `grid` filled with `fill` onto the current page of `doc`, fitted to the
- *  page width (and shrunk to fit the height when needed). */
+ *  page width — shrunk to fit the height on one page, or (fill.paginate)
+ *  continued onto new pages. */
 export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: TemplateFill): void {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -107,12 +112,11 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
   const totalHpx = outRows.reduce((a, r) => a + (grid.rows[r.src] || 21), 0) || 1;
   let k = (pageW - margin * 2) / (totalWpx * PX_MM);
   const maxH = pageH - margin * 2;
-  if (totalHpx * PX_MM * k > maxH) k = maxH / (totalHpx * PX_MM);
+  if (!fill.paginate && totalHpx * PX_MM * k > maxH) k = maxH / (totalHpx * PX_MM);
   const mm = (px: number) => px * PX_MM * k;
   const colX: number[] = [margin];
   for (const w of grid.cols) colX.push(colX[colX.length - 1] + mm(w));
-  const rowY: number[] = [margin];
-  for (const r of outRows) rowY.push(rowY[rowY.length - 1] + mm(grid.rows[r.src] || 21));
+  const rowH = outRows.map(r => mm(grid.rows[r.src] || 21));
 
   // Merges, re-indexed onto output rows (a merge inside one template row is
   // repeated for every output row built from it).
@@ -131,10 +135,45 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
     mergeAt.set(`${m.o0},${m.c0}`, m);
     for (let o = m.o0; o < m.o1; o++) for (let c = m.c0; c < m.c1; c++) if (o !== m.o0 || c !== m.c0) covered.add(`${o},${c}`);
   }
+
+  // ── Rows → pages. One page unless fill.paginate; then a row that would run
+  //    past the bottom margin starts a new page, and a multi-row merged block
+  //    moves whole to the next page when it fits on one. ──
+  const startPage = doc.getCurrentPageInfo().pageNumber;
+  const rowPage: number[] = [];
+  const rowTop: number[] = [];
+  {
+    const groupEnd = new Map<number, number>();
+    if (fill.paginate) for (const m of outMerges) if (m.o1 - m.o0 > 1) groupEnd.set(m.o0, Math.max(groupEnd.get(m.o0) ?? 0, m.o1));
+    let page = 0, y = margin;
+    for (let o = 0; o < outRows.length; o++) {
+      if (fill.paginate) {
+        let need = rowH[o];
+        const end = groupEnd.get(o);
+        if (end) {
+          let g = 0;
+          for (let x = o; x < Math.min(end, outRows.length); x++) g += rowH[x];
+          if (g <= maxH) need = g;
+        }
+        if (y + need > margin + maxH + 0.01 && y > margin + 0.01) { page++; y = margin; }
+      }
+      rowPage[o] = page;
+      rowTop[o] = y;
+      y += rowH[o];
+    }
+    const lastPage = outRows.length ? rowPage[outRows.length - 1] : 0;
+    while (doc.getNumberOfPages() < startPage + lastPage) doc.addPage();
+  }
+  /** Switch drawing to the page a rect sits on. */
+  const onPage = (page: number) => doc.setPage(startPage + page);
   const rectOf = (o: number, c: number) => {
     const m = mergeAt.get(`${o},${c}`);
     const o1 = m ? m.o1 : o + 1, c1 = m ? m.c1 : c + 1;
-    return { x: colX[c], y: rowY[o], w: colX[Math.min(c1, grid.cols.length)] - colX[c], h: rowY[Math.min(o1, outRows.length)] - rowY[o] };
+    // Height = the rows of this cell/merge on the SAME page (a block taller than
+    // a page is cut at the page break).
+    let h = 0;
+    for (let x = o; x < Math.min(o1, outRows.length); x++) { if (rowPage[x] !== rowPage[o]) break; h += rowH[x]; }
+    return { x: colX[c], y: rowTop[o], w: colX[Math.min(c1, grid.cols.length)] - colX[c], h, page: rowPage[o] };
   };
 
   // The checkbox that belongs to a label. A row's boxes sit consistently either
@@ -199,6 +238,7 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
       const cell = cellAt.get(`${row.src},${c}`);
       if (!cell?.bg) continue;
       const r = rectOf(o, c);
+      onPage(r.page);
       doc.setFillColor(cell.bg[0], cell.bg[1], cell.bg[2]);
       doc.rect(r.x, r.y, r.w, r.h, 'F');
     }
@@ -231,6 +271,7 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
       const cell = cellAt.get(`${row.src},${c}`);
       if (!cell?.b) continue;
       const rr = rectOf(o, c);
+      onPage(rr.page);
       const x0 = rr.x, x1 = rr.x + rr.w, y0 = rr.y, y1 = rr.y + rr.h;
       drawEdge(cell.b.t, x0, y0, x1, y0);
       drawEdge(cell.b.b, x0, y1, x1, y1);
@@ -246,6 +287,7 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
       const cell = cellAt.get(`${row.src},${c}`);
       if (!isCheckbox(cell)) continue;
       const r = rectOf(o, c);
+      onPage(r.page);
       const size = Math.min(r.h * 0.6, r.w * 0.6, 4);
       const x = r.x + (r.w - size) / 2, y = r.y + (r.h - size) / 2;
       doc.setDrawColor(60, 60, 60); doc.setLineWidth(0.3);
@@ -267,6 +309,7 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
     // Only a block big enough to be a logo area (else the template has none).
     if (best && best.r.w >= 25 && best.r.h >= 10) {
       try {
+        onPage(best.r.page);
         const props = doc.getImageProperties(fill.logoDataUrl);
         const pad = 1.2;
         const bw = best.r.w - pad * 2, bh = best.r.h - pad * 2;
@@ -286,6 +329,7 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
       const text = textFor(o, cell);
       if (!text.trim()) continue;
       const r = rectOf(o, c);
+      onPage(r.page);
       const f = cell.f || {};
       const fam = /times|serif/i.test(f.fam || '') && !/sans/i.test(f.fam || '') ? 'times' : /courier|mono/i.test(f.fam || '') ? 'courier' : 'helvetica';
       const style = f.b && f.i ? 'bolditalic' : f.b ? 'bold' : f.i ? 'italic' : 'normal';
@@ -343,4 +387,5 @@ export function renderTemplateGridInto(doc: jsPDF, grid: TemplateGrid, fill: Tem
       }
     }
   });
+  onPage(outRows.length ? rowPage[outRows.length - 1] : 0);
 }

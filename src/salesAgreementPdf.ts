@@ -25,7 +25,8 @@ export function generateSalesAgreementPdf(d: SalesAgreementData): { blobUrl: str
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const tpl = docTemplate('salesAgreement');
   if (tpl) {
-    renderTemplateGridInto(doc, tpl.grid, { tokens: d.tokens, items: d.items, logoDataUrl: tpl.logo });
+    // Long legal document: full page width, continued onto further pages.
+    renderTemplateGridInto(doc, tpl.grid, { tokens: d.tokens, items: d.items, logoDataUrl: tpl.logo, paginate: true });
   } else {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(20);
