@@ -11485,6 +11485,28 @@ export default function App() {
   /** A contract line's differential for display, in the contract's currency:
    *  stored as CAD/MT, so a USD contract shows it ÷ the contract's FX rate.
    *  `label` is the currency prefix ('USD ' / 'CAD ' — '' for CAD contracts). */
+  /** Net kg per unit of a contract line's product — by its exact product id,
+   *  else its name. kg 0 = bulk (no unit) or unknown. */
+  const contractLineUnit = (cl: ContractLine): { kg: number; bulk: boolean } => {
+    const qa = cl.productKey ? qaProducts.find(q => q.id === cl.productKey) || null : null;
+    const sk = (qa ? skus.find(x => x.id === qa.skuId) : undefined)
+      || (cl.productKey ? skus.find(x => x.id === cl.productKey) : undefined)
+      || resolveProduct(cl.productDisplayName || cl.productName).sku
+      || null;
+    const q = qa || (sk ? qaProducts.find(x => x.skuId === sk.id) || null : null);
+    const group = (q?.productGroup || sk?.productGroup || '').trim().toLowerCase();
+    const fmt = (q?.productFormat || sk?.productFormat || '').trim().toLowerCase();
+    const bulk = group === 'bulk' || fmt === 'bulk' || fmt === 'liquid' || /molasses/i.test(q?.sugarType || sk?.sugarType || '');
+    const kg = q?.netWeightKg || sk?.netWeightKg || sk?.netWeight || 0;
+    return { kg: bulk ? 0 : kg, bulk };
+  };
+  /** Per-unit cell text for a line price (contract currency). */
+  const contractLinePerUnit = (cl: ContractLine, pricePerMt: number, currency?: string): { text: string; sub?: string } => {
+    const u = contractLineUnit(cl);
+    if (u.bulk) return { text: '—', sub: 'bulk' };
+    if (!u.kg) return { text: '—', sub: 'no unit weight' };
+    return { text: `${currency ? currency + ' ' : ''}$${fmtN((pricePerMt * u.kg) / 1000, 2)}`, sub: `per ${fmtN(u.kg, u.kg % 1 ? 2 : 0)} kg` };
+  };
   const contractLineDifferential = (contract: Contract, line: ContractLine): { value: number; label: string; note?: string } => {
     const cad = Number(line.differentialCadMt) || 0;
     if ((contract.currency || '').trim().toUpperCase() !== 'USD') return { value: cad, label: '' };
@@ -25617,9 +25639,9 @@ export default function App() {
                             matching (cl.productName === lineItem.productName) stays
                             aligned, while the label shows the real product name. */}
                         {buildOrderProductOptions(undefined, { selectableOnly: true })
-                          .filter(o => o.value && !(editingContract.contractLines || []).some(cl => cl.productName === o.value))
+                          .filter(o => o.value && !(editingContract.contractLines || []).some(cl => (cl.productKey ? cl.productKey === o.key : cl.productName === o.value)))
                           .map(o => (
-                            <option key={o.key} value={o.value}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
+                            <option key={o.key} value={o.key}>{o.location ? `${o.label} — ${o.location}` : o.label}</option>
                           ))}
                       </select>
                     </div>
@@ -25637,9 +25659,13 @@ export default function App() {
                       onClick={() => {
                         const productEl = document.getElementById('editContractLineProduct') as HTMLSelectElement;
                         const diffEl = document.getElementById('editContractLineDiff') as HTMLInputElement;
-                        const productName = productEl?.value;
+                        // The picker's value is the exact product (QA / SKU id): store
+                        // it with the line so a "Bag" line knows which bag (and its
+                        // unit weight) — the catalog value alone is shared.
+                        const opt = buildOrderProductOptions(undefined, { selectableOnly: true }).find(o => o.key === productEl?.value);
+                        const productName = opt?.value;
                         const diff = parseFloat(diffEl?.value) || 0;
-                        if (!productName) return;
+                        if (!opt || !productName) return;
                         // Differentials are CAD; a USD contract adds CAD ÷ its FX rate.
                         const linePrice = contractLinePrice(editingContract, calcContractPrice(editingContract).final ?? editingContract.finalPrice, diff);
                         if (linePrice === null) {
@@ -25649,6 +25675,8 @@ export default function App() {
                         const newLine: ContractLine = {
                           id: `CL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
                           productName,
+                          productKey: opt.key,
+                          productDisplayName: opt.label,
                           differentialCadMt: diff,
                           finalPriceMt: linePrice
                         };
@@ -25674,6 +25702,7 @@ export default function App() {
                             <th className="p-2 text-right">Differential (CAD/MT)</th>
                             <th className="p-2 text-right">Differential (USD/MT)</th>
                             <th className="p-2 text-right">Final Price/MT</th>
+                            <th className="p-2 text-right">Per Unit</th>
                             <th className="p-2 w-8"></th>
                           </tr>
                         </thead>
@@ -25694,6 +25723,9 @@ export default function App() {
                                       {editingContract.currency || ''} ${fmtN(shown, 2)}
                                       {live !== null && Math.abs(live - (cl.finalPriceMt || 0)) >= 0.005 && <div className="text-[9px] font-normal text-emerald-800">was ${fmtN(cl.finalPriceMt, 2)}</div>}
                                     </td>
+                                    {(() => { const pu = contractLinePerUnit(cl, shown, editingContract.currency); return (
+                                      <td className="p-2 text-right font-mono">{pu.text}{pu.sub && <div className="text-[9px] opacity-60">{pu.sub}</div>}</td>
+                                    ); })()}
                                   </>
                                 );
                               })()}
@@ -25995,6 +26027,7 @@ export default function App() {
                           <th className="px-4 py-2 text-right opacity-60 font-bold">Differential (CAD/MT)</th>
                           <th className="px-4 py-2 text-right opacity-60 font-bold">Differential (USD/MT)</th>
                           <th className="px-4 py-2 text-right opacity-60 font-bold">Final Price / MT</th>
+                          <th className="px-4 py-2 text-right opacity-60 font-bold">Per Unit</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#141414]/10">
@@ -26015,6 +26048,9 @@ export default function App() {
                                     {c.currency} ${fmtN(cl.finalPriceMt, 2)}
                                     {off && <div className="text-[9px] font-normal text-amber-700" title="Final Price + CAD differential (÷ FX on a USD contract)">should be ${fmtN(rule!, 2)} — save the contract to update</div>}
                                   </td>
+                                  {(() => { const pu = contractLinePerUnit(cl, cl.finalPriceMt || 0, c.currency); return (
+                                    <td className="px-4 py-2 text-right font-mono">{pu.text}{pu.sub && <div className="text-[9px] opacity-60">{pu.sub}</div>}</td>
+                                  ); })()}
                                 </>
                               );
                             })()}
