@@ -7491,8 +7491,10 @@ export default function App() {
         itas_name: c.itasName || customer?.itasCustomerName || '',
         corporate_address: customerAddress, customer_address: customerAddress,
         customer_corporate_address: customer ? oneLine(customer.address, customer.city, customer.province, customer.postalCode) : '',
-        currency: cur, price_mt: priceMt ? `${priceMt} / MT` : '', price: priceMt,
-        contract_volume: volume, volume,
+        // Bare values: the template words the units ("{{contract_volume}} MT",
+        // "{{price_MT}} per metric ton"); {{volume}} keeps its " MT".
+        currency: cur, price_mt: priceMt, price: priceMt,
+        contract_volume: Number(c.contractVolume) ? Number(c.contractVolume).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '', volume,
         freight_terms: c.shippingTerms || '', shipping_terms: c.shippingTerms || '',
         payment_terms: paymentTerms,
         origin: c.origin || '', destination: c.destination || '',
