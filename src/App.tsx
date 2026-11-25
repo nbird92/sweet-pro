@@ -6887,6 +6887,21 @@ export default function App() {
     if (!isContractDelivered(c)) { const port = contractPortOfOrigin(c); if (port) return port; }
     return c.origin || '';
   };
+  /** Destination as shown for a contract (stored destination is only set on
+   *  delivered quotes). Not delivered: the buyer collects at origin, so the
+   *  location's Port of Origin (else its city, province). Delivered: the stored
+   *  destination, else the customer's ship-to (else billing) city, province. */
+  const contractDestinationLabel = (c: Contract): string => {
+    const cityProv = (city?: string, prov?: string) => [city, prov].map(x => (x || '').trim()).filter(Boolean).join(', ');
+    if (!isContractDelivered(c)) {
+      const loc = findDocLocation(c.origin);
+      return contractPortOfOrigin(c) || cityProv(loc?.city, loc?.province) || (c.destination || '').trim();
+    }
+    if ((c.destination || '').trim()) return c.destination.trim();
+    const cust = customers.find(x => x.name === c.customerName) || customers.find(x => !!c.customerNumber && (x.id === c.customerNumber || x.customerNumber === c.customerNumber));
+    const st = cust?.shipToLocations?.[0];
+    return cityProv(st?.city, st?.province) || cityProv(cust?.city, cust?.province);
+  };
 
   /** Resolve everything a shipment document (BOL / document package) draws from,
    *  so a document opened from the SHIPMENT SCHEDULE carries the same data as one
@@ -7516,7 +7531,7 @@ export default function App() {
         contract_volume: Number(c.contractVolume) ? Number(c.contractVolume).toLocaleString(undefined, { maximumFractionDigits: 3 }) : '', volume,
         freight_terms: c.shippingTerms || '', shipping_terms: c.shippingTerms || '',
         payment_terms: paymentTerms,
-        origin: contractOriginLabel(c), destination: c.destination || '',
+        origin: contractOriginLabel(c), destination: contractDestinationLabel(c),
         // Port of Origin: the location's (Locations table), else its city, province.
         // The template's Port of Origin row reads {{location_city_PROVINCE}}.
         port_of_origin: contractPortOfOrigin(c) || [supplierLoc?.city, supplierLoc?.province].filter(Boolean).join(', '),
@@ -25971,7 +25986,7 @@ export default function App() {
                           return productNameToDisplay(sku) || sku;
                         })()}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Origin</td><td className="px-4 py-2 font-bold">{contractOriginLabel(selectedContractDetail) || '—'}{contractOriginLabel(selectedContractDetail) !== (selectedContractDetail.origin || '') && <span className="ml-2 text-[10px] font-normal opacity-60">({selectedContractDetail.origin} · not delivered)</span>}</td></tr>
-                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{selectedContractDetail.destination || '—'}</td></tr>
+                        <tr><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Destination</td><td className="px-4 py-2 font-bold">{contractDestinationLabel(selectedContractDetail) || '—'}{!(selectedContractDetail.destination || '').trim() && contractDestinationLabel(selectedContractDetail) && <span className="ml-2 text-[10px] font-normal opacity-60">({isContractDelivered(selectedContractDetail) ? 'customer ship-to' : 'not delivered — port of origin'})</span>}</td></tr>
                         <tr className="bg-[#F9F9F9]"><td className="px-4 py-2 opacity-60 uppercase text-[10px] tracking-widest font-bold">Volume (Total)</td><td className="px-4 py-2 font-bold">{selectedContractDetail.contractVolume || 0} MT</td></tr>
                         {(() => {
                           const st = contractVolumeStats.get(selectedContractDetail.id) || { taken: 0, onOrder: 0, outstanding: selectedContractDetail.contractVolume || 0 };
