@@ -121,6 +121,7 @@ import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
 import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './utils/customerItas';
 import { calcContractPrice, DEFAULT_YIELD_LOSS } from './utils/contractPriceCalc';
+import { lineDifferentials, contractLinePrice, isUsdContract } from './utils/contractLines';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
@@ -25623,7 +25624,7 @@ export default function App() {
                       </select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold opacity-60">Differential ($/MT)</label>
+                      <label className="text-[10px] uppercase font-bold opacity-60">Differential (CAD/MT)</label>
                       <input
                         id="editContractLineDiff"
                         type="number"
@@ -25639,11 +25640,17 @@ export default function App() {
                         const productName = productEl?.value;
                         const diff = parseFloat(diffEl?.value) || 0;
                         if (!productName) return;
+                        // Differentials are CAD; a USD contract adds CAD ÷ its FX rate.
+                        const linePrice = contractLinePrice(editingContract, calcContractPrice(editingContract).final ?? editingContract.finalPrice, diff);
+                        if (linePrice === null) {
+                          setErrorBox('Enter this contract\'s FX Rate first. Differentials are in CAD, and a USD contract needs its FX rate to convert them.');
+                          return;
+                        }
                         const newLine: ContractLine = {
                           id: `CL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
                           productName,
                           differentialCadMt: diff,
-                          finalPriceMt: Math.round(((calcContractPrice(editingContract).final ?? editingContract.finalPrice) + diff) * 100) / 100
+                          finalPriceMt: linePrice
                         };
                         setEditingContract({
                           ...editingContract,
@@ -25664,7 +25671,8 @@ export default function App() {
                         <thead>
                           <tr className="bg-[#141414] text-[#E4E3E0] text-[10px] uppercase">
                             <th className="p-2 text-left">Product</th>
-                            <th className="p-2 text-right">Differential</th>
+                            <th className="p-2 text-right">Differential (CAD/MT)</th>
+                            <th className="p-2 text-right">Differential (USD/MT)</th>
                             <th className="p-2 text-right">Final Price/MT</th>
                             <th className="p-2 w-8"></th>
                           </tr>
@@ -25673,8 +25681,22 @@ export default function App() {
                           {(editingContract.contractLines || []).map(cl => (
                             <tr key={cl.id} className="border-t border-[#141414]/10 text-xs">
                               <td className="p-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                              <td className="p-2 text-right">${fmtN(cl.differentialCadMt, 2)}</td>
-                              <td className="p-2 text-right font-bold">${fmtN(cl.finalPriceMt, 2)}</td>
+                              {(() => {
+                                const dd = lineDifferentials(editingContract, cl.differentialCadMt || 0);
+                                const live = contractLinePrice(editingContract, calcContractPrice(editingContract).final ?? editingContract.finalPrice, cl.differentialCadMt || 0);
+                                const shown = live ?? cl.finalPriceMt;
+                                const sign = (v: number) => `${v < 0 ? '−' : '+'}$${fmtN(Math.abs(v), 2)}`;
+                                return (
+                                  <>
+                                    <td className="p-2 text-right font-mono">{sign(dd.cad)}</td>
+                                    <td className="p-2 text-right font-mono" title={dd.usd === null ? 'No FX rate on this contract' : `CAD $${fmtN(dd.cad, 2)} ÷ FX ${fmtN(Number(editingContract.fxRate), 4)}`}>{dd.usd === null ? '—' : sign(dd.usd)}</td>
+                                    <td className="p-2 text-right font-bold font-mono">
+                                      {editingContract.currency || ''} ${fmtN(shown, 2)}
+                                      {live !== null && Math.abs(live - (cl.finalPriceMt || 0)) >= 0.005 && <div className="text-[9px] font-normal text-emerald-800">was ${fmtN(cl.finalPriceMt, 2)}</div>}
+                                    </td>
+                                  </>
+                                );
+                              })()}
                               <td className="p-2">
                                 <button onClick={() => setEditingContract({
                                   ...editingContract,
@@ -25689,7 +25711,7 @@ export default function App() {
                       </table>
                     </div>
                   )}
-                  <div className="text-[10px] italic opacity-50">Add product-specific lines with custom differentials. Items can only be ordered against contracts with matching contract lines.</div>
+                  <div className="text-[10px] italic opacity-50">Differentials are entered in CAD/MT. On a USD contract each line adds the CAD differential ÷ the contract's FX rate to the Final Price.</div>
                 </div>
 
                 <div className="flex gap-4 pt-4">
@@ -25714,16 +25736,19 @@ export default function App() {
                       // Prices come from the pricing fields (no live market data).
                       // An incomplete build-up keeps the stored prices.
                       const pc = calcContractPrice(editingContract);
-                      const priced: Contract = pc.complete
-                        ? {
-                            ...editingContract,
-                            finalPrice: pc.final!,
-                            bulkBasePrice: pc.bulkBase!,
-                            ...(editingContract.contractLines?.length ? {
-                              contractLines: editingContract.contractLines.map(l => ({ ...l, finalPriceMt: Math.round((pc.final! + (l.differentialCadMt || 0)) * 100) / 100 })),
-                            } : {}),
-                          }
-                        : editingContract;
+                      // Lines: Final Price + CAD differential (÷ FX on a USD contract).
+                      const effFinal = pc.complete ? pc.final! : (editingContract.finalPrice || 0);
+                      const repriced = editingContract.contractLines?.length
+                        ? editingContract.contractLines.map(l => {
+                            const lp = contractLinePrice(editingContract, effFinal, l.differentialCadMt || 0);
+                            return lp === null ? l : { ...l, finalPriceMt: lp };
+                          })
+                        : undefined;
+                      const priced: Contract = {
+                        ...editingContract,
+                        ...(pc.complete ? { finalPrice: pc.final!, bulkBasePrice: pc.bulkBase! } : {}),
+                        ...(repriced ? { contractLines: repriced } : {}),
+                      };
                       const edited: Contract = { ...priced, contractNumber: newCn, endDate: contractEndDate(editingContract.endDate) };
                       const saved: Contract = before
                         ? withChangeNote(before, edited, 'EDITED', user?.displayName || user?.email || undefined, customerNameById)
@@ -25942,7 +25967,7 @@ export default function App() {
                           {selectedContractDetail.contractLines.map((cl, idx) => (
                             <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                               <td className="px-4 py-2 opacity-70">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
-                              <td className="px-4 py-2 text-right font-bold">{(() => { const d = contractLineDifferential(selectedContractDetail, cl); return `${d.label}${d.value >= 0 ? '+' : '−'}$${fmtN(Math.abs(d.value), 2)}/MT`; })()}</td>
+                              <td className="px-4 py-2 text-right font-bold">{(() => { const dd = lineDifferentials(selectedContractDetail, cl.differentialCadMt || 0); const sg = (v: number) => `${v >= 0 ? '+' : '−'}$${fmtN(Math.abs(v), 2)}`; return `CAD ${sg(dd.cad)}${dd.usd !== null ? ` · USD ${sg(dd.usd)}` : ''}/MT`; })()}</td>
                               <td className="px-4 py-2 opacity-70">Final Price</td>
                               <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}/MT</td>
                             </tr>
@@ -25967,7 +25992,8 @@ export default function App() {
                       <thead className="bg-[#F5F5F5] text-[10px] uppercase tracking-widest">
                         <tr>
                           <th className="px-4 py-2 text-left opacity-60 font-bold">Product</th>
-                          <th className="px-4 py-2 text-right opacity-60 font-bold">Differential</th>
+                          <th className="px-4 py-2 text-right opacity-60 font-bold">Differential (CAD/MT)</th>
+                          <th className="px-4 py-2 text-right opacity-60 font-bold">Differential (USD/MT)</th>
                           <th className="px-4 py-2 text-right opacity-60 font-bold">Final Price / MT</th>
                         </tr>
                       </thead>
@@ -25976,10 +26002,22 @@ export default function App() {
                           <tr key={cl.id} className={idx % 2 === 1 ? 'bg-[#F9F9F9]' : ''}>
                             <td className="px-4 py-2 font-bold">{cl.productDisplayName || productNameToDisplay(cl.productName) || cl.productName}</td>
                             {(() => {
-                              const d = contractLineDifferential(selectedContractDetail, cl);
-                              return <td className="px-4 py-2 text-right" title={d.note}>{d.label}${fmtN(d.value, 2)}</td>;
+                              const c = selectedContractDetail;
+                              const dd = lineDifferentials(c, cl.differentialCadMt || 0);
+                              const sg = (v: number) => `${v >= 0 ? '+' : '−'}$${fmtN(Math.abs(v), 2)}`;
+                              const rule = contractLinePrice(c, c.finalPrice || 0, cl.differentialCadMt || 0);
+                              const off = rule !== null && Math.abs(rule - (cl.finalPriceMt || 0)) >= 0.005;
+                              return (
+                                <>
+                                  <td className={`px-4 py-2 text-right font-mono ${!isUsdContract(c) ? 'font-bold' : ''}`}>{sg(dd.cad)}</td>
+                                  <td className={`px-4 py-2 text-right font-mono ${isUsdContract(c) ? 'font-bold' : ''}`} title={dd.usd === null ? 'No FX rate on this contract' : `CAD $${fmtN(dd.cad, 2)} ÷ FX ${fmtN(Number(c.fxRate), 4)}`}>{dd.usd === null ? '—' : sg(dd.usd)}</td>
+                                  <td className="px-4 py-2 text-right font-bold">
+                                    {c.currency} ${fmtN(cl.finalPriceMt, 2)}
+                                    {off && <div className="text-[9px] font-normal text-amber-700" title="Final Price + CAD differential (÷ FX on a USD contract)">should be ${fmtN(rule!, 2)} — save the contract to update</div>}
+                                  </td>
+                                </>
+                              );
                             })()}
-                            <td className="px-4 py-2 text-right font-bold">{selectedContractDetail.currency} ${fmtN(cl.finalPriceMt, 2)}</td>
                           </tr>
                         ))}
                       </tbody>
