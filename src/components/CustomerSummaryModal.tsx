@@ -202,6 +202,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                     <Field label="Salesperson" value={salesperson ? <>{salesperson.name}{salesperson.email && <div className="text-[11px] opacity-60">{salesperson.email}</div>}</> : undefined} />
                     <Field label="Default Margin" value={customer.defaultMargin ? `${customer.defaultMargin} CAD/MT` : undefined} />
                     <Field label="Payment Terms" value={customer.defaultPaymentTerms} />
+                    <Field label="Credit Limit" value={typeof customer.creditLimit === 'number' ? `${customer.defaultCurrency ? customer.defaultCurrency + ' ' : ''}$${customer.creditLimit.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : undefined} />
                     <Field label="Default Currency" value={customer.defaultCurrency} />
                     <Field label="Default Carrier" value={customer.defaultCarrierCode} />
                     <Field label="CHEP Account #" value={customer.chepAccountNumber} />

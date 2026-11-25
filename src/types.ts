@@ -119,6 +119,7 @@ export interface Customer {
   chepAccountNumber?: string;   // customer's CHEP pallet account number
   defaultCurrency?: string;     // 'CAD' | 'USD' — fallback currency when no contract currency is known
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
+  creditLimit?: number;         // Credit limit, in the customer's default currency
   itasCustomerName?: string;
   /** Extra ITAS accounts this customer trades under (itasCustomerName is the
    *  primary). Read every name through itasNamesOf() in utils/customerItas. */

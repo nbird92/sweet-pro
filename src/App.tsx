@@ -4135,6 +4135,8 @@ export default function App() {
           const salesContactEmail = entry.salescontactemail || entry.salesemail || '';
           const customerServiceEmail = entry.customerserviceemail || '';
           const defaultPaymentTerms = entry.defaultpaymentterms || entry.paymentterms || '';
+          const creditLimitNum = parseFloat(String(entry.creditlimit || '').replace(/[$,\s]/g, ''));
+          const creditLimit = Number.isFinite(creditLimitNum) && creditLimitNum >= 0 ? creditLimitNum : undefined;
           const defaultCarrierCode = entry.defaultcarriercode || entry.carriercode || '';
           const chepAccountNumber = entry.chepaccountnumber || entry.chepaccount || entry.chep || '';
           const defaultCurrency = (entry.defaultcurrency || entry.currency || '').toUpperCase();
@@ -4164,6 +4166,7 @@ export default function App() {
               salesContactEmail: salesContactEmail || c.salesContactEmail,
               customerServiceEmail: customerServiceEmail || c.customerServiceEmail,
               defaultPaymentTerms: defaultPaymentTerms || c.defaultPaymentTerms,
+              creditLimit: creditLimit ?? c.creditLimit,
               defaultCarrierCode: defaultCarrierCode || c.defaultCarrierCode,
               chepAccountNumber: chepAccountNumber || c.chepAccountNumber,
               defaultCurrency: defaultCurrency || c.defaultCurrency,
@@ -4191,6 +4194,7 @@ export default function App() {
             salesContactEmail: salesContactEmail || undefined,
             customerServiceEmail: customerServiceEmail || undefined,
             defaultPaymentTerms: defaultPaymentTerms || undefined,
+            ...(creditLimit !== undefined ? { creditLimit } : {}),
             defaultCarrierCode: defaultCarrierCode || undefined,
             chepAccountNumber: chepAccountNumber || undefined,
             defaultCurrency: defaultCurrency || undefined,
@@ -12729,7 +12733,7 @@ export default function App() {
     if (!window.confirm(`Rebuild ${rebuilt.length} customer(s) from orders / invoices / contracts and add them to the table? Existing customers are left unchanged. Full street ship-to addresses can't be recovered from this data (only ship-to location names from contracts).`)) return;
     setCustomers(prev => [...prev, ...rebuilt]);
     // Hand back a filled template CSV (same columns as the customer template).
-    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
+    const tplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'creditLimit', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
     exportCSV(tplHeaders, rebuilt, 'customer_template_rebuilt.csv');
     setSuccessBox(`Added ${rebuilt.length} customer(s) rebuilt from orders / invoices / contracts. Ship-to location names were recovered from contract destinations; street addresses weren't stored on orders and need re-entry or a backup restore. A "customer_template_rebuilt.csv" was downloaded.`);
   };
@@ -14403,8 +14407,8 @@ export default function App() {
     if (activePage === 'Customers') {
       const filteredCustomers = getSortedAndFilteredData<Customer>(customers, ['name', 'defaultLocation', 'id', 'customerNumber']);
 
-      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
-      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
+      const customerCsvHeaders = ['id', 'name', 'itasCustomerName', 'customerNumber', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'creditLimit', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
+      const customerTplHeaders = ['customerNumber', 'name', 'itasCustomerName', 'defaultLocation', 'address', 'city', 'province', 'postalCode', 'defaultMargin', 'contactEmail', 'contactPhone', 'qaContractEmail', 'salesContactEmail', 'customerServiceEmail', 'defaultPaymentTerms', 'creditLimit', 'defaultCarrierCode', 'chepAccountNumber', 'defaultCurrency', 'notes'];
       const customerExportSheets = (): SheetSpec[] => [
         {
           sheetName: 'Customers',
@@ -14422,6 +14426,7 @@ export default function App() {
             { header: 'Postal Code', key: 'postalCode' },
             { header: 'Default Margin', key: 'defaultMargin' },
             { header: 'Payment Terms', key: 'defaultPaymentTerms' },
+            { header: 'Credit Limit', key: 'creditLimit' },
             { header: 'Default Carrier', key: 'defaultCarrierCode' },
             { header: 'CHEP Account #', key: 'chepAccountNumber' },
             { header: 'Default Currency', key: 'defaultCurrency' },
@@ -26408,6 +26413,15 @@ export default function App() {
                     </select>
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Credit Limit ({newCustomer.defaultCurrency || 'CAD'})</label>
+                    <DecimalInput
+                      value={newCustomer.creditLimit}
+                      onValue={(v) => setNewCustomer({ ...newCustomer, creditLimit: v === undefined || v < 0 ? undefined : v })}
+                      placeholder="No limit set"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
+                    />
+                  </div>
+                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Salesperson</label>
                     <select
                       value={newCustomer.salespersonId || ''}
@@ -27257,6 +27271,15 @@ export default function App() {
                       <option value="Net 90">Net 90</option>
                       <option value="2% / Net 15">2% / Net 15</option>
                     </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold opacity-50">Credit Limit ({editingCustomer.defaultCurrency || 'CAD'})</label>
+                    <DecimalInput
+                      value={editingCustomer.creditLimit}
+                      onValue={(v) => setEditingCustomer({ ...editingCustomer, creditLimit: v === undefined || v < 0 ? undefined : v })}
+                      placeholder="No limit set"
+                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none placeholder:text-gray-400 placeholder:italic"
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Default Currency</label>
