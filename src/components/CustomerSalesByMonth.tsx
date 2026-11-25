@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { itasNamesOf } from '../utils/customerItas';
 import type { Customer, Invoice } from '../types';
 
 // "Invoiced Sales by Product (MT)" — product × month matrix for one customer and
@@ -10,7 +11,7 @@ const fmt = (v: number, d = 1) => v ? v.toLocaleString(undefined, { minimumFract
 const norm = (s?: string) => (s || '').trim().toLowerCase();
 /** Normalized names (name + ITAS name) of one customer or several. */
 const namesOf = (c: Customer | Customer[]) =>
-  new Set((Array.isArray(c) ? c : [c]).flatMap(x => [norm(x.name), norm(x.itasCustomerName)]).filter(Boolean));
+  new Set((Array.isArray(c) ? c : [c]).flatMap(x => [norm(x.name), ...itasNamesOf(x).map(norm)]).filter(Boolean));
 
 /** Product × month matrix with row and column totals. */
 export const MonthMatrix = ({ rows, months, empty, shade }: { rows: { name: string; values: number[] }[]; months: string[]; empty: string; shade?: (i: number) => boolean }) => {

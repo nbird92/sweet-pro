@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { itasNamesLabel } from '../utils/customerItas';
 import { Invoice, Order, Customer, Contract, SKU } from '../types';
 import { X, ChevronDown, ChevronUp, Download, Plus, Trash2, GripVertical } from 'lucide-react';
 
@@ -212,7 +213,7 @@ export default function SalesStatsPage({ invoices, orders, customers, contracts,
       // Customer
       customerName: cust?.name || inv?.customer || ord?.customer || '—',
       customerNumber: cust?.customerNumber || '—',
-      itasCustomerName: cust?.itasCustomerName || '—',
+      itasCustomerName: itasNamesLabel(cust) || '—',
       customerLocation: cust?.defaultLocation || '—',
       customerProvince: cust?.province || '—',
       customerCity: cust?.city || '—',

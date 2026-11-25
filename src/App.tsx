@@ -119,6 +119,7 @@ import { ColumnsMenu, makeColumnLayout } from './components/ColumnsMenu';
 import type { SheetSpec } from './utils/exportExcel';
 import { syncShipmentScheduleSheet, parseCSV, type SyncResult as SheetSyncResult } from './utils/googleSheetsSync';
 import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportRows } from './components/SalesForecastSummary';
+import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './utils/customerItas';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
@@ -1528,7 +1529,7 @@ export default function App() {
     const keys = new Map<string, number>();
     const names = new Map<string, number>();
     if (!cust) return { keys, names };
-    const nameSet = new Set([cust.name, cust.itasCustomerName].map(nrm).filter(Boolean));
+    const nameSet = new Set([cust.name, ...itasNamesOf(cust)].map(nrm).filter(Boolean));
     const loc = nrm(location);
     const consider = (lineItems: Array<{ productKey?: string; productDisplayName?: string; productName?: string }>, itemCustomer?: string, itemLoc?: string) => {
       if (!nameSet.has(nrm(itemCustomer))) return;
@@ -4148,7 +4149,7 @@ export default function App() {
               ...c,
               name: name || c.name,
               customerNumber: customerNumber || c.customerNumber,
-              itasCustomerName: itasCustomerName || c.itasCustomerName,
+              ...(itasCustomerName ? withItasNames({}, splitItasNames(itasCustomerName)) : { itasCustomerName: c.itasCustomerName, ...(c.itasCustomerNames ? { itasCustomerNames: c.itasCustomerNames } : {}) }),
               defaultLocation: entry.defaultlocation || entry.location ? defaultLocation : c.defaultLocation,
               address: address || c.address,
               city: city || c.city,
@@ -4175,7 +4176,7 @@ export default function App() {
             id: id || `CUST-${newCustNum}`,
             name,
             customerNumber: newCustNum,
-            itasCustomerName: itasCustomerName || undefined,
+            ...withItasNames({}, splitItasNames(itasCustomerName)),
             defaultLocation,
             address: address || undefined,
             city: city || undefined,
@@ -5781,7 +5782,7 @@ export default function App() {
     };
     for (const c of customers) {
       note(norm(c.name), c.name);
-      note(norm(c.itasCustomerName), c.name);
+      for (const itas of itasNamesOf(c)) note(norm(itas), c.name);
       note(norm(c.customerNumber), c.name);
     }
     const fix = (stored?: string): string | null => {
@@ -7453,7 +7454,7 @@ export default function App() {
       const up = (v?: string) => (v || '').trim().toUpperCase();
       const customer = (c.customerNumber && customers.find(x => up(x.customerNumber) === up(c.customerNumber)))
         || customers.find(x => up(x.name) === up(c.customerName))
-        || customers.find(x => !!c.itasName && up(x.itasCustomerName) === up(c.itasName));
+        || customers.find(x => !!c.itasName && itasNamesOf(x).some(n => up(n) === up(c.itasName)));
       const supplierLoc = findDocLocation(c.origin) || findDocLocation(customer?.defaultLocation);
       const twoLine = (street?: string, city?: string, prov?: string, postal?: string) => {
         const cityLine = [[city, prov].filter(Boolean).join(', '), postal].filter(Boolean).join(' ');
@@ -9506,7 +9507,7 @@ export default function App() {
       if (!itas) return null;
       const itasNorm = itas.trim().toLowerCase();
       // Direction A: exact itasCustomerName match — strongest signal.
-      const byItasField = customers.find(c => (c.itasCustomerName || '').trim().toLowerCase() === itasNorm);
+      const byItasField = customers.find(c => itasNamesOf(c).some(n => n.toLowerCase() === itasNorm));
       if (byItasField) return byItasField;
       // Direction B: name match against the stripped key.
       const key = itasToCustomerKey(itas);
@@ -14378,6 +14379,7 @@ export default function App() {
           ],
           rows: customers.map(c => ({
             ...c,
+            itasCustomerName: itasNamesLabel(c),
             groupName: (() => { const g = customerGroups.find(gr => gr.id === c.customerGroupId); return g ? `${g.groupCode} — ${g.name}` : ''; })(),
           })),
         },
@@ -14422,7 +14424,7 @@ export default function App() {
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Upload size={12} /> Import CSV
             </button>
-            <button onClick={() => exportCSV(customerCsvHeaders, customers, 'customers_export.csv')}
+            <button onClick={() => exportCSV(customerCsvHeaders, customers.map(c => ({ ...c, itasCustomerName: itasNamesOf(c).join('; ') })), 'customers_export.csv')}
               className="px-4 py-2 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 hover:bg-white/10 transition-colors whitespace-nowrap">
               <Download size={12} /> CSV
             </button>
@@ -26870,14 +26872,41 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold opacity-50">ITAS Customer Name</label>
-                    <input
-                      type="text"
-                      value={editingCustomer.itasCustomerName || ''}
-                      onChange={(e) => setEditingCustomer({ ...editingCustomer, itasCustomerName: e.target.value })}
-                      className="w-full bg-[#F5F5F5] border border-[#141414] p-3 text-sm focus:bg-white transition-colors outline-none"
-                      placeholder="ITAS customer name..."
-                    />
+                    <label className="text-[10px] uppercase font-bold opacity-50">ITAS Customer Names</label>
+                    {(() => {
+                      // Raw list while editing (blank rows allowed); cleaned on Save.
+                      const list = [editingCustomer.itasCustomerName || '', ...(editingCustomer.itasCustomerNames || [])];
+                      const setList = (next: string[]) => setEditingCustomer({
+                        ...editingCustomer,
+                        itasCustomerName: next[0] ?? '',
+                        itasCustomerNames: next.slice(1),
+                      });
+                      return (
+                        <div className="space-y-1.5">
+                          {list.map((n, i) => (
+                            <div key={i} className="flex gap-2 items-center">
+                              <input
+                                type="text"
+                                value={n}
+                                onChange={(e) => setList(list.map((x, j) => (j === i ? e.target.value : x)))}
+                                className="flex-1 bg-[#F5F5F5] border border-[#141414] p-3 text-sm font-mono focus:bg-white transition-colors outline-none"
+                                placeholder={i === 0 ? 'Primary ITAS name (e.g. CHAPMAN.P)' : 'Another ITAS name'}
+                              />
+                              {i === 0 && list.length > 1 && <span className="text-[9px] uppercase font-bold opacity-50 w-14">Primary</span>}
+                              {i > 0 && (
+                                <button type="button" onClick={() => setList(list.filter((_, j) => j !== i))} className="p-2 border border-[#141414] hover:bg-red-500 hover:text-white w-14 flex justify-center" title="Remove this ITAS name">
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <button type="button" onClick={() => setList([...list, ''])} className="px-3 py-1.5 border border-[#141414] text-[10px] font-bold uppercase hover:bg-[#F5F5F5] flex items-center gap-1">
+                            <Plus size={10} /> Add ITAS name
+                          </button>
+                          <p className="text-[10px] opacity-50">Every name links this customer's invoices, orders, contracts and sales. The first is the primary (exports, new contracts).</p>
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold opacity-50">Corporate Name</label>
@@ -27480,9 +27509,11 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      setCustomers(customers.map(c => c.id === editingCustomer.id ? editingCustomer : c));
+                      // ITAS names: drop blank rows and duplicates; first = primary.
+                      const savedCustomer = withItasNames(editingCustomer, [editingCustomer.itasCustomerName || '', ...(editingCustomer.itasCustomerNames || [])]);
+                      setCustomers(customers.map(c => c.id === savedCustomer.id ? savedCustomer : c));
                       // Durable immediately — includes any ship-to locations just added.
-                      saveNow(COLLECTIONS.customers, [editingCustomer]);
+                      saveNow(COLLECTIONS.customers, [savedCustomer]);
                       setEditingCustomer(null);
                       setShowShipToForm(false);
                       setEditingShipTo(null);

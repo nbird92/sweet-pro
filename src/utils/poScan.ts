@@ -7,6 +7,7 @@
 // POs from the same customer map themselves over time.
 
 import type { Customer, Contract, ShipToLocation } from '../types';
+import { itasNamesOf } from './customerItas';
 
 export interface ExtractedLineItem {
   /** PO number this line belongs to on a multi-PO schedule table (the server
@@ -186,7 +187,7 @@ export function matchCustomer(
     // Score against BOTH the display name and the ITAS name — a PO that spells the
     // customer as their ITAS name (or vice-versa) would otherwise miss. similarity
     // is case/punctuation-insensitive, so "Chapmans" already scores 1.0 vs "CHAPMANS".
-    const score = Math.max(similarity(raw, c.name), similarity(raw, c.itasCustomerName || ''));
+    const score = Math.max(similarity(raw, c.name), ...itasNamesOf(c).map(x => similarity(raw, x)));
     if (score > bestScore) { bestScore = score; best = c; }
   }
   return best;

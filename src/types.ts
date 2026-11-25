@@ -120,6 +120,9 @@ export interface Customer {
   defaultCurrency?: string;     // 'CAD' | 'USD' — fallback currency when no contract currency is known
   defaultPaymentTerms?: string; // Payment terms (e.g. "Net 30", "2% / Net 15")
   itasCustomerName?: string;
+  /** Extra ITAS accounts this customer trades under (itasCustomerName is the
+   *  primary). Read every name through itasNamesOf() in utils/customerItas. */
+  itasCustomerNames?: string[];
   corporateName?: string;      // legal / corporate entity name (e.g. for invoices and contracts)
   customerGroupId?: string;
   shipToLocations?: ShipToLocation[];

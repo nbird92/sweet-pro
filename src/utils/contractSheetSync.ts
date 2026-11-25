@@ -20,6 +20,7 @@ import type { Contract, Customer } from '../types';
 import { fetchTabFromSheet, type ColumnMap, type SheetImportConfig, type ConfiguredTab } from './googleOrderSheetSync';
 import { parseCSV } from './googleSheetsSync';
 import { withChangeNote, prependNote, noteStamp } from './contractNotes';
+import { itasNamesOf } from './customerItas';
 
 export const CONTRACT_SHEET_ID = '1VRBPkAG0zn3eJdPbkhuck3o1d0k054_NjOzuU3Krsq4';
 
@@ -208,12 +209,12 @@ export function parsedRowsToContracts(
   const key = (s?: string) => (s || '').trim().toUpperCase();
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
-  // One row per contract number — a repeated row keeps the LAST occurrence.
-  const byNumber = new Map<string, ParsedContractRow>();
-  for (const r of parsed) {
-    if (byNumber.has(r.contractNumber)) result.skipped.push({ tab: r.tab, contractNumber: r.contractNumber, reason: `listed again on row ${r.rowIdx} — the later row is used` });
-    byNumber.set(r.contractNumber, r);
-  }
+  // Rows grouped by contract number. A number can appear more than once — the
+  // same contract split across two ITAS accounts (SBF.P 250 MT / SBFLEC.P 50 MT)
+  // or a stray partial row — so one row is PICKED per contract (below), never
+  // "last row wins".
+  const rowsByNumber = new Map<string, ParsedContractRow[]>();
+  for (const r of parsed) rowsByNumber.set(r.contractNumber, [...(rowsByNumber.get(r.contractNumber) || []), r]);
 
   // ITAS code → customer. Learned links (an existing contract already tied to a
   // customer under this ITAS code) first, then the customer's ITAS name, then
@@ -228,11 +229,11 @@ export function parsedRowsToContracts(
   const customerFor = (itas: string): Customer | null => {
     const n = norm(itas);
     if (!n) return null;
-    const hit = ctx.customers.find(c => norm(c.itasCustomerName) === n) || learned.get(n);
+    const hit = ctx.customers.find(c => itasNamesOf(c).some(x => norm(x) === n)) || learned.get(n);
     if (hit) return hit;
     const base = norm(itas.replace(/\.[A-Za-z]{1,4}$/, ''));
     if (!base) return null;
-    const byName = ctx.customers.find(c => norm(c.name) === base || norm(c.itasCustomerName) === base);
+    const byName = ctx.customers.find(c => norm(c.name) === base || itasNamesOf(c).some(x => norm(x) === base));
     if (byName) return byName;
     if (base.length >= 4) {
       const pre = ctx.customers.filter(c => { const cn = norm(c.name); return cn.length >= 4 && (cn.startsWith(base) || base.startsWith(cn)); });
@@ -243,8 +244,26 @@ export function parsedRowsToContracts(
 
   const existingByNumber = new Map(ctx.existingContracts.map(c => [key(c.contractNumber), c] as const));
   const unmatched = new Map<string, string[]>();
+  const qtyOf = (r: ParsedContractRow) => r.adjustedQty ?? r.originalQty ?? 0;
+  // Which of a contract number's rows to use: the one whose ITAS customer is the
+  // app contract's (its ITAS name, then its linked customer); otherwise the row
+  // with the largest quantity (then the first). The others are reported.
+  const pickRow = (rows: ParsedContractRow[], existing?: Contract): ParsedContractRow => {
+    if (rows.length === 1) return rows[0];
+    if (existing) {
+      const byItas = existing.itasName ? rows.find(r => norm(r.itasCustomer) === norm(existing.itasName)) : undefined;
+      if (byItas) return byItas;
+      const byCust = existing.customerName ? rows.find(r => customerFor(r.itasCustomer)?.name === existing.customerName) : undefined;
+      if (byCust) return byCust;
+    }
+    return rows.reduce((best, r) => (qtyOf(r) > qtyOf(best) ? r : best), rows[0]);
+  };
 
-  for (const r of byNumber.values()) {
+  for (const [cn, group] of rowsByNumber) {
+    const r = pickRow(group, existingByNumber.get(cn));
+    for (const other of group) {
+      if (other !== r) result.skipped.push({ tab: other.tab, contractNumber: cn, reason: `also listed on row ${other.rowIdx} (ITAS ${other.itasCustomer || '?'}, ${qtyOf(other)} MT) — row ${r.rowIdx} (ITAS ${r.itasCustomer || '?'}) is used` });
+    }
     try {
       const cust = customerFor(r.itasCustomer);
       if (!cust && r.itasCustomer) unmatched.set(r.itasCustomer, [...(unmatched.get(r.itasCustomer) || []), r.contractNumber]);

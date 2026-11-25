@@ -19,6 +19,7 @@
 // web — the endpoint above honours the former for CORS-friendly fetches.
 
 import type { Order, OrderLineItem, Customer, SKU, QAProduct, Carrier, Invoice, Shipment, Transfer, LotCode } from '../types';
+import { itasNamesOf } from './customerItas';
 import { parseCSV } from './googleSheetsSync';
 import { poKey } from './poNumber';
 import { cleanLotCode, lotKey } from './lotCode';
@@ -455,12 +456,12 @@ export function resolveCustomer(raw: string, customers: Customer[]): string {
   const n = norm(raw);
   if (!n) return raw;
   // 1. Exact normalized match on name / ITAS name / customer number.
-  let m = customers.find(c => norm(c.name) === n || norm(c.itasCustomerName) === n || norm(c.customerNumber) === n);
+  let m = customers.find(c => norm(c.name) === n || itasNamesOf(c).some(x => norm(x) === n) || norm(c.customerNumber) === n);
   if (m) return m.name;
   // 2. Prefix / containment on name or ITAS name (guard tiny strings so a 1-2 char
   //    token can't match everything).
   const contains = (a: string, b: string) => !!a && !!b && a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a) || a.includes(b) || b.includes(a));
-  m = customers.find(c => contains(norm(c.name), n) || contains(norm(c.itasCustomerName), n));
+  m = customers.find(c => contains(norm(c.name), n) || itasNamesOf(c).some(x => contains(norm(x), n)));
   return m ? m.name : raw;
 }
 

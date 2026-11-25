@@ -5,6 +5,7 @@ import { X, Pencil, Building2, FileText, BarChart3, TrendingUp, Receipt, Externa
 import { Customer, Contract, Invoice, Order, CustomerForecast, FiscalYear, Person, CustomerGroup, SavedQuote } from '../types';
 import { fmtN } from '../utils/fmt';
 import SavedQuoteBreakdown from './SavedQuoteBreakdown';
+import { itasNamesOf, itasNamesLabel } from '../utils/customerItas';
 
 type Tab = 'details' | 'contracts' | 'sales' | 'forecast' | 'quotes';
 
@@ -54,7 +55,7 @@ const Stat = ({ label, value, sub }: { label: string; value: string; sub?: strin
 export default function CustomerSummaryModal({ customer, contracts, invoices, orders, customerForecasts, fiscalYears, people, customerGroups, contractStats, toShortform, onEdit, onOpenContract, onDeleteQuote, onBookContract, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('details');
   const [openQuoteId, setOpenQuoteId] = useState<string | null>(null);
-  const names = useMemo(() => new Set([norm(customer.name), norm(customer.itasCustomerName)].filter(Boolean)), [customer]);
+  const names = useMemo(() => new Set([norm(customer.name), ...itasNamesOf(customer).map(norm)].filter(Boolean)), [customer]);
   const label = (n?: string) => (toShortform(n) || n || '(unknown)').trim();
 
   // ── Invoices for this customer (non-cancelled) ──
@@ -195,7 +196,7 @@ export default function CustomerSummaryModal({ customer, contracts, invoices, or
                   <div className="grid grid-cols-2 gap-4">
                     <Field label="Customer Name" value={customer.name} />
                     <Field label="Customer #" value={customer.customerNumber} />
-                    <Field label="ITAS Name" value={customer.itasCustomerName} />
+                    <Field label={itasNamesOf(customer).length > 1 ? 'ITAS Names' : 'ITAS Name'} value={itasNamesLabel(customer)} />
                     <Field label="Customer Group" value={group?.name} />
                     <Field label="Default Location" value={customer.defaultLocation} />
                     <Field label="Salesperson" value={salesperson ? <>{salesperson.name}{salesperson.email && <div className="text-[11px] opacity-60">{salesperson.email}</div>}</> : undefined} />

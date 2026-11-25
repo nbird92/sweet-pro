@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { itasNamesOf } from '../utils/customerItas';
 import {
   Search,
   ArrowUpDown,
@@ -217,7 +218,7 @@ export default function ReportsPage({
     const byNorm = new Map<string, string>();
     for (const c of customers) {
       if (c.name && !exact.has(c.name)) exact.set(c.name, c.name);
-      for (const k of [c.name, c.itasCustomerName, c.customerNumber, c.id]) {
+      for (const k of [c.name, ...itasNamesOf(c), c.customerNumber, c.id]) {
         const n = normalize(k);
         if (n && !byNorm.has(n)) byNorm.set(n, c.name);
       }
@@ -385,7 +386,7 @@ export default function ReportsPage({
     for (const c of customers) {
       if (!c.customerGroupId) continue;
       if (c.name) custLookupToGroupId.set(`n:${normalize(c.name)}`, c.customerGroupId);
-      if (c.itasCustomerName) custLookupToGroupId.set(`n:${normalize(c.itasCustomerName)}`, c.customerGroupId);
+      for (const itas of itasNamesOf(c)) custLookupToGroupId.set(`n:${normalize(itas)}`, c.customerGroupId);
       if (c.customerNumber) custLookupToGroupId.set(`c:${normalize(c.customerNumber)}`, c.customerGroupId);
       if (c.id) custLookupToGroupId.set(`i:${normalize(c.id)}`, c.customerGroupId);
     }
@@ -1221,7 +1222,7 @@ export default function ReportsPage({
     const monthKeys = new Set<string>();
     const rows = customers.map(cust => {
       const names = new Set<string>();
-      for (const raw of [cust.name, cust.itasCustomerName]) { const n = norm(raw); if (n) names.add(n); }
+      for (const raw of [cust.name, ...itasNamesOf(cust)]) { const n = norm(raw); if (n) names.add(n); }
       const byMonth: Record<string, number> = {};
       let total = 0;
       indicesFor(names).forEach(idx => {
@@ -1377,7 +1378,7 @@ export default function ReportsPage({
     const members = customers.filter(c => customerIds.includes(c.id));
     if (!members.length) return [];
     const norm = (v?: string) => (v || '').trim().toLowerCase();
-    const names = new Set(members.flatMap(c => [norm(c.name), norm(c.itasCustomerName)]).filter(Boolean));
+    const names = new Set(members.flatMap(c => [norm(c.name), ...itasNamesOf(c).map(norm)]).filter(Boolean));
     const invoicedBols = new Set(invoices.filter(i => i.status !== 'Cancelled' && i.status !== 'Credit' && i.bolNumber).map(i => (i.bolNumber || '').trim().toUpperCase()));
     return orders
       .filter(o => (o.status === 'Open' || o.status === 'Confirmed')
@@ -1547,7 +1548,7 @@ export default function ReportsPage({
 
     const rows = customers.map(cust => {
       const names = new Set<string>();
-      for (const raw of [cust.name, cust.itasCustomerName]) { const n = norm(raw); if (n) names.add(n); }
+      for (const raw of [cust.name, ...itasNamesOf(cust)]) { const n = norm(raw); if (n) names.add(n); }
       const num = norm(cust.customerNumber);
 
       let salesMt = 0;

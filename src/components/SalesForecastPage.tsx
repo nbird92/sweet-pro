@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { itasNamesOf } from '../utils/customerItas';
 import {
   X,
   Edit2,
@@ -1929,7 +1930,7 @@ export default function SalesForecastPage({
     }
     const custByKey = new Map<string, Customer>();
     for (const c of customers) {
-      for (const k of [custKey(c.name), custKey(c.itasCustomerName), (c.customerNumber || '').trim().toLowerCase()]) {
+      for (const k of [custKey(c.name), ...itasNamesOf(c).map(custKey), (c.customerNumber || '').trim().toLowerCase()]) {
         if (k && !custByKey.has(k)) custByKey.set(k, c);
       }
     }
