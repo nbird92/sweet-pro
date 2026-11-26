@@ -122,6 +122,7 @@ import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportR
 import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './utils/customerItas';
 import { calcContractPrice, DEFAULT_YIELD_LOSS } from './utils/contractPriceCalc';
 import { lineDifferentials, contractLinePrice, isUsdContract } from './utils/contractLines';
+import { fixPastYear } from './utils/pastYear';
 import { EASTERN_TZ, TIME_ZONE_OPTIONS, browserTimeZone, isValidTimeZone, convertWallTime, tzShort, guessLocationTimeZone } from './utils/timeZones';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
@@ -9637,6 +9638,51 @@ export default function App() {
 
     if (changed) setContracts(updated);
   }, [contracts, customers]);
+
+  // PAST-YEAR REPAIR. The PO scanner's AI filled a missing year with an old one
+  // ("Nov 28" → 2023-11-28), so scanned orders showed 2023 / 2024 ship and
+  // delivery dates. Customers never order for past years: on an open order made
+  // by the scanner, the PO review or by hand (ids ORD-PO-<ms> / ORD-<ms> — sheet
+  // imports are ORD-IMPORT- and keep their dates), a date more than 120 days
+  // before the order was created moves to the same day in the creation year (or
+  // the next). Schedule rows booked on the wrong date for the same BOL follow.
+  // Converges: a corrected order no longer qualifies.
+  useEffect(() => {
+    if (!user || !lastSynced || !orders.length) return;
+    const fixed: Order[] = [];
+    const moves: Array<{ bol: string; from: string; to: string }> = [];
+    for (const o of orders) {
+      const m = (o.id || '').match(/^ORD-(?:PO-)?(\d{13})-/);
+      if (!m || /complete|cancel/i.test(o.status || '')) continue;
+      const created = new Date(Number(m[1])).toISOString().slice(0, 10);
+      const date = fixPastYear(o.date, created) || o.date;
+      const shipmentDate = fixPastYear(o.shipmentDate, created);
+      const deliveryDate = fixPastYear(o.deliveryDate, created);
+      if (date === o.date && shipmentDate === o.shipmentDate && deliveryDate === o.deliveryDate) continue;
+      fixed.push({ ...o, date, shipmentDate, deliveryDate });
+      if (o.bolNumber && o.shipmentDate && shipmentDate && shipmentDate !== o.shipmentDate) moves.push({ bol: o.bolNumber, from: o.shipmentDate, to: shipmentDate });
+    }
+    if (!fixed.length) return;
+    const byId = new Map(fixed.map(o => [o.id, o] as const));
+    setOrders(prev => prev.map(o => byId.get(o.id) || o));
+    saveNow(COLLECTIONS.orders, fixed);
+    if (moves.length) {
+      const key = (b?: string) => (b || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const moveFor = (sh: Shipment) => moves.find(mv => key(mv.bol) === key(sh.bol) && mv.from === sh.date);
+      const shift = (sh: Shipment): Shipment => {
+        const mv = moveFor(sh);
+        return mv ? { ...sh, date: mv.to, week: `Week ${getWeekNumber(mv.to)}`, day: safeWeekday(mv.to) } : sh;
+      };
+      const changedShips = [...hamiltonShipments, ...vancouverShipments].filter(sh => !!moveFor(sh)).map(shift);
+      if (changedShips.length) {
+        setHamiltonShipments(prev => prev.map(shift));
+        setVancouverShipments(prev => prev.map(shift));
+        saveNow(COLLECTIONS.shipments, changedShips);
+      }
+    }
+    console.log(`[dates] corrected past-year dates on ${fixed.length} order(s): ${fixed.map(o => o.bolNumber || o.po).join(', ')}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, user, lastSynced]);
 
   // Auto-fill missing shipment fields from matching orders by BOL number
   const shipmentAutoFillRan = useRef(false);

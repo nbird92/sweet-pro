@@ -746,6 +746,35 @@ export function splitMultiPoDoc(doc: any): any[] {
  *  file can hold several POs (e.g. one per page of a multi-page PDF), so this
  *  returns an ARRAY — one parsed object per PO, each tagged with sourceFile.
  *  Returns [] when no order content is present (e.g. unrelated mail). */
+/** Customers never order for past years. A date well before `refISO` got a wrong
+ *  year (the model fills a missing year with an old one — "Nov 28" → 2023-11-28):
+ *  move it to the same month/day in the reference year, or the next. (Copy of
+ *  src/utils/pastYear.ts — api/ doesn't import from src/.) */
+function fixPastYear(dateISO: unknown, refISO: string, toleranceDays = 120): unknown {
+  if (typeof dateISO !== 'string') return dateISO;
+  const m = dateISO.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const r = refISO.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m || !r) return dateISO;
+  const DAY = 86400000;
+  const floor = Date.UTC(+r[1], +r[2] - 1, +r[3]) - toleranceDays * DAY;
+  if (Date.UTC(+m[1], +m[2] - 1, +m[3]) >= floor) return dateISO;
+  const month = +m[2], day = +m[3];
+  for (const y of [+r[1], +r[1] + 1]) {
+    let d = day;
+    while (d > 28 && new Date(Date.UTC(y, month - 1, d)).getUTCMonth() !== month - 1) d--;
+    if (Date.UTC(y, month - 1, d) >= floor) return `${y}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  return dateISO;
+}
+/** Apply fixPastYear to every date a PO / amendment / appointment document carries. */
+function fixDocPastYears(doc: any, todayISO: string): void {
+  for (const k of ['orderDate', 'shipmentDate', 'deliveryDate']) if (doc[k]) doc[k] = fixPastYear(doc[k], todayISO);
+  if (doc.amendment && typeof doc.amendment === 'object') {
+    for (const k of ['newShipmentDate', 'newDeliveryDate']) if (doc.amendment[k]) doc.amendment[k] = fixPastYear(doc.amendment[k], todayISO);
+  }
+  if (Array.isArray(doc.lineItems)) for (const li of doc.lineItems) if (li && li.deliveryDate) li.deliveryDate = fixPastYear(li.deliveryDate, todayISO);
+}
+
 export async function extractPO(
   file: UploadFile,
   hints: ExtractHints | undefined,
@@ -754,6 +783,10 @@ export async function extractPO(
   const parts = await partsForFile(file);
   const ht = hintsText(hints);
   if (ht) parts.push({ text: `\nReference data:\n${ht}` });
+  // The model fills a missing year from its own past otherwise ("Nov 28" →
+  // 2023-11-28). Tell it today's date; past years are corrected in code below too.
+  const todayISO = new Date().toISOString().slice(0, 10);
+  parts.push({ text: `Today's date is ${todayISO}. Purchase orders are for upcoming dates: when a date has no year, use the year that makes it today or later (the nearest upcoming occurrence), never a past year.` });
   parts.push({ text: 'Extract this purchase order into the required JSON schema.' });
 
   const ai = new GoogleGenAI({ apiKey: opts.apiKey });
@@ -865,6 +898,10 @@ export async function extractPO(
       // arithmetic) so e.g. $0.31034/lb becomes $684.18/MT reliably, and derive
       // $/MT from a total order price ÷ quantity when no per-unit price is given.
       deriveDocMetrics(doc);
+      // PAST-YEAR GUARD. Orders, amendments and appointments are never for past
+      // years — move a date that lands months back to its upcoming year.
+      // (Demurrage invoices legitimately reference past shipments.)
+      if (String(doc.documentType || '') !== 'demurrage') fixDocPastYears(doc, todayISO);
       // DEGENERATE-IDENTIFIER GUARD. The model occasionally emits a runaway
       // repeated-character string ("PO-000000000…" hundreds of chars long) into
       // an identifier field; stored verbatim it pollutes the feed/queue and
