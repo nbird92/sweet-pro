@@ -1057,6 +1057,8 @@ export interface ColumnMap {
    *  Customer, Contract # and Price reuse `customer` / `contractNumber` / `pricePerMt`. */
   originalQty?: number;
   adjustedQty?: number;
+  contractStart?: number;
+  contractEnd?: number;
   currency?: number;
   shippingTerms?: number;
   paymentTerms?: number;

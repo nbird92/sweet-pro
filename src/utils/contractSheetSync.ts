@@ -21,6 +21,7 @@ import { fetchTabFromSheet, type ColumnMap, type SheetImportConfig, type Configu
 import { parseCSV } from './googleSheetsSync';
 import { withChangeNote, prependNote, noteStamp } from './contractNotes';
 import { itasNamesOf } from './customerItas';
+import { contractStartDate, contractEndDate } from './contractDates';
 
 export const CONTRACT_SHEET_ID = '1VRBPkAG0zn3eJdPbkhuck3o1d0k054_NjOzuU3Krsq4';
 
@@ -29,6 +30,8 @@ export const CONTRACT_FIELDS: Array<{ key: keyof ColumnMap; label: string; requi
   { key: 'contractNumber', label: 'Contract #', required: true },
   { key: 'customer', label: 'ITAS Customer', required: true },
   { key: 'pricePerMt', label: 'Price / MT' },
+  { key: 'contractStart', label: 'Contract Start Date' },
+  { key: 'contractEnd', label: 'Contract End Date' },
   { key: 'originalQty', label: 'Original Quantity (MT)' },
   { key: 'adjustedQty', label: 'Adjusted Quantity (MT)' },
   { key: 'currency', label: 'Currency' },
@@ -37,7 +40,8 @@ export const CONTRACT_FIELDS: Array<{ key: keyof ColumnMap; label: string; requi
 ];
 
 /** Built-in preset for the Sucro contract list (row 1 = titles, row 2 = the
- *  CHANGE sub-titles, data from row 3). */
+ *  CHANGE sub-titles, data from row 3). Columns are also found by their header
+ *  text at sync time, so an inserted column doesn't shift the mapping. */
 export const DEFAULT_CONTRACT_IMPORT_CONFIG: SheetImportConfig = {
   name: 'ITAS Contract List',
   sheetId: CONTRACT_SHEET_ID,
@@ -45,8 +49,8 @@ export const DEFAULT_CONTRACT_IMPORT_CONFIG: SheetImportConfig = {
     tabName: 'Contract List',
     headerRow: 1,
     columns: {
-      customer: 0, contractNumber: 1, pricePerMt: 2, originalQty: 3, adjustedQty: 4,
-      currency: 5, shippingTerms: 6, paymentTerms: 7,
+      customer: 0, contractNumber: 1, pricePerMt: 2, contractStart: 3, contractEnd: 4,
+      originalQty: 5, adjustedQty: 6, currency: 7, shippingTerms: 8, paymentTerms: 9,
     },
   }],
 };
@@ -65,6 +69,8 @@ export function autoDetectContractColumns(...headerRows: string[][]): ColumnMap 
     customer: find(h => /^(itas )?customer( name)?$|^client$/.test(h)),
     contractNumber: find(h => /^contract( #| no\.?| number)?$/.test(h)),
     pricePerMt: find(h => /^price( ?\/ ?mt| per mt)?$|^unit price$/.test(h)),
+    contractStart: find(h => /^(contract |period )?start( date)?$/.test(h)),
+    contractEnd: find(h => /^(contract |period )?end( date)?$/.test(h)),
     originalQty: find(h => /^original( quantity| qty| volume)?$/.test(h)),
     adjustedQty: find(h => /^adjusted( quantity| qty| volume)?$|^(contract )?(quantity|volume)$/.test(h)),
     currency: find(h => /^currency$|^curr\.?$/.test(h)),
@@ -84,6 +90,9 @@ export interface ParsedContractRow {
   currency?: string;
   shippingTerms?: string;
   paymentTerms?: string;
+  /** ISO dates (a month-only start → its 1st, end → its last day). */
+  startDate?: string;
+  endDate?: string;
   changes: Array<{ n: number; date: string; adjustment?: number; description: string }>;
 }
 
@@ -141,7 +150,13 @@ function detectChangeBlocks(headerRows: string[][]): Array<{ n: number; date?: n
 
 export function parseContractRows(rows: string[][], tab: ConfiguredTab): ParsedContractRow[] {
   const headerIdx = Math.max(0, Math.floor(tab.headerRow || 1) - 1);
-  const cm = tab.columns;
+  // Columns the preset doesn't map are found by their header text (a preset
+  // saved before Start / End Date columns existed still imports them).
+  const detected = autoDetectContractColumns(...rows.slice(0, headerIdx + 2));
+  const cm: ColumnMap = { ...tab.columns };
+  for (const [k, v] of Object.entries(detected) as Array<[keyof ColumnMap, number | undefined]>) {
+    if (v !== undefined && (cm[k] === undefined || cm[k]! < 0)) cm[k] = v;
+  }
   const cell = (row: string[], idx: number | undefined) => (idx === undefined || idx < 0 ? '' : String(row[idx] ?? '').trim());
   // The titles row plus the row under it (the CHANGE sub-titles live there).
   const blocks = detectChangeBlocks(rows.slice(0, headerIdx + 2));
@@ -170,6 +185,8 @@ export function parseContractRows(rows: string[][], tab: ConfiguredTab): ParsedC
       currency: cell(row, cm.currency),
       shippingTerms: cell(row, cm.shippingTerms),
       paymentTerms: cell(row, cm.paymentTerms),
+      startDate: contractStartDate(contractSheetDate(cell(row, cm.contractStart))) || undefined,
+      endDate: contractEndDate(contractSheetDate(cell(row, cm.contractEnd))) || undefined,
       changes,
     });
   }
@@ -282,6 +299,9 @@ export function parsedRowsToContracts(
         if (currency && currency !== (existing.currency || '').toUpperCase()) after.currency = currency;
         if (r.shippingTerms && r.shippingTerms !== (existing.shippingTerms || '')) after.shippingTerms = r.shippingTerms;
         if (r.paymentTerms && !(existing.paymentTerms || '').trim()) after.paymentTerms = r.paymentTerms;
+        // Contract period — ITAS is the record; "Jan 2026" and 2026-01-01 are the same start.
+        if (r.startDate && r.startDate !== contractStartDate(existing.startDate)) after.startDate = r.startDate;
+        if (r.endDate && r.endDate !== contractEndDate(existing.endDate)) after.endDate = r.endDate;
         if (r.itasCustomer && !(existing.itasName || '').trim()) after.itasName = r.itasCustomer;
         if (cust && !(existing.customerName || '').trim()) {
           after.customerName = cust.name;
@@ -296,6 +316,8 @@ export function parsedRowsToContracts(
         if (after.contractVolume !== existing.contractVolume) fieldChanges.push(`Volume ${existing.contractVolume ?? '—'} → ${after.contractVolume} MT`);
         if (after.currency !== existing.currency) fieldChanges.push(`Currency ${existing.currency || '—'} → ${after.currency}`);
         if (after.shippingTerms !== existing.shippingTerms) fieldChanges.push(`Shipping terms ${existing.shippingTerms || '—'} → ${after.shippingTerms}`);
+        if (after.startDate !== existing.startDate) fieldChanges.push(`Start ${existing.startDate || '—'} → ${after.startDate}`);
+        if (after.endDate !== existing.endDate) fieldChanges.push(`End ${existing.endDate || '—'} → ${after.endDate}`);
         if (after.paymentTerms !== existing.paymentTerms) fieldChanges.push(`Payment terms → ${after.paymentTerms}`);
         if (after.itasName !== existing.itasName) fieldChanges.push(`ITAS name → ${after.itasName}`);
         if (after.customerName !== existing.customerName) fieldChanges.push(`Customer → ${after.customerName}`);
@@ -323,8 +345,8 @@ export function parsedRowsToContracts(
         contractVolume: vol,
         volumeTaken: 0,
         volumeOutstanding: vol,
-        startDate: '',
-        endDate: '',
+        startDate: r.startDate || '',
+        endDate: r.endDate || '',
         skuName: '',
         origin: '',
         destination: '',
