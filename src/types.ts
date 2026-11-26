@@ -434,6 +434,9 @@ export interface Location {
   /** Port of origin printed on the Sales Contract (e.g. "Hamilton, ON"). Also
    *  shown as the Origin of contracts that aren't delivered. */
   portOfOrigin?: string;
+  /** Local time zone (IANA, e.g. America/Vancouver). Shipment appointment times
+   *  at this location are in this zone. Unset: Vancouver sites Pacific, else Eastern. */
+  timeZone?: string;
   address: string;
   city: string;
   province: string;

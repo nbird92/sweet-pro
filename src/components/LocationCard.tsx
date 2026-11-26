@@ -9,6 +9,7 @@ import React, { useRef, useState } from 'react';
 import { X, Pencil, Building2, Truck, ShieldCheck, Plus, Trash2, Upload, Download, FileText, CheckCircle2 } from 'lucide-react';
 import type { Location, Person, ProductGroup, QADocument } from '../types';
 import { uploadQAFile } from '../firebaseStorage';
+import { TIME_ZONE_OPTIONS, guessLocationTimeZone, tzShort } from '../utils/timeZones';
 
 type Tab = 'general' | 'logistics' | 'quality';
 type DocField = 'gfsiAuditReport' | 'gfsiAuditCertificate' | 'organicAuditReport' | 'organicAuditCertificate' | 'kosherCertificate' | 'halalCertificate';
@@ -196,6 +197,18 @@ export default function LocationCard({ location, isNew, people, productGroups, o
                   {text('Location Code', 'locationCode', 'e.g. 100')}
                   <div className="col-span-2">{text('BOL Name', 'bolName', 'Legal shipper name for BOL / Packing List')}</div>
                   <div className="col-span-2">{text('Port of Origin', 'portOfOrigin', 'e.g. Hamilton, ON — printed on the Sales Contract')}</div>
+                  {editing ? (
+                    <div className="col-span-2">
+                      <label className={lblCls}>Time Zone</label>
+                      <select value={draft.timeZone || ''} onChange={e => set({ timeZone: e.target.value || undefined })} className={inputCls}
+                        title="Local time zone of this location — its shipment appointment times are in this zone">
+                        <option value="">Default — {guessLocationTimeZone(draft.name)}</option>
+                        {TIME_ZONE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="col-span-2"><Field label="Time Zone" value={(() => { const tz = location.timeZone || guessLocationTimeZone(location.name); const lbl = TIME_ZONE_OPTIONS.find(([id]) => id === tz)?.[1] || tz; return `${lbl} (${tzShort(tz)})${location.timeZone ? '' : ' — default'}`; })()} /></div>
+                  )}
                   {editing ? (
                     <div>
                       <label className={lblCls}>Active</label>

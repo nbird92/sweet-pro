@@ -122,6 +122,7 @@ import SalesForecastSummary, { computeSalesForecastSummary, salesForecastExportR
 import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './utils/customerItas';
 import { calcContractPrice, DEFAULT_YIELD_LOSS } from './utils/contractPriceCalc';
 import { lineDifferentials, contractLinePrice, isUsdContract } from './utils/contractLines';
+import { EASTERN_TZ, TIME_ZONE_OPTIONS, browserTimeZone, isValidTimeZone, convertWallTime, tzShort, guessLocationTimeZone } from './utils/timeZones';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
@@ -941,6 +942,13 @@ export default function App() {
   // Location card (Supply Chain page) — the one place locations are viewed and
   // edited (merged from the old QA location card + Supply Chain detail).
   const [locationCard, setLocationCard] = useState<{ loc: Location; isNew: boolean } | null>(null);
+  // App time zone (Dashboard): appointment times, email times and appointment
+  // requests are SHOWN in this zone. Saved per user (prefs) + this browser.
+  const [appTimeZone, setAppTimeZone] = useState<string>(() => {
+    try { const v = localStorage.getItem('appTimeZone'); if (v && isValidTimeZone(v)) return v; } catch { /* ignore */ }
+    return browserTimeZone();
+  });
+  useEffect(() => { try { localStorage.setItem('appTimeZone', appTimeZone); } catch { /* ignore */ } }, [appTimeZone]);
   // Email Center — outbound transactional emails + settings (Resend-backed).
   const [emailLog, setEmailLog] = useState<EmailLog[]>([]);
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(INITIAL_EMAIL_SETTINGS);
@@ -3091,9 +3099,13 @@ export default function App() {
     // Appointment suggestion — approving books the suggested slot (or the
     // originally requested one, if it has since freed up).
     if (a.requestedApptDate && (a.suggestedApptTime || a.requestedApptTime)) {
-      const tryTimes = Array.from(new Set([a.suggestedApptTime, a.requestedApptTime].filter(Boolean))) as string[];
-      for (const t of tryTimes) {
-        const plan = planOrderAppointment(order, a.requestedApptDate, t, order.carrier || '');
+      // suggestedApptTime is a slot on the dock schedule (local time);
+      // requestedApptTime is as emailed (Eastern).
+      const tryTimes: Array<{ t: string; tz?: string }> = [];
+      if (a.suggestedApptTime) tryTimes.push({ t: a.suggestedApptTime });
+      if (a.requestedApptTime) tryTimes.push({ t: a.requestedApptTime, tz: EASTERN_TZ });
+      for (const { t, tz } of tryTimes) {
+        const plan = planOrderAppointment(order, a.requestedApptDate, t, order.carrier || '', [], tz);
         if (plan.status === 'exists') {
           setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
           return;
@@ -3101,7 +3113,7 @@ export default function App() {
         if (plan.status === 'created') {
           if (plan.toHamilton) setHamiltonShipments(prev => [...prev, ...plan.shipments]);
           else setVancouverShipments(prev => [...prev, ...plan.shipments]);
-          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, pickupTime: plan.time, shipmentDate: a.requestedApptDate } : o));
+          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, pickupTime: plan.time, shipmentDate: plan.date } : o));
           setPoAmendments(prev => prev.map(x => x.id === a.id ? { ...x, status: 'applied', appliedAt: new Date().toISOString(), orderId: order.id, orderBol: order.bolNumber } : x));
           return;
         }
@@ -3155,15 +3167,22 @@ export default function App() {
     timeRaw: string,
     carrierName: string,
     extraBooked: Shipment[] = [],
+    /** Zone the requested time is in (emails: Eastern). Converted to the
+     *  location's local time — the dock schedule's zone — before booking. */
+    sourceTz?: string,
   ): { status: 'exists' }
-    | { status: 'created'; toHamilton: boolean; shipments: Shipment[]; time: string; bay: string; location: string }
-    | { status: 'unavailable'; time: string; suggestedTime?: string; location: string } => {
+    | { status: 'created'; toHamilton: boolean; shipments: Shipment[]; time: string; date: string; bay: string; location: string }
+    | { status: 'unavailable'; time: string; date: string; suggestedTime?: string; location: string } => {
     const tm = (timeRaw || '').trim().match(/^(\d{1,2}):?(\d{2})/);
-    const time = tm ? `${tm[1].padStart(2, '0')}:${tm[2]}` : '';
+    let time = tm ? `${tm[1].padStart(2, '0')}:${tm[2]}` : '';
     const apptLoc = order.location || '';
     const toHamilton = !apptLoc.toLowerCase().includes('vancouver'); // default Hamilton
     const bucketName = toHamilton ? 'Hamilton' : 'Vancouver';
-    if (!time || !dateISO) return { status: 'unavailable', time: timeRaw || '', location: bucketName };
+    if (sourceTz && time && dateISO) {
+      const c = convertWallTime(dateISO, time, sourceTz, locationTimeZone(apptLoc || bucketName));
+      dateISO = c.date; time = c.time;
+    }
+    if (!time || !dateISO) return { status: 'unavailable', time: timeRaw || '', date: dateISO, location: bucketName };
     const list = [...(toHamilton ? hamiltonShipments : vancouverShipments), ...extraBooked];
     // Already booked for this BOL that day — nothing to do. Checked across BOTH
     // sites and ignoring spaces/punctuation/case (one row per load).
@@ -3202,7 +3221,7 @@ export default function App() {
         notes: '', color: '',
         location: apptLoc || bucketName,
       }));
-      return { status: 'created', toHamilton, shipments, time, bay, location: bucketName };
+      return { status: 'created', toHamilton, shipments, time, date: dateISO, bay, location: bucketName };
     }
     // Requested slot is full — suggest the nearest free standard slot (later wins ties).
     const toMin = (t: string) => { const m = t.match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : NaN; };
@@ -3213,7 +3232,7 @@ export default function App() {
       if (da !== db) return da - db;
       return toMin(b) - toMin(a); // tie → prefer the later slot
     })[0];
-    return { status: 'unavailable', time, suggestedTime, location: bucketName };
+    return { status: 'unavailable', time, date: dateISO, suggestedTime, location: bucketName };
   };
 
   // Drain the incomingPoOrders queue (written by the Gmail cron) into real Open
@@ -3456,7 +3475,8 @@ export default function App() {
               const carrierConfirmed = fromCarrier || isLogisticsSenderEmail(item?.fromEmail);
               const apptDate = refShipDate || (cur.shipmentDate ?? order.shipmentDate ?? '');
               if (carrierConfirmed && refPickup && apptDate) {
-                const plan = planOrderAppointment(order, apptDate, refPickup, carrierName || order.carrier || '', apptAdds);
+                const plan = planOrderAppointment(order, apptDate, refPickup, carrierName || order.carrier || '', apptAdds, EASTERN_TZ);
+                const refPickupNorm = (() => { const m = refPickup.trim().match(/^(\d{1,2}):?(\d{2})/); return m ? `${m[1].padStart(2, '0')}:${m[2]}` : refPickup; })();
                 if (plan.status === 'created') {
                   apptAdds.push(...plan.shipments);
                   changes.push(`appointment booked ${apptDate} ${plan.time} @ ${plan.bay}`);
@@ -3467,9 +3487,9 @@ export default function App() {
                     subject: item?.subject,
                     sourceFile: item?.sourceFile,
                     sourceEmailId: item?.sourceEmailId,
-                    summary: `Requested appointment ${plan.time} on ${apptDate} is NOT available${plan.suggestedTime ? ` — suggested ${plan.suggestedTime} (${plan.location})` : ' — no free slots that day'}`,
+                    summary: `Requested appointment ${refPickupNorm} ET on ${apptDate} is NOT available${plan.suggestedTime ? ` — suggested ${plan.suggestedTime} (${plan.location} local)` : ' — no free slots that day'}`,
                     requestedApptDate: apptDate,
-                    requestedApptTime: plan.time,
+                    requestedApptTime: refPickupNorm,
                     suggestedApptTime: plan.suggestedTime || undefined,
                     apptLocation: plan.location,
                   };
@@ -3524,7 +3544,7 @@ export default function App() {
             if (!alreadyHandled && reqTime && reqDate) {
               // Pre-compute a suggestion when the order is known, so the card
               // can offer "book suggested" immediately.
-              const plan = ord ? planOrderAppointment(ord, reqDate, reqTime, ord.carrier || '', apptAdds) : null;
+              const plan = ord ? planOrderAppointment(ord, reqDate, reqTime, ord.carrier || '', apptAdds, EASTERN_TZ) : null;
               const patch: Partial<PoAmendment> = {
                 receivedAt: item?.receivedAt,
                 fromEmail: item?.fromEmail,
@@ -5451,6 +5471,7 @@ export default function App() {
               }
             } catch { /* cache best-effort */ }
           }
+          if (typeof remote.appTimeZone === 'string' && isValidTimeZone(remote.appTimeZone)) setAppTimeZone(remote.appTimeZone);
           if (remote.columnHidden && typeof remote.columnHidden === 'object') {
             const ch = remote.columnHidden as Record<string, string[]>;
             setColumnHidden(ch);
@@ -5487,10 +5508,11 @@ export default function App() {
         columnOrders,
         columnHidden,
         stockEmailRecipients: stockSavedRecipients,
+        appTimeZone,
       }).catch(e => console.warn('User prefs save failed:', e instanceof Error ? e.message : e));
     }, 800);
     return () => clearTimeout(t);
-  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders, columnHidden, stockSavedRecipients]);
+  }, [user, prefsLoaded, pageOrder, hiddenPages, columnOrders, columnHidden, stockSavedRecipients, appTimeZone]);
 
   // Auto-maximize the Order Details modal whenever a new order is opened.
   useEffect(() => {
@@ -6901,6 +6923,22 @@ export default function App() {
     const cust = customers.find(x => x.name === c.customerName) || customers.find(x => !!c.customerNumber && (x.id === c.customerNumber || x.customerNumber === c.customerNumber));
     const st = cust?.shipToLocations?.[0];
     return cityProv(st?.city, st?.province) || cityProv(cust?.city, cust?.province);
+  };
+
+  // ── Time zones ──
+  /** A location's local zone (its setting, else Vancouver → Pacific, else Eastern). */
+  const locationTimeZone = (ref?: string): string => {
+    const loc = findDocLocation(ref) || locations.find(l => !!ref && l.name.toLowerCase().includes((ref || '').toLowerCase()));
+    return (loc?.timeZone && isValidTimeZone(loc.timeZone)) ? loc.timeZone : guessLocationTimeZone(loc?.name || ref);
+  };
+  /** An emailed (Eastern) appointment time → the location's local wall time. */
+  const requestToLocal = (dateISO: string, time: string, location?: string) =>
+    convertWallTime(dateISO, time, EASTERN_TZ, locationTimeZone(location));
+  /** A location-local appointment time shown in the app's zone ("07:00", "22:00 (−1d)"). */
+  const apptTimeLabel = (dateISO: string, time: string, location?: string): string => {
+    if (!time) return time;
+    const c = convertWallTime(dateISO, time, locationTimeZone(location), appTimeZone);
+    return c.dayShift ? `${c.time} (${c.dayShift > 0 ? '+' : '−'}${Math.abs(c.dayShift)}d)` : c.time;
   };
 
   /** Resolve everything a shipment document (BOL / document package) draws from,
@@ -13968,6 +14006,15 @@ export default function App() {
               <RefreshCw size={12} className={isSyncingAll ? 'animate-spin' : ''} />
               {isSyncingAll ? 'Syncing…' : 'Sync All'}
             </button>
+            <label className="px-2 py-1 text-[#E4E3E0] text-[10px] font-bold uppercase flex items-center gap-1.5 whitespace-nowrap"
+              title="Show shipment appointment times, emails and appointment requests in this time zone">
+              <Globe size={12} /> Time Zone
+              <select value={appTimeZone} onChange={(e) => setAppTimeZone(e.target.value)}
+                className="bg-[#141414] border border-white/30 text-[#E4E3E0] text-[10px] font-normal normal-case px-1.5 py-1 outline-none">
+                {!TIME_ZONE_OPTIONS.some(([id]) => id === appTimeZone) && <option value={appTimeZone}>{appTimeZone}</option>}
+                {TIME_ZONE_OPTIONS.map(([id, label]) => <option key={id} value={id}>{label} ({tzShort(id)})</option>)}
+              </select>
+            </label>
           </PageBanner>
           <div className="p-6 space-y-8">
 
@@ -14174,6 +14221,11 @@ export default function App() {
               <ToolbarSelect label="Location" value={scheduleLocation} onChange={setScheduleLocation}
                 options={activeLocations.map(loc => ({ value: loc.name, label: loc.name }))} />
               <ToolbarToggle label="Show previous weeks" checked={showPreviousWeeks} onChange={setShowPreviousWeeks} />
+              {(() => { const locTz = locationTimeZone(locationName); return (
+                <span className="text-[10px] uppercase font-bold opacity-70 whitespace-nowrap" title={`Appointment times are stored in ${locationName}'s local time (${locTz}) and shown in your Dashboard time zone (${appTimeZone}).`}>
+                  Times in {tzShort(appTimeZone)}{locTz !== appTimeZone ? ` · dock ${tzShort(locTz)}` : ''}
+                </span>
+              ); })()}
             </>}
           actions={<>
             <button onClick={() => {
@@ -14340,7 +14392,7 @@ export default function App() {
                                                     if (shipments.length === 0) {
                                                       return (
                                                         <tr key={slot} className="group hover:bg-[#F5F5F5] transition-colors border-b border-[#141414]/5">
-                                                          <td className="px-2 py-1 text-[10px] font-mono border-r border-[#141414]/5 opacity-40">{slot}</td>
+                                                          <td className="px-2 py-1 text-[10px] font-mono border-r border-[#141414]/5 opacity-40" title={`${slot} local`}>{apptTimeLabel(dateStr, slot, locationName)}</td>
                                                           <td colSpan={15} className="px-2 py-1 text-[10px] italic opacity-20">—</td>
                                                           <td className="px-1 py-0.5">
                                                             <button onClick={() => {
@@ -14361,7 +14413,7 @@ export default function App() {
                                                     const sRes = resolveRecord({ bol: s.bol, po: s.po });
                                                     return (
                                                       <tr key={s.id} className={`transition-colors border-b border-[#141414]/5 cursor-pointer ${(s.status || '').toLowerCase() === 'in progress' ? 'bg-yellow-50 hover:bg-yellow-100' : !isStandardSlot ? 'hover:bg-amber-50 bg-amber-50/50' : 'hover:bg-[#F5F5F5]'}`} onClick={() => setEditingShipment(s)}>
-                                                        <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`}>{slot}</td>
+                                                        <td className={`px-2 py-1 text-[10px] font-mono font-bold border-r border-[#141414]/5 ${!isStandardSlot ? 'text-amber-700' : ''}`} title={`${slot} local`}>{apptTimeLabel(dateStr, slot, locationName)}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{s.deliveryDate || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5 font-black">{s.customer || sRes.customer || '—'}</td>
                                                         <td className="px-2 py-1 text-[10px] border-r border-[#141414]/5">{transferForShipment(s)?.to || shipToForShipment({ bol: s.bol || sRes.bolNumber, po: s.po || sRes.po }) || '—'}</td>
@@ -16063,6 +16115,9 @@ export default function App() {
       });
       return (
         <EmailCenterPage
+          timeZone={appTimeZone}
+          requestToLocal={requestToLocal}
+          showApptTime={apptTimeLabel}
           emailLog={emailLog}
           emailSettings={emailSettings}
           setEmailSettings={setEmailSettings}
@@ -17552,6 +17607,7 @@ export default function App() {
               { key: 'name', label: 'Name', bold: true, render: (l) => l.name || '—' },
               { key: 'bolName', label: 'BOL Name', render: (l) => l.bolName || '—' },
               { key: 'portOfOrigin', label: 'Port of Origin', render: (l) => l.portOfOrigin || '—' },
+              { key: 'timeZone', label: 'Time Zone', sortValue: (l) => l.timeZone || guessLocationTimeZone(l.name), render: (l) => { const tz = l.timeZone || guessLocationTimeZone(l.name); return <span title={tz}>{tzShort(tz)}{l.timeZone ? '' : <span className="opacity-50"> (default)</span>}</span>; } },
               { key: 'address', label: 'Address', render: (l) => l.address || '—' },
               { key: 'city', label: 'City', render: (l) => l.city || '—' },
               { key: 'province', label: 'Province', render: (l) => l.province || '—' },

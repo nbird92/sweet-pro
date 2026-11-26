@@ -6,12 +6,19 @@
 // here already supports those — just no UI for them yet.
 
 import React, { useMemo, useState } from 'react';
+import { formatInstant, tzShort } from '../utils/timeZones';
 import { Mail, Settings, AlertTriangle, CheckCircle2, Clock, X, Inbox, Pencil, RefreshCw, ChevronRight, ChevronDown, Trash2, Paperclip, CalendarClock } from 'lucide-react';
 import PageBanner from './PageBanner';
 import type { EmailLog, EmailSettings, EmailStatus, EmailDocumentType, PoImportLogEntry, PoAmendment, PoPendingImport, InboxFeedItem, InboxTriage } from '../types';
 import { fmtN } from '../utils/fmt';
 
 interface Props {
+  /** App time zone (Dashboard): every email / request time is shown in it. */
+  timeZone?: string;
+  /** An emailed (Eastern) appointment time → the location's local time. */
+  requestToLocal?: (date: string, time: string, location?: string) => { date: string; time: string };
+  /** A location-local appointment time shown in the app's zone. */
+  showApptTime?: (date: string, time: string, location?: string) => string;
   emailLog: EmailLog[];
   emailSettings: EmailSettings;
   setEmailSettings: (next: EmailSettings) => void;
@@ -129,7 +136,11 @@ const STATUS_STYLES: Record<EmailStatus, string> = {
   bounced: 'bg-red-100    text-red-700',
 };
 
-export default function EmailCenterPage({ emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, inboxFeed = [], inboxTriage = [], onReviewFeedPo, onDismissInbox, onMarkInboxHandled, onReopenInbox, onRefreshInbox, poAmendments = [], currentApptFor, slotCheck, onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+export default function EmailCenterPage({ timeZone, requestToLocal, showApptTime, emailLog, emailSettings, setEmailSettings, poImportLog = [], poPendingImports = [], onReviewImports, onDismissImport, onDeleteImport, onClearImportHistory, inboxFeed = [], inboxTriage = [], onReviewFeedPo, onDismissInbox, onMarkInboxHandled, onReopenInbox, onRefreshInbox, poAmendments = [], currentApptFor, slotCheck, onApplyAmendment, onDismissAmendment, onScanInbox }: Props) {
+  // Instants in the app's zone; appointment times in the app's zone.
+  const fmtDT = (iso?: string) => (iso ? formatInstant(iso, timeZone) : '—');
+  const fmtD = (iso?: string) => (iso ? formatInstant(iso, timeZone, true) : '');
+  const show = (date: string, time: string, location?: string) => (time && showApptTime ? showApptTime(date, time, location) : time);
   const [showSettings, setShowSettings] = useState(false);
   const [expandedImport, setExpandedImport] = useState<string | null>(null);
   const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
@@ -304,22 +315,29 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     const oldDelDate = a.prevDeliveryDate || cur.deliveryDate || '';
     const newPickDate = deliveryOnly ? '' : (a.newShipmentDate || a.requestedApptDate || '');
     const newDelDate = a.newDeliveryDate || (deliveryOnly ? a.newShipmentDate : '') || '';
-    const pickTime = deliveryOnly ? '' : rt.pickupTime;
+    const loc = cur.location || a.apptLocation || '';
+    let pickTime = deliveryOnly ? '' : rt.pickupTime;
     const wantsPick = !!(newPickDate || pickTime);
     const wantsDel = !!(newDelDate || rt.deliveryTime);
-    const reqPickDate = newPickDate || oldPickDate;
+    let reqPickDate = newPickDate || oldPickDate;
+    // Emailed times are Eastern; the schedule is in the dock's local time —
+    // convert before comparing / checking slots.
+    if (pickTime && reqPickDate && loc && requestToLocal) {
+      const c = requestToLocal(reqPickDate, pickTime, loc);
+      pickTime = c.time; reqPickDate = c.date;
+    }
     const reqPickTime = pickTime || oldPickTime; // time unchanged unless one is named
     return {
-      cur, deliveryOnly, wantsPick, wantsDel,
-      oldPick: fmt(oldPickDate, oldPickTime),
-      newPick: fmt(reqPickDate, reqPickTime),
+      cur, loc, deliveryOnly, wantsPick, wantsDel,
+      oldPick: fmt(oldPickDate, show(oldPickDate, oldPickTime, loc)),
+      newPick: fmt(reqPickDate, show(reqPickDate, reqPickTime, loc)),
       oldDel: fmt(oldDelDate),
       newDel: fmt(newDelDate || oldDelDate, rt.deliveryTime),
       reqPickDate, pickTime,
       // Separate columns: each is current -> requested (requested '' = no change asked).
       cols: {
         pickDate: { from: oldPickDate, to: newPickDate },
-        apptTime: { from: oldPickTime, to: pickTime },
+        apptTime: { from: show(oldPickDate, oldPickTime, loc), to: show(reqPickDate, pickTime, loc) },
         delDate: { from: oldDelDate, to: newDelDate },
         delTime: { from: '', to: rt.deliveryTime },
       },
@@ -345,7 +363,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
     const items = changeItems(a);
     if (!items.length) {
       const v = apptView(a);
-      return <span className="opacity-60">{v.pickUnchanged ? `Confirms appointment time ${v.pickTime}` : (a.summary || 'See email')}</span>;
+      return <span className="opacity-60">{v.pickUnchanged ? `Confirms appointment time ${show(v.reqPickDate, v.pickTime, v.loc)}` : (a.summary || 'See email')}</span>;
     }
     return (
       <div className="space-y-0.5">
@@ -477,7 +495,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                   <React.Fragment key={e.id}>
                     <tr className={`hover:bg-[#F9F9F9] cursor-pointer ${status ? 'opacity-60' : ''}`} onClick={() => setExpandedFeed(open ? null : e.id)}>
                       <td className="p-3 text-xs">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                      <td className="p-3 text-xs font-mono whitespace-nowrap">{e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'}</td>
+                      <td className="p-3 text-xs font-mono whitespace-nowrap">{e.receivedAt ? fmtDT(e.receivedAt) : '—'}</td>
                       <td className="p-3 text-xs max-w-[180px]" title={e.fromEmail}>
                         <div className="truncate">{e.fromName || e.fromEmail || '—'}</div>
                         <SenderCategoryChip category={e.senderCategory} />
@@ -497,7 +515,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                         <td colSpan={7} className="p-4">
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs mb-3">
                             <Row label="From" value={[e.fromName, e.fromEmail].filter(Boolean).join(' · ') || '—'} />
-                            <Row label="Received" value={e.receivedAt ? new Date(e.receivedAt).toLocaleString() : '—'} />
+                            <Row label="Received" value={e.receivedAt ? fmtDT(e.receivedAt) : '—'} />
                             <Row label="Subject" value={e.subject || '(no subject)'} />
                             <Row label="Attachments" value={e.attachments?.length ? e.attachments.map(a => a.filename).join(', ') : '—'} />
                             {e.customer && <Row label="Customer" value={e.customer} />}
@@ -570,7 +588,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     <React.Fragment key={imp.id}>
                       <tr className="hover:bg-[#F9F9F9] cursor-pointer" onClick={() => setExpandedImport(open ? null : imp.id)}>
                         <td className="p-3 text-xs">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
-                        <td className="p-3 text-xs font-mono whitespace-nowrap">{(imp.receivedAt || imp.createdAt) ? new Date(imp.receivedAt || imp.createdAt).toLocaleString() : '—'}</td>
+                        <td className="p-3 text-xs font-mono whitespace-nowrap">{(imp.receivedAt || imp.createdAt) ? fmtDT(imp.receivedAt || imp.createdAt) : '—'}</td>
                         <td className="p-3 text-xs max-w-[180px] truncate" title={imp.fromEmail}>{imp.fromEmail || '—'}</td>
                         <td className="p-3 text-xs max-w-[240px] truncate" title={imp.subject}>{imp.subject || '—'}</td>
                         <td className="p-3 text-xs font-mono font-bold" title={imp.poNumber || ex.poNumber || ''}><div className="max-w-[140px] truncate">{imp.poNumber || ex.poNumber || '—'}</div></td>
@@ -646,7 +664,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
           <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><Inbox size={14} /> Email Import History</h3>
           <div className="flex items-center gap-3">
             <span className="text-[10px] opacity-50 font-mono">
-              {importCounts.total} imported{lastImport ? ` · last ${new Date(lastImport).toLocaleString()}` : ''}
+              {importCounts.total} imported{lastImport ? ` · last ${fmtDT(lastImport)}` : ''}
               {importCounts.duplicate > 0 ? ` · ${importCounts.duplicate} dup` : ''}
               {importCounts.skipped > 0 ? ` · ${importCounts.skipped} skipped` : ''}
             </span>
@@ -679,7 +697,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             <tbody className="divide-y divide-[#141414]/10">
               {poImports.map(e => (
                 <tr key={e.id} className="hover:bg-[#F9F9F9]">
-                  <td className="p-3 text-xs font-mono whitespace-nowrap">{e.importedAt ? new Date(e.importedAt).toLocaleString() : '—'}</td>
+                  <td className="p-3 text-xs font-mono whitespace-nowrap">{e.importedAt ? fmtDT(e.importedAt) : '—'}</td>
                   <td className="p-3 text-xs">{e.fromEmail || '—'}</td>
                   <td className="p-3 text-xs max-w-[240px] truncate" title={e.subject}>{e.subject || '—'}</td>
                   <td className="p-3 text-xs font-mono">{e.sourceFile || '—'}</td>
@@ -708,7 +726,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
       {apptRequestsSorted.length > 0 && (
         <div className="px-6 pt-2 pb-5">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CalendarClock size={14} /> Appointment Requests &amp; Amendments</h3>
+            <h3 className="text-xs font-bold uppercase tracking-widest flex items-center gap-2"><CalendarClock size={14} /> Appointment Requests &amp; Amendments{timeZone && <span className="normal-case tracking-normal font-normal opacity-70">· times in {tzShort(timeZone)} (emails are Eastern)</span>}</h3>
             {pendingApptRequests > 0 && <span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 text-[9px] font-bold uppercase">{pendingApptRequests} to review</span>}
           </div>
           <div className="bg-white border border-[#141414] shadow-[4px_4px_0px_0px_rgba(20,20,20,1)] overflow-auto max-h-[380px]">
@@ -732,7 +750,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     onClick={() => setExpandedApptId(id => (id === a.id ? null : a.id))}
                     title="Click to show the email"
                   >
-                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
+                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? fmtDT(a.receivedAt || a.createdAt) : '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[160px] truncate">{a.poNumber || '—'}{a.orderBol ? <span className="opacity-50 font-normal"> / {a.orderBol}</span> : null}</div></td>
                     <td className="p-3 text-xs">{a.customer || '—'}</td>
                     <td className="p-3 text-xs">{renderChanges(a)}</td>
@@ -748,14 +766,14 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                       return (<>
                         <td className="p-3 text-xs whitespace-nowrap">
                           {a.suggestedApptTime ? (
-                            <span className="font-mono"><span className="text-amber-700 font-bold">Taken</span> → suggest <b>{a.suggestedApptTime}</b></span>
+                            <span className="font-mono"><span className="text-amber-700 font-bold">Taken</span> → suggest <b>{show(a.requestedApptDate || '', a.suggestedApptTime, loc)}</b></span>
                           ) : !open ? '—'
                           : v.pickUnchanged ? (
-                            <span className="text-emerald-700 font-bold">Already booked at {v.pickTime}</span>
+                            <span className="text-emerald-700 font-bold">Already booked at {show(v.reqPickDate, v.pickTime, loc)}</span>
                           ) : check ? (
                             check.free
-                              ? <span className="text-emerald-700 font-bold">{v.pickTime} open</span>
-                              : <span title={`Booked by ${check.by}`}><span className="text-red-700 font-bold">{v.pickTime} taken</span>{check.nextFree ? <> → next free <b className="font-mono">{check.nextFree}</b></> : ' — no free slot that day'}</span>
+                              ? <span className="text-emerald-700 font-bold">{show(v.reqPickDate, v.pickTime, loc)} open</span>
+                              : <span title={`Booked by ${check.by}`}><span className="text-red-700 font-bold">{show(v.reqPickDate, v.pickTime, loc)} taken</span>{check.nextFree ? <> → next free <b className="font-mono">{show(v.reqPickDate, check.nextFree, loc)}</b></> : ' — no free slot that day'}</span>
                           ) : v.pickTime && !loc ? (
                             <span className="opacity-60">Not scheduled — can't check the {v.pickTime} slot</span>
                           ) : v.wantsDel && !v.pickTime ? (
@@ -781,7 +799,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                           <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
                         </div>
                       ) : a.status === 'applied' ? (
-                        <span className="text-[9px] uppercase opacity-60">{a.requestedApptDate ? 'booked' : 'applied'}{a.appliedAt ? ` ${new Date(a.appliedAt).toLocaleDateString()}` : ''}</span>
+                        <span className="text-[9px] uppercase opacity-60">{a.requestedApptDate ? 'booked' : 'applied'}{a.appliedAt ? ` ${fmtD(a.appliedAt)}` : ''}</span>
                       ) : (
                         <span className="text-[9px] uppercase opacity-40">dismissed</span>
                       )}
@@ -824,7 +842,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                     onClick={() => setExpandedApptId(id => (id === a.id ? null : a.id))}
                     title="Click to show the email"
                   >
-                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? new Date(a.receivedAt || a.createdAt).toLocaleString() : '—'}</td>
+                    <td className="p-3 text-xs font-mono whitespace-nowrap">{(a.receivedAt || a.createdAt) ? fmtDT(a.receivedAt || a.createdAt) : '—'}</td>
                     <td className="p-3 text-xs font-mono font-bold" title={a.poNumber || ''}><div className="max-w-[140px] truncate">{a.poNumber || '—'}</div></td>
                     <td className="p-3 text-xs font-mono"><div className="max-w-[110px] truncate">{a.orderBol || '—'}</div></td>
                     <td className="p-3 text-xs font-bold" title={a.customer || ''}><div className="max-w-[180px] truncate">{a.customer || '—'}</div></td>
@@ -842,7 +860,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
                           <button onClick={() => onDismissAmendment?.(a)} className="px-2 py-0.5 rounded-full border border-[#141414] text-[9px] font-bold uppercase hover:bg-[#F5F5F5]">Dismiss</button>
                         </div>
                       ) : a.status === 'applied' ? (
-                        <span className="text-[9px] uppercase opacity-60">{a.appliedAt ? `applied ${new Date(a.appliedAt).toLocaleDateString()}` : 'applied'}</span>
+                        <span className="text-[9px] uppercase opacity-60">{a.appliedAt ? `applied ${fmtD(a.appliedAt)}` : 'applied'}</span>
                       ) : (
                         <span className="text-[9px] uppercase opacity-40">dismissed</span>
                       )}
@@ -903,7 +921,7 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             <tbody className="divide-y divide-[#141414]/10">
               {visibleLogs.map(log => (
                 <tr key={log.id} className="hover:bg-[#F9F9F9] cursor-pointer" style={{ contentVisibility: 'auto', containIntrinsicSize: '0 44px' } as React.CSSProperties} onClick={() => setViewingLog(log)}>
-                  <td className="p-3 text-xs font-mono">{log.createdAt ? new Date(log.createdAt).toLocaleString() : '—'}</td>
+                  <td className="p-3 text-xs font-mono">{log.createdAt ? fmtDT(log.createdAt) : '—'}</td>
                   <td className="p-3 text-xs">{TYPE_LABELS[log.type]}</td>
                   <td className="p-3 text-xs font-bold">{log.customerName || '—'}</td>
                   <td className="p-3 text-xs font-mono">
@@ -1017,8 +1035,8 @@ export default function EmailCenterPage({ emailLog, emailSettings, setEmailSetti
             <div className="p-6 text-xs space-y-3">
               <Row label="Customer" value={viewingLog.customerName || '—'} />
               <Row label="Status" value={<StatusPill status={viewingLog.status} />} />
-              <Row label="Created" value={viewingLog.createdAt ? new Date(viewingLog.createdAt).toLocaleString() : '—'} />
-              <Row label="Sent" value={viewingLog.sentAt ? new Date(viewingLog.sentAt).toLocaleString() : '—'} />
+              <Row label="Created" value={viewingLog.createdAt ? fmtDT(viewingLog.createdAt) : '—'} />
+              <Row label="Sent" value={viewingLog.sentAt ? fmtDT(viewingLog.sentAt) : '—'} />
               <Row label="To (intended)" value={(viewingLog.recipientTo || []).join(', ') || '—'} />
               <Row label="To (actual)" value={(viewingLog.actualRecipientTo || []).join(', ') || '—'} />
               {viewingLog.recipientCc?.length ? <Row label="CC" value={viewingLog.recipientCc.join(', ')} /> : null}
