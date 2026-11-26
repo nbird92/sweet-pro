@@ -9,6 +9,15 @@
 // "10:00 on 2026-11-26 in Eastern" becomes "07:00" in Pacific.
 
 export const EASTERN_TZ = 'America/Toronto';
+/** British Columbia stays on UTC−7 all year (no more clock changes), unlike
+ *  Los Angeles. A fixed-offset zone (IANA 'Etc/GMT+7' = UTC−7) so it is right
+ *  even on browsers whose zone data predates BC's change. */
+export const BC_TZ = 'Etc/GMT+7';
+/** Map retired / changed zone ids to the one the app uses (America/Vancouver → BC). */
+export function normalizeTimeZone(tz?: string): string {
+  if (!tz) return tz || '';
+  return tz === 'America/Vancouver' ? BC_TZ : tz;
+}
 
 /** Zone choices: [IANA id, label]. */
 export const TIME_ZONE_OPTIONS: Array<[string, string]> = [
@@ -19,7 +28,8 @@ export const TIME_ZONE_OPTIONS: Array<[string, string]> = [
   ['America/Regina', 'Saskatchewan (Regina)'],
   ['America/Edmonton', 'Mountain (Edmonton / Denver)'],
   ['America/Phoenix', 'Arizona (Phoenix)'],
-  ['America/Vancouver', 'Pacific (Vancouver / Los Angeles)'],
+  ['Etc/GMT+7', 'British Columbia (Vancouver) — UTC−7 year-round'],
+  ['America/Los_Angeles', 'Pacific (Los Angeles / Seattle)'],
   ['America/Anchorage', 'Alaska (Anchorage)'],
   ['Pacific/Honolulu', 'Hawaii (Honolulu)'],
   ['America/Mexico_City', 'Mexico City'],
@@ -41,7 +51,7 @@ export const TIME_ZONE_OPTIONS: Array<[string, string]> = [
 ];
 
 export function browserTimeZone(): string {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || EASTERN_TZ; } catch { return EASTERN_TZ; }
+  try { return normalizeTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) || EASTERN_TZ; } catch { return EASTERN_TZ; }
 }
 
 export function isValidTimeZone(tz?: string): boolean {
@@ -86,6 +96,7 @@ export function utcToZoned(utcMs: number, tz: string): { date: string; time: str
  *  Unparseable input (or the same zone) comes back unchanged. */
 export function convertWallTime(dateISO: string, time: string, fromTz: string, toTz: string): { date: string; time: string; dayShift: number } {
   const same = { date: dateISO, time, dayShift: 0 };
+  fromTz = normalizeTimeZone(fromTz); toTz = normalizeTimeZone(toTz);
   if (!fromTz || !toTz || fromTz === toTz) return same;
   const utc = zonedToUtc(dateISO, time, fromTz);
   if (utc === null || !isValidTimeZone(toTz)) return same;
@@ -97,7 +108,9 @@ export function convertWallTime(dateISO: string, time: string, fromTz: string, t
 
 /** Short zone name on a date, e.g. "EST" / "PST". */
 export function tzShort(tz?: string, dateISO?: string): string {
+  tz = normalizeTimeZone(tz);
   if (!tz) return '';
+  if (tz === BC_TZ) return 'BC UTC−7';
   try {
     const d = dateISO ? new Date(`${dateISO}T12:00:00Z`) : new Date();
     return new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(d).find(p => p.type === 'timeZoneName')?.value || tz;
@@ -109,12 +122,13 @@ export function formatInstant(iso: string | undefined, tz?: string, dateOnly = f
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  const opt = isValidTimeZone(tz) ? { timeZone: tz } : undefined;
+  const zone = normalizeTimeZone(tz);
+  const opt = isValidTimeZone(zone) ? { timeZone: zone } : undefined;
   return dateOnly ? d.toLocaleDateString(undefined, opt) : d.toLocaleString(undefined, opt);
 }
 
 /** Default zone for a location name when none is set: Vancouver sites are
  *  Pacific; everything else Eastern. */
 export function guessLocationTimeZone(name?: string): string {
-  return /vancouver/i.test(name || '') ? 'America/Vancouver' : EASTERN_TZ;
+  return /vancouver/i.test(name || '') ? BC_TZ : EASTERN_TZ;
 }

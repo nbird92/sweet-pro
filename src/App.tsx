@@ -123,7 +123,7 @@ import { itasNamesOf, itasNamesLabel, splitItasNames, withItasNames } from './ut
 import { calcContractPrice, DEFAULT_YIELD_LOSS } from './utils/contractPriceCalc';
 import { lineDifferentials, contractLinePrice, isUsdContract } from './utils/contractLines';
 import { fixPastYear } from './utils/pastYear';
-import { EASTERN_TZ, TIME_ZONE_OPTIONS, browserTimeZone, isValidTimeZone, convertWallTime, tzShort, guessLocationTimeZone } from './utils/timeZones';
+import { EASTERN_TZ, TIME_ZONE_OPTIONS, browserTimeZone, isValidTimeZone, convertWallTime, tzShort, guessLocationTimeZone, normalizeTimeZone } from './utils/timeZones';
 import { CONTRACT_FIELDS, DEFAULT_CONTRACT_IMPORT_CONFIG, autoDetectContractColumns, syncContractsFromConfig, type ContractSyncResult } from './utils/contractSheetSync';
 import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows, loadHamiltonBayMap, loadHamiltonSource, normalizeScheduleTime, saveHamiltonBayMap, saveHamiltonSource, hasSavedHamiltonSource, IMPORT_SETTINGS_EVENT } from './utils/hamiltonScheduleSync';
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
@@ -946,7 +946,7 @@ export default function App() {
   // App time zone (Dashboard): appointment times, email times and appointment
   // requests are SHOWN in this zone. Saved per user (prefs) + this browser.
   const [appTimeZone, setAppTimeZone] = useState<string>(() => {
-    try { const v = localStorage.getItem('appTimeZone'); if (v && isValidTimeZone(v)) return v; } catch { /* ignore */ }
+    try { const v = normalizeTimeZone(localStorage.getItem('appTimeZone') || ''); if (v && isValidTimeZone(v)) return v; } catch { /* ignore */ }
     return browserTimeZone();
   });
   useEffect(() => { try { localStorage.setItem('appTimeZone', appTimeZone); } catch { /* ignore */ } }, [appTimeZone]);
@@ -5472,7 +5472,7 @@ export default function App() {
               }
             } catch { /* cache best-effort */ }
           }
-          if (typeof remote.appTimeZone === 'string' && isValidTimeZone(remote.appTimeZone)) setAppTimeZone(remote.appTimeZone);
+          if (typeof remote.appTimeZone === 'string' && isValidTimeZone(normalizeTimeZone(remote.appTimeZone))) setAppTimeZone(normalizeTimeZone(remote.appTimeZone));
           if (remote.columnHidden && typeof remote.columnHidden === 'object') {
             const ch = remote.columnHidden as Record<string, string[]>;
             setColumnHidden(ch);
@@ -6930,7 +6930,7 @@ export default function App() {
   /** A location's local zone (its setting, else Vancouver → Pacific, else Eastern). */
   const locationTimeZone = (ref?: string): string => {
     const loc = findDocLocation(ref) || locations.find(l => !!ref && l.name.toLowerCase().includes((ref || '').toLowerCase()));
-    return (loc?.timeZone && isValidTimeZone(loc.timeZone)) ? loc.timeZone : guessLocationTimeZone(loc?.name || ref);
+    return (loc?.timeZone && isValidTimeZone(normalizeTimeZone(loc.timeZone))) ? normalizeTimeZone(loc.timeZone) : guessLocationTimeZone(loc?.name || ref);
   };
   /** An emailed (Eastern) appointment time → the location's local wall time. */
   const requestToLocal = (dateISO: string, time: string, location?: string) =>
