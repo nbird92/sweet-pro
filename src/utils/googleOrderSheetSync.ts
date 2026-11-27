@@ -2028,6 +2028,17 @@ export function parsedRowsToInvoicesConfigured(
   }
   const updatedInvoiceIds = new Set<string>(); // each existing invoice touched at most once per run
   const addedInvoiceNumbers = new Set<string>();
+  // Every existing invoice on a BOL (numbered or not) — rows WITHOUT an invoice
+  // number still carry PAPS / customs entry / lot / trailer / dates for the load.
+  const existingInvoicesByBol = new Map<string, Invoice[]>();
+  for (const i of existingInvoices) {
+    const b = (i.bolNumber || '').trim().toUpperCase();
+    if (!b) continue;
+    const arr = existingInvoicesByBol.get(b); if (arr) arr.push(i); else existingInvoicesByBol.set(b, [i]);
+  }
+  // Latest merged version of each updated invoice: several rows may fill
+  // different fields of the same invoice in one run.
+  const merged = new Map<string, Invoice>();
 
   // BOL → Order lookup for line-item inheritance
   const ordersByBol = new Map<string, Order>();
@@ -2042,10 +2053,38 @@ export function parsedRowsToInvoicesConfigured(
         result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row marked cancelled' });
         continue;
       }
-      // 2. NOT invoiced — skip (this is the inverse of the orders sync).
-      //    Invoices REQUIRE an invoice number to exist in this row.
+      // 2. No invoice number (not billed in the sheet yet). Never creates an
+      //    invoice (un-billed rows are orders), but the row's load details still
+      //    fill BLANK fields on the invoices already in the app for that BOL
+      //    (and PO, when both have one) — e.g. an invoice made with Complete &
+      //    Bill whose PAPS / customs entry numbers live only in the sheet.
       if (!isInvoicedValue(r.invoiceNumber)) {
-        result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no invoice number (not yet billed)' });
+        const bolN = (r.bolNumber || '').trim().toUpperCase();
+        const pkN = poKey(r.poNumber);
+        const cands = bolN ? (existingInvoicesByBol.get(bolN) || []).filter(inv => !pkN || !poKey(inv.po) || poKey(inv.po) === pkN) : [];
+        if (!cands.length) {
+          result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no invoice number (not yet billed) and no invoice with this BOL' });
+          continue;
+        }
+        const carrierN = resolveCarrier(r.carrierName, carriers);
+        const blankN = (v: unknown) => v === undefined || v === null || v === '';
+        let touched = 0;
+        for (const inv of cands) {
+          const cur = merged.get(inv.id) || inv;
+          const patch: Partial<Invoice> = {};
+          if (blankN(cur.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
+          if (blankN(cur.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+          if (blankN(cur.reversals) && r.reversals) patch.reversals = r.reversals;
+          if (blankN(cur.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
+          if (blankN(cur.trailerNo) && r.trailerNo) patch.trailerNo = r.trailerNo;
+          if (blankN(cur.carrier) && carrierN) patch.carrier = carrierN;
+          if (blankN(cur.po) && r.poNumber) patch.po = r.poNumber;
+          if (blankN(cur.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
+          if (blankN(cur.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
+          if (blankN(cur.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
+          if (Object.keys(patch).length) { merged.set(inv.id, stripUndefined({ ...cur, ...patch })); touched++; }
+        }
+        if (!touched) result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'No invoice number — the invoice(s) on this BOL already have these details' });
         continue;
       }
       // 3. Require BOL — invoices have to link back to a shipment
@@ -2136,19 +2175,21 @@ export function parsedRowsToInvoicesConfigured(
         }
         const blank = (v: unknown) => v === undefined || v === null || v === '';
         const patch: Partial<Invoice> = {};
-        if (blank(existingInv.po) && r.poNumber) patch.po = r.poNumber;
-        if (blank(existingInv.invoiceNumber) && r.invoiceNumber) patch.invoiceNumber = r.invoiceNumber;
-        if (blank(existingInv.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
-        if (blank(existingInv.splitNo) && r.splitNumber) patch.splitNo = r.splitNumber;
-        if (blank(existingInv.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
-        if (blank(existingInv.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
-        if (blank(existingInv.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
-        if (blank(existingInv.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
-        if (blank(existingInv.reversals) && r.reversals) patch.reversals = r.reversals;
-        if (blank(existingInv.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
-        if (blank(existingInv.trailerNo) && r.trailerNo) patch.trailerNo = r.trailerNo;
-        if (blank(existingInv.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
-        if (blank(existingInv.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
+        // Compare against what earlier rows in this run already filled.
+        const base = merged.get(existingInv.id) || existingInv;
+        if (blank(base.po) && r.poNumber) patch.po = r.poNumber;
+        if (blank(base.invoiceNumber) && r.invoiceNumber) patch.invoiceNumber = r.invoiceNumber;
+        if (blank(base.contractNumber) && r.contractNumber) patch.contractNumber = r.contractNumber;
+        if (blank(base.splitNo) && r.splitNumber) patch.splitNo = r.splitNumber;
+        if (blank(base.carrier) && carrierCanonical) patch.carrier = carrierCanonical;
+        if (blank(base.location) && explicit?.defaultLocation) patch.location = explicit.defaultLocation;
+        if (blank(base.papsNo) && r.papsNo) patch.papsNo = r.papsNo;
+        if (blank(base.customsEntryNo) && r.customsEntryNo) patch.customsEntryNo = r.customsEntryNo;
+        if (blank(base.reversals) && r.reversals) patch.reversals = r.reversals;
+        if (blank(base.lotCode) && r.lotCode) patch.lotCode = r.lotCode;
+        if (blank(base.trailerNo) && r.trailerNo) patch.trailerNo = r.trailerNo;
+        if (blank(base.shipmentDate) && r.shipmentDate) patch.shipmentDate = r.shipmentDate;
+        if (blank(base.deliveryDate) && r.deliveryDate) patch.deliveryDate = r.deliveryDate;
         // Pricing backfill — price and amount filled independently, each only
         // when the existing invoice is missing it (never overwrites a value).
         if (pricePerMt > 0 && blank(existingInv.pricePerMt)) patch.pricePerMt = pricePerMt;
@@ -2187,7 +2228,7 @@ export function parsedRowsToInvoicesConfigured(
           corrected = true;
         }
         if (Object.keys(patch).length > 0) {
-          result.updatedInvoices.push(stripUndefined({ ...existingInv, ...patch }));
+          merged.set(existingInv.id, stripUndefined({ ...base, ...patch }));
           updatedInvoiceIds.add(existingInv.id);
         } else if (corrected) {
           updatedInvoiceIds.add(existingInv.id);
@@ -2238,6 +2279,7 @@ export function parsedRowsToInvoicesConfigured(
       result.errors.push({ tab: r.tab, rowIdx: r.rowIdx, message: err instanceof Error ? err.message : String(err) });
     }
   }
+  result.updatedInvoices = [...merged.values()];
   return result;
 }
 
