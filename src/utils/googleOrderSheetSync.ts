@@ -2061,7 +2061,10 @@ export function parsedRowsToInvoicesConfigured(
       if (!isInvoicedValue(r.invoiceNumber)) {
         const bolN = (r.bolNumber || '').trim().toUpperCase();
         const pkN = poKey(r.poNumber);
-        const cands = bolN ? (existingInvoicesByBol.get(bolN) || []).filter(inv => !pkN || !poKey(inv.po) || poKey(inv.po) === pkN) : [];
+        // One invoice on the BOL → that's the load (a PO typo on the sheet doesn't
+        // block it). Several (split invoices) → the PO picks which ones.
+        const onBol = bolN ? (existingInvoicesByBol.get(bolN) || []) : [];
+        const cands = onBol.length <= 1 ? onBol : onBol.filter(inv => !pkN || !poKey(inv.po) || poKey(inv.po) === pkN);
         if (!cands.length) {
           result.skipped.push({ tab: r.tab, bolNumber: r.bolNumber, invoiceNumber: r.invoiceNumber, reason: 'Row has no invoice number (not yet billed) and no invoice with this BOL' });
           continue;
