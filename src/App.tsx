@@ -129,6 +129,7 @@ import { HAMILTON_SCHEDULE_LOCATION, parseHamiltonSchedule, classifyScheduleRows
 import { shipmentIdentityKey, planShipmentDedupe, type DedupePlan } from './utils/shipmentDedupe';
 import { contractEndDate, contractCreatedDate, contractStartDate, longDate } from './utils/contractDates';
 import { generateSalesAgreementPdf } from './salesAgreementPdf';
+import EmailPdfModal from './components/EmailPdfModal';
 import { fmtN } from './utils/fmt';
 import {
   syncOrdersSheet,
@@ -1048,7 +1049,10 @@ export default function App() {
     } catch { /* cache best-effort */ }
   };
   const [generatingOrderConfirmation, setGeneratingOrderConfirmation] = useState<string | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string; title?: string; templateId?: string } | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string; filename: string; templateType?: string; title?: string; templateId?: string;
+    // Set for previews that can be emailed (Sales Contract): the Send to Customer menu.
+    email?: { blob: Blob; customerIds: string[]; title: string; subject: string; intro: string[] } } | null>(null);
+  const [pdfEmailOpen, setPdfEmailOpen] = useState(false);
 
   // Modal window states (minimize/maximize)
   const [modalStates, setModalStates] = useState<Record<string, { minimized: boolean; maximized: boolean }>>({});
@@ -6885,6 +6889,7 @@ export default function App() {
   const handleClosePdfPreview = () => {
     if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
     setPdfPreview(null);
+    setPdfEmailOpen(false);
   };
 
   /** Find a Location by name or code — exact first, then a loose name match so
@@ -7603,9 +7608,26 @@ export default function App() {
       ];
       const safe = (v: string) => v.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
       const filename = `SalesContract_${safe(c.contractNumber || 'draft')}_${safe(corporateName)}.pdf`;
-      const { blobUrl } = generateSalesAgreementPdf({ tokens, items, fields, filename });
+      const { blobUrl, blob } = generateSalesAgreementPdf({ tokens, items, fields, filename });
       if (pdfPreview?.url) URL.revokeObjectURL(pdfPreview.url);
-      setPdfPreview({ url: blobUrl, filename, title: 'Sales Contract Preview', templateId: salesAgreementTemplate?.id });
+      const greetName = customer?.name || c.customerName || corporateName;
+      setPdfEmailOpen(false);
+      setPdfPreview({
+        url: blobUrl, filename, title: 'Sales Contract Preview', templateId: salesAgreementTemplate?.id,
+        email: {
+          blob,
+          customerIds: customer ? [customer.id] : [],
+          title: 'Email Sales Contract',
+          subject: `Sales Contract${c.contractNumber ? ` ${c.contractNumber}` : ''} — ${greetName}`,
+          intro: [
+            `Dear ${greetName},`,
+            '',
+            `Please find attached sales contract${c.contractNumber ? ` ${c.contractNumber}` : ''}${bulkProduct ? ` for ${bulkProduct}` : ''}${start && end ? ` (${longDate(start)} – ${longDate(end)})` : ''}.`,
+            '',
+            'Please let us know if you have any questions.',
+          ],
+        },
+      });
     } catch (e: any) {
       console.error('Generate sales contract failed:', e);
       setErrorBox('Failed to generate the sales contract: ' + (e.message || 'Unknown error'));
@@ -21285,6 +21307,14 @@ export default function App() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
+                      {pdfPreview.email && (
+                        <button
+                          onClick={() => setPdfEmailOpen(true)}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
+                        >
+                          <Mail size={12} /> Send to Customer
+                        </button>
+                      )}
                       <button
                         onClick={handleDownloadPdf}
                         className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-widest transition-colors"
@@ -21305,6 +21335,18 @@ export default function App() {
               </div>
             </motion.div>
           </div>
+        )}
+        {pdfPreview?.email && pdfEmailOpen && (
+          <EmailPdfModal
+            title={pdfPreview.email.title}
+            customers={customers.filter(x => pdfPreview.email!.customerIds.includes(x.id))}
+            pdf={{ blob: pdfPreview.email.blob, filename: pdfPreview.filename }}
+            defaultSubject={pdfPreview.email.subject}
+            defaultIntro={pdfPreview.email.intro}
+            senderName={user?.displayName || ''}
+            senderEmail={user?.email || ''}
+            onClose={() => setPdfEmailOpen(false)}
+          />
         )}
 
         {/* Complete & Bill confirmation modal — shows an order summary so the

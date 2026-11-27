@@ -21,7 +21,7 @@ export interface SalesAgreementData {
  * wording (force majeure, governing law, …) lives in the template sheet, never
  * in the code. Otherwise a plain built-in summary of the terms is drawn.
  */
-export function generateSalesAgreementPdf(d: SalesAgreementData): { blobUrl: string; filename: string; fromTemplate: boolean } {
+export function generateSalesAgreementPdf(d: SalesAgreementData): { blobUrl: string; blob: Blob; filename: string; fromTemplate: boolean } {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const tpl = docTemplate('salesAgreement');
   if (tpl) {
@@ -54,5 +54,5 @@ export function generateSalesAgreementPdf(d: SalesAgreementData): { blobUrl: str
     }
   }
   const blob = doc.output('blob');
-  return { blobUrl: URL.createObjectURL(blob), filename: d.filename, fromTemplate: !!tpl };
+  return { blobUrl: URL.createObjectURL(blob), blob, filename: d.filename, fromTemplate: !!tpl };
 }
