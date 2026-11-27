@@ -8,6 +8,7 @@
 
 import { GoogleGenAI, Type } from '@google/genai';
 import ExcelJS from 'exceljs';
+import { spreadsheetBytesKind, xlsToText, markupTableToText, decodeTextBytes } from './_xlsLegacy.js';
 
 export const DEFAULT_MODEL = 'gemini-2.5-flash';
 
@@ -445,6 +446,18 @@ async function xlsxToText(buf: Buffer): Promise<string> {
   return out.join('\n');
 }
 
+/** Any spreadsheet attachment to text, by what the bytes actually are: .xlsx
+ *  (zip) via ExcelJS, Excel 97-2003 .xls (OLE/BIFF) via the legacy reader, and
+ *  the HTML / SpreadsheetML / CSV files systems export under a .xls name. */
+async function spreadsheetToText(buf: Buffer): Promise<string> {
+  switch (spreadsheetBytesKind(buf)) {
+    case 'zip': return xlsxToText(buf);
+    case 'ole': return xlsToText(buf);
+    case 'text': return markupTableToText(decodeTextBytes(buf));
+    default: throw new Error('Unrecognised spreadsheet format: not an Excel .xlsx/.xls, HTML or CSV file.');
+  }
+}
+
 // Cost cap: bound how much text (email thread / spreadsheet / csv) is sent to
 // Gemini. A PO's actionable content is near the top; a 200-page quoted thread or
 // a huge sheet would otherwise bill enormous input tokens. Overridable via
@@ -464,7 +477,7 @@ async function partsForFile(file: UploadFile): Promise<any[]> {
   const buf = Buffer.from(file.dataBase64, 'base64');
   const name = (file.name || '').toLowerCase();
   if (name.endsWith('.xlsx') || name.endsWith('.xls') || mime.includes('spreadsheet') || mime.includes('excel')) {
-    const text = await xlsxToText(buf);
+    const text = await spreadsheetToText(buf);
     return [label, { text: `Spreadsheet contents (tab-separated):\n${capText(text)}` }];
   }
   return [label, { text: `File contents:\n${capText(buf.toString('utf8'))}` }];
